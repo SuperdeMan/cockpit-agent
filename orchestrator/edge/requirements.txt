@@ -7,3 +7,5 @@ nats-py>=2.6.0
 # 对全量语料逐 token 比对 BertTokenizerFast——为一个分词器把 transformers + tokenizers 的
 # Rust 扩展拉进车机镜像不值。缺包时 EdgeNLU 决议 disabled、整链回落规则（声纹先例）。
 onnxruntime>=1.17,<2
+# CA2-06: verify Ed25519 vehicle-state envelopes (private key only on edge).
+cryptography>=42.0

@@ -62,4 +62,12 @@ def owner_scoped(key: str, user_id: str, occupant_id: str = "") -> str:
 __all__ = ["NEWS_ACTIVE", "RESEARCH_ACTIVE", "TRIP_ACTIVE",
            "REMINDERS_ACTIVE", "REMINDER_PENDING", "REMINDABLE_ACTIVE",
            "SCENE_ACTIVE", "SCENE_PENDING", "CHARGING_DEST_CHOICES",
-           "owner_scoped"]
+           "owner_scoped", "vehicle_scoped"]
+
+
+def vehicle_scoped(key: str, vehicle_id: str) -> str:
+    """Vehicle-scoped runtime state inside the existing owner profile; no schema migration."""
+    from urllib.parse import quote
+    if not isinstance(vehicle_id, str) or not vehicle_id.strip() or len(vehicle_id) > 128:
+        raise ValueError("vehicle_identity_required")
+    return f"{key}:vehicle:{quote(vehicle_id, safe='')}"

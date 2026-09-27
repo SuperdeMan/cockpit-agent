@@ -38,6 +38,20 @@ _NEAR = {"lat": 31.2, "lng": 121.4}
 
 
 @pytest.mark.asyncio
+async def test_same_owner_location_reminders_are_vehicle_scoped_with_legacy_v1():
+    pub=Pub()
+    a=_loc_reminder("u1","primary","A文件",31.2,121.4)
+    b=_loc_reminder("u1","primary","B文件",31.2,121.4); b.extra["vehicle_id"]="v2"
+    wa,store=await _watcher_with(pub,a,b)
+    wb=GeofenceWatcher(store,pub,now_fn=lambda:1000.0,vehicle_id="v2")
+    await wa.on_state([],{"location":_FAR}); await wb.on_state([],{"location":_FAR})
+    assert await wb.on_state([],{"location":_NEAR})==1
+    assert pub.sent[0]["vehicle_id"]=="v2" and "B文件" in pub.sent[0]["speech"]
+    assert await wa.on_state([],{"location":_NEAR})==1
+    assert pub.sent[1]["vehicle_id"]=="v1" and "A文件" in pub.sent[1]["speech"]
+
+
+@pytest.mark.asyncio
 async def test_two_owners_hitting_the_same_fence_are_published_separately():
     pub = Pub()
     w, _ = await _watcher_with(

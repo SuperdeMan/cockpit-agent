@@ -24,7 +24,7 @@ import yaml
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM, REJECTED
 from agents._sdk.base import Context
-from agents._sdk.shared_state import SCENE_ACTIVE, SCENE_PENDING
+from agents._sdk.shared_state import SCENE_ACTIVE, SCENE_PENDING, vehicle_scoped
 
 from .catalog import action_type_for, affected_state_keys, is_danger, load_catalog, \
     resolve_command, restore_action, validate_action
@@ -93,7 +93,7 @@ class SceneOrchestratorAgent(BaseAgent):
         self.store = SceneStore()
         self.mirror = StateMirror()
         self._builtin: list[Scene] = self._builtin_scenes(_load_builtin(_SCENES_PATH))
-        # P2 Verify-Repair：后台对账（按 user 单飞）。ctx_ids = (session, user, vehicle)——
+        # P2 Verify-Repair：后台对账（按 user/vehicle 单飞）。ctx_ids = (session, user, vehicle)——
         # 后台任务不依赖请求级 ctx，用 Agent 级 self.memory 重建 Context（deep_research 先例）。
         self.triggers: TriggerWatcher | None = None
         self.verify = VerifyManager(
@@ -376,7 +376,7 @@ class SceneOrchestratorAgent(BaseAgent):
             actions, override_src, intent.slots.get("custom_params"))
 
         # P2 Ground·Solve（D9）：读环境 → 确定性求值 → 本次具体动作序列。全程零 LLM。
-        env = self._ground(meta)
+        env = self._ground(meta, ctx.vehicle_id)
         sol = solve(actions, scene.guards, env, label=scene.name)
         if sol.blocked:                                   # guard block：确凿不满足 → 诚实拒绝
             return AgentResult(status=REJECTED, speech=sol.blocked)
@@ -413,16 +413,9 @@ class SceneOrchestratorAgent(BaseAgent):
             res.speech = f"{head}。{tail}"
         return res
 
-    def _ground(self, meta: dict) -> dict:
-        """读环境（Ground）：车况镜像 + meta 电量 + 本地时。取不到的键**不进 env**——
-        solve 会把它判成 unknown 而不是猜一个值（三态求值的前提）。"""
-        env = self.mirror.snapshot()
-        battery = (meta or {}).get("vehicle_battery")     # context_scopes: [vehicle_state]
-        if battery not in (None, "") and "battery" not in env:
-            try:
-                env["battery"] = float(str(battery).replace("%", ""))
-            except ValueError:
-                pass
+    def _ground(self, meta: dict, vehicle_id: str = "") -> dict:
+        """Only the selected vehicle's accepted observations ground scene conditions."""
+        env = self.mirror.snapshot(vehicle_id)
         # 业务时区（BUSINESS_TZ，与 time watcher 同源）：容器本地时是 UTC，
         # 直接 time.localtime() 会让「hour>=22 才调暗灯」这类条件错 8 小时。
         env["hour"] = datetime.now(BUSINESS_TZ).hour
@@ -433,16 +426,18 @@ class SceneOrchestratorAgent(BaseAgent):
         keys: set[str] = set()
         for a in actions:
             keys.update(affected_state_keys(a))
-        snapshot = self.mirror.capture(sorted(keys))     # 读不到的键记 None → 退默认表
+        snapshot = self.mirror.capture(sorted(keys), vehicle_id=ctx.vehicle_id)     # 读不到的键记 None → 退默认表
 
         activation_id = uuid.uuid4().hex
-        await self._save_kv(ctx, SCENE_ACTIVE, {
+        saved = await self._save_kv(ctx, SCENE_ACTIVE, {
             "scene_id": scene.id, "scene_name": scene.name,
             "activated_at": int(time.time()), "activation_id": activation_id,
             "snapshot": snapshot,
             "solved_actions": actions,        # 本次实际下发集 = 恢复基准（v2.1 修正④）
             "deferred": [],
         })
+        if not saved:
+            return AgentResult(status=FAILED, speech="暂时无法保存这辆车的场景状态，请稍后重试。")
         if scene.source == USER:
             await self.store.bump_use(self._uid(ctx), scene.id)
 
@@ -491,7 +486,7 @@ class SceneOrchestratorAgent(BaseAgent):
 
     # ── scene.deactivate：真恢复（D5）───────────────────────────────────────
     async def _deactivate(self, intent, ctx, meta) -> AgentResult:
-        self.verify.cancel(self._uid(ctx))     # 先掐掉在飞的对账（v2.1 修正③单飞）
+        self.verify.cancel(self._uid(ctx), ctx.vehicle_id)     # 先掐掉在飞的对账（v2.1 修正③单飞）
         active = await self._load_kv(ctx, SCENE_ACTIVE)
         if not active.get("scene_id"):
             return AgentResult(speech="当前没有开启场景模式。")
@@ -522,7 +517,8 @@ class SceneOrchestratorAgent(BaseAgent):
                                           "actions": self._dispatch_payloads(restores)},
                      require_confirm=True)
 
-        await self._save_kv(ctx, SCENE_ACTIVE, {})
+        if not await self._save_kv(ctx, SCENE_ACTIVE, {}):
+            return AgentResult(status=FAILED, speech="暂时无法保存这辆车的场景状态，请稍后重试。")
         tail = ("（" + "；".join(dict.fromkeys(notes)) + "）") if notes else ""
         res = AgentResult(speech=f"已退出{name}，车内恢复原样。{tail}")
         for a in restores:
@@ -712,14 +708,22 @@ class SceneOrchestratorAgent(BaseAgent):
                 "actions_preview": actions_preview(actions)}
 
     # ── shared_state（conventions §9）────────────────────────────────────────
-    async def _save_kv(self, ctx, key: str, value: dict) -> None:
+    async def _save_kv(self, ctx, key: str, value: dict) -> bool:
         try:
-            await ctx.save_shared_state(key, value)
+            if key == SCENE_ACTIVE:
+                # The historical slot belongs exclusively to v1. Keep one
+                # authority per car, including rollback/re-upgrade writers.
+                if ctx.vehicle_id != "v1":
+                    key = vehicle_scoped(key, ctx.vehicle_id)
+            return await ctx.save_shared_state(key, value) is not False
         except Exception as e:
-            logger.warning("scene: 写 %s 失败（忽略）：%s", key, e)
+            logger.warning("scene: 写 %s 失败：%s", key, type(e).__name__)
+            return False
 
     async def _load_kv(self, ctx, key: str) -> dict:
         try:
+            if key == SCENE_ACTIVE and ctx.vehicle_id != "v1":
+                key = vehicle_scoped(key, ctx.vehicle_id)
             data = await ctx.load_shared_state(key)
         except Exception:
             return {}

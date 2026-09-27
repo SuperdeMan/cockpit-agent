@@ -166,7 +166,7 @@ class _Mirror:
     def __init__(self, *snapshots):
         self._snaps = list(snapshots) or [{}]
 
-    def snapshot(self):
+    def snapshot(self, vehicle_id=None):
         return self._snaps.pop(0) if len(self._snaps) > 1 else self._snaps[0]
 
 

@@ -1,17 +1,14 @@
-"""车况镜像：订阅 NATS `vehicle.state.changed`，在进程内维护一份全量车况。
+"""Read-only vehicle observations for proactive conditions and driving load.
 
-与 `agents/scene_orchestrator/src/state_mirror.py` 同款范式（真相源是端侧 VAL，经
-`orchestrator/edge/main.py` 的周期全量快照 + 变更 diff 广播）。冷启动最长一个快照周期
-（默认 30s）内补齐——这段窗口里 `speed_kmh` 读不到，驾驶负荷闸按设计**放行**
-（子 RFC §2.3 闸4：「读不到车速」不是「用户在忙」的证据）。
-
-全程 fail-open：无 NATS_URL / 连接失败 → 镜像恒空，治理器照常裁决（少一道闸而已）。
+The governor must select the vehicle named by a scoped notification. Missing
+identity yields no vehicle facts, rather than borrowing the demo vehicle.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
+
+from runtime.vehicle_state import VehicleStateStore, LEGACY_VEHICLE
 
 logger = logging.getLogger("proactive.mirror")
 
@@ -19,24 +16,21 @@ STATE_SUBJECT = "vehicle.state.changed"
 
 
 class VehicleMirror:
-    def __init__(self):
-        self._state: dict = {}
+    def __init__(self, *, policy=None, wall_ms=None, monotonic=None):
+        clocks = {"wall_ms": wall_ms}
+        if monotonic is not None:
+            clocks["monotonic"] = monotonic
+        self.store = VehicleStateStore(policy, **clocks)
 
     @property
     def state(self) -> dict:
-        return self._state
+        return self.snapshot(LEGACY_VEHICLE)
 
-    def snapshot(self) -> dict:
-        return dict(self._state)
+    def snapshot(self, vehicle_id=LEGACY_VEHICLE) -> dict:
+        return self.store.snapshot(vehicle_id)
 
-    def apply(self, raw: bytes) -> None:
-        try:
-            event = json.loads(raw.decode())
-        except Exception:
-            return
-        for c in event.get("changes") or []:
-            if isinstance(c, dict) and c.get("key"):
-                self._state[c["key"]] = c.get("new")
+    def apply(self, raw: bytes):
+        return self.store.ingest(raw)
 
     async def subscribe(self, nc) -> bool:
         if nc is None:

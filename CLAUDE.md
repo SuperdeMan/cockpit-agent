@@ -184,6 +184,7 @@ python scripts/dev_stack.py dashboard
 - 架构：`docs/architecture/cockpit-agent-architecture.md`；
 - 后续排序：`docs/roadmap.md`；v2 目标态：`docs/architecture/cockpit-agent-v2-target-architecture.md`；
 - 可领取工作包：`docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md`；首批实现与验证进度看 `docs/design/2026-09-26-v2-runtime-r0-r1-execution.md`；
+- 车辆观测接入、`VEHICLE_STATE_TRUST` / `VEHICLE_STATE_KEY_ID` / `VEHICLE_STATE_PRIVATE_KEY` 和仿真验证：`docs/design/2026-09-27-v2-vehicle-state-and-simulation.md`；
 - 历史：`docs/agents-history.md`；
 - 设计索引：`docs/design/README.md`；
 - 历史 Phase 1 DoD：`docs/architecture/phase1-implementation-plan.md`；试点与量产分开验收。

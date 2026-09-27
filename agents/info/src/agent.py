@@ -9,6 +9,7 @@ R2.4：按域拆分为 `handlers/{weather,search,sports,news,stock,briefing}` mi
 向后兼容重导出（测试/外部按 `agents.info.src.agent` 导入路径不变）。
 """
 from __future__ import annotations
+from runtime.vehicle_state import VehicleStateStore
 import logging
 import os
 import re
@@ -75,6 +76,8 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
         # 主动早报（P2 雏形）：NATS 连接 + 每日一次去重
         self._nc = None
         self._last_briefing_date = ""
+        self._vehicle_states = VehicleStateStore()
+        self._briefing_dates = {}
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {

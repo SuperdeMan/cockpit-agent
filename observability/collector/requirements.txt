@@ -11,3 +11,5 @@ opentelemetry-exporter-otlp-proto-grpc==1.43.0
 # transitive 版本（collector 本身不直接用 gRPC，纯为版本一致性）。
 grpcio==1.66.2
 protobuf==7.35.0
+# CA2-06: verify Ed25519 vehicle-state envelopes (private key only on edge).
+cryptography>=42.0

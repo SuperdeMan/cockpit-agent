@@ -32,18 +32,16 @@ class BriefingMixin:
         logger.info("info: 已订阅 vehicle.state.changed，开启主动早报雏形")
 
     async def _on_state_event(self, msg) -> None:
-        """晨间（6-10 点）首次行驶（挂挡/起步）→ 每日一次主动播报新闻速览（best-effort）。"""
-        try:
-            event = json.loads(msg.data.decode())
-        except Exception:
-            return
-        if not self._is_morning_drive(event):
+        result = self._vehicle_states.ingest(msg.data)
+        if not result.accepted or not self._is_morning_drive({"changes": list(result.changes)}):
             return
         today = _shanghai_now().strftime("%Y-%m-%d")
-        if self._last_briefing_date == today:        # 每日一次
+        if self._briefing_dates.get(result.vehicle_id) == today:
             return
-        self._last_briefing_date = today
-        await self._publish_morning_briefing()
+        self._briefing_dates[result.vehicle_id] = today
+        if result.vehicle_id == "v1":
+            self._last_briefing_date = today
+        await self._publish_morning_briefing(vehicle_id=result.vehicle_id)
 
     @staticmethod
     def _has_drive_start(changes) -> bool:
@@ -64,7 +62,7 @@ class BriefingMixin:
         return (6 <= _shanghai_now().hour < 10
                 and BriefingMixin._has_drive_start(event.get("changes")))
 
-    async def _publish_morning_briefing(self) -> None:
+    async def _publish_morning_briefing(self, *, vehicle_id="v1") -> None:
         """聚合 top 新闻 → 发 agent.proactive（edge 网关订阅后广播给 HMI）。"""
         if not self._nc:
             return
@@ -78,7 +76,7 @@ class BriefingMixin:
         heads = "；".join(f"{i}. {self._clean_title(n['title'])}"
                          for i, n in enumerate(raw, 1))
         speech = f"早安！今天有几条值得关注的新闻——{heads}。说『看新闻』我给你逐条讲。"
-        payload = {"type": "morning_news", "speech": speech,
+        payload = {"type": "morning_news", "speech": speech, "vehicle_id": vehicle_id,
                    "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000),
                    # 环境类：赶上高负荷/免打扰就让路；半小时内没说出去就算了（早报过时即无用）
                    "priority": P_AMBIENT,

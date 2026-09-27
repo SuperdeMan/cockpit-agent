@@ -265,7 +265,7 @@ export function VehicleSection({ p, vehState }: { p: Palette; vehState: Record<s
 }
 
 /** 手机「车辆」整页 */
-export function VehiclePanel({ p, vehState }: { p: Palette; vehState: Record<string, unknown> }) {
+export function VehiclePanel({ p, vehState, stateLabel }: { p: Palette; vehState: Record<string, unknown>; stateLabel?: string }) {
   const empty = !Object.keys(vehState).length
   return (
     <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 14 + PRESENCE_LANE_DP, gap: 10 }}>
@@ -277,7 +277,7 @@ export function VehiclePanel({ p, vehState }: { p: Palette; vehState: Record<str
         </Text>
       ) : null}
       <VehicleDetails p={p} vehState={vehState} />
-      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>与座舱实时同步</Text>
+      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>{stateLabel || '车辆状态'}</Text>
     </ScrollView>
   )
 }

@@ -6,3 +6,5 @@
 # 无 POSTGRES_DSN 或缺 asyncpg 时诚实降级回内存态并打 WARNING，不假装持久接管。
 nats-py>=2.6.0
 asyncpg>=0.29
+# CA2-06: verify Ed25519 vehicle-state envelopes (private key only on edge).
+cryptography>=42.0

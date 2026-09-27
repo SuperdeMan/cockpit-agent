@@ -56,3 +56,9 @@
 NATS_URL=nats://127.0.0.1:4222 python -m proactive.main
 python -m pytest proactive -q --import-mode=importlib
 ```
+
+## 车辆范围（CA2-06）
+
+生产接线用 `scoped_state_fn(vehicle_id)`；车况按来源验签并逐信号过期，缺少车辆身份时不借 v1 的值。
+车辆事件生产者携带已校验的 vehicle_id，去重/合并按车辆区分；user_id 和既有投递合同继续保留。
+[车态契约与签名启用](../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。

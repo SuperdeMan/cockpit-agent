@@ -55,18 +55,20 @@ def test_garbage_payload_is_ignored():
 def test_stale_mirror_reads_as_blind():
     """链路断了（edge 每 30s 必发全量快照）→ 陈旧值不可信，当作看不见，
     而不是拿旧值去判「没生效」。"""
-    m = VehicleStateMirror(stale_s=1.0)
+    clock = [time.monotonic()]
+    m = VehicleStateMirror(stale_s=1.0, monotonic=lambda: clock[0])
     _feed(m, [{"key": "hvac_on", "new": True}])
     assert m.snapshot() == {"hvac_on": True}
-    m._updated_at = time.time() - 10
+    clock[0] += 10
     assert m.snapshot() == {}
     assert m.get("hvac_on") is None
 
 
 def test_stale_disabled_when_zero():
-    m = VehicleStateMirror(stale_s=0)
+    clock = [time.monotonic()]
+    m = VehicleStateMirror(stale_s=0, monotonic=lambda: clock[0])
     _feed(m, [{"key": "hvac_on", "new": True}])
-    m._updated_at = time.time() - 10_000
+    clock[0] += 10_000
     assert m.snapshot() == {"hvac_on": True}
 
 

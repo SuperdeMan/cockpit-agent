@@ -1,4 +1,4 @@
-from val import VAL
+from orchestrator.edge.val import VAL
 
 
 def test_initial_state_declares_every_long_qa_restorable_control():

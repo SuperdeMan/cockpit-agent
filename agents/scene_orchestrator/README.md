@@ -65,3 +65,10 @@ python test/e2e_scene.py                                                       #
 - `docs/design/2026-07-14-scene-orchestrator-redesign.md`——D1-D11 决策全集 + §0.5 落地纠偏 + §0.6 评审修复留档（**当前实现的唯一权威叙述**）
 - `docs/design/2026-07-14-scene-orchestrator-implementation-plan.md`——实施计划（已执行完毕）
 - `docs/design/2026-06-20-standalone-agents-roadmap.md` §3.2/§8——0.1.0 历史版（已被上述重设计取代）
+
+## 车辆状态与恢复（CA2-06）
+
+Ground/capture/Verify 使用请求车辆的有效观测；不再以客户端 meta.vehicle_battery 补充权威车态。
+SCENE_ACTIVE 原键仅归历史 v1，其它车辆使用 SDK vehicle_scoped 键，每车只有一份恢复状态；无需 schema 迁移。
+Verify 单飞、驻车边沿、事件建议和节流按车辆区分；时间建议暂保留 v1 兼容范围。
+[协议与回滚规则](../../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。

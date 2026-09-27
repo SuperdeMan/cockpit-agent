@@ -18,11 +18,15 @@ const WS_URL = BASE.replace(/^http/, 'ws') + '/stream'
 
 export type ObsHandlers = {
   onSnapshot?: (snapshot: {
+    vehicle_id?: string
+    vehicle_observation?: { version: number; vehicle_id: string; state: VehicleState; signals: Record<string, unknown> }
     vehicle_state: VehicleState
     agents: Record<string, AgentInfo>
     traces: Trace[]
   }) => void
   onStateChange?: (event: {
+    vehicle_id?: string
+    observation?: { version: number; vehicle_id: string; state: VehicleState; signals: Record<string, unknown> }
     changes: StateChange[]
     source: string
     trace_id?: string

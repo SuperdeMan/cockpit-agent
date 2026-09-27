@@ -2,20 +2,27 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from runtime.vehicle_state import VehicleStateStore, LEGACY_VEHICLE
 
 
 class CollectorStore:
     """Aggregate vehicle state, traces, and agent runtime information."""
 
-    def __init__(self, max_traces: int = 200):
-        self.vehicle_state: dict = {}
+    def __init__(self, max_traces: int = 200, *, state_policy=None, wall_ms=None, monotonic=None):
+        clocks = {"wall_ms": wall_ms}
+        if monotonic is not None:
+            clocks["monotonic"] = monotonic
+        self.vehicle_states = VehicleStateStore(state_policy, **clocks)
         self.traces: OrderedDict[str, dict] = OrderedDict()
         self.agents: dict[str, dict] = {}
         self._max_traces = max_traces
 
-    def apply_state(self, event: dict) -> None:
-        for change in event.get("changes", []):
-            self.vehicle_state[change["key"]] = change["new"]
+    @property
+    def vehicle_state(self) -> dict:
+        return self.vehicle_states.snapshot(LEGACY_VEHICLE)
+
+    def apply_state(self, event: dict):
+        return self.vehicle_states.ingest(event)
 
     def apply_span(self, event: dict) -> None:
         trace_id = event.get("trace_id") or "unknown"

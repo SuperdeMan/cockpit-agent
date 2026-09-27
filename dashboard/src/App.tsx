@@ -25,10 +25,20 @@ const NAV: ReadonlyArray<readonly [ViewKey, string, string]> = [
   ['badcases', '收藏', 'badcase 列表与重放'],
 ]
 
+function observationLabel(signals: Record<string, unknown>) {
+  const metadata = Object.values(signals).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+  if (!metadata.length) return '等待车况'
+  const source = metadata.every((m) => m.source_kind === 'simulated') ? '模拟车况'
+    : metadata.some((m) => m.source_kind === 'simulated' || m.source_kind === 'sandbox') ? '包含模拟数据' : '车辆状态'
+  return metadata.some((m) => m.quality !== 'good') ? source + ' · 部分状态待更新' : source
+}
+
 export default function App() {
   const [view, setView] = useState<ViewKey>('sessions')
   const [connected, setConnected] = useState(false)
   const [vehicle, setVehicle] = useState<VehicleStateMap>({})
+  const [vehicleLabel, setVehicleLabel] = useState('等待车况')
+  const versionedState = useRef(false)
   const [changed, setChanged] = useState<Set<string>>(new Set())
   const [traces, setTraces] = useState<Trace[]>([])
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({})
@@ -65,13 +75,34 @@ export default function App() {
     }
 
     const disconnect = connectObs({
-      onConn: setConnected,
+      onConn: (online) => {
+        setConnected(online)
+        if (!online) { setVehicle({}); setVehicleLabel('车况待更新') }
+      },
       onSnapshot: (snapshot) => {
-        setVehicle(snapshot.vehicle_state || {})
+        if (snapshot.vehicle_id && snapshot.vehicle_id !== 'v1') return
+        const observation = snapshot.vehicle_observation
+        if (observation?.version === 2 && observation.vehicle_id === 'v1') {
+          versionedState.current = true
+          setVehicle(observation.state)
+          setVehicleLabel(observationLabel(observation.signals))
+        } else if (!versionedState.current && !observation) {
+          setVehicle(snapshot.vehicle_state || {})
+          setVehicleLabel('模拟车况 · 更新时效未知')
+        }
         setTraces((snapshot.traces || []).slice(0, 30))
         setAgents(snapshot.agents || {})
       },
       onStateChange: (event) => {
+        if (event.vehicle_id && event.vehicle_id !== 'v1') return
+        if (event.observation?.version === 2 && event.observation.vehicle_id === 'v1') {
+          versionedState.current = true
+          setVehicle(event.observation.state)
+          setVehicleLabel(observationLabel(event.observation.signals))
+          flash(event.changes.map((change) => change.key))
+          return
+        }
+        if (versionedState.current || event.observation) return
         setVehicle((previous) => {
           const next = { ...previous }
           event.changes.forEach((change) => {
@@ -227,7 +258,7 @@ export default function App() {
       </header>
 
       {view === 'live' && (
-        <LiveView vehicle={vehicle} changed={changed} traces={traces} agents={agents} />
+        <LiveView vehicle={vehicle} changed={changed} vehicleLabel={vehicleLabel} traces={traces} agents={agents} />
       )}
       {view === 'sessions' && <SessionsView lastTurn={lastTurn} />}
       {view === 'logs' && <LogsView lastLog={lastLog} />}

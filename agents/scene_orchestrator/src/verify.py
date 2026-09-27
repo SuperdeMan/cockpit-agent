@@ -50,11 +50,11 @@ class VerifyManager:
         self._load_active = load_active    # async (ctx_ids) -> dict
         self._save_active = save_active    # async (ctx_ids, dict) -> None
         self._wait_s = wait_s
-        self._tasks: dict[str, asyncio.Task] = {}
+        self._tasks: dict[tuple[str, str], asyncio.Task] = {}
 
-    def cancel(self, user_id: str) -> None:
+    def cancel(self, user_id: str, vehicle_id: str = "v1") -> None:
         """退出场景 / 新激活时先 cancel 旧 task（与代际校验双保险，覆盖 cancel 竞窗）。"""
-        t = self._tasks.pop(user_id, None)
+        t = self._tasks.pop((user_id, vehicle_id), None)
         if t and not t.done():
             t.cancel()
 
@@ -66,12 +66,13 @@ class VerifyManager:
         if not checkable:
             return
         user_id = ctx_ids[1]
-        self.cancel(user_id)
+        self.cancel(user_id, ctx_ids[2])
+        owner = (user_id, ctx_ids[2])
         task = asyncio.create_task(
             self._run(ctx_ids, scene_name, activation_id, list(checkable)))
-        self._tasks[user_id] = task
-        task.add_done_callback(lambda t: self._tasks.pop(user_id, None)
-                               if self._tasks.get(user_id) is t else None)
+        self._tasks[owner] = task
+        task.add_done_callback(lambda t: self._tasks.pop(owner, None)
+                               if self._tasks.get(owner) is t else None)
 
     async def _run(self, ctx_ids: tuple, scene_name: str, activation_id: str,
                    checkable: list) -> None:
@@ -82,7 +83,7 @@ class VerifyManager:
             if (active or {}).get("activation_id") != activation_id:
                 return                             # 被新激活覆盖 / 已退出 → 静默放弃（防错账假警）
 
-            env = self._mirror.snapshot()
+            env = self._mirror.snapshot(ctx_ids[2])
             if not env:
                 return                             # 镜像没数据 = 无法验证（≠ 失败）→ 静默
 
@@ -135,7 +136,7 @@ class VerifyManager:
                                          for a in bad],
                      "buttons": buttons},
             "agent_id": "scene-orchestrator",
-            "user_id": ctx_ids[1],
+            "user_id": ctx_ids[1], "vehicle_id": ctx_ids[2],
             # 对账是用户显式激活场景后的完成合同，不应被免打扰/负荷/频控静默吞掉。
             # 去重粒度必须是**激活实例**；缺省 agent_id|type 会跨用户、跨激活共用 600s 键。
             "priority": P_USER_CONTRACT,

@@ -29,11 +29,12 @@ logger = logging.getLogger("agent.reminder.geofence")
 
 
 class GeofenceWatcher:
-    def __init__(self, store, publish, *, now_fn=time.time, tz=None):
+    def __init__(self, store, publish, *, now_fn=time.time, tz=None, vehicle_id="v1"):
         self._store = store
         self._publish = publish              # async (payload: dict) -> None
         self._now = now_fn
         self._tz = tz
+        self._vehicle_id = vehicle_id
         self._inside: dict[str, bool] = {}   # reminder id -> 上次是否在围栏内（None=未播种）
 
     async def on_state(self, changes: list, state: dict) -> int:
@@ -41,7 +42,8 @@ class GeofenceWatcher:
         if not isinstance(location, dict):
             return 0
         try:
-            pending = await self._store.list_location_pending()
+            pending = [r for r in await self._store.list_location_pending()
+                       if (r.extra or {}).get("vehicle_id", "v1") == self._vehicle_id]
         except Exception as e:
             logger.debug("位置提醒读取失败：%s", e)
             return 0
@@ -94,7 +96,7 @@ class GeofenceWatcher:
                  for r in items]
         from runtime.proactive import P_USER_CONTRACT
         fired_ts = int(self._now() * 1000)
-        return {"type": "reminder_fired", "speech": speech,
+        return {"type": "reminder_fired", "speech": speech, "vehicle_id": self._vehicle_id,
                 "card": cards[0] if len(cards) == 1 else
                 {"type": "card_group", "items": cards},
                 "agent_id": "reminder", "ts": fired_ts,

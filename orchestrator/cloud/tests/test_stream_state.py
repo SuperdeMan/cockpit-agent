@@ -120,7 +120,8 @@ class _Mirror:
     def __init__(self, snapshot):
         self._snapshot = snapshot
 
-    def snapshot(self):
+    def snapshot(self, vehicle_id):
+        assert vehicle_id == "v1"
         return self._snapshot
 
 
@@ -132,7 +133,7 @@ def _control_step(verification=None):
 
 def _readback(step, mirror=None):
     executor = DagExecutor(call_agent_fn=_unused, state_mirror=mirror)
-    return asyncio.run(executor.stream_uncertain_result(step, PlanContext()))
+    return asyncio.run(executor.stream_uncertain_result(step, PlanContext(vehicle_id="v1")))
 
 
 async def _unused(*_args, **_kwargs):      # pragma: no cover - 只为满足构造契约

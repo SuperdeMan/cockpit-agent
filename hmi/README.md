@@ -113,3 +113,9 @@ npx vite build                      # 生产构建
   **均默认关**。**「重录」与「添加乘员」是两个动作**：前者带原 `occupant_id` 更新模板、
   身份与记忆都保留，后者会分配新的 `occ-N`——走错了这个人的记忆当场分家成两半。
   称呼**必填**（空名不再静默兜底成「乘客」，那会把上次填对的名字冲掉）。
+
+## 车辆投影（CA2-06）
+
+`vehicleObservation.mjs` 与 mobile 共用：绑定 session_identity，拒绝其它车辆、旧 revision/epoch，
+只展示未过期的 good 信号，断连清空读数并标明模拟来源。旧帧只属于明确 v1 的未升级兼容档。
+[服务端协议与混部边界](../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。

@@ -24,6 +24,7 @@ import (
 
 	"github.com/cockpit/car-agent/gateway/deployprofile"
 	"github.com/cockpit/car-agent/gateway/tlscfg"
+	"github.com/cockpit/car-agent/gateway/vehiclestate"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
 )
@@ -36,8 +37,9 @@ var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { retu
 // gorilla/websocket 不允许并发写同一连接，故每连一把写锁，请求-响应与广播都经它序列化。
 
 type wsClient struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
+	identity identity
+	conn     *websocket.Conn
+	mu       sync.Mutex
 }
 
 func (c *wsClient) send(v any) {
@@ -70,36 +72,30 @@ func (h *wsHub) broadcast(v any) int {
 	return len(cs)
 }
 
+func (h *wsHub) broadcastFor(vehicleID, userID string, v any) int {
+	h.mu.Lock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for client := range h.clients {
+		if vehicleID != "" && client.identity.vehicleID != vehicleID {
+			continue
+		}
+		if userID != "" && client.identity.userID != userID {
+			continue
+		}
+		clients = append(clients, client)
+	}
+	h.mu.Unlock()
+	for _, client := range clients {
+		client.send(v)
+	}
+	return len(clients)
+}
+
 var hub = newHub()
 
 // ─── 车况镜像：NATS vehicle.state.changed（增量 diff + edge 周期全量快照，同一主题）
 // 合并缓存 → HMI 连上即推全量、变更即播。右舞台待机场景电量/续航/挡位据此动态取数
 // （此前 ContextualStage 写死 62%/430km/P 占位）。
-
-var vehState = struct {
-	mu   sync.Mutex
-	m    map[string]any
-	last string // 上次广播的序列化快照：周期全量快照重放时去重，不给 HMI 发无变化帧
-}{m: map[string]any{}}
-
-// mergeVehState 合并 changes 进镜像，返回（全量快照, 是否有实际变化）。
-func mergeVehState(changes []map[string]any) (map[string]any, bool) {
-	vehState.mu.Lock()
-	defer vehState.mu.Unlock()
-	for _, kv := range changes {
-		if k, _ := kv["key"].(string); k != "" {
-			vehState.m[k] = kv["new"]
-		}
-	}
-	snap := make(map[string]any, len(vehState.m))
-	for k, v := range vehState.m {
-		snap[k] = v
-	}
-	b, _ := json.Marshal(snap) // encoding/json 按 key 排序，序列化即规范形
-	changed := string(b) != vehState.last
-	vehState.last = string(b)
-	return snap, changed
-}
 
 // 主动投递回路（M-C）。此前网关只做单向广播：`hub.broadcast` 的返回值（在线 HMI 数）
 // 只进了一行日志，n==0 时消息直接蒸发。回执与上线补投是「发出去了」与「用户收到了」
@@ -131,35 +127,22 @@ func publishProactiveControl(subject string, payload map[string]any) {
 	}
 }
 
-func vehStateSnapshot() map[string]any {
-	vehState.mu.Lock()
-	defer vehState.mu.Unlock()
-	if len(vehState.m) == 0 {
-		return nil
-	}
-	snap := make(map[string]any, len(vehState.m))
-	for k, v := range vehState.m {
-		snap[k] = v
-	}
-	return snap
-}
-
 type wsRequest struct {
-	Type                string            `json:"type"` // R4.3b P2：="cancel" 时取消在飞请求（旧 HMI 不发此字段，向后兼容）
-	Text                string            `json:"text"`
-	SessionID           string            `json:"session_id"`
+	Type      string `json:"type"` // R4.3b P2：="cancel" 时取消在飞请求（旧 HMI 不发此字段，向后兼容）
+	Text      string `json:"text"`
+	SessionID string `json:"session_id"`
 	// QA 卡 Q3：本轮的请求 id，由 HMI 生成。网关把它盖在该轮**每一帧**上，
 	// 归属不再靠「WS 串行所以 fifo[0] 就是当前轮」那个在抢发时不成立的假设。
-	RequestID           string            `json:"request_id"`
-	IsConfirmation      bool              `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
+	RequestID      string `json:"request_id"`
+	IsConfirmation bool   `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
 	// QA 卡 Q1-B：这一下确认/取消**指向哪一条挂起**。由 final 下发、HMI 原样回传。
 	// 网关只搬运不解释——它既不是授权凭据也不参与任何判定，寻址在编排侧做。
 	OperationID         string            `json:"operation_id"`
-	Meta                map[string]string `json:"meta"`            // HMI 设置透传（answer_length/model_pref 等）
+	Meta                map[string]string `json:"meta"` // HMI 设置透传（answer_length/model_pref 等）
 	E2EMemoryCapability string            `json:"e2e_memory_capability"`
 	// M-C 投递回执：HMI 呈现主动消息后回传凭据（合并组回整组）。
-	DeliveryID          string            `json:"delivery_id"`
-	DeliveryIDs         []string          `json:"delivery_ids"`
+	DeliveryID  string   `json:"delivery_id"`
+	DeliveryIDs []string `json:"delivery_ids"`
 }
 
 func buildHandleRequest(
@@ -212,7 +195,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 	}
 	defer conn.Close()
 
-	client := &wsClient{conn: conn}
+	client := &wsClient{conn: conn, identity: id}
 
 	// Signed E2E children must receive owner proof before any test setup or
 	// destructive request can be sent over this connection. Send it before
@@ -227,13 +210,17 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		})
 	}
 
+	vehicleProjection.Lock()
+	projectionEpoch := vehicleProjection.epoch
+	vehicleProjection.Unlock()
+	client.send(map[string]any{"type": "session_identity", "user_id": id.userID,
+		"vehicle_id": id.vehicleID, "vehicle_state_epoch": projectionEpoch})
 	hub.register(client)
 	defer hub.unregister(client)
 
 	// 车况镜像连上即推（尚无镜像时静默；下一个周期快照/变更事件会补上）
-	if snap := vehStateSnapshot(); snap != nil {
-		client.send(map[string]any{"type": "vehicle_state", "state": snap})
-	}
+	frame, _ := vehicleStateFrame(id.vehicleID)
+	client.send(frame)
 
 	// 连上即请求补投未送达的主动消息（M-C）。车况镜像早就在用「连上即推」这个
 	// 机制，只是从没用在主动消息上——断线期间到点的提醒此前直接蒸发。
@@ -552,20 +539,20 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 				"operation_id": p.OperationId, "risk": p.Risk,
 				"allowed_channels": stringsOrEmpty(p.AllowedChannels),
 				"action_summary":   p.ActionSummary, "object_summary": p.ObjectSummary,
-				"reason_code":      p.ReasonCode,
-				"expires_at_ms":    p.ExpiresAtMs, "server_now_ms": p.ServerNowMs,
-				"summary_source":   p.SummarySource, "target_intent": p.TargetIntent,
+				"reason_code":   p.ReasonCode,
+				"expires_at_ms": p.ExpiresAtMs, "server_now_ms": p.ServerNowMs,
+				"summary_source": p.SummarySource, "target_intent": p.TargetIntent,
 			}
 		}
 		if sr := f.SlotRequest; sr != nil {
 			result["slot_request"] = map[string]any{
 				"operation_id": sr.OperationId, "slot": sr.Slot,
 				"display_name": sr.DisplayName, "shape": sr.Shape,
-				"suggestions":  stringsOrEmpty(sr.Suggestions),
-				"state":        sr.State,
+				"suggestions":     stringsOrEmpty(sr.Suggestions),
+				"state":           sr.State,
 				"remaining_slots": stringsOrEmpty(sr.RemainingSlots),
-				"prompt":       sr.Prompt,
-				"expires_at_ms": sr.ExpiresAtMs, "server_now_ms": sr.ServerNowMs,
+				"prompt":          sr.Prompt,
+				"expires_at_ms":   sr.ExpiresAtMs, "server_now_ms": sr.ServerNowMs,
 			}
 		}
 		if len(f.Issues) > 0 {
@@ -654,6 +641,14 @@ func dnsTarget(addr string) string {
 // ─── 入口 ───
 
 func main() {
+	vehiclePolicy, policyErr := vehiclestate.LoadPolicy()
+	if policyErr != nil {
+		log.Fatalf("invalid vehicle-state policy: %v", policyErr)
+	}
+	configureVehicleState(vehiclePolicy)
+	stateCtx, stateCancel := context.WithCancel(context.Background())
+	defer stateCancel()
+	go expireVehicleState(stateCtx)
 	// B3 部署形态闸：dev（默认）零校验；prod 下任一 fail-open 配置即拒绝启动。
 	// 放在 main 第一行——校验必须先于任何监听/拨号，别让一个 fail-open 的进程先把端口占上。
 	deployprofile.Enforce(deployprofile.RoleEdgeGateway)
@@ -701,12 +696,14 @@ func main() {
 					"advisory": p["type"], "source": p["agent_id"],
 					"card": p["card"],
 				}
-				for _, k := range []string{"delivery_id", "delivery_ids", "priority"} {
+				for _, k := range []string{"delivery_id", "delivery_ids", "priority", "vehicle_id", "user_id"} {
 					if v, ok := p[k]; ok && v != nil {
 						out[k] = v
 					}
 				}
-				n := hub.broadcast(out)
+				vehicleID, _ := p["vehicle_id"].(string)
+				userID, _ := p["user_id"].(string)
+				n := hub.broadcastFor(vehicleID, userID, out)
 				log.Printf("[edge-gateway] proactive(nats) -> %d HMI: %v", n, p["speech"])
 			}); err != nil {
 				log.Printf("[edge-gateway] NATS subscribe failed: %v", err)
@@ -715,15 +712,7 @@ func main() {
 			}
 			// 车况桥接：合并增量 diff / 周期全量快照（同主题）→ 有实际变化才广播全量给 HMI。
 			if _, err := nc.Subscribe("vehicle.state.changed", func(m *natsgo.Msg) {
-				var p struct {
-					Changes []map[string]any `json:"changes"`
-				}
-				if json.Unmarshal(m.Data, &p) != nil || len(p.Changes) == 0 {
-					return
-				}
-				if snap, changed := mergeVehState(p.Changes); changed {
-					hub.broadcast(map[string]any{"type": "vehicle_state", "state": snap})
-				}
+				receiveVehicleState(m.Data)
 			}); err != nil {
 				log.Printf("[edge-gateway] NATS vehicle.state subscribe failed: %v", err)
 			} else {

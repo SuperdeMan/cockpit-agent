@@ -14,6 +14,7 @@ import yaml
 from typing import Any
 
 from runtime.positions import scan_positions
+from orchestrator.edge.vehicle_driver import SimulatedVehicleDriver
 
 logger = logging.getLogger("edge.val")
 
@@ -32,35 +33,9 @@ class VAL:
         knowledge_dir: str | None = None,
         vehicle_model: str | None = None,
         on_change=None,
+        driver: SimulatedVehicleDriver | None = None,
     ):
-        self.state = {
-            # 空调
-            "hvac_on": False, "hvac_temp": 24,
-            # 除雾（前后挡各一个物理开关，见 commands.yaml 的 front_defogger 注释）
-            "front_defogger": False, "rear_defogger": False,
-            # 门窗 / 车身开闭
-            "window": "closed", "sunroof": "closed",
-            "door_lock": "locked", "trunk": "closed",
-            # 座椅
-            "seat_heating": False, "seat_ventilation": False,
-            # 灯光
-            "ambient_light": False, "headlight": False,
-            "warning_light": False,
-            # 媒体
-            "media": "stopped", "volume": 30, "volume_muted": False,
-            # 其他车身
-            "wiper": False, "fragrance": False,
-            "rear_view_mirror": "unfolded",
-            "rear_view_mirror_heating": False,
-            "steering_wheel_heating": False,
-            # ws8: 安全相关
-            "child_lock": False,
-            # 动态量（在「车辆动态」面板呈现）
-            "speed_kmh": 0, "gear": "P", "battery": 72, "location": None,
-            # 座舱温度（传感器读数，非空调设定值 hvac_temp）——场景策略的环境分支据此选制冷/
-            # 制热（「同一个午休模式，35℃ 走制冷、5℃ 走制热」）。可经 debug 通道模拟。
-            "cabin_temp": 24,
-        }
+        self.driver = driver or SimulatedVehicleDriver()
         self._on_change = on_change
         self.vehicle_model = vehicle_model
         self.commands: dict = {}
@@ -70,6 +45,10 @@ class VAL:
         if knowledge_dir is None:
             knowledge_dir = os.path.join(os.path.dirname(__file__), "knowledge")
         self._load_knowledge(knowledge_dir)
+
+    @property
+    def state(self):
+        return self.driver.state
 
     # ── 知识库加载 ──────────────────────────────────────────────
 
@@ -175,8 +154,11 @@ class VAL:
         if not confirmed and self._need_confirm(command.split(".")[0]):
             return False, self._pick_response("Car_general_restrictions_5")
         # 安全态门控示例：高速行驶中不完全打开车窗
-        if command == "window.open" and self.state["speed_kmh"] > 120:
-            return False, "高速行驶中为安全起见暂不打开车窗"
+        if command == "window.open":
+            if not self.driver.inputs_available({"speed_kmh"}):
+                return False, "车辆状态暂不可用，暂时不能执行这项操作"
+            if self.state["speed_kmh"] > 120:
+                return False, "高速行驶中为安全起见暂不打开车窗"
         return self._apply(command, args)
 
     def _apply(self, command: str, args: dict) -> tuple[bool, str]:
@@ -365,6 +347,13 @@ class VAL:
         # voice_forbidden：不支持语音操作
         if obj_def.get("voice_forbidden", False):
             return False, self._pick_response("Car_general_restrictions_4")
+
+        # These are the local inputs read by the existing guards below. Cloud
+        # observations never substitute for this execution-time check.
+        required_inputs = ({"battery"} if operate == "query" and obj == "battery"
+                           else {"speed_kmh", "gear", "battery", "child_lock"})
+        if not self.driver.inputs_available(required_inputs):
+            return False, "车辆状态暂不可用，暂时不能执行这项操作"
 
         # drive_restricted：行车中不允许操控
         if obj_def.get("drive_restricted", False):

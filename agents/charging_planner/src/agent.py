@@ -4,6 +4,7 @@
 不做车控——只产出导航动作和信息建议。
 """
 from __future__ import annotations
+from runtime.vehicle_state import VehicleStateStore
 import json
 import logging
 import os
@@ -35,6 +36,8 @@ class ChargingPlannerAgent(BaseAgent):
         super().__init__(_MANIFEST)
         self.charging = build_charging_provider()
         self._nc = None
+        self._vehicle_states = VehicleStateStore()
+        self._low_batteries = {}
         self._state: dict = {}
         self._low_battery = None
 
@@ -64,19 +67,25 @@ class ChargingPlannerAgent(BaseAgent):
                     os.getenv("CHARGING_LOW_SOC", "20"))
 
     async def _on_state_event(self, msg) -> None:
-        try:
-            event = json.loads(msg.data.decode())
-        except Exception:
+        result = self._vehicle_states.ingest(msg.data)
+        if not result.accepted or not self._low_battery:
             return
-        changes = [c for c in (event.get("changes") or [])
-                   if isinstance(c, dict) and c.get("key")]
-        for c in changes:
-            self._state[c["key"]] = c.get("new")
-        if self._low_battery:
-            try:
-                await self._low_battery.on_state(changes, dict(self._state))
-            except Exception as e:               # 旁路异常绝不拖垮 Agent
-                logger.warning("charging: 低电量建议异常（忽略）：%s", e)
+        state = self._vehicle_states.snapshot(result.vehicle_id)
+        if result.vehicle_id == "v1":
+            self._state = state
+            watcher = self._low_battery
+        else:
+            watcher = self._low_batteries.get(result.vehicle_id)
+            if watcher is None:
+                watcher = self._low_batteries[result.vehicle_id] = LowBatteryWatcher(
+                    self._publish_proactive, self._find_stations_for_advice,
+                    threshold=float(os.getenv("CHARGING_LOW_SOC", "20")),
+                    throttle_s=float(os.getenv("CHARGING_LOW_SOC_THROTTLE_S", "1800")),
+                    agent_id=self.manifest.agent_id, vehicle_id=result.vehicle_id)
+        try:
+            await watcher.on_state(list(result.changes), state)
+        except Exception as e:
+            logger.warning("charging: 低电量建议异常（忽略）：%s", e)
 
     async def _find_stations_for_advice(self, point):
         return await self.charging.find_nearby(point)

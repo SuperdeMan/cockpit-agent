@@ -96,10 +96,10 @@ class TriggerWatcher:
         self._scenes_at = 0.0                    # _enabled_scenes 缓存时间戳
         self._scenes_cached: list = []
         self._task: asyncio.Task | None = None
-        self._parked = True                      # gear 边沿（驻车补做用）
+        self._parked: dict[str, bool] = {}                      # gear 边沿（驻车补做用）
 
     async def start(self) -> None:
-        self._mirror.on_change(self._on_state)   # 事件触发挂已有订阅，不新建
+        self._mirror.on_vehicle_change(self._on_state)   # 事件触发挂已有订阅，不新建
         self._task = asyncio.create_task(self._poll_forever())
         logger.info("scene triggers: 时间 poll=%ss，事件挂车况镜像", self._poll_s)
 
@@ -113,41 +113,42 @@ class TriggerWatcher:
         self._scenes_cached = []
 
     # ── 事件触发（边沿 + 节流）───────────────────────────────────────────────
-    async def _on_state(self, changes: list, state: dict) -> None:
+    async def _on_state(self, changes: list, state: dict, vehicle_id="v1") -> None:
         env = enrich_env(state)
         for scene in await self._enabled_scenes():
             for i, t in enumerate(scene.triggers or []):
                 if str((t or {}).get("type")) != "event":
                     continue
-                key = f"{scene.id}|{i}"
+                key = f"{vehicle_id}|{scene.id}|{i}"
                 ok = evaluate(_cond(t.get("spec") or {}), env) == SAT
                 was = self._edge.get(key, False)
                 self._edge[key] = ok
                 # **边沿触发**：只在「从不满足 → 满足」发一次。否则 battery=19 每来一次
                 # 状态广播就播一遍，成了骚扰风暴。
                 if ok and not was and self._allow(key):
-                    await self._suggest(scene, self._reason(t, env), [_cond(t.get("spec") or {})])
+                    await self._suggest(scene, self._reason(t, env), [_cond(t.get("spec") or {})], vehicle_id=vehicle_id)
 
-        await self._check_deferred(env)          # 第三消费方：驻车补做
+        await self._check_deferred(env, vehicle_id)          # 第三消费方：驻车补做
 
-    async def _check_deferred(self, env: dict) -> None:
+    async def _check_deferred(self, env: dict, vehicle_id="v1") -> None:
         """gear→P 变沿 + deferred 非空 → 发补做建议卡（P2 verify 挂的队列在这里兑现）。"""
         parked = str(env.get("gear") or "").upper() == "P"
-        was, self._parked = self._parked, parked
+        was = self._parked.get(vehicle_id, True)
+        self._parked[vehicle_id] = parked
         if not parked or was or not self._load_active:
             return
         for uid in self._users:
             try:
-                active = await self._load_active(("", uid, "")) or {}
+                active = await self._load_active(("", uid, vehicle_id)) or {}
             except Exception:
                 continue
             deferred = active.get("deferred") or []
             name = active.get("scene_name") or "场景"
-            if not deferred or not self._allow(f"deferred|{uid}", 300):
+            if not deferred or not self._allow(f"deferred|{vehicle_id}|{uid}", 300):
                 continue
             what = "、".join(d.get("reason") or d.get("command", "") for d in deferred[:3])
             await self._publish({
-                "type": "scene_suggest", "agent_id": "scene-orchestrator", "user_id": uid,
+                "type": "scene_suggest", "agent_id": "scene-orchestrator", "user_id": uid, "vehicle_id": vehicle_id,
                 "ts": int(time.time() * 1000),
                 # 驻车补做：只在 P 挡发，不带情境断言（gear 边沿已是判据本身）
                 "priority": P_ADVISORY, "dedup_key": f"scene.deferred|{uid}",
@@ -237,7 +238,7 @@ class TriggerWatcher:
                   "cabin_temp": "车内温度", "location.city": "位置"}
         return f"{labels.get(k, k)}现在是 {env.get(k)}"
 
-    async def _suggest(self, scene, reason: str, conditions: list | None = None) -> None:
+    async def _suggest(self, scene, reason: str, conditions: list | None = None, *, vehicle_id="v1") -> None:
         """**只发建议卡，零执行权**（D6）。用户点「开启」→ 回发原话走正常语音链路。
 
         M3：走主动治理器（`advisory` 档）。带上**触发条件本身**作为情境断言——
@@ -246,7 +247,7 @@ class TriggerWatcher:
         """
         await self._publish({
             "type": "scene_suggest", "agent_id": "scene-orchestrator",
-            "user_id": scene.user_id or "u1", "ts": int(time.time() * 1000),
+            "user_id": scene.user_id or "u1", "vehicle_id": vehicle_id, "ts": int(time.time() * 1000),
             "priority": P_ADVISORY, "dedup_key": f"scene.suggest|{scene.id}",
             "ttl_ms": _SUGGEST_TTL_MS, "conditions": conditions or [],
             "speech": f"{reason}，要开启{scene.name}吗？",

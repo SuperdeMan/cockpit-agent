@@ -30,3 +30,9 @@ CA2-04 的 final 可带 `result_bundles`（v1）：同一任务的完整答案�
 - Cloud Gateway 多实例下的车辆会话亲和/一致性路由。
 - 量产设备证书与 token 鉴权、本地/云端限流和网关审计持久化。
 - 当前 ASR/TTS 通过独立 HTTP 音频代理接入，不在 WebSocket 中传输原始音频流。
+
+## 车辆来源与会话隔离（CA2-06）
+
+`vehiclestate/` 按受控公钥验证观测并维护逐信号有效期。Cloud channel token 在签名模式绑定车辆，连接不能二次 Hello 换车。
+Edge WS 先发 session_identity，再发带 projection_epoch/revision 的完整车态；车辆/用户定向广播，过期也主动推送。
+[版本 2 契约和混部边界](../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)；认证模拟来源不等于 OEM 身份。

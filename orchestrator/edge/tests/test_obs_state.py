@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import contextlib
+import json
 
 from server import EdgeOrchestratorServicer
 
@@ -23,17 +26,19 @@ def test_local_execute_enqueues_and_emits_state(monkeypatch):
     assert not service._state_q.empty()
 
     async def drain_once():
-        changes, source, trace_id = await service._state_q.get()
-        await service.obs.emit_state(
-            changes,
-            source=source,
-            trace_id=trace_id,
-        )
+        task = asyncio.create_task(service.drain_state())
+        await asyncio.wait_for(service._state_q.join(), timeout=1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
-    asyncio.run(asyncio.wait_for(drain_once(), timeout=1))
+    asyncio.run(drain_once())
 
     assert sent
-    assert any(change["key"] == "hvac_temp" for change in sent[0][0])
+    assert sent[0][0]["version"] == 2
+    payload = json.loads(base64.b64decode(sent[0][0]["payload"]))
+    assert payload["vehicle_id"] == "v1"
+    assert any(signal["key"] == "hvac_temp" and signal["value"] == 26 for signal in payload["signals"])
 
 
 def test_emit_snapshot_sends_full_state(monkeypatch):
@@ -48,5 +53,7 @@ def test_emit_snapshot_sends_full_state(monkeypatch):
     asyncio.run(service.emit_snapshot())
 
     assert sent and sent[0][1] == "snapshot"
-    keys = {change["key"] for change in sent[0][0]}
+    payload = json.loads(base64.b64decode(sent[0][0]["payload"]))
+    assert payload["snapshot"] is True
+    keys = {signal["key"] for signal in payload["signals"]}
     assert {"hvac_temp", "speed_kmh", "battery"} <= keys

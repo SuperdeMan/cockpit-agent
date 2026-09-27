@@ -243,7 +243,7 @@ async def main() -> None:
 
     gov = Governor(
         publish,
-        state_fn=mirror.snapshot,
+        scoped_state_fn=mirror.snapshot,
         emit=emit,
         merge_window_ms=_int_env("PROACTIVE_MERGE_WINDOW_MS", 1500),
         dedup_window_s=_int_env("PROACTIVE_DEDUP_WINDOW_S", 600),

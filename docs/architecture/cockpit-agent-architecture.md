@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.54（能力契约准入、兼容与调用版本；版本规则见附录 C）
-> 日期：2026-09-27；CA2-02–05 首版已有实现，运行与验收证据按独立 SHA 登记。
+> 版本：v1.55（车辆观测身份、逐信号时效与有状态仿真；版本规则见附录 C）
+> 日期：2026-09-28；CA2-02–06/12 首版已有实现，运行与验收证据按独立 SHA 登记。
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -10,8 +10,9 @@
 > 沙箱、真实 VAL（SOME-IP/CAN、车规适配）仍是目标态。实现现状和差距以 `AGENTS.md`
 > 与 [QA/发布交接](../reviews/2026-08-30-qa-closeout-handoff.md)为准。后续排序以 [路线图](../roadmap.md)为准。
 > v2 完整目标写在 [目标分册](cockpit-agent-v2-target-architecture.md)。CA2-02–04 见
-> [首批记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md)，CA2-05 见 [能力契约](../design/2026-09-27-v2-capability-contract.md)；
-> Decide、T1e、持久操作与可信多车状态仍未实现。
+> [首批记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md)，CA2-05 见 [能力契约](../design/2026-09-27-v2-capability-contract.md)，
+> CA2-06/12 见 [车辆状态与仿真](../design/2026-09-27-v2-vehicle-state-and-simulation.md)（首版实现与验证中）；
+> Decide、T1e、持久操作、量产多车账号与 ACL 仍未实现。
 
 ---
 
@@ -479,7 +480,7 @@ Planner 的智能供给全部声明式化，且**规则第一次有了出口**�
    - **三态语义**：SAT 通过 / UNSAT 进 `on_fail` / **UNKNOWN 不定罪**（观测缺失≠没做成，防假警）。
    - `on_fail`：`report`（保持 **OK** 状态 + `data["_verify"]` 保留键 → 聚合器确定性拼接诚实口径，遵 R9 §9.5）、`retry`（**只对 `require_confirm=false` 的步开放**——副作用永不重放）。
    - 挂点是 executor 尾链（`dispatch → _to_result → 确认兜底闸 → 对账`）**外加两条流式直通路径**（engine D0 / loop T2）显式调用，且流式路径不重试（话术已流出）。
-   - 求值源：`orchestrator/cloud/state_mirror.py` 只读订阅 NATS `vehicle.state.changed`（与 gateway/edge、collector、scene 三处镜像同源同形态），fail-open。
+   - 求值源：`orchestrator/cloud/state_mirror.py` 只读订阅 NATS `vehicle.state.changed`，经共享观测校验器按请求车辆、逐信号质量/有效期取值；缺失或过期为 UNKNOWN。来源认证、当前满足和动作因果分别判断，不能用模拟状态推出真实执行完成。
 
 二者就位后，T2 有界循环预算由单值升级为按 `plan.complexity` **分档**（Interactive / Complex；Background 归 Ledger 语义不占循环预算），并落**重复副作用防抖**（`(intent, 解析后 slots)` 指纹撞上即回填、动作不重发）——对症"replan 对已完成步骤失忆而重复产出同一动作"，比原设想的"副作用步不进循环体"精准（不阉割 T2 对副作用任务的编排能力）且可测。
 
@@ -1289,3 +1290,4 @@ Phase 0 的链路骨架与 Phase 1 的工程化主干已形成；完整 Phase 1 
 | v1.52 | 2026-09-26 | 采纳 v2 目标分册和 R0–R5/JV 路线；校准当前边界；详细 Planner 约束与旧版本记录分拆。只有文档变更，v2 尚未实现。 |
 | v1.53 | 2026-09-27 | CA2-02–04 首版：业务范围与授权原话分开、服务端任务与来源引用、完整结果/短 TTS 双投影；不含持久操作或跨端历史卡片恢复。 |
 | v1.54 | 2026-09-27 | CA2-05 首版：能力效果与参数声明、冻结迁移、Registry 兼容视图、调用摘要及接收方拒绝；未实现可信车型绑定、持久操作或新的重试语义。 |
+| v1.55 | 2026-09-28 | CA2-06/12 首版：来源认证、车辆/信号分区、epoch/seq、逐信号时效与质量、全部车态消费者接线与两车故障仿真；签名启用与真栈/设备验收分栏，不含 OEM 驱动、完整账号/ACL 或持久因果账本。 |

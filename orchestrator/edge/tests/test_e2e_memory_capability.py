@@ -14,6 +14,34 @@ import server as server_module
 from server import EdgeOrchestratorServicer
 
 
+def test_named_other_vehicle_cannot_reach_val_or_cloud():
+    service = EdgeOrchestratorServicer()
+    request = _request(capability="")
+    request.text = "打开空调"
+    request.context.vehicle_id = "other-vehicle"
+    before = dict(service.val.state)
+    events = asyncio.run(_collect(service, request))
+    assert service.val.state == before
+    finals = [ev.final for ev in events if ev.WhichOneof("event") == "final"]
+    assert finals and "不匹配" in finals[-1].speech and not finals[-1].actions
+    assert not service.cloud._started
+
+
+def test_cloud_client_does_not_adopt_request_vehicle_identity():
+    from cloud_client import CloudClient
+    async def go():
+        client = CloudClient(vehicle_id="v1")
+        request = _request(capability=""); request.context.vehicle_id = "v2"
+        try:
+            _ = [event async for event in client.handle(request)]
+        except RuntimeError as exc:
+            assert "identity mismatch" in str(exc)
+        else:
+            raise AssertionError("cross-vehicle request accepted")
+        assert client.vehicle_id == "v1" and not client._started
+    asyncio.run(go())
+
+
 def _cloud_only(monkeypatch) -> None:
     monkeypatch.setattr(server_module, "climate_feeling_intents", lambda _text: None)
     monkeypatch.setattr(server_module, "split_and_classify", lambda _text: None)
@@ -28,7 +56,7 @@ def _request(*, capability: str) -> orchestrator_pb2.HandleRequest:
         request_id="request-1",
         context=common_pb2.ContextRef(
             user_id="e2e-run-signed-user",
-            vehicle_id="vehicle-1",
+            vehicle_id="v1",
         ),
         meta={"trace_id": "trace-edge-capability"},
         e2e_memory_capability=capability,

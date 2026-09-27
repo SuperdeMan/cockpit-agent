@@ -260,12 +260,15 @@ class EventEmitter:
         )
 
     async def emit_state(self, changes, source, trace_id="") -> None:
+        # Encoded v2 payloads are immutable observations captured at VAL change
+        # time. Never refresh their source clock when draining the output queue.
+        state = dict(changes) if isinstance(changes, dict) else {"changes": changes}
         await self._emit(
             "vehicle.state.changed",
             {
+                **state,
                 "trace_id": trace_id,
                 "source": source,
-                "changes": changes,
             },
         )
 

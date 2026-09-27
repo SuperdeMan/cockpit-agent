@@ -230,7 +230,8 @@ def test_state_event_broadcasts_once_then_throttled(monkeypatch):
 
     published = []
 
-    async def fake_publish(advisory_type, speech):
+    async def fake_publish(advisory_type, speech, *, vehicle_id):
+        assert vehicle_id == "v1"
         published.append((advisory_type, speech))
     monkeypatch.setattr(agent, "_publish_proactive", fake_publish)
 

@@ -85,7 +85,21 @@ func TestInvalidSignedBusinessSessionStillClosesWith1008(t *testing.T) {
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = conn.ReadMessage()
+	// The resolved identity and the initial (possibly empty) state projection
+	// precede request processing. They must not mask the policy close below.
+	for i := 0; i < 3; i++ {
+		var raw []byte
+		_, raw, err = conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var frame struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &frame) != nil || (frame.Type != "session_identity" && frame.Type != "vehicle_state") {
+			t.Fatalf("unexpected frame before policy close: %s", raw)
+		}
+	}
 	closeErr, ok := err.(*websocket.CloseError)
 	if !ok || closeErr.Code != websocket.ClosePolicyViolation {
 		t.Fatalf("want close 1008, got %v", err)

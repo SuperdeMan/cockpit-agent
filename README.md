@@ -20,7 +20,9 @@
 步骤业务范围、服务端任务/来源引用、ResultBundle 与能力契约已有首版实现，见
 [首批实施](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)与
 [Capability v2](docs/design/2026-09-27-v2-capability-contract.md)；发布验收以 QA 交接为准。
-Jev Decide、可信多车状态与持久操作仍未实现。
+[车辆状态与故障仿真](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)首版代码已形成：
+来源签名、逐车辆/逐信号镜像、过期展示和两车故障实验；签名配置与真栈验收仍需单列完成。
+Jev Decide、量产多车身份/ACL 与持久操作仍未实现。
 Jev 先走离线/影子评测，再按任务启用排序建议。
 直接从 [路线图](docs/roadmap.md)、[目标架构](docs/architecture/cockpit-agent-v2-target-architecture.md)
 和 [分批实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)接续。

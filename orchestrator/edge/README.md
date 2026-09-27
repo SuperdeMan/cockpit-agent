@@ -4,7 +4,7 @@
 
 ## v2 后续边界（未实现）
 
-CA2-06 先做车辆身份与逐信号可信事件，CA2-11/12 做本地操作日志和有状态故障仿真，CA2-18 才接一种 OEM 驱动。
+CA2-06/12 首版加入车辆身份、逐信号观测和有状态故障仿真；本地持久操作日志仍待 CA2-11，CA2-18 才接一种 OEM 驱动。
 T0 与 VAL 继续确定性执行；CA2-13/14 的 T1e 是可选实验，NLU 当前 off/shadow 不因路线图合入而可执行。
 云端不可用时所需操作准入/状态复核在车端，不把 Jev 或云 PG 变成快路径前提。
 依赖和验收见 [路线图](../../docs/roadmap.md)与 [实施方案](../../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
@@ -49,3 +49,11 @@ T0 与 VAL 继续确定性执行；CA2-13/14 的 T1e 是可选实验，NLU 当�
 EdgeCall.contract_query 是只读探测变体，必须没有执行 intent；旧节点只会看到空意图并拒绝。
 Cloud 调度的已注册能力在 VAL 之前检查契约和参数，旧冻结接口兼容；T0 的本地确定性路径继续由 VAL 校验。
 这不证明真实车型、软件版本或信号时效，后者仍属 CA2-06/10。
+
+## 车辆观测与离线故障实验（CA2-06/12）
+
+`vehicle_driver.py` 持有模拟值，VAL 仍是唯一命令入口；edge 发布带 epoch/seq 的版本 2 观测。
+运行签名配置只在实际 edge 生产者读取，元数据构建器中的 VAL 不获取私钥。
+运行 `python scripts/probe_vehicle_state_simulation.py --seed 12 --output .artifacts/vehicle-state-v2/lab.json`
+可重放两车隔离、局部静默、坏质量、乱序、重启与 ACK 丢失，零网络。
+[契约/配置与证据](../../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)区分代码、签名启用和实车验收。

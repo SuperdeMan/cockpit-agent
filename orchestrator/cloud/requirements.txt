@@ -3,3 +3,5 @@ protobuf==7.35.0
 nats-py>=2.6.0
 pyyaml>=6.0
 redis==5.0.8
+# CA2-06: verify Ed25519 vehicle-state envelopes (private key only on edge).
+cryptography>=42.0

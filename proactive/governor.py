@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -148,7 +149,7 @@ def merge_cards(items) -> dict | None:
 class Governor:
     """六道闸 + 合并窗口 + 延后队列。纯 asyncio，无外部依赖（NATS 由 main 注入）。"""
 
-    def __init__(self, publish, *, state_fn=None, emit=None, now_fn=time.time,
+    def __init__(self, publish, *, state_fn=None, scoped_state_fn=None, emit=None, now_fn=time.time,
                  localtime_fn=business_localtime,
                  merge_window_ms: int = 1500, dedup_window_s: int = 600,
                  max_per_hour: int = 6, high_load_speed: float = 80.0,
@@ -157,6 +158,7 @@ class Governor:
         # M-C 投递账本（可空=退回纯内存的旧行为，advisory/ambient 本来就不落库）
         self._store = store
         self._state_fn = state_fn or (lambda: {})
+        self._scoped_state_fn = scoped_state_fn
         self._emit = emit                       # async (event: dict) -> None，可空
         self._now = now_fn
         self._localtime = localtime_fn
@@ -377,7 +379,9 @@ class Governor:
     # ── 六道闸 ───────────────────────────────────────────────────────────
     def _gate(self, item: Item, *, first_pass: bool) -> tuple[str, str]:
         now = self._now()
-        env = enrich(self._state_fn())
+        state = (self._scoped_state_fn(str(item.payload.get("vehicle_id") or ""))
+                 if self._scoped_state_fn else self._state_fn())
+        env = enrich(state)
 
         # 闸1 情境断言复核：生产方与治理器并行消费同一车况事件，request 可能先于
         # 治理器镜像到达。带 TTL 的首轮请求先短暂延后，复评仍 UNSAT/UNKNOWN 才丢；
@@ -474,9 +478,10 @@ class Governor:
         # B 的消息记在 A 名下、也只对 A 播报——reminder 侧刻意做的 owner 分组
         # 不该在治理器这一跳被抵消（2026-08-14 EVA 二轮批 A③）。
         # owner 键与频控/投递账本同源（payload.user_id，缺省空串归一组）。
-        groups: dict[str, list] = {}
+        groups: dict[tuple[str, str], list] = {}
         for it in items:
-            groups.setdefault(str(it.payload.get("user_id") or ""), []).append(it)
+            groups.setdefault((str(it.payload.get("user_id") or ""),
+                               str(it.payload.get("vehicle_id") or "")), []).append(it)
         for group in groups.values():
             await self._flush_owner_group(group)
 
@@ -582,6 +587,8 @@ class Governor:
             ttl = int(p.get("ttl_ms") or 0)
         except (TypeError, ValueError):
             ttl = 0
+        if p.get("vehicle_id"):
+            dedup = json.dumps([str(p["vehicle_id"]), dedup], separators=(",", ":"))
         return Item(payload=p, priority=priority, conditions=conds, dedup_key=dedup,
                     ttl_ms=max(0, ttl), accepted_at=self._now())
 

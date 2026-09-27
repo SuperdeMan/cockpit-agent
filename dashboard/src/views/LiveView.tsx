@@ -11,11 +11,13 @@ export function LiveView({
   changed,
   traces,
   agents,
+  vehicleLabel,
 }: {
   vehicle: VehicleStateMap
   changed: Set<string>
   traces: Trace[]
   agents: Record<string, AgentInfo>
+  vehicleLabel?: string
 }) {
   return (
     <main className="hud-main">
@@ -24,7 +26,7 @@ export function LiveView({
         <TracePanel traces={traces} />
       </div>
       <div className="hud-col right">
-        <VehicleState state={vehicle} changed={changed} />
+        <VehicleState state={vehicle} changed={changed} label={vehicleLabel} />
         <Dynamics state={vehicle} />
         <AgentList agents={agents} />
       </div>

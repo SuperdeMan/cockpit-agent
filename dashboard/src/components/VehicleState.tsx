@@ -15,8 +15,8 @@ import {
   type KeyMeta,
 } from './vehicle-config'
 
-function Pill({ on }: { on: boolean }) {
-  return <span className={'vpill ' + (on ? 'on' : 'off')}>{on ? 'ON' : 'OFF'}</span>
+function Pill({ on }: { on: boolean | null }) {
+  return <span className={'vpill ' + (on ? 'on' : 'off')}>{on === null ? '未知' : on ? 'ON' : 'OFF'}</span>
 }
 
 function Bar({ pct, color }: { pct: number; color?: string }) {
@@ -123,7 +123,7 @@ function AtomicCard(props: { id: string; meta: KeyMeta; value: unknown; changed:
 
 // ── 聚合卡：空调（开关 + 温度 + 风速 三合一） ──
 function HvacCard({ state, changed }: { state: VehicleStateMap; changed: boolean }) {
-  const on = state.hvac_on === true
+  const on = typeof state.hvac_on === 'boolean' ? state.hvac_on : null
   const temp = state.hvac_temp
   const wind = state.hvac_wind_speed
   return (
@@ -144,7 +144,7 @@ function HvacCard({ state, changed }: { state: VehicleStateMap; changed: boolean
 
 // ── 聚合卡：氛围灯（开关 + 颜色 + 亮度），色块用真实颜色 ──
 function AmbientCard({ state, changed }: { state: VehicleStateMap; changed: boolean }) {
-  const on = state.ambient_light === true
+  const on = typeof state.ambient_light === 'boolean' ? state.ambient_light : null
   const color = state.ambient_light_color
   const brightness = state.ambient_light_brightness
   return (
@@ -218,9 +218,11 @@ function OtherCard({ id, value, changed }: { id: string; value: unknown; changed
 export function VehicleState({
   state,
   changed,
+  label,
 }: {
   state: VehicleStateMap
   changed: Set<string>
+  label?: string
 }) {
   const present = new Set(Object.keys(state).filter((key) => !DYNAMIC.has(key)))
 
@@ -246,7 +248,7 @@ export function VehicleState({
           <h2>车辆状态</h2>
           <span className="en">Vehicle State</span>
         </div>
-        <span className="panel__tag">看是否真变化</span>
+        <span className="panel__tag">{label || '车辆状态'}</span>
       </div>
       <div className="panel__body">
         {sections.length === 0 && <p className="empty">等待车辆状态…</p>}

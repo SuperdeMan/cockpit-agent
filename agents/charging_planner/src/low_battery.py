@@ -54,13 +54,14 @@ class LowBatteryWatcher:
     """电量变沿 → 一条低电量建议。纯逻辑，NATS/provider 由外部注入（全离线可测）。"""
 
     def __init__(self, publish, find_stations, *, threshold: float = 20.0,
-                 throttle_s: float = 1800.0, now_fn=time.time, agent_id="charging-planner"):
+                 throttle_s: float = 1800.0, now_fn=time.time, agent_id="charging-planner", vehicle_id="v1"):
         self._publish = publish                 # async (payload: dict) -> None
         self._find = find_stations              # async (GeoPoint|None) -> list[station]
         self._threshold = threshold
         self._throttle_s = throttle_s
         self._now = now_fn
         self._agent_id = agent_id
+        self._vehicle_id = vehicle_id
         self._below = False                     # 上一次是否已在阈值下（边沿判据）
         self._last_fire = float("-inf")         # 不是 0——注入时钟下 0 会让首次就撞节流窗
 
@@ -107,6 +108,7 @@ class LowBatteryWatcher:
             speech = f"电量只剩 {pct}% 了，要我帮你找个充电桩吗？"
             card = None
         payload = {
+            "vehicle_id": self._vehicle_id,
             "type": TYPE, "speech": speech, "agent_id": self._agent_id,
             "ts": int(self._now() * 1000),
             "priority": P_ADVISORY, "dedup_key": DEDUP_KEY, "ttl_ms": TTL_MS,

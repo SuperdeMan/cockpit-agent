@@ -24,6 +24,7 @@ import (
 
 	"github.com/cockpit/car-agent/gateway/deployprofile"
 	"github.com/cockpit/car-agent/gateway/tlscfg"
+	"github.com/cockpit/car-agent/gateway/vehiclestate"
 	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
@@ -37,14 +38,15 @@ type channelServer struct {
 	plannerAddr string
 	plannerConn *grpc.ClientConn
 	planner     orchpb.CloudPlannerClient
-	sessions sync.Map // vehicle_id -> *sessionState
-	pending  sync.Map // correlation_id -> chan *EdgeResult
-	edgeSeq  atomic.Uint64
-	idem     IdempotencyStore
+	sessions    sync.Map // vehicle_id -> *sessionState
+	pending     sync.Map // correlation_id -> chan *EdgeResult
+	edgeSeq     atomic.Uint64
+	idem        IdempotencyStore
 
 	// R3.1 层 2（通道/车辆鉴权）：Hello 的 session_token 须在允许集内。
 	authRequired  bool
 	channelTokens map[string]bool
+	vehiclePolicy *vehiclestate.Policy
 }
 
 // parseChannelTokens 解析允许的 channel token 集合（逗号分隔）。
@@ -65,6 +67,15 @@ func (s *channelServer) channelTokenAllowed(token string) bool {
 		return true
 	}
 	return token != "" && s.channelTokens[token]
+}
+
+// A bearer token cannot select a different vehicle just by changing Hello.
+func (s *channelServer) channelVehicleAllowed(token, vehicleID string) bool {
+	policy := s.vehiclePolicy
+	if policy == nil {
+		policy = vehiclestate.LegacyPolicy("v1")
+	}
+	return policy.ChannelVehicleAllowed(token, vehicleID)
 }
 
 // plannerClient 取当前 planner 存根（重建期受锁保护）。
@@ -143,6 +154,9 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 
 		switch body := up.Body.(type) {
 		case *channelpb.UpFrame_Hello:
+			if activeSession != nil {
+				return status.Error(codes.FailedPrecondition, "channel identity is already bound")
+			}
 			// 握手鉴权（R3.1 层 2）：先校 vehicle_id，再按 AUTH_REQUIRED 校 channel token。
 			vehicleID = body.Hello.VehicleId
 			if vehicleID == "" {
@@ -153,7 +167,7 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 					},
 				})
 			}
-			if !s.channelTokenAllowed(body.Hello.GetSessionToken()) {
+			if !s.channelTokenAllowed(body.Hello.GetSessionToken()) || !s.channelVehicleAllowed(body.Hello.GetSessionToken(), vehicleID) {
 				log.Printf("[cloud-gateway] hello rejected: invalid channel token (vehicle=%s)", vehicleID)
 				return sm.Send(&channelpb.DownFrame{
 					CorrelationId: corrID,
@@ -399,6 +413,10 @@ func getenv(k, def string) string {
 // ─── 入口 ───
 
 func main() {
+	vehiclePolicy, policyErr := vehiclestate.LoadPolicy()
+	if policyErr != nil {
+		log.Fatalf("invalid vehicle-state policy: %v", policyErr)
+	}
 	// B3 部署形态闸：dev（默认）零校验；prod 下任一 fail-open 配置即拒绝启动。
 	// 放在 main 第一行——校验必须先于任何监听/拨号，别让一个 fail-open 的进程先把端口占上。
 	deployprofile.Enforce(deployprofile.RoleCloudGateway)
@@ -436,6 +454,7 @@ func main() {
 		idem:          buildIdempotencyStore(),
 		authRequired:  authRequired,
 		channelTokens: channelTokens,
+		vehiclePolicy: vehiclePolicy,
 	})
 
 	go func() {

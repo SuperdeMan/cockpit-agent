@@ -50,9 +50,9 @@ def _dns_target(addr: str) -> str:
 class CloudClient:
     """端→云持久通道门面。`handle()` 契约（async-generator，异常上抛）保持不变。"""
 
-    def __init__(self, edge_call_executor=None, stub_factory=None):
+    def __init__(self, edge_call_executor=None, stub_factory=None, *, vehicle_id=None):
         self.addr = os.getenv("CLOUD_GATEWAY_ADDR", "cloud-gateway:8080")
-        self.vehicle_id = os.getenv("VEHICLE_ID", "v1")
+        self.vehicle_id = vehicle_id or os.getenv("VEHICLE_ID", "v1")
         # R3.1 层 2（通道鉴权）：Hello 携带 channel session_token，云网关按 AUTH_REQUIRED 校验；
         # 默认空 → 云侧默认放行（保持现状）。
         self.channel_token = os.getenv("CLOUD_CHANNEL_TOKEN", "")
@@ -257,6 +257,8 @@ class CloudClient:
         查询就是查询——零业务副作用是它的全部前提，绕道普通请求就守不住这一条。
         超时/断连抛错，由调用方标 partial，**不得把它当成鉴权失败**（§6.3）。
         """
+        if context is not None and context.vehicle_id and context.vehicle_id != self.vehicle_id:
+            raise RuntimeError("vehicle identity mismatch")
         await self._ensure_started()
         await asyncio.wait_for(self._connected.wait(), timeout=_CONNECT_WAIT_S)
         corr_id = f"session-info-{uuid.uuid4().hex}"
@@ -281,8 +283,8 @@ class CloudClient:
     async def handle(self, request):
         """通过持久 EdgeCloudChannel 转发请求，yield HandleEvent 直到 final；断连则抛错由上层降级。"""
         vid = _vehicle_of(request)
-        if vid and not self._started:
-            self.vehicle_id = vid   # 首个请求前采用其 vehicle_id 作握手身份
+        if vid and vid != self.vehicle_id:
+            raise RuntimeError("vehicle identity mismatch")
         await self._ensure_started()
 
         try:

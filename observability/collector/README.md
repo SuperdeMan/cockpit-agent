@@ -50,3 +50,9 @@ python -m pytest --import-mode=importlib observability/collector/tests -q
 curl http://localhost:8092/healthz
 python test/e2e_obs.py   # 真栈：turn 落库/obs.llm/日志关联/badcase/重启持久化（16 断言）
 ```
+
+## 车辆维度与有效期（CA2-06）
+
+`/api/vehicle/state?vehicle_id=v1` 保留纯值响应；`/api/vehicle/observation?vehicle_id=v1` 返回逐信号来源/质量/时效。
+`/stream?vehicle_id=v1` 只推该车状态，发送前在连接锁内读取最新投影，每秒检查过期；调试/trace 面仍为受限 PoC。
+来源校验复用 `runtime.vehicle_state`，公共 `VEHICLE_STATE_TRUST` 配置与启用状态见 [实施记录](../../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。

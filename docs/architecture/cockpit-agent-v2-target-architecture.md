@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 更新：2026-09-27。状态：**目标态分期实施；CA2-02–05 已有首版，其余按实施方案推进**。
+> 更新：2026-09-28。状态：**目标态分期实施；CA2-02–06/12 已有首版，06/12 启用验收单列，其余按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
@@ -95,9 +95,10 @@ CA2-03 首版已引入服务端稳定 ID 和来源关系，来源片段不是已
 
 ## 4. 可信车辆状态与联邦视图
 
-当前 `vehicle.state.changed` 及 Cloud 镜像是 PoC 单车模型：整包 `_updated_at` 和 180 s 陈旧阈值。
-v2 增加认证映射得出的 tenant/user/vehicle 绑定，以及 source、source_epoch、source_seq、
-observed_at、可信 received_at、quality、单位、逐信号有效期、可选 operation_id 和 provenance。
+CA2-06/12 首版已形成版本 2 观测信封、受控公钥→车辆/来源绑定、epoch/seq、逐信号采样/接收/过期时间、
+质量与单位；Python/Go 读者共用对照向量，签名启用与发布证据见 [本包记录](../design/2026-09-27-v2-vehicle-state-and-simulation.md)。
+当前驱动仍是模拟 VAL；签名只认证模拟来源，完整 tenant/user/vehicle 账号与 NATS ACL 仍属后续试点。
+可选 operation_id 只保留关联线索，动作因果和持久恢复仍待 CA2-08–11。
 
 生产者、NATS 路由/ACL、网关、Cloud/scene 镜像、collector、HMI 车态和 Verifier 必须按同一版本迁移。
 旧无车辆身份消息只能进入显式配置的单车仿真兼容车道，不能自动绑定到“当前用户的车”；

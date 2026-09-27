@@ -92,7 +92,11 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 新能力必须声明 Capability v2；`runtime/capability_migration.json` 是冻结的历史兼容清单，不能为使新能力通过而扩充。
   契约摘要仅证明版本一致，不能授予权限或替代确认；具体规则见 [CA2-05](docs/design/2026-09-27-v2-capability-contract.md)。
 
-## 4. 当前真实状态（2026-09-27）
+- 车辆观测统一经 `runtime/vehicle_state.py` / Go `gateway/vehiclestate` 校验；请求车辆必须显式传到读取方。
+  `VEHICLE_STATE_TRUST` 是公钥/身份/TTL 策略，私钥仅给 edge；签名模拟状态不等于实车或动作因果证明。
+  缺失/过期信号不填 `0/P/OFF`，新信号不能刷新旧信号；接入与配置审查见 [CA2-06/12](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。
+
+## 4. 当前真实状态（2026-09-28）
 
 ### 4.0 发布快照
 
@@ -102,6 +106,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 - 本仓仍是 Phase 1 工程化 PoC；CA2-02–05 的步骤范围、服务端身份、ResultBundle 与能力契约首版已实现，
   验证进度见 [首批记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。Jev Decide、T1e 与真实车辆驱动未实现。
+- CA2-06/12 的逐车/逐信号观测与故障仿真首版已形成；离线验证、签名配置和真栈状态看 [本包记录](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)，未启用不报已上线。
 - Android 包身份与设备验收看 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)，不得用服务端 SHA 代替 APK 身份。
 - 历史手册基线 `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 的读数只属该 SHA，
   完整发布流水已迁到 [入口状态快照](docs/history/2026-09-26-entry-status-snapshot.md)，不再往本节堆批次。

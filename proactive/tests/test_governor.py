@@ -49,6 +49,23 @@ def decisions_of(sink, decision):
     return [d for d in sink.decisions if d["decision"] == decision]
 
 
+@pytest.mark.asyncio
+async def test_vehicle_scope_selects_conditions_and_prevents_cross_car_merge_or_dedup():
+    sink = Sink()
+    gov = make_gov(sink, scoped_state_fn=lambda vehicle: {"battery":15 if vehicle=="v1" else 88},
+                   merge_window_ms=60000)
+    condition=[{"key":"battery", "op":"lt", "value":20}]
+    assert await gov.submit(msg(user_id="u1",vehicle_id="v1",conditions=condition,dedup_key="low"))==ACCEPTED
+    assert await gov.submit(msg(user_id="u1",vehicle_id="v2",conditions=condition,dedup_key="low"))==DROPPED
+    await gov.stop()
+    sink = Sink(); gov=make_gov(sink,merge_window_ms=60000)
+    for vehicle in ("v1","v2"):
+        assert await gov.submit(msg(user_id="u1",vehicle_id=vehicle,priority="user_contract",dedup_key="same"))==ACCEPTED
+    await gov._flush()
+    assert len(sink.out)==2 and {p["vehicle_id"] for p in sink.out}=={"v1","v2"}
+    await gov.stop()
+
+
 # ── E2E exact-owner namespace admin（纯通用队列操作）──────────────────────
 
 @pytest.mark.asyncio

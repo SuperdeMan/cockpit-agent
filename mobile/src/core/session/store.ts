@@ -1,3 +1,4 @@
+import { emptyVehicleProjection, bindVehicleIdentity, projectVehicleFrame } from '@shared/vehicleObservation.mjs'
 // 会话状态机（实施计划 M1-1 ⛔）：hmi/src/App.tsx 消息状态机的 RN 移植。
 // 8 型下行帧分发逐帧对照 App.tsx:330-607；发送/确认对照 :680-876；看门狗 :609-628。
 // 归属规则（§2.3 前言，多端一致性要求 conventions §9.33）：
@@ -116,6 +117,7 @@ export interface SessionState {
   proactiveDeliveries: Record<string, ProactiveDelivery>
   pendingOps: PendingOp[]
   vehState: Record<string, unknown>
+  vehStateLabel?: string
   /** 行车档事实（B4-2）：Edge 在 process 帧上的 driving 标注。判据在 core/presence/drivingMode.ts，
    *  这里只登记「最近一次 true / 由 true 转 false 的时刻」——不靠在飞轮，轮结束后仍在 */
   drivingEdge: DrivingEdgeFact
@@ -249,6 +251,7 @@ export class SessionCore {
   /** 候选上下文（final 记录 / sendRouter 消费）。公开只为测试与调试读取。 */
   candidates: CandidateState = emptyCandidates()
 
+  private vehicleProjection = emptyVehicleProjection()
   private readonly deps: SessionDeps
   private readonly registry = new RequestRegistry()
   private readonly watchdogs = new Map<string, ReturnType<typeof setTimeout>>()
@@ -284,6 +287,7 @@ export class SessionCore {
       proactiveDeliveries: {},
       pendingOps: [],
       vehState: {},
+      vehStateLabel: '等待车况',
       drivingEdge: NO_EDGE_DRIVING,
       drivingDismissedAt: 0,
       connStatus: 'closed',
@@ -354,6 +358,10 @@ export class SessionCore {
     // closed↔connecting 反复摆动，同值早退不该让表漏摘/漏起。
     if (status === 'open') { this.resumeWatchdogs(); this.flushProactiveAcks() }
     else this.pauseWatchdogs()
+    if (status !== 'open') {
+      this.vehicleProjection = { ...this.vehicleProjection, state: {}, signals: {}, label: '车况待更新' }
+      this.store.setState({ vehState: {}, vehStateLabel: '车况待更新' })
+    }
     if (status === prev) return
     if (status === 'closed' && prev === 'open') {
       // 探活判死 / onclose：此刻在飞的轮可能写进了死 socket（M3-W 残留窗）——当场结算成可重发的终态，
@@ -1147,13 +1155,19 @@ export class SessionCore {
       }
       return
     }
-    if (data.type === 'vehicle_state') {
-      if (data.state && typeof data.state === 'object') {
-        this.store.setState({ vehState: data.state as Record<string, unknown> })
+    if (data.type === 'session_identity' || data.type === 'vehicle_state') {
+      const previous = this.vehicleProjection
+      const next = data.type === 'session_identity'
+        ? bindVehicleIdentity(previous, data) : projectVehicleFrame(previous, data)
+      if (next !== previous) {
+        this.vehicleProjection = next
+        this.store.setState({ vehState: next.state, vehStateLabel: next.label })
       }
       return
     }
     if (data.type === 'proactive') {
+      if (data.vehicle_id && data.vehicle_id !== this.vehicleProjection.vehicleId) return
+      if (data.user_id && this.vehicleProjection.userId && data.user_id !== this.vehicleProjection.userId) return
       const text = (data.speech || '').toString().trim()
       const card = data.card || undefined
       if (!text && !card) return // 空投递不消费凭据，之后的有效补投仍可接收。

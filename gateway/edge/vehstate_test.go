@@ -1,52 +1,52 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"github.com/cockpit/car-agent/gateway/vehiclestate"
+	"testing"
+)
 
-// 车况镜像合并/去重（右舞台动态取数的网关侧契约）：
-// 增量 diff 合并进镜像；周期全量快照重放（内容相同）不算变化（不给 HMI 发无变化帧）。
-func TestMergeVehStateMergesAndDedupes(t *testing.T) {
-	vehState.mu.Lock()
-	vehState.m = map[string]any{}
-	vehState.last = ""
-	vehState.mu.Unlock()
-
-	snap, changed := mergeVehState([]map[string]any{
-		{"key": "battery", "old": nil, "new": 72.0},
-		{"key": "gear", "old": "P", "new": "D"},
-	})
-	if !changed || snap["battery"] != 72.0 || snap["gear"] != "D" {
-		t.Fatalf("first merge: snap=%v changed=%v", snap, changed)
+func TestVehicleStateProjectionIsScopedAndStableWithoutANewObservation(t *testing.T) {
+	configureVehicleState(vehiclestate.LegacyPolicy("v1"))
+	input := []byte(`{"changes":[{"key":"battery","new":72},{"key":"gear","new":"D"}]}`)
+	if !receiveVehicleState(input) {
+		t.Fatal("legacy simulator event rejected")
 	}
-
-	// 周期全量快照重放同样内容 → 非变化
-	if _, changed = mergeVehState([]map[string]any{
-		{"key": "battery", "old": nil, "new": 72.0},
-		{"key": "gear", "old": nil, "new": "D"},
-	}); changed {
-		t.Fatal("replayed identical snapshot must not count as change")
+	snap := vehStateSnapshot("v1")
+	if snap["battery"] != 72.0 || snap["gear"] != "D" {
+		t.Fatalf("bad projection: %v", snap)
 	}
-
-	// 真变更：合并且保留未变键
-	snap, changed = mergeVehState([]map[string]any{{"key": "battery", "new": 60.0}})
-	if !changed || snap["battery"] != 60.0 || snap["gear"] != "D" {
-		t.Fatalf("delta merge: snap=%v changed=%v", snap, changed)
+	if len(vehStateSnapshot("v2")) != 0 {
+		t.Fatal("borrowed another vehicle's values")
+	}
+	first, _ := vehicleStateFrame("v1")
+	again, changed := vehicleStateFrame("v1")
+	if changed || first["revision"] != again["revision"] {
+		t.Fatal("unchanged observation should not rebroadcast")
+	}
+	if receiveVehicleState([]byte(`{"changes":[{"new":1}]}`)) {
+		t.Fatal("invalid entry accepted")
+	}
+	if !receiveVehicleState([]byte(`{"changes":[{"key":"battery","new":60}]}`)) {
+		t.Fatal("valid delta rejected")
 	}
 	if got := vehStateSnapshot(); got["battery"] != 60.0 || got["gear"] != "D" {
-		t.Fatalf("snapshot getter mismatch: %v", got)
-	}
-
-	// 无 key 的脏条目忽略
-	if _, changed = mergeVehState([]map[string]any{{"new": 1.0}}); changed {
-		t.Fatal("entry without key must be ignored")
+		t.Fatalf("lost unchanged signal: %v", got)
 	}
 }
 
-func TestVehStateSnapshotEmptyIsNil(t *testing.T) {
-	vehState.mu.Lock()
-	vehState.m = map[string]any{}
-	vehState.last = ""
-	vehState.mu.Unlock()
-	if vehStateSnapshot() != nil {
-		t.Fatal("empty mirror should yield nil (connect-time push skipped)")
+func TestEmptyVehicleProjectionClearsOldClientValues(t *testing.T) {
+	configureVehicleState(vehiclestate.LegacyPolicy("v1"))
+	frame, _ := vehicleStateFrame("v1")
+	raw, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if json.Unmarshal(raw, &parsed) != nil {
+		t.Fatal("frame is not JSON")
+	}
+	if len(parsed["state"].(map[string]any)) != 0 || parsed["vehicle_id"] != "v1" || parsed["version"] != 2.0 {
+		t.Fatalf("invalid empty projection %v", parsed)
 	}
 }

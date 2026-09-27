@@ -10,6 +10,7 @@
 投递桥接尚未实现（网关当前仅日志）；本 Agent 负责"产出并发布主动播报"，HMI 投递为后续一跳。
 """
 from __future__ import annotations
+from runtime.vehicle_state import VehicleStateStore
 import asyncio
 import json
 import logging
@@ -136,6 +137,8 @@ class RoadSafetyAgent(BaseAgent):
         # 主动播报：NATS 连接 + 同类提示节流时间戳
         self._nc = None
         self._last_broadcast: dict[str, float] = {}
+        self._vehicle_states = VehicleStateStore()
+        self._last_cities = {}
         self._last_city = ""          # 上一次已评估的位置（周期全量快照不算「进入新区域」）
         # 节流窗口：同类提示默认 30 分钟不重复；夜间（22:00–06:00）降频到 60 分钟
         self._throttle_sec = float(os.getenv("ROAD_SAFETY_THROTTLE_SEC", "1800"))
@@ -160,25 +163,18 @@ class RoadSafetyAgent(BaseAgent):
         logger.info("road-safety: 已订阅 %s，开启主动播报", _STATE_SUBJECT)
 
     async def _on_state_event(self, msg) -> None:
-        """车辆状态变更回调：location **真的变了**才算进入新区域 → 查预警 → 节流后主动播报。
-
-        为什么要比对上一次：`orchestrator/edge/main.py` 每 `OBS_SNAPSHOT_INTERVAL`
-        （默认 30s）发一次**全量快照**，快照里 location 一定在 changes 里——不比对的话
-        车停着不动也每 30 秒查一次预警。2026-07-25 真栈实测的后果是：一个查不到的地名
-        每 30 秒打一次和风 400，把**共享的 qweather 熔断器打开**，天气域跟着一起垮
-        （journeys B1-4/B3-4 因此变红）。语义上「进入新区域」本来就该是变沿。
-        """
-        try:
-            event = json.loads(msg.data.decode())
-        except Exception:
+        result = self._vehicle_states.ingest(msg.data)
+        if not result.accepted:
             return
-        city = self._location_from_changes(event.get("changes") or [])
-        if not city or city == self._last_city:
+        city = self._location_from_changes(list(result.changes))
+        if not city or city == self._last_cities.get(result.vehicle_id):
             return
-        self._last_city = city
+        self._last_cities[result.vehicle_id] = city
+        if result.vehicle_id == "v1":
+            self._last_city = city
         advisory = await self._evaluate_hazard(city)
         if advisory:
-            await self._maybe_broadcast("weather_safety", "weather_safety", advisory)
+            await self._maybe_broadcast("weather_safety", "weather_safety", advisory, vehicle_id=result.vehicle_id)
 
     @staticmethod
     def _location_from_changes(changes: list) -> str:
@@ -223,17 +219,18 @@ class RoadSafetyAgent(BaseAgent):
         return last is None or (now - last) >= window
 
     async def _maybe_broadcast(
-            self, category: str, advisory_type: str, speech: str) -> bool:
+            self, category: str, advisory_type: str, speech: str, *, vehicle_id="") -> bool:
         """节流通过则记录时间戳并发布主动播报事件；被节流返回 False。"""
         now = time.time()
+        category = (vehicle_id, category) if vehicle_id else category
         if not self._should_broadcast(category, now):
             logger.debug("road-safety: 「%s」处于节流窗口内，跳过", category)
             return False
         self._last_broadcast[category] = now
-        await self._publish_proactive(advisory_type, speech)
+        await self._publish_proactive(advisory_type, speech, vehicle_id=vehicle_id)
         return True
 
-    async def _publish_proactive(self, advisory_type: str, speech: str) -> None:
+    async def _publish_proactive(self, advisory_type: str, speech: str, *, vehicle_id="") -> None:
         """向主动治理器发安全播报。
 
         **`critical` 档**：免打扰/驾驶负荷/频控全豁免，合并窗口为 0 立即发——
@@ -250,6 +247,8 @@ class RoadSafetyAgent(BaseAgent):
             "priority": P_CRITICAL,
             "dedup_key": f"road-safety.{advisory_type}",
         }
+        if vehicle_id:
+            payload["vehicle_id"] = vehicle_id
         await publish_proactive(self._nc, payload)
         logger.info("road-safety: 主动播报 %s", speech[:40])
 

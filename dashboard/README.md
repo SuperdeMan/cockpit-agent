@@ -47,3 +47,9 @@ Dashboard 不直接写空调、车窗等车控状态。命令复用 Edge Gateway
 置于正式鉴权边界之后。内容级采集（用户原话/话术/plan/LLM 输入输出）由
 `OBS_CONTENT_CAPTURE` 门控（统一脱敏）——**量产必须 off**，off 后仅保留长度与
 哈希指纹，链路形状排查不受影响。
+
+## 观测质量（CA2-06）
+
+当前 UI 显式订阅历史 v1；Collector 提供按 vehicle_id 查询的值与观测元数据接口。
+完整投影替换旧值，过期或断连清空，缺失速度/挡位/开关显示未知；模拟标识不代表真实执行验证。
+[接入和签名配置](../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。

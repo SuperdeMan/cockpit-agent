@@ -82,6 +82,11 @@ def _agent(llm_reply: str = "") -> SceneOrchestratorAgent:
     return a
 
 
+def _seed(agent, values):
+    result = agent.mirror.store.ingest({"changes": [{"key": k, "new": v} for k, v in values.items()]})
+    assert result.accepted, result.reason
+
+
 def _ctx(kv: KV, **kw):
     return kv.bind(make_context(**kw))
 
@@ -185,8 +190,8 @@ def test_activate_appends_scene_mode():
 def test_activate_writes_scene_active_with_generation_and_snapshot():
     kv = KV()
     a = _agent()
-    a.mirror._state = {"hvac_temp": 21, "ambient_light_brightness": 80,
-                       "ambient_light": True, "ambient_light_color": "blue"}
+    _seed(a, {"hvac_temp": 21, "ambient_light_brightness": 80,
+                       "ambient_light": True, "ambient_light_color": "blue"})
     _run(run_handle(a, "scene.activate", slots={"scene": "回家模式"},
                     raw_text="开启回家模式", ctx=_ctx(kv)))
     act = kv.data[SCENE_ACTIVE]
@@ -217,7 +222,7 @@ def test_deactivate_restores_from_snapshot():
     """退出要把车真的恢复回去——v1 只回一句「已退出XX」，座椅还躺着（硬伤 2）。"""
     kv = KV()
     a = _agent()
-    a.mirror._state = {"hvac_temp": 21, "volume": 35, "ambient_light": False}
+    _seed(a, {"hvac_temp": 21, "volume": 35, "ambient_light": False})
     _run(run_handle(a, "scene.activate", slots={"scene": "午休模式"},
                     raw_text="午休模式", ctx=_ctx(kv), meta={"confirmed": "true"}))
     res = _run(run_handle(a, "scene.deactivate", slots={}, raw_text="退出午休模式",
@@ -614,7 +619,7 @@ def _policy_scene():
 def test_activate_env_branch_hot():
     kv, a = KV(), _agent()
     _run(a.store.save(_policy_scene()))
-    a.mirror._state = {"battery": 80, "cabin_temp": 35}
+    _seed(a, {"battery": 80, "cabin_temp": 35})
     res = _run(run_handle(a, "scene.activate", slots={"scene": "观星模式"},
                           raw_text="开启观星模式", ctx=_ctx(kv)))
     temps = [x["payload"]["temperature"] for x in res.actions
@@ -626,7 +631,7 @@ def test_activate_env_branch_missing_data_does_not_double_fire():
     """v2.1 修正②真实链路复现：车内温度读不到 → 两条互斥分支都跳过，并诚实告知。"""
     kv, a = KV(), _agent()
     _run(a.store.save(_policy_scene()))
-    a.mirror._state = {"battery": 80}                # 无 cabin_temp
+    _seed(a, {"battery": 80})                # 无 cabin_temp
     res = _run(run_handle(a, "scene.activate", slots={"scene": "观星模式"},
                           raw_text="开启观星模式", ctx=_ctx(kv)))
     cmds = [x["payload"].get("command") for x in res.actions]
@@ -637,7 +642,7 @@ def test_activate_env_branch_missing_data_does_not_double_fire():
 def test_activate_guard_block_rejects_honestly():
     kv, a = KV(), _agent()
     _run(a.store.save(_policy_scene()))
-    a.mirror._state = {"battery": 5, "cabin_temp": 30}
+    _seed(a, {"battery": 5, "cabin_temp": 30})
     res = _run(run_handle(a, "scene.activate", slots={"scene": "观星模式"},
                           raw_text="开启观星模式", ctx=_ctx(kv)))
     assert res.status == "rejected" and "电量太低" in res.speech
@@ -650,7 +655,7 @@ def test_activate_idempotent_all_done():
     _run(a.store.save(Scene(user_id="u1", name="静音模式2", source=USER, actions=[
         {"type": "vehicle.control", "command": "volume.set", "params": {"level": "0"},
          "require_confirm": False}])))
-    a.mirror._state = {"volume": 0}
+    _seed(a, {"volume": 0})
     res = _run(run_handle(a, "scene.activate", slots={"scene": "静音模式2"},
                           raw_text="开启静音模式2", ctx=_ctx(kv)))
     assert res.status == "ok" and "无需调整" in res.speech and not res.actions
@@ -663,15 +668,15 @@ def test_activate_schedules_verify_and_deactivate_cancels():
     done_callback，`_tasks` 会被清空，跨 run 断言只会看到空字典。
     """
     kv, a = KV(), _agent()
-    a.mirror._state = {"hvac_temp": 21}
+    _seed(a, {"hvac_temp": 21})
 
     async def go():
         await run_handle(a, "scene.activate", slots={"scene": "回家模式"},
                          raw_text="开启回家模式", ctx=_ctx(kv))
-        assert "u1" in a.verify._tasks, "激活应注册后台对账"
+        assert ("u1", "v1") in a.verify._tasks, "激活应注册后台对账"
         await run_handle(a, "scene.deactivate", slots={}, raw_text="退出",
                          ctx=_ctx(kv), meta={"confirmed": "true"})
-        assert "u1" not in a.verify._tasks, "退出应掐掉在飞对账"
+        assert ("u1", "v1") not in a.verify._tasks, "退出应掐掉在飞对账"
 
     _run(go())
 

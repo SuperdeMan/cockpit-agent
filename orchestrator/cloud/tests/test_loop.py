@@ -971,7 +971,8 @@ class _Mirror:
     def __init__(self, snapshot):
         self._snapshot = snapshot
 
-    def snapshot(self):
+    def snapshot(self, vehicle_id):
+        assert vehicle_id == "v1"
         return self._snapshot
 
 
@@ -999,7 +1000,7 @@ def test_stream_action_then_lost_final_goes_through_readback():
         _Planner([ReplanDecision(done=True)]), executor, aggregator, None,
         max_iters=2, budget_ms=5000, stream_fn=stream_fn)
     _collect(controller, goal="test", initial_plan=plan, agents=[],
-             ctx=PlanContext(), user_text="开空调")
+             ctx=PlanContext(vehicle_id="v1"), user_text="开空调")
 
     composed = [r for _text, results in aggregator.calls for r in results]
     assert "已经生效" in composed[-1].speech, composed[-1].speech

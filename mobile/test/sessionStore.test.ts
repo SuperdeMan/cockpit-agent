@@ -75,6 +75,29 @@ const flush = async (hops = 5) => {
   for (let i = 0; i < hops; i += 1) await Promise.resolve()
 }
 
+test('车态绑定服务端身份，拒绝串车和晚到帧，过期值从展示中移除', () => {
+  const { core } = newCore()
+  core.handleFrame({ type: 'session_identity', user_id: 'u1', vehicle_id: 'v2', vehicle_state_epoch: 'gateway-1' })
+  const stateFrame = (vehicle: string, revision: number, quality: string) => ({
+    type: 'vehicle_state', version: 2, vehicle_id: vehicle, projection_epoch: 'gateway-1', revision,
+    state: { battery: 88 }, observation: { version: 2, vehicle_id: vehicle, state: { battery: 88 },
+      signals: { battery: { quality, authenticated: true, source_kind: 'simulated' } } },
+  })
+  core.handleFrame(stateFrame('v2', 2, 'good'))
+  expect(core.store.getState().vehState).toEqual({ battery: 88 })
+  expect(core.store.getState().vehStateLabel).toBe('模拟车况')
+  core.handleFrame(stateFrame('v1', 3, 'good'))
+  core.handleFrame(stateFrame('v2', 1, 'stale'))
+  expect(core.store.getState().vehState).toEqual({ battery: 88 })
+  core.handleFrame(stateFrame('v2', 3, 'stale'))
+  expect(core.store.getState().vehState).toEqual({})
+  core.handleFrame({ type: 'vehicle_state', state: { battery: 99 } })
+  expect(core.store.getState().vehState).toEqual({})
+  core.handleFrame({ type: 'proactive', vehicle_id: 'v1', user_id: 'u1', speech: '另一辆车的建议' })
+  expect(msgs(core)).toHaveLength(0)
+  core.dispose()
+})
+
 test('候选改写保留本轮语音来源；后续文字轮不继承', () => {
   const { core, transport } = newCore()
   core.candidates.intentChoice = { options: [{ label: '查天气', send_text: '明天天气怎么样' }] }

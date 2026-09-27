@@ -157,7 +157,7 @@ def eval_state_match(expect: dict, snapshot: dict | None, slots=None) -> str:
 
 # ── 调度：按 mode 选求值器 ───────────────────────────────────────────────
 
-async def evaluate(verification: dict, data: dict, mirror=None, slots=None) -> str:
+async def evaluate(verification: dict, data: dict, mirror=None, slots=None, vehicle_id=None) -> str:
     """按声明的 mode 求值。未知 mode → UNKNOWN（前向兼容：新 mode 在旧编排上不定罪）。
 
     `state_match` 在 `timeout_ms` 内轮询等收敛——车控生效有毫秒到秒级延迟（动作到端 →
@@ -170,19 +170,20 @@ async def evaluate(verification: dict, data: dict, mirror=None, slots=None) -> s
     if mode == MODE_SCHEMA:
         return eval_schema(expect, data)
     if mode == MODE_STATE_MATCH:
-        return await _eval_state_with_wait(expect, verification, mirror, slots)
+        return await _eval_state_with_wait(expect, verification, mirror, slots, vehicle_id)
     return UNKNOWN
 
 
 async def _eval_state_with_wait(expect: dict, verification: dict, mirror,
-                                slots=None) -> str:
+                                slots=None, vehicle_id=None) -> str:
     if mirror is None:
         return UNKNOWN
     timeout_ms = int(verification.get("timeout_ms") or 0) or DEFAULT_TIMEOUT_MS
     deadline = asyncio.get_event_loop().time() + timeout_ms / 1000.0
     verdict = UNKNOWN
     while True:
-        verdict = eval_state_match(expect, mirror.snapshot(), slots)
+        snapshot = mirror.snapshot(vehicle_id) if vehicle_id is not None else mirror.snapshot()
+        verdict = eval_state_match(expect, snapshot, slots)
         if verdict == SAT:
             return SAT
         if asyncio.get_event_loop().time() >= deadline:

@@ -295,3 +295,9 @@ types/                 第三方类型补丁：RN 内部 URL 实现 / react-nati
 test/                  jest（jest-expo）：守卫 + 契约单测 + 变异反向验证；计数以 `npm test` 本次输出为准
 e2e/                   Maestro flow：9 条（tag offline / online / manual），前提与坑账只在 e2e/README.md
 ```
+
+## 车辆投影（CA2-06）
+
+会话状态机复用共享 `vehicleObservation.mjs`，按服务端身份接收该车的完整投影，丢弃旧 revision/epoch；
+缺失/过期值不显示为零或驻车，界面显示模拟来源，断连清空。
+[契约及混部规则](../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)；代码测试不等于 APK/真机验收。

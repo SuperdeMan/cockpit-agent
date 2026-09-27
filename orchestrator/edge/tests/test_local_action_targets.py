@@ -174,7 +174,7 @@ def _handle(monkeypatch, request, *, multi=None, mixed=None, classify=None, stru
 def _pb_request(text, meta=None, request_id="req-targets"):
     return orchestrator_pb2.HandleRequest(
         text=text, session_id="targets-session", request_id=request_id,
-        context=common_pb2.ContextRef(user_id="u1", vehicle_id="vehicle-1"),
+        context=common_pb2.ContextRef(user_id="u1", vehicle_id="v1"),
         meta={"trace_id": "trace-targets", **(meta or {})})
 
 

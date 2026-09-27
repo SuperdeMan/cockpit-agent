@@ -74,10 +74,23 @@ def _powershell() -> str:
     return found
 
 
+def _child_shell_env(powershell: str) -> dict[str, str]:
+    env = dict(os.environ)
+    if os.name == "nt" and Path(powershell).name.lower() == "powershell.exe":
+        # Python does not perform pwsh's native 7 -> 5.1 environment handoff.
+        # Inheriting PS7's module path makes the real Get-FileHash unavailable
+        # in Windows PowerShell. Let this child initialize its own module path;
+        # the wrapper, hash cmdlet and argv assertions remain real and unchanged.
+        for key in list(env):
+            if key.upper() == "PSMODULEPATH":
+                env.pop(key)
+    return env
+
+
 def test_wrapper_fails_nonzero_when_docker_is_unavailable():
     assert WRAPPER.is_file(), "Go test wrapper is missing"
     powershell = _powershell()
-    env = dict(os.environ)
+    env = _child_shell_env(powershell)
     env["PATH"] = ""
     completed = subprocess.run(
         [
@@ -127,7 +140,7 @@ def _run_with_fake_docker(tmp_path, packages, extra_env=None):
         )
         shim.chmod(0o755)
     powershell = _powershell()
-    env = dict(os.environ)
+    env = _child_shell_env(powershell)
     env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
     env["FAKE_DOCKER_CAPTURE"] = str(capture)
     # 开发者自己的 GOPROXY 不能漏进用例：wrapper 的缺省值是被测物，覆盖路径另有用例显式设它。

@@ -1,3 +1,4 @@
+import { emptyVehicleProjection, bindVehicleIdentity, projectVehicleFrame } from './vehicleObservation.mjs'
 // 座舱 HMI 外壳：WebSocket 连接（带重连）+ 视图路由（对话/设置）+ 消息状态机。
 // 消息流：用户发送 → 立刻插入助手"思考中"占位 → final 替换 / speech_delta 流式填充。
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -71,6 +72,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const [connected, setConnected] = useState(false)
   // 车况镜像（edge-gateway vehicle_state 消息：连上即推全量 + 变更广播）→ 右舞台待机场景取数
   const [vehState, setVehState] = useState<Record<string, unknown>>({})
+  const [vehStateLabel, setVehStateLabel] = useState('等待车况')
+  const vehicleProjectionRef = useRef(emptyVehicleProjection())
   // QA 卡 Q1-C：待确认不再是一个全局布尔，而是一张按 operation_id 索引的小台账
   // （容量 3，与云端挂起表一致）。确认条按 id 渲染 ⇒ 可以同时显示多条，且新消息
   // 不再把它顶掉——后端那句「对了，X 还在等你确认」的软提醒本来就是为补偿它加的。
@@ -173,7 +176,13 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   useEffect(() => {
     const rws = new ResilientWebSocket(WS_URL, {
       onMessage: (data: any) => handleEvent(data),
-      onStatus: (s: string) => setConnected(s === 'open'),
+      onStatus: (s: string) => {
+        setConnected(s === 'open')
+        if (s !== 'open') {
+          vehicleProjectionRef.current = { ...vehicleProjectionRef.current, state: {}, signals: {}, label: '车况待更新' }
+          setVehState({}); setVehStateLabel('车况待更新')
+        }
+      },
     })
     wsRef.current = rws
     rws.start()
@@ -533,12 +542,20 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       }
       return
     }
-    if (data.type === 'vehicle_state') {
-      // 车况镜像更新（NATS→edge-gateway 桥接）：只更新状态，不进消息流
-      if (data.state && typeof data.state === 'object') setVehState(data.state as Record<string, unknown>)
+    if (data.type === 'session_identity' || data.type === 'vehicle_state') {
+      const previous = vehicleProjectionRef.current
+      const next = data.type === 'session_identity'
+        ? bindVehicleIdentity(previous, data) : projectVehicleFrame(previous, data)
+      if (next !== previous) {
+        vehicleProjectionRef.current = next
+        setVehState(next.state); setVehStateLabel(next.label)
+      }
       return
     }
     if (data.type === 'proactive') {
+      const identity = vehicleProjectionRef.current
+      if (data.vehicle_id && data.vehicle_id !== identity.vehicleId) return
+      if (data.user_id && identity.userId && data.user_id !== identity.userId) return
       // 主动建议（记忆 routine / 路况安全 / 异步深调研完成等经 NATS→edge 投递）：独立通知气泡，不占用 pending。
       // 异步深调研完成会带 card（可读分节报告卡）→ 一并挂到该消息上渲染；其余主动播报无 card。
       const text = (data.speech || '').toString().trim()
@@ -910,7 +927,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           livePendingOps={pendingOps.map((o) => o.id)}
           onConfirm={confirm} onQuick={send} partialUser={handsFreePartial} />
         <aside className="au-stage">
-          <ContextualStage messages={messages} vehicle={vehState} />
+          <ContextualStage messages={messages} vehicle={vehState} vehicleLabel={vehStateLabel} />
         </aside>
       </main>
       <Composer

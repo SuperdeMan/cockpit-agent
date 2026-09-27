@@ -22,7 +22,8 @@ class FakeMirror:
     def __init__(self, state=None):
         self._state = state or {}
 
-    def snapshot(self):
+    def snapshot(self, vehicle_id="v1"):
+        assert vehicle_id == "v1"
         return dict(self._state)
 
 
@@ -60,6 +61,22 @@ async def _settle():
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_cancelling_one_car_does_not_cancel_same_users_other_car():
+    async def go():
+        class ScopedMirror:
+            def snapshot(self, vehicle_id):
+                assert vehicle_id=="v2"
+                return {"hvac_temp":24}
+        bus=Bus({"activation_id":"g1"})
+        manager=_mgr(ScopedMirror(),bus)
+        for vehicle in ("v1","v2"):
+            manager.schedule(("session","u1",vehicle),"场景","g1",[_act("hvac.set",{"temperature":"22"})])
+        manager.cancel("u1","v1")
+        await _settle()
+        assert len(bus.sent)==1 and bus.sent[0]["vehicle_id"]=="v2"
+    _run(go())
 
 
 # ── 对账 ────────────────────────────────────────────────────────────────────

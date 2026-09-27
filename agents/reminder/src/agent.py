@@ -4,6 +4,7 @@
 时间可测性：所有"现在"取 self._now_utc()（测试注入固定时钟）。
 """
 from __future__ import annotations
+from runtime.vehicle_state import VehicleStateStore
 import asyncio
 import json
 import logging
@@ -227,6 +228,8 @@ class ReminderAgent(BaseAgent):
         self._tz = business_tz()
         self._sched_task = None
         self._geofence = None
+        self._vehicle_states = VehicleStateStore()
+        self._geofences = {}
         self._veh_state: dict = {}
 
     # ── 生命周期：存储初始化 + NATS + 调度循环（road-safety 先例）──
@@ -253,18 +256,22 @@ class ReminderAgent(BaseAgent):
             logger.info("reminder: 已订阅车况，位置提醒围栏开启")
 
     async def _on_state_event(self, msg) -> None:
-        try:
-            event = json.loads(msg.data.decode())
-        except Exception:
+        result = self._vehicle_states.ingest(msg.data)
+        if not result.accepted or not self._geofence:
             return
-        for c in event.get("changes") or []:
-            if isinstance(c, dict) and c.get("key"):
-                self._veh_state[c["key"]] = c.get("new")
-        if not self._geofence:
-            return
+        state = self._vehicle_states.snapshot(result.vehicle_id)
+        if result.vehicle_id == "v1":
+            self._veh_state = state
+            watcher = self._geofence
+        else:
+            from .geofence import GeofenceWatcher
+            watcher = self._geofences.get(result.vehicle_id)
+            if watcher is None:
+                watcher = self._geofences[result.vehicle_id] = GeofenceWatcher(
+                    self.store, self._publish_proactive, tz=self._tz, vehicle_id=result.vehicle_id)
         try:
-            await self._geofence.on_state([], dict(self._veh_state))
-        except Exception as e:           # 围栏是旁路，异常绝不拖垮 Agent
+            await watcher.on_state(list(result.changes), state)
+        except Exception as e:
             logger.warning("reminder: 围栏判定异常（忽略）：%s", e)
 
     async def _publish_proactive(self, payload: dict) -> None:
@@ -721,6 +728,8 @@ class ReminderAgent(BaseAgent):
     # ── 位置提醒（M3 P1）──
     async def _create_location(self, pp, fallback_title: str, ctx, meta) -> AgentResult:
         """建一条位置提醒。**地点解析不出就诚实追问，绝不存一条永远不会触发的提醒。**"""
+        if not getattr(ctx, "vehicle_id", ""):
+            return AgentResult(speech="当前未绑定车辆位置，暂时无法设置到地提醒。")
         title = (pp.title or fallback_title or "").strip()
         if not title:
             return AgentResult(status=NEED_SLOT, speech=f"到{pp.place}提醒你什么事？",
@@ -737,7 +746,8 @@ class ReminderAgent(BaseAgent):
             user_id=self._uid(ctx), occupant_id=self._occ(ctx),
                 vehicle_id=ctx.vehicle_id or "",
             title=title, kind=LOCATION,
-            extra={"place": pp.place, "trigger_on": pp.trigger_on, **resolved}))
+            extra={"place": pp.place, "trigger_on": pp.trigger_on, **resolved,
+                   "vehicle_id": ctx.vehicle_id}))
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
         return AgentResult(speech=f"好的，{verb}{pp.place}我就提醒你：{title}。",

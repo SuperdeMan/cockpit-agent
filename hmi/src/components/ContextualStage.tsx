@@ -34,7 +34,7 @@ function deriveScene(messages: Msg[]): Scene {
   return { kind: 'idle' }
 }
 
-export function ContextualStage({ messages, vehicle }: { messages: Msg[]; vehicle?: Record<string, unknown> }) {
+export function ContextualStage({ messages, vehicle, vehicleLabel }: { messages: Msg[]; vehicle?: Record<string, unknown>; vehicleLabel?: string }) {
   const scene = deriveScene(messages)
   return (
     <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(120% 120% at 70% 20%, rgba(91,140,255,0.10), transparent 60%)' }}>
@@ -45,14 +45,14 @@ export function ContextualStage({ messages, vehicle }: { messages: Msg[]; vehicl
       ) : scene.kind === 'agenda' ? (
         <AgendaStage card={scene.card} />
       ) : (
-        <IdleStage vehicle={vehicle} />
+        <IdleStage vehicle={vehicle} vehicleLabel={vehicleLabel} />
       )}
     </div>
   )
 }
 
 // ── 待机场景：时钟 + 日期 + 车辆概览 + 光球氛围 ──
-function IdleStage({ vehicle }: { vehicle?: Record<string, unknown> }) {
+function IdleStage({ vehicle, vehicleLabel }: { vehicle?: Record<string, unknown>; vehicleLabel?: string }) {
   const { settings } = useSettings()
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -73,7 +73,8 @@ function IdleStage({ vehicle }: { vehicle?: Record<string, unknown> }) {
         </div>
         <div style={{ fontSize: 15, color: 'var(--au-text-2)', marginTop: 10 }}>{date}</div>
       </div>
-      {/* 车辆概览：edge-gateway 车况镜像动态取数（vehicle_state WS 消息）；未就绪显示 -- */}
+      {/* Source and freshness describe readings, never grant command permission. */}
+      <div style={{ color: 'var(--au-text-2)', fontSize: 13 }}>{vehicleLabel || '车辆状态'}</div>
       <div style={{ display: 'flex', gap: 14 }}>
         {stageMetrics(vehicle).map((m) => (
           <div key={m.label} className="au-glass" style={{ padding: '16px 22px', textAlign: 'center', minWidth: 96 }}>

@@ -4,6 +4,8 @@
 
 > 新升级先从 [路线图](roadmap.md)和 [实施方案](design/2026-09-26-cockpit-agent-v2-implementation-plan.md)领取 CA2/JV 包。
 > CA2-02–05 已有首版实现；能力变更增加 `python scripts/capability_inventory.py --check` 本地检查。
+> CA2-06/12 的零网络实验使用 `python scripts/probe_vehicle_state_simulation.py --seed 12 --output .artifacts/vehicle-state-v2/lab.json`。
+> 新观测环境变量、签名启用与回滚边界见 [配置审查](design/2026-09-27-v2-vehicle-state-and-simulation.md#7-签名启用配置审查)。
 > Jev 尚未实现；数据库、运行配置、CI/CD、真实调用与部署仍分别走既有授权。
 > 当前 release/status/verify 的最后记录维护在 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 

@@ -14,6 +14,7 @@
 
 v2 接续顺序统一看 [路线图](../roadmap.md)。能力接入与兼容规则见
 [CA2-05 首版](2026-09-27-v2-capability-contract.md)，任务领取仍以 [总实施方案](2026-09-26-cockpit-agent-v2-implementation-plan.md)为准。
+车辆观测与仿真当前包见 [CA2-06/12](2026-09-27-v2-vehicle-state-and-simulation.md)；签名配置与真栈验收单独登记。
 
 - 文件名：`YYYY-MM-DD-<topic-kebab>.md`
 - 每篇开头声明：`状态`（草案/评审中/已批准/落地中/已归档）、`交付对象`（谁来实现）、`关联`（相关代码与文档）

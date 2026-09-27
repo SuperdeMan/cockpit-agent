@@ -2,6 +2,13 @@ import { render, screen } from '@testing-library/react'
 
 import { VehicleState } from './VehicleState'
 
+test('a fresh temperature does not invent a missing HVAC switch state', () => {
+  render(<VehicleState state={{ hvac_temp: 26 }} changed={new Set()} label="模拟车况" />)
+  expect(screen.getByText('未知')).toBeTruthy()
+  expect(screen.queryByText('OFF')).toBeNull()
+  expect(screen.getByText('模拟车况')).toBeTruthy()
+})
+
 test('aggregates hvac on/temp/wind into one card and highlights on member change', () => {
   render(
     <VehicleState

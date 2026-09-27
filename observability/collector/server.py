@@ -15,6 +15,7 @@ from . import otel_bridge
 from .db import ObsDB
 from .metrics_export import render_prometheus_metrics
 from .store import CollectorStore
+from runtime.vehicle_state import LEGACY_VEHICLE
 
 logger = logging.getLogger("obs.collector")
 
@@ -37,21 +38,68 @@ class Hub:
 
     def __init__(self):
         self.clients: set[WebSocket] = set()
+        self.vehicles: dict[WebSocket, str] = {}
+        self._locks: dict[WebSocket, asyncio.Lock] = {}
+        self._observations: dict[WebSocket, dict] = {}
 
-    async def join(self, websocket: WebSocket) -> None:
+    async def join(self, websocket: WebSocket, vehicle_id=LEGACY_VEHICLE) -> None:
         await websocket.accept()
         self.clients.add(websocket)
+        self.vehicles[websocket] = vehicle_id
+        self._locks[websocket] = asyncio.Lock()
 
     def leave(self, websocket: WebSocket) -> None:
         self.clients.discard(websocket)
+        self.vehicles.pop(websocket, None)
+        self._locks.pop(websocket, None)
+        self._observations.pop(websocket, None)
+
+    async def send_observation(self, websocket: WebSocket, store: CollectorStore, *, initial=False) -> None:
+        lock = self._locks.get(websocket)
+        if lock is None:
+            return
+        async with lock:
+            vehicle_id = self.vehicles.get(websocket, "")
+            # Read inside the send lock: a queued expiry must not overwrite a
+            # newer NATS observation with a previously captured projection.
+            observation = store.vehicle_states.view(vehicle_id)
+            previous = self._observations.get(websocket)
+            if not initial and previous == observation:
+                return
+            if initial:
+                message = {"type": "snapshot", "vehicle_id": vehicle_id,
+                           "vehicle_state": observation["state"], "vehicle_observation": observation,
+                           "agents": store.agents, "traces": store.snapshot_traces(30)}
+            else:
+                before, after = (previous or {}).get("state", {}), observation["state"]
+                changes = [{"key": k, "old": before.get(k), "new": after.get(k)}
+                           for k in sorted(set(before) | set(after)) if before.get(k) != after.get(k)]
+                message = {"type": "state_change", "vehicle_id": vehicle_id,
+                           "observation": observation, "changes": changes}
+            await websocket.send_text(json.dumps(message, ensure_ascii=False))
+            self._observations[websocket] = observation
+
+    async def broadcast_vehicle(self, store: CollectorStore, vehicle_id: str) -> None:
+        for websocket in list(self.clients):
+            if self.vehicles.get(websocket) != vehicle_id:
+                continue
+            try:
+                await self.send_observation(websocket, store)
+            except Exception:
+                self.leave(websocket)
 
     async def broadcast(self, message: dict) -> None:
         text = json.dumps(message, ensure_ascii=False)
         for websocket in list(self.clients):
+            if message.get("type") == "state_change" and message.get("vehicle_id") != self.vehicles.get(websocket, LEGACY_VEHICLE):
+                continue
             try:
-                await websocket.send_text(text)
+                lock = self._locks.get(websocket)
+                if lock is not None:
+                    async with lock:
+                        await websocket.send_text(text)
             except Exception:
-                self.clients.discard(websocket)
+                self.leave(websocket)
 
 
 def create_app(
@@ -76,8 +124,12 @@ def create_app(
         return {"status": "ok", "nats": app.state.nc is not None}
 
     @app.get("/api/vehicle/state")
-    async def vehicle_state():
-        return app.state.store.vehicle_state
+    async def vehicle_state(vehicle_id: str = LEGACY_VEHICLE):
+        return app.state.store.vehicle_states.snapshot(vehicle_id)
+
+    @app.get("/api/vehicle/observation")
+    async def vehicle_observation(vehicle_id: str = LEGACY_VEHICLE):
+        return app.state.store.vehicle_states.view(vehicle_id)
 
     @app.get("/api/traces")
     async def traces(limit: int = 50):
@@ -198,21 +250,16 @@ def create_app(
     @app.websocket("/stream")
     async def stream(websocket: WebSocket):
         dashboard_hub = app.state.hub
-        await dashboard_hub.join(websocket)
+        vehicle_id = websocket.query_params.get("vehicle_id", LEGACY_VEHICLE)
+        await dashboard_hub.join(websocket, vehicle_id)
         try:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "snapshot",
-                        "vehicle_state": app.state.store.vehicle_state,
-                        "agents": app.state.store.agents,
-                        "traces": app.state.store.snapshot_traces(30),
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            await dashboard_hub.send_observation(websocket, app.state.store, initial=True)
             while True:
-                await websocket.receive_text()
+                try:
+                    await asyncio.wait_for(websocket.receive_text(), timeout=1)
+                except asyncio.TimeoutError:
+                    pass
+                await dashboard_hub.send_observation(websocket, app.state.store)
         except WebSocketDisconnect:
             dashboard_hub.leave(websocket)
         except Exception:
@@ -259,8 +306,9 @@ async def ingest_loop(app: FastAPI) -> None:
             return
 
         if message.subject == "vehicle.state.changed":
-            store.apply_state(event)
-            await hub.broadcast({"type": "state_change", **event})
+            result = store.apply_state(message.data)
+            if result.accepted:
+                await hub.broadcast_vehicle(store, result.vehicle_id)
         elif message.subject == "obs.span":
             store.apply_span(event)
             otel_bridge.export_span(event)  # T3.6: best-effort tee, no-op unless bridge active

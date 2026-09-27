@@ -34,6 +34,8 @@ from security import capability_status
 from security.audit import AuditLogger
 from security.session_scopes import resolve_granted_scopes
 from observability.events import EventEmitter, change_source
+from runtime.vehicle_state import StateSigner
+from orchestrator.edge.vehicle_driver import SimulatedVehicleDriver
 from observability.tracing import (get_trace_id, new_trace_id, set_session_id,
                                    set_trace_id)
 
@@ -222,7 +224,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             try:
                 self._state_q.put_nowait(
                     (
-                        changes,
+                        self.val.driver.observation(changes=changes),
                         self._change_source.get(),
                         self._get_trace_id(),
                     )
@@ -230,7 +232,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             except Exception:
                 pass
 
-        self.val = VAL(on_change=_on_change)
+        vehicle_id = os.getenv("VEHICLE_ID", "v1")
+        driver = SimulatedVehicleDriver(vehicle_id, signer=StateSigner.from_env(vehicle_id))
+        self.val = VAL(on_change=_on_change, driver=driver)
         self._audit = AuditLogger()     # 权限拒绝/fail-open 兜底留痕（与云侧同一事件族）
         self.cloud = CloudClient(edge_call_executor=EdgeCallExecutor(self.val))
         self.cloud_connected = False  # 连接状态追踪
@@ -255,11 +259,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
     async def emit_snapshot(self):
         """Publish the complete initial vehicle-state mirror."""
-        changes = [
-            {"key": key, "old": None, "new": value}
-            for key, value in self.val.state.items()
-        ]
-        await self.obs.emit_state(changes, source="snapshot")
+        await self.obs.emit_state(self.val.driver.observation(snapshot=True), source="snapshot")
 
     def apply_debug(self, key: str, value) -> bool:
         """Update a simulated environment value through a strict whitelist."""
@@ -636,6 +636,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         在线与否不需要猜；云侧能力向中枢查一次。云侧取不到时标 `partial` 并说明原因
         ——**不得把「此刻查不到」说成「你没有这些能力」**，也不得据此判 token 失效。
         """
+        claimed_vehicle = getattr(getattr(request, "context", None), "vehicle_id", "")
+        if claimed_vehicle and claimed_vehicle != self.val.driver.vehicle_id:
+            if context is not None:
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, "vehicle identity mismatch")
+            raise PermissionError("vehicle identity mismatch")
         meta = dict(getattr(request, "meta", None) or {})
         granted, source = resolve_granted_scopes(meta)
         local_rows = [capability_status.capability_row(m, granted, online=True)
@@ -755,6 +760,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
     async def _handle_impl(self, request, context, turn: dict):
         trace_id = _ensure_trace_id(request)
+        claimed_vehicle = getattr(getattr(request, "context", None), "vehicle_id", "")
+        if claimed_vehicle and claimed_vehicle != self.val.driver.vehicle_id:
+            turn["path"] = "vehicle_identity_rejected"
+            yield orchestrator_pb2.HandleEvent(final=orchestrator_pb2.FinalResult(
+                speech="目标车辆与当前连接不匹配，未执行任何操作。"))
+            return
         self._change_source.set("T0")
         # `_edge_executed` 是端侧执行器签发给云侧的内部事实，不是客户端输入。
         # 网关会透传 HMI meta，因此每轮入口必须先剥掉同名键；混合路径只有在 VAL

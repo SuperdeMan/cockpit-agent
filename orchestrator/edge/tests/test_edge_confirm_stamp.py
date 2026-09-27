@@ -35,7 +35,7 @@ def _cloud_meta(text: str, meta: dict | None = None) -> dict:
     service.obs.emit_turn = noop
     request = orchestrator_pb2.HandleRequest(
         text=text, session_id="edge-confirm-session", request_id="req-edge-confirm",
-        context=common_pb2.ContextRef(user_id="u1", vehicle_id="vehicle-1"),
+        context=common_pb2.ContextRef(user_id="u1", vehicle_id="v1"),
         meta={"trace_id": "trace-edge-confirm", **(meta or {})})
 
     async def go():

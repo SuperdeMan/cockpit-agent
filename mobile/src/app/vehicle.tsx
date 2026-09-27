@@ -22,12 +22,12 @@ export default function Vehicle() {
 }
 
 function VehicleBody({ wired }: { wired: Wired }) {
-  const { vehState } = useStore(wired.core.store)
+  const { vehState, vehStateLabel } = useStore(wired.core.store)
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
   return (
     <View style={{ flex: 1, backgroundColor: p.bg }}>
-      <VehiclePanel p={p} vehState={vehState} />
+      <VehiclePanel p={p} vehState={vehState} stateLabel={vehStateLabel} />
     </View>
   )
 }

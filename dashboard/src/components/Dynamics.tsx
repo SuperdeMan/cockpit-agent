@@ -10,10 +10,10 @@ function setEnv(key: string, value: unknown) {
 }
 
 export function Dynamics({ state }: { state: VehicleStateMap }) {
-  const speed = Number(state.speed_kmh ?? 0)
-  const battery = Number(state.battery ?? 0)
-  const gear = typeof state.gear === 'string' ? state.gear : 'P'
-  const armed = speed > 120
+  const speed = typeof state.speed_kmh === 'number' ? state.speed_kmh : null
+  const battery = typeof state.battery === 'number' ? state.battery : null
+  const gear = typeof state.gear === 'string' ? state.gear : null
+  const armed = speed !== null && speed > 120
 
   return (
     <section className="panel">
@@ -27,29 +27,31 @@ export function Dynamics({ state }: { state: VehicleStateMap }) {
 
       <div className="dyn">
         <div className="dyn__row">
-          <div className="dyn__label">🏎 车速 {speed} km/h</div>
+          <div className="dyn__label">🏎 车速 {speed ?? '—'} km/h</div>
           <input
             type="range"
             min={0}
             max={180}
-            value={speed}
+            value={speed ?? 0}
+            disabled={speed === null}
             onChange={(event) => setEnv('speed_kmh', Number(event.target.value))}
           />
         </div>
 
         <div className="dyn__row">
-          <div className="dyn__label">🔋 电量 {battery}%</div>
+          <div className="dyn__label">🔋 电量 {battery ?? '—'}%</div>
           <input
             type="range"
             min={0}
             max={100}
-            value={battery}
+            value={battery ?? 0}
+            disabled={battery === null}
             onChange={(event) => setEnv('battery', Number(event.target.value))}
           />
         </div>
 
         <div className="dyn__gear">
-          <span>⚙️ 挡位</span>
+          <span>⚙️ 挡位{gear === null ? ' —' : ''}</span>
           <div className="gearbox">
             {GEARS.map((value) => (
               <button

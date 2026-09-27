@@ -1,26 +1,17 @@
-"""车辆状态镜像：订阅 NATS `vehicle.state.changed`，在进程内维护一份全量车况。
+"""Vehicle-scoped scene observations; one subscription, explicit callback scope.
 
-**为什么不用 `ctx.fetch("vehicle_state")`**：memory 里根本没有这个 scope——manifest 的
-`context_scopes: [vehicle_state]` 只控制一个 meta 键（`vehicle_battery`）是否下发，见
-`orchestrator/cloud/clients.py::_SENSITIVE_SCOPE`。车况的真相源是端侧 VAL，经 NATS 广播：
-`orchestrator/edge/main.py` 每 `OBS_SNAPSHOT_INTERVAL`（默认 30s）发一次**全量快照**、
-每次车控变更发**增量 diff**（`drain_state`）。gateway/edge 的 `vehState` 与
-observability/collector 的 `CollectorStore` 都是这么建镜像的，本模块同款。
-
-**一条订阅、多消费方**（设计 §7.2）：P0 只用镜像本身（deactivate 的激活前快照）；
-P2 的 Verify 对账、P3 的事件触发与驻车补做经 `on_change()` 挂回调，**不新建订阅**。
-
-冷启动：进程刚起时镜像为空，最多一个快照周期（30s）内补齐。全程 fail-open——
-拿不到状态就当"读不到"，由调用方退反向默认表/跳过，绝不阻塞主链路。
+Unscoped legacy callbacks belong only to the configured PoC vehicle. Foreground
+scene reads must pass the request vehicle. Expiry and identity share the runtime
+validator; no caller can refresh all signals by publishing a single delta.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from typing import Awaitable, Callable
 
+from runtime.vehicle_state import VehicleStateStore, LEGACY_VEHICLE
 from runtime.proactive import SKIPPED, publish_proactive
 
 logger = logging.getLogger("agent.scene.mirror")
@@ -31,10 +22,14 @@ ChangeCb = Callable[[list, dict], Awaitable[None]]
 
 
 class StateMirror:
-    def __init__(self):
-        self._state: dict = {}
+    def __init__(self, *, policy=None, wall_ms=None, monotonic=None):
+        clocks = {"wall_ms": wall_ms}
+        if monotonic is not None:
+            clocks["monotonic"] = monotonic
+        self.store = VehicleStateStore(policy, **clocks)
         self._nc = None
-        self._cbs: list[ChangeCb] = []
+        self._cbs: list[tuple[ChangeCb, str]] = []
+        self._vehicle_cbs = []
 
     @property
     def connected(self) -> bool:
@@ -57,39 +52,45 @@ class StateMirror:
         logger.info("scene: 已订阅 %s，车况镜像开启", STATE_SUBJECT)
         return True
 
-    def on_change(self, cb: ChangeCb) -> None:
+    def on_change(self, cb: ChangeCb, *, vehicle_id=LEGACY_VEHICLE) -> None:
         """挂一个变更消费方：cb(changes, full_state)。异常由本模块吞掉（fail-open）。"""
-        self._cbs.append(cb)
+        self._cbs.append((cb, vehicle_id))
+
+    def on_vehicle_change(self, cb) -> None:
+        """cb(changes, state, vehicle_id); identity comes from validated ingestion."""
+        self._vehicle_cbs.append(cb)
 
     async def _on_state(self, msg) -> None:
-        try:
-            event = json.loads(msg.data.decode())
-        except Exception:
+        accepted = self.store.ingest(msg.data)
+        if not accepted.accepted:
             return
-        changes = [c for c in (event.get("changes") or [])
-                   if isinstance(c, dict) and c.get("key")]
-        if not changes:
-            return
-        for c in changes:
-            self._state[c["key"]] = c.get("new")
-        for cb in list(self._cbs):
+        for cb in list(self._vehicle_cbs):
             try:
-                await cb(changes, dict(self._state))
+                await cb(list(accepted.changes), self.store.snapshot(accepted.vehicle_id), accepted.vehicle_id)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:                 # 一个消费方炸了不能拖垮镜像
+            except Exception as e:
+                logger.warning("scene: 车辆状态消费方异常（忽略）：%s", e)
+        for cb, vehicle_id in list(self._cbs):
+            if vehicle_id != accepted.vehicle_id:
+                continue
+            try:
+                await cb(list(accepted.changes), self.store.snapshot(vehicle_id))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
                 logger.warning("scene: 状态消费方异常（忽略）：%s", e)
 
     # ── 读 ──
-    def snapshot(self) -> dict:
-        return dict(self._state)
+    def snapshot(self, vehicle_id=LEGACY_VEHICLE) -> dict:
+        return self.store.snapshot(vehicle_id)
 
-    def get(self, key: str, default=None):
-        return self._state.get(key, default)
+    def get(self, key: str, default=None, *, vehicle_id=LEGACY_VEHICLE):
+        return self.snapshot(vehicle_id).get(key, default)
 
-    def capture(self, keys) -> dict:
-        """按键取快照；**读不到的键记 None**（调用方据此退反向默认表，D5）。"""
-        return {k: self._state.get(k) for k in keys}
+    def capture(self, keys, *, vehicle_id=LEGACY_VEHICLE) -> dict:
+        snapshot = self.snapshot(vehicle_id)
+        return {k: snapshot.get(k) for k in keys}
 
     # ── 写（proactive 播报；P2 Verify / P3 触发用）──
     async def publish(self, payload: dict) -> bool:

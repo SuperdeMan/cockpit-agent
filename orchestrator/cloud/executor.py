@@ -451,7 +451,8 @@ class DagExecutor:
             # 已经跑过，所以这里是**真实下发的**槽，不是 planner 的原始输出）。
             verdict = await _verify.evaluate(verification, result.data or {},
                                              mirror=self._mirror,
-                                             slots=dict(step.slots or {}))
+                                             slots=dict(step.slots or {}),
+                                             vehicle_id=ctx.vehicle_id)
         except Exception as e:      # fail-open：对账是增强，绝不因它炸主链
             logger.warning("Step %s verify errored (ignored): %s", step.id, e)
             return _verify.UNKNOWN

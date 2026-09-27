@@ -27,12 +27,12 @@ class FakeMirror:
     def __init__(self):
         self.cbs = []
 
-    def on_change(self, cb):
+    def on_vehicle_change(self, cb):
         self.cbs.append(cb)
 
-    async def fire(self, state):
+    async def fire(self, state, vehicle_id="v1"):
         for cb in self.cbs:
-            await cb([{"key": k, "new": v} for k, v in state.items()], state)
+            await cb([{"key": k, "new": v} for k, v in state.items()], state, vehicle_id)
 
 
 class Bus:
@@ -58,7 +58,7 @@ async def _watcher(scenes, bus, mirror, **kw):
         await store.save(s)
     w = TriggerWatcher(store, mirror, bus.publish, poll_s=999, tz=_TZ,
                        load_active=bus.load, **kw)
-    mirror.on_change(w._on_state)
+    mirror.on_vehicle_change(w._on_state)
     return w
 
 
@@ -207,7 +207,7 @@ def test_deferred_suggested_on_park_edge():
                    "deferred": [{"command": "seat.recline", "reason": "座椅放平到160度"}]})
         mirror = FakeMirror()
         w = await _watcher([], bus, mirror)
-        w._parked = False                                    # 先在行车态
+        w._parked["v1"] = False                                    # 先在行车态
         await mirror.fire({"gear": "P", "battery": 80})       # 驻车变沿
         return bus.sent
     sent = _run(go())
@@ -222,7 +222,7 @@ def test_no_deferred_no_suggest():
         bus = Bus({"scene_name": "午休模式", "deferred": []})
         mirror = FakeMirror()
         w = await _watcher([], bus, mirror)
-        w._parked = False
+        w._parked["v1"] = False
         await mirror.fire({"gear": "P"})
         return bus.sent
     assert _run(go()) == []
@@ -235,7 +235,7 @@ def test_deferred_not_resuggested_while_staying_parked():
                    "deferred": [{"command": "seat.recline", "reason": "座椅放平"}]})
         mirror = FakeMirror()
         w = await _watcher([], bus, mirror)
-        w._parked = False
+        w._parked["v1"] = False
         await mirror.fire({"gear": "P"})
         await mirror.fire({"gear": "P", "battery": 70})
         await mirror.fire({"gear": "P", "battery": 69})

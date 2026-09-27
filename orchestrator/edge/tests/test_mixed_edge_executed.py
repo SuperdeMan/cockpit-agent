@@ -37,7 +37,7 @@ def _request(text: str = "关闭空调然后打开，按顺序执行") -> orches
         text=text,
         session_id="mixed-executed-session",
         request_id="request-or2",
-        context=common_pb2.ContextRef(user_id="u1", vehicle_id="vehicle-1"),
+        context=common_pb2.ContextRef(user_id="u1", vehicle_id="v1"),
         meta={"trace_id": "trace-or2"},
     )
 
