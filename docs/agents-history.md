@@ -10237,3 +10237,6 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   退役 `56f92838`，收尾 `55165e50` 与已停用的 `7b346c90`（删 52 个 tag、3 个目录；当前版本别名因在用跳过）；激活前备份走新 `backup.sh`，
   轮转 25 套均在策略内。服务器恰 3 套 release 镜像，`builds/` 为空；status 5/5 零 warning、可用 59.95 GiB，verify `20260928T094959Z-55165e5.json`。
   残余：两次审批的上传目录属于从未激活的 SHA，保留策略只报告不删，需人工清。
+- P0 报出的 `shared/` 6 个残留（3 份 `.env.bak*`、`4c1f479` 清单 / 校验和、旧 `release.lock`）首次撞另一会话的发布锁未执行，17:56 CST 在发布锁内删除；
+  全程未读 `.env` 副本，活跃 `.env` 的 stat 前后一致。复核时 capacity 把 P1 安装的 `shared/retention-policy.json` 报成残留：
+  已知布局是手写的第二份清单，P1 加安装目标时没同步。已补入，并用测试对账预检 `REQUIRED_INSTALLED`（修前判红）；真机未知条目清零。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import json
 import re
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from scripts import cloud_capacity as cap
-from scripts.cloud_release_lib import CommandResult, ReleaseRequest, SshConfig
+from scripts.cloud_release_lib import REMOTE_PREFLIGHT_SOURCE, CommandResult, ReleaseRequest, SshConfig
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA_A = "a" * 40
@@ -29,6 +30,20 @@ def test_build_gate_mirrors_the_remote_build_declaration():
 
 def test_warning_line_sits_above_the_build_gate():
     assert cap.CAPACITY_WARN_FREE_BYTES > cap.BUILD_GATE_BYTES
+
+
+def test_known_layout_covers_every_file_the_approval_installs_under_shared():
+    # 2026-09-28: P1 installed shared/retention-policy.json and the capacity view called it a stray.
+    block = re.search(r"^REQUIRED_INSTALLED = (\{.*?^\})", REMOTE_PREFLIGHT_SOURCE, re.M | re.S)
+    assert block, "preflight no longer declares REQUIRED_INSTALLED as a dict literal"
+    prefix = "/opt/car-agent/shared/"
+    installed = {
+        target[len(prefix):].split("/")[0]
+        for target in ast.literal_eval(block.group(1)).values()
+        if target.startswith(prefix)
+    }
+    assert "retention-policy.json" in installed
+    assert installed - cap.KNOWN_LAYOUT["shared"] == set()
 
 
 @pytest.mark.parametrize(

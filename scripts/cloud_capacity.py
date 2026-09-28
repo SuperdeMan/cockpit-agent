@@ -33,13 +33,15 @@ CAPACITY_WARN_FREE_BYTES = (
 )
 
 #: Entries the release/backup tooling owns; anything else is reported as a stray.
+#: Files the infrastructure approval installs under shared/ must be listed here; the
+#: test reconciles this with REQUIRED_INSTALLED in the remote preflight.
 KNOWN_LAYOUT: Mapping[str, frozenset[str]] = {
     "root": frozenset({"builds", "current", "incoming", "releases", "shared"}),
     "incoming": frozenset({"releases"}),
     "shared": frozenset({
         ".env", "backups", "bin", "bootstrap-staging", "compose.cloud.yaml",
         "evidence", "imports", "infrastructure-backups", "locks", "models",
-        "release-infrastructure.json", "runtime-project-name",
+        "release-infrastructure.json", "retention-policy.json", "runtime-project-name",
         "vite.hmi.cloud.config.mjs",
     }),
 }

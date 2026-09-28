@@ -186,6 +186,8 @@ release tag 指向同一镜像时才去，只删标签不删镜像）；退役�
 新增 19 条单测、`test_dev_stack.py` 新增 5 条，两处关键逻辑的变异（不扣容器链、不扣其他 release 的共享层）各判红；`scripts/tests` 全量 1542 passed / 11 skipped。
 真机只读读数（本仓 `7b346c90` 构建进行中）：可用 65.18 GiB（ok）；本项目镜像 3.54 GiB、文件 1.79 GiB；其他镜像 14.59 GiB（18 个仓库）；
 构建缓存 11.29 GiB（BuildKit 口径 15.83 GB）；散落项 6 个：`shared/` 下 3 份 `.env.bak*`（密钥副本）、两份首版引导残留、旧的 `shared/release.lock`，用户已批准删除。
+首次执行撞上另一会话的发布锁而未执行，17:56 CST 在发布锁内删除。随后 capacity 把 P1 安装的 `shared/retention-policy.json` 报成散落项：
+已知布局是手写清单，P1 加了安装目标却没同步它。已补入，并加测试与预检 `REQUIRED_INSTALLED` 对账，未知条目清零。
 
 **P1 实现（2026-09-28，待基础设施审批与发布）**：`deploy/cloud/retention-policy.json`（单一声明源，`cloud_capacity` 的预警线也改读它）；
 `deploy/cloud/retention.py`（宿主上唯一的删除点：纯函数算计划，执行前逐对象重验根目录 / 名字 / 非符号链接 / 当前版本 / 在用镜像 /
