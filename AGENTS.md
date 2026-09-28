@@ -87,6 +87,9 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 ### 3.4 v2 / Jev 增量约束
 
+- 模型上下文经 CA2-07 权限投影：主体来自 PlanContext，接收需求来自 manifest；unary/D0/T2 最终过滤同源，step.meta 不得恢复被剔除的字段。
+- RequestView 只属于当前请求，不进持久化或跨主体复用；读态 off/none/unavailable 分开，晚到结果不恢复撤掉的权限。接口与覆盖边界见 [上下文视图](docs/design/2026-09-28-v2-permissioned-context-view.md)。
+
 - 先复用 Step、WorkingSet、SessionState、Ledger、Verifier；不再建一套会话、重试或授权判据。
 - 稳定 goal_id 由服务端持有；`PLANNER_GOALS` 保持 off，模型覆盖关系不能授予执行权。
 - 领域答案声明 `_speech_verbatim=true` 时，聚合必须保留原文语义，不交模型二次改写；保真不等于上游事实或条件正确。
@@ -126,7 +129,7 @@ v2 的可重复旅程、故障矩阵与模型收益门槛见 [实施方案](docs
 
 | 主题 | 启动条件 / 唯一接续入口 |
 |---|---|
-| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-02–06/12 首版与签名车道已落地，下一包 CA2-07 权限化 Context View；R0 业务残余与设备验收继续分项，Jev 仍未接入 |
+| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-02–07/12 首版已落地；下一包 CA2-08 持久准入，先冻结存储与迁移方案。R0、S2S/正式身份和设备验收仍分项，Jev 未接入 |
 | 手册召回、条件与复合问句 | [2026-09-26 设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §8；挂确认已有 CA2-04 闭环，已登记胎压条件见 [来源护栏](docs/design/2026-09-28-manual-source-evidence-guard.md)；规划/回忆残余继续重证，Jev 不能代修 |
 | 对话评审四轮 | [逐条重证与分批落地](docs/design/2026-09-24-conversation-review-round4-remediation.md) §7；已修项不重新立项，未触发项保持条件 |
 | 对话评审三轮 | [修复记录](docs/design/2026-09-23-conversation-review-round3-remediation.md)；历史批次与待裁决项按原表追溯 |
@@ -179,7 +182,7 @@ python -X utf8 -m pytest -q -n 8 --dist worksteal
 - 内存充足可用 `-n auto`；可用内存约 6GB 时用 `-n 8`，避免 worker 被 OOM 杀死。
 - 并行偶发红先单文件/串行复跑；OS lock、真实子进程和其他 agent 会污染读数。
 - 跑批期间不改工作树；读数属于 collect 时的树。
-- `target=cloud` + 本地 Docker 停时，32 skipped 是当前 Windows 基线。
+- Windows 跳过数会随 POSIX 用例与本地资产变化；按当轮原因、SHA 和 artifact 登记，不为对齐旧分母修改 skip。
 
 ### 6.2 四道 blocking 门禁与端侧 smoke
 

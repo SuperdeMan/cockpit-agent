@@ -5,6 +5,7 @@
 ## v2 能力契约与后续边界
 
 CA2-05 已接入版本 2 能力契约，声明、准入、版本探测和参数检查见 [实施记录](../../docs/design/2026-09-27-v2-capability-contract.md)。
+CA2-07 已在 SDK 中落实主体读取权限和接收方 context_scopes 的交集；个人历史/记忆未读取与空记录分开，车辆信息只接受有界、同车的校验器投影，不回落旧 Memory KV 车态。详见 [视图契约](../../docs/design/2026-09-28-v2-permissioned-context-view.md)。
 CA2-08/11 的持久操作与恢复仍待实现。
 当前 ledger 的 best-effort 不能直接套用到未来承诺可恢复的副作用工作流；新增写档须先具备可靠落账和对账。
 Jev 只通过拟新增的网关 Decide client 访问，Agent 不自行调用供应商或复制权限判据。

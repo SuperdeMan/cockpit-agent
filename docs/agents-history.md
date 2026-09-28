@@ -10256,3 +10256,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   首轮 success、回收 0B，64 个容器的 ID 前后一致。
 - 口径：`--max-used-space 20GB` 按 1024 进制解析为 20 GiB，`buildx du` 却按 1000 进制显示，du 约 21.47GB 以内都不会回收。
   首轮 0B 与此一致，§6 验收按这个口径读。下一次构建耗时待下次发布记录。证据在 `.artifacts/cloud-capacity-20260928/p2-host-capacity-gc/`。
+
+## 2026-09-28：CA2-07 Cloud/Agent 权限视图首版
+
+- `0265bc40` 实现 RequestView 与 WorkingSet/SDK 权限过滤，普通、D0/T2 与恢复路径同源；固定主体、接收需求和逐信号有效期，晚到读取不恢复旧权限。复用原 Scope 父子覆盖，SDK 不再用 Memory KV 旧车态兜底。
+- Road-safety 四项能力转 revision 2 显式只读参数契约，补可选 origin；旧调用被拒，冻结 legacy 清单不改。既有正向测试补齐显式读权限与新流式参数，反例独立验证。
+- 合入并发 P2 主线后以 `b095caca` 完成精确全量、门禁、CI、dry-run/apply、独立 status/verify。既有自动保留策略照常运行，本批未额外修改 .env/token/schema/CI/CD。
+- 旧版 `55165e50` 对受限测试身份回显历史数字；本版权限最终探针 60/60、6 个禁止读取/关记忆场景零模型调用，正向回答 2/3；业务失败与前两次探针中止全部保留。新旧目录/契约 9 项、签名观测 16/16。
+- 固定语料 20×3、99 轮，207 条已记录调用均 MiniMax-M3，零动作/车态变化/证据错误/残留挂起；原始 2 红含 1 误报，人工另补 2 项，登记 3 个业务未完成轮。S2S、调试 HTTP、全局身份、设备与声学不作本包签收。
+- 当前数字看 QA 交接 §2，细节见 `docs/design/2026-09-28-v2-permissioned-context-view.md`；证据 `.artifacts/context-view/b095caca-evidence-manifest.json`。下一包 CA2-08，先存储/迁移方案再按红线实施。

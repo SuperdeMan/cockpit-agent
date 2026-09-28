@@ -1,6 +1,6 @@
 # Cockpit Agent v2 与 Jev 分批实施方案
 
-> 更新：2026-09-28。状态：**CA2-02–05 首版已发布；CA2-06/12 离线、模拟兼容与签名车道真栈验证完成，CA2-07 已拆为 G1–G3、尚未实现；接续顺序以路线图为准**。
+> 更新：2026-09-28。状态：**CA2-02–05 首版已发布；CA2-06/12 离线、模拟兼容与签名车道真栈验证完成，CA2-07 的 G1–G3 已实现并在 Cloud/Agent 路径部署复验；其他身份/语音边界仍未签收；接续顺序以路线图为准**。
 > 原规划基线：`47c62b44d335a3c76da90f89f05fa2fc887c2742`；进度与精确证据见 [首批执行记录](2026-09-26-v2-runtime-r0-r1-execution.md)。
 > [路线图](../roadmap.md)决定优先级，[目标架构](../architecture/cockpit-agent-v2-target-architecture.md)决定边界。
 > CA2-01–22 与 JV00–09 沿用两份研究编号，是可领取的本地任务，不是已创建的 GitHub Issue。
@@ -136,7 +136,7 @@ CA2-06/12 首版代码、共享对照向量、故障 harness 和配置审批范�
 
 ### PR-G：CA2-07，权限化 Context View
 
-前置为 CA2-05 能力契约与 CA2-06/12 来源签名。依次推进以下三个可审查子步，保持同一份 WorkingSet 和事实权威：
+首版已按 G1–G3 落地，代码、配置边界与本轮证据见 [实施记录](2026-09-28-v2-permissioned-context-view.md)。以下保留实施顺序；当前下一包以路线图为准。前置为 CA2-05 能力契约与 CA2-06/12 来源签名，保持同一份 WorkingSet 和事实权威：
 
 1. **G1 字段与授权表**：盘点 ContextManager.assemble、WorkingSet.render_context、PlanContext.prefs、focus 和 Clients._merge_meta 的全部读取/投影出口。冻结 owner、vehicle、来源引用、逐字段权限和 found/none/unavailable/off；既有读取状态直接复用，拒绝读取不伪装为“记录不存在”。新增 scope 或运行配置另列具体范围，本包不擅自扩大发放权限。
 2. **G2 统一投影**：从本轮已读取的历史、记忆、任务结果和逐信号车态生成模型可见视图，不重查历史或另建事实库。权限剔除先于预算裁剪，pinned 约束不能绕过权限；模型投影与确定性执行所需的完整权威目录分开。覆盖 T1/T2、重规划、流式调用和挂起恢复，堵住旧 meta/focus 把字段带回来的出口。
@@ -144,7 +144,7 @@ CA2-06/12 首版代码、共享对照向量、故障 harness 和配置审批范�
 
 先写有反例的投影契约，再接模型入口，最后做真实模型回归；不靠删除记忆/会话或重置测试用户掩盖泄露。固定语料保持版本可追溯，并单独修正“关键词出现但只有澄清”的测量盲区，旧 artifact 不覆盖重算。
 
-现有代码已具备 WorkingSet 的 history_state/memory_state 和 Agent manifest context_scopes；后者只是接收方需要哪些字段，不能代替主体授权。ContextManager 的 granted_permissions 参数、记忆装配，以及 stream/legacy 的未过滤 meta 分支均列为接线审查点，不凭参数存在宣称权限化已完成。
+WorkingSet 的读态与请求绑定、主体权限和接收方需求的交集过滤已经接线；stream/legacy 不再默认放行敏感 metadata。已接入的隐私通知取消本进程在途读取；S2S 直接历史、调试 HTTP 与全局 IdP 撤销仍按 CA2-16/22 边界处理，不宣称全系统已覆盖。
 
 ### PR-J1/J2/J3：JV01 / JV02 / JV03（3–5 / 3–5 / 4–6 人日，标注与外部等待另计）
 

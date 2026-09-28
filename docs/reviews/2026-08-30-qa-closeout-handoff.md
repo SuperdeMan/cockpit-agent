@@ -1,15 +1,15 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-28（车辆来源签名已启用并复验；固定语料原始 6 红、人工补充 4 个未完成轮，QA 仍非全绿；随后 `55165e50` 发布容量治理 P1，应用代码不变）
+> 更新时间：2026-09-28（CA2-07 Cloud/Agent 权限视图已部署复验；权限检查通过，正向回答与 R0 业务残余仍开）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。最后一次已登记生产 release 是 `7b346c908e67e9bfe79d8c769f43a5895e8612a5`，
-在 CA2-02–06/12、聚合原文保护及胎压来源护栏基础上启用模拟来源 Ed25519 签名。
-私钥隔离、实际消息、HTTP/WS 身份/时效和固定语料已复验；来源仍是 simulated，不代表实车或操作因果证明。
+**QA 验收仍非全绿**。当前登记的 release 为 `b095caca46a4a4188e2b26927327117c62326acb`，
+包含 CA2-07 的 Cloud/Agent 权限化上下文视图；主体权限、接收需求与在途读取失效机制已落地。
+权限专项和固定语料已复验，S2S 直接历史、调试 HTTP 与量产全局身份边界未关闭；车态仍是模拟来源。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
 v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定语料三次复验为 101 测量轮，raw 6 红：
@@ -26,10 +26,10 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | 研究采纳起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；运行时首批版本见下行；后续纯文档提交允许领先 production |
-| 生产 release | `55165e50ab6d70a4ab679ba0e537a30eb2cdb571`，2026-09-28，容量治理 P1（发布事务内策略回收首跑）；相对 `7b346c90` 只改 `deploy/cloud`、`scripts`、文档与规则，应用代码相同，模拟车辆来源签名照旧启用。`7b346c908e67e9bfe79d8c769f43a5895e8612a5` 启用模拟车辆来源签名；再前一版 `56409fef` 为未签名兼容车道，保留既有来源条件/原图修复。旧版回滚边界见 [车辆状态 §7](../design/2026-09-27-v2-vehicle-state-and-simulation.md#7-签名启用配置审查) |
-| status / verify | `55165e50`：`ok`、5/5 healthy、零 warning，release/running SHA 一致；统一 verify `verified`：`20260928T094959Z-55165e5.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`。`7b346c90` 的统一 verify 为 `20260928T091042Z-7b346c9.json`；其首趟记忆问句过度澄清导致 7/8，失败证据保留，未将方差销账 |
+| 生产 release | `b095caca46a4a4188e2b26927327117c62326acb`，2026-09-28，CA2-07 Cloud/Agent 权限视图；上一版 `55165e50` 为容量治理 P1、应用仍沿用 `7b346c90`。来源签名保持启用，.env/token/schema 未因本包修改 |
+| status / verify | `b095caca`：ok、5/5 healthy、零 warning，release/running SHA 一致；统一 verify verified：`20260928T112855Z-b095cac.json`，e2e_remote_safe / minimax:MiniMax-M3 |
 | CA2-06/12 后端验证 | `89b19956`：10148 passed / 34 skipped / 9 warnings，4727.69 s；四道门禁、edge smoke、Go 五包通过；有状态故障实验 16/16。工作树额外缺两项 NLU vocab，不混同主仓 32 skip 口径；[本包 §8](../design/2026-09-27-v2-vehicle-state-and-simulation.md#8-验证登记) |
-| 当前后端与门禁 | `7b346c90` 精确干净工作树全量 10202 passed / 32 skipped / 11 warnings，529.58 s；四门禁与 smoke 通过，[CI](https://github.com/SuperdeMan/cockpit-agent/actions/runs/36399631781) 8 项 success。警告为既有 Starlette、AsyncMock 未 await 与 Bert tokenizer 弃用；后续容量治理/文档提交不借用本批结果 |
+| 当前后端与门禁 | `b095caca` 干净工作树全量 10309 passed / 35 skipped / 11 warnings，463.81 s；四门禁、smoke 与 [CI 8 项](https://github.com/SuperdeMan/cockpit-agent/actions/runs/36414421462) success。35 skip 按 Windows/POSIX/本地服务等条件登记，11 warning 为既有 Starlette/AsyncMock/Bert 弃用；实现提交 `0265bc40` 的 10293/34/11、567.24 s 单独留档，不转借 |
 | 来源条件与图标专项（历史） | release/runner `56409fef`：文字六句 ×3 为 17/18，图标两句 ×3 为 6/6；已派发手册条件完整，6 份受控图标 hash 相同。共 35 次调用仅 Planner、均 pinned MiniMax-M3；零动作/确认/26 键车态差异/证据错误/残留挂起。不转写为 `7b346c90` 或整本新成绩 |
 | 来源护栏批红轮（56409fef） | MSE01 r2 / `68e86285b5d84fab9be198a1baab2c36`：首个有效 salvage 有安全与手册两步，通道修复重试仍 salvage、只剩安全，覆盖首轮计划；无手册派发/卡。原策略有历史补槽收益，保留并登记到既有评估项，不关闭重试或用多步骤合并猜覆盖 |
 | 前版来源条件专项 | `56f92838` 的六句 ×3 为 18/18，27 次 Planner 调用；随后发现图标原图丢失，已由 `56409fef` 修复。该前版成绩不转借后续版本 |
@@ -52,13 +52,15 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | CA2-06/12 固定语料 | release/runner `89b19956`，60/60 case run / 101 测量轮；raw 6 红=5 业务问题+1 关键词误报，228 次已记录调用均 MiniMax-M3；零动作/车态变化/证据失败/残留挂起；混合手册展示 8/9。[逐条复核](../design/2026-09-27-v2-vehicle-state-and-simulation.md#83-固定语料复验) |
 | CA2-06/12 客户端 | `89b19956`：HMI 358、dashboard 19 与两者生产构建通过；HMI tsc 与基线同为 25 项旧错，零新增。Android `b98c9b60`：112 suites / 1159 tests + tsc/lint；mobile tree 与 release 相同。浏览器实际渲染与 APK/设备未验，见本包 §8.1 |
 | CA2-06/12 签名真栈 | `7b346c90`：26/26 运行 release 镜像一致，23 服务公钥策略、11 个必要消费者一致；私钥只在 edge。真实 NATS 快照独立验签，篡改/重放在隔离校验器拒绝；HTTP/WS 只读 16/16，27 信号/26 有效值、错车无事实并拒绝，前后车态相同；kind 仍 simulated |
-| 当前固定语料 | release/runner `7b346c90`：60/60 case run、103 测量轮（含取消）；原始 6 红，人工补充 4 个未完成轮，混合手册呈现 8/9。已记录 212 次调用均 pinned MiniMax-M3；零动作/车态差异/证据错误/残留挂起，release 连续、runner 未变。[逐条复核](../design/2026-09-27-v2-vehicle-state-and-simulation.md#84-签名车道启用与真栈复验2026-09-28) |
-| 当前证据索引 | `.artifacts/vehicle-state-signing/7b346c90-evidence-manifest.json`；来源条件/图标批仍为 `.artifacts/manual-source-evidence/56409fef-evidence-manifest.json`；所有旧证据按自己的 SHA 引用 |
+| 当前固定语料 | release/runner `b095caca`：60/60 case run、99 测量轮（含取消）；原始 2 红=1 关键词误报+1 手册未派发，人工另补场景解释不足与前/后备箱混淆，共 3 个真实业务未完成轮。混合手册呈现 9/9，207 条已记录调用均 pinned MiniMax-M3；零动作/车态差异/证据错误/残留挂起，release 连续、runner 未变。[逐条复核](../design/2026-09-28-v2-permissioned-context-view.md#53-固定语料与逐条复核) |
+| CA2-07 权限专项 | `b095caca` 最终探针版本 3：3 组测试历史由 Memory 只读确认存在，12 轮/60 个权限检查通过；6 个受限/关记忆场景无模型调用、无数字回显，零动作/车态变化。正向回答仅 2/3，总业务 passed=false 保留；早期探针中止与旧版越权回显另留工件，不拼接通过数 |
+| CA2-07 契约与观测 | `b095caca` 在线 17 Agent/155 能力；旧读取方仅隐藏 4 个迁移后的 Road-safety 能力；9 个契约/拒绝探针通过，legacy 历史清单不改。签名观测 16/16，27 信号/26 有效值、source_kind=simulated，错车拒绝与车态不变 |
+| 当前证据索引 | `.artifacts/context-view/b095caca-evidence-manifest.json`；此前来源签名批与来源条件/图标批仍分别使用 `.artifacts/vehicle-state-signing/7b346c90-evidence-manifest.json`、`.artifacts/manual-source-evidence/56409fef-evidence-manifest.json`，不互借数字 |
 | 聚合修复容量处置 | 原已授权缓存剩余 580 项仍回收 0B，未扩大范围；另经用户授权清理 6 个已完成发布的重复源码/上传包，约 0.319 GiB，空闲约 30.26 GiB。全部发布/镜像/容器/卷与构建证据校验未变；`.artifacts/vehicle-state-v2/hotfix-space-cleanup-result.json` |
 | 来源条件批发布与容量（历史） | `56f92838` 首趟 apply 未创建候选上传/构建目录，原因未定；重新只读预检后按原 API 重试成功。旧获批 580 项本轮仍报告 0B，未追加删除；后续只读空闲约 32.01 GiB，不归为本次清理成果。阶段诊断与边界见 [来源条件 §4](../design/2026-09-28-manual-source-evidence-guard.md#4-首版文字发布与精确证据) |
 | 云端容量清理（2026-09-28） | 经用户批准：保留 `56409fef` / `56f92838` / `0a589e14`，删其余 20 个 release 镜像集（含 `4c1f479`，其目录保留）与 19 个 release 目录、重复源码/上传包、09-13 及更早备份 405 个、5 个 08-17/18 迁移包（元数据先归档本地），构建缓存 `until=24h`（同条件补 `--all`）。可用 31.28 → 46.87 GiB；current、运行容器、卷、共享模型与构建证据未变；status 5/5 零 warning，verify `20260928T073945Z-56409fe.json`。第二轮删除首版引导残留（含 1.13 GB 镜像归档）与两份过期 .env 副本等无用内容，可用 48.08 GiB，status 5/5；构建缓存按用户要求保留。过程与保留项见 [history](../agents-history.md)；`.artifacts/cloud-capacity-20260928/` |
 | 容量治理 P0 / P1（2026-09-28） | [方案](../design/2026-09-28-cloud-host-capacity-governance.md) P0 `66d68f64`、P1 `48007778` + `887b983c` 已启用：基础设施锚 `a3346202`；发布 / 回滚后按策略退役旧 release，备份 GFS 轮转（首次手动 apply：备份 119 → 24 套）。随后发布 `55165e50`，发布事务内自动回收首跑：退役 `56f92838`、收尾 `55165e50` / `7b346c90`（删 52 个 tag、3 个目录，当前版本别名因在用跳过），激活前备份轮转 25 套均在策略内；服务器上恰 3 套 release 镜像。status 5/5 零 warning、可用 59.95 GiB，verify `20260928T094959Z-55165e5.json`。P2 `a53034b6` 已安装（18:39 CST）：主机级 `host-capacity-gc` 每小时给构建缓存封顶到 20 GiB（`buildx du` 显示约 21.47GB）、删除 7 天以上的 core dump，journald 上限 1G；不在基础设施锚内，见 `deploy/host/README.md` |
-| v2 / Jev | CA2-02–06 与 CA2-12 首版、模拟来源签名车道已发布；CA2-07 已拆为 G1–G3、尚未实现，设备/扩展矩阵未验收。Decide、持久操作、T1e、OEM 驱动与量产多车账号/ACL 仍未实现 |
+| v2 / Jev | CA2-02–07/12 首版已落地；CA2-07 只关闭 Cloud/Agent 模型上下文路径，本包不替 S2S、调试 HTTP、正式全局身份或设备签收。下一包 CA2-08 持久准入先做存储/迁移方案；Decide、T1e、OEM 与持久操作仍未实现 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。
@@ -201,6 +203,9 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 签名发布的固定语料又观察到手册 15 s 超时、目录模型超时后空检索、无必要澄清、畸形 steps、
 Provider 529 后的受话误判，以及露营模式解释覆盖不足；自动判据对“重复关键词但没有回答”存在盲区。
 六个原始红轮与四个补充未完成轮均只记录未关闭，见 [本批逐条记录](../design/2026-09-27-v2-vehicle-state-and-simulation.md#84-签名车道启用与真栈复验2026-09-28)。
+CA2-07 另登记：V210 r1 手册未派发，V207 r3 场景列表未回答模式含义，V214 r3 生成层混淆前/后备箱；
+权限专项的正向回忆也有一轮声称无记录，但数据存在，Agent 具体输入缺乏完整证据，根因待裁定。
+这些都没有随权限机制签收而关闭，见 [CA2-07 §5](../design/2026-09-28-v2-permissioned-context-view.md#5-发布与证据2026-09-28)。
 会话四轮未关项按 [原待办](../design/2026-09-24-conversation-review-round4-remediation.md) §7 重证；
 Android 按 [总表](../design/2026-09-14-android-remaining-todos.md)。统一优先级见 [路线图](../roadmap.md)，
 下面保留历史 QA 五项的逐条处置，不代表全部仍待修。

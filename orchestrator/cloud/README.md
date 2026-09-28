@@ -10,7 +10,7 @@
 CA2-02–04 已原位扩展 Step/step_record/SessionState 的来源范围、服务端 task/goal 来源引用与 ResultBundle。
 来源片段的语义覆盖保持 unknown；完整公开正文走正常会话呈现，恢复执行不重播旧卡/动作。
 接线与验证见 [首批记录](../../docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。
-CA2-06/12 已接入逐信号车态与模拟来源签名；CA2-07 权限化 View、CA2-08–11 持久操作与对账继续按包实现。
+CA2-06/12 已接入逐信号车态与模拟来源签名；CA2-07 已为 WorkingSet、模型与 Agent metadata 接入权限视图。CA2-08–11 持久操作与对账继续按包实现。
 WorkingSet 是 View/DecisionSnapshot 的投影来源，不能再读一份历史造第二事实源；来源验签不代替字段授权。
 `PLANNER_GOALS` 保持 off；现有 actionability 仍是纯函数 shadow，Jev 异步建议接点另做、默认不消费。
 T1/D0/T2、提前 dispatch、挂起恢复均须逐出口验收；共用 retry_policy，不增加外层重试。
@@ -84,4 +84,4 @@ EdgeCall.contract_query 只读探测。不支持的旧节点不会收到真实�
 
 Verifier 必须按 PlanContext.vehicle_id 读取共享校验器的逐信号投影；过期、坏质量或未认证的未知来源不能充当本车事实。
 `state_match=SAT` 只说明接受的观测满足条件，不能证明本次操作因果。
-[接入与签名配置](../../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)；完整权限化 View 仍待 CA2-07。
+[接入与签名配置](../../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)；[CA2-07 权限视图](../../docs/design/2026-09-28-v2-permissioned-context-view.md)负责模型输入与下发数据，S2S/全局身份治理仍单列。
