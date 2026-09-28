@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.cloud_capacity import collect_capacity
 from scripts.cloud_release_lib import (
     ReleaseError,
     ReleaseRequest,
@@ -81,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     target_set = target_commands.add_parser("set")
     target_set.add_argument("name", choices=("local", "cloud"))
     commands.add_parser("status")
+    commands.add_parser("capacity")
     deploy = commands.add_parser("deploy")
     deploy.add_argument("--sha", default="HEAD")
     deploy.add_argument("--approve-ci-cd-sha256")
@@ -438,6 +440,16 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
         exit_code, label = _status_code(status)
         emit({**stack_status_to_dict(status), **base, "status": label})
         return exit_code
+    if args.command == "capacity":
+        # Read-only attribution of host disk usage (design 2026-09-28 §4.6).
+        if selection.name != "cloud":
+            raise DevStackError("capacity requires target=cloud")
+        config = _connection(args)
+        report = collect_capacity(
+            _cloud_request(repo, config), status_runner or DefaultStackStatusRunner()
+        )
+        emit({**base, "action": "capacity", "status": "ok", **report})
+        return 0
     if args.command == "deploy":
         if selection.name != "cloud":
             raise DevStackError("deploy requires target=cloud")

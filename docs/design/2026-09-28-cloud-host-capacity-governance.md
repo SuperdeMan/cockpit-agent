@@ -1,7 +1,7 @@
 # 云主机容量治理：发布产物保留、构建缓存上限与容量可观测
 
-> 状态：**已批准，待实施**（2026-09-28：用户认可 §4.1 初值；主机级事项由 drone-agent 当前的 Claude 会话对接）。
-> §4.7 的规则修订随 P1 落地；在那之前现行「逐项批准」规则继续有效，服务器与 Docker 配置不变
+> 状态：**已批准，P0 已实现**（2026-09-28：用户认可 §4.1 初值；主机级事项由 drone-agent 当前的 Claude 会话对接）。
+> P0 见 §5；§4.7 的规则修订随 P1 落地，在那之前现行「逐项批准」规则继续有效，服务器与 Docker 配置不变
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -120,7 +120,8 @@
 ### 4.4 构建缓存上限（主机级，需与 drone-agent 共识）
 
 - **做法**：主机级 systemd timer（`host-buildcache-gc`，每小时一次）执行
-  `docker buildx prune --builder default -f --all --max-used-space <cap>`，`cap` 读自 §4.1；本项目 release 锁被占用时跳过本轮；
+  `docker buildx prune --builder default -f --all --max-used-space <cap>`，`cap` 读自 §4.1；对本项目 release 锁
+  与 drone 的 `~/drone-agent/stack.lock` 各做一次非阻塞 flock，任一拿不到就跳过本轮（drone 侧 09-28 提出，避免在对方批次或部署中途清缓存）；
   每轮结果写 journal 与证据。
 - **按总量而不按时间**：§1 第 4 条已实测时间过滤会被祖先链锁住；`--max-used-space` 由 BuildKit 按最近使用排序回收到上限，
   `--all` 覆盖与镜像同层的 shared 记录。
@@ -132,14 +133,16 @@
 ### 4.5 主机日志与崩溃转储（主机级，需共识）
 
 - journald：drop-in 设 `SystemMaxUse=1G`（现 0.99 GiB，默认上限可到 4 GiB），只重启 `systemd-journald`，不影响容器。
-- apport core dump：由同一 host timer 删除 `/var/lib/apport/coredump` 里超过 7 天的文件；根因（drone `sim/collect.py` 的 SIGABRT）由 drone 侧修。
+- apport core dump：由同一 host timer 删除 `/var/lib/apport/coredump` 里超过 7 天的文件，**但要等 drone 确认后才启用**——
+  drone 正用现存 5 个 core 取栈排查 `sim/collect.py` 的 SIGABRT，在那之前主机上的 core 一律不碰。
 - 容器日志：本项目在 `compose.cloud.yaml` 为各服务设 `json-file` 的 `max-size: 10m`、`max-file: 3`（随 P1 发布生效）；daemon 级默认值放 P3。
 
 ### 4.6 容量可观测
 
-- `dev_stack status` 增加 `disk_available_bytes`，并在低于 `warn_free_gib` 时给 warning。远端预检已返回这个字段
-  （`cloud_release_lib.py:1616–1643`，`dev_stack.py:183–220` 的发布路径已在用），`status` 只需接上；
-  字段集合是精确校验的（`cloud_release_lib.py:1255`、`:1659`），两端一起改。
+- `dev_stack status` 增加独立的 `capacity` 字段（可用字节、预警线、构建闸、等级 `ok` / `warn` / `below_build_gate`），
+  **不进 `warnings`、不改变 `status` 与退出码**：`probe_qa_long_sessions.py:867–884` 要求 status 为 ok 且零 warning，
+  容量提示若进 `warnings`，会在低于 40 GiB 时拦下所有长会话验收。数据来自远端预检已返回的 `disk_available_bytes`
+  （`cloud_release_lib.py:1616–1643`，`inspect_cloud_status` 已调用），不改远端字段集合。
 - 新增只读 `capacity` 命令，固化这次的核算方法：用 `ctr` 的快照 usage 和镜像→快照图，按本项目 / drone / 基础镜像 / 构建缓存分列；
   列出本项目各类目录大小，以及 `/opt/car-agent` 下不属于已知布局的散落项。不调用 buildx history，不以 `docker system df` 的 unique/reclaimable 作结论。
 
@@ -151,11 +154,19 @@
   策略本身的修改仍需授权。
 - `docs/dev-guide.md` 增加容量排查一节（内容取 §8）。
 
-### 4.8 需要 drone-agent 侧做的（列给该项目，不在本仓实施）
+### 4.8 与 drone-agent 的分工（对接方：drone-agent 当前的 Claude 会话，2026-09-28 起）
 
-镜像集保留（例如最近 3 套），并清理旧运行留下的已停容器；`artifacts/` 设保留期；修复 `sim/collect.py` 的崩溃；
-认可 §4.4 的缓存上限和 §4.5 的主机日志、core dump 上限。取得共识前，本项目不单方面改主机级设置。
-对接方：drone-agent 当前的 Claude 会话（2026-09-28 起）；共识结果回填本节。
+**drone 侧已答复（2026-09-28）**：
+- 自行清理：16:17–16:23 CST 按记录 ID 只删 drone 已被取代版本的私有构建缓存 292 条 / 18.64 GB（排除被镜像引用与当前版本仍依赖的父层），
+  builder 总量 34.4 → 15.8 GB；artifacts 中 59 个 ULog 以 zstd 无损压缩（1.09 → 0.30 GB）；删 8 个中间版本共 34 个镜像标签与 11 个传输包。
+  drone 读到 16:23 时主机可用约 70 GB。
+- 保留约定（drone 用户批准）：镜像保留当前版本与各里程碑，不按「最近 N 套」（现 12 个版本、58 个标签 + M0 基础镜像）；
+  已停容器由 compose 管理、可写层约 10 MB；`artifacts/` 是已提交记录引用的证据，不按时间删，ULog 定期压缩。
+- 技术意见：按总量 20 GB 做 LRU 对 drone 够用（重建代价大的只有 ROS 2 基础层，PX4 工具链在 M0 基础镜像里不受缓存清理影响）；
+  每小时可以，但要同时避让 `~/drone-agent/stack.lock`（已并入 §4.4）；不调用 buildx history；需重启 dockerd 的改动只在双方约定的维护窗口做。
+- 待定：§4.4 缓存上限、§4.5 journald 与 core dump 上限需 drone 用户确认；5 个 core 在 drone 取栈修复之前保留。
+
+取得确认前，本项目不单方面改主机级设置；确认结果回填本节。
 
 ## 5. 分阶段落地
 
@@ -163,8 +174,15 @@
 |---|---|---|---|
 | P0 可观测 | §4.6：`status` 容量字段与 warning、只读 `capacity`；§8 写入 dev-guide | 常规提交与推送（只改 `scripts/`、`docs/`，不涉基础设施锚） | 单测覆盖字段校验与阈值；真机只读跑一次 `capacity`，与本次 ctr 读数对账 |
 | P1 本项目保留 | §4.1–4.3、§4.5 的容器日志、§4.7 规则修订 | 本方案批准；`deploy/cloud/**` 基础设施锚重批一次；随后 deploy `--apply` | 纯函数单测 + 沿用 `_run_cloud_bash` 替身写法的 bash 集成测试；先在真机跑只读 `retention --dry-run` 逐项对账再发布；验收见 §6 |
-| P2 主机级 | §4.4 缓存上限 timer；§4.5 journald 与 core dump；§4.8 与 drone 取得共识 | 系统配置授权（红线）+ drone 侧认可 | 安装后手动触发首轮，记录前后 `buildx du` Total、可用空间与下一次构建耗时 |
+| P2 主机级 | §4.4 缓存上限 timer（避让两个项目的锁）；§4.5 journald 与 core dump；§4.8 与 drone 取得共识 | 系统配置授权（红线）+ drone 用户确认 | 安装后手动触发首轮，记录前后 `buildx du` Total、可用空间与下一次构建耗时 |
 | P3 可选 | daemon.json（`builder.gc`、`live-restore`、日志默认值）在一个维护窗口里一次重启；评估 containerd snapshotter 取舍与扩盘 | 维护窗口 + 两项目停机授权 | 单独方案 |
+
+**P0 实现记录（2026-09-28）**：`scripts/cloud_capacity.py`（预警线 40 GiB；构建闸是 `remote-build.sh` `MIN_DISK_BYTES` 的镜像声明，由测试对账；
+远端探针只调用 `du` / `ctr … ls|usage` / `docker ps` / `docker buildx du`，由测试钉住只读白名单；归属计算为本地纯函数）；
+`dev_stack status` 增加 `capacity`，`dev_stack capacity` 输出按项目归属的读数；`docs/dev-guide.md` 增加「云主机容量」。
+新增 19 条单测、`test_dev_stack.py` 新增 5 条，两处关键逻辑的变异（不扣容器链、不扣其他 release 的共享层）各判红；`scripts/tests` 全量 1542 passed / 11 skipped。
+真机只读读数（本仓 `7b346c90` 构建进行中）：可用 65.18 GiB（ok）；本项目镜像 3.54 GiB、文件 1.79 GiB；其他镜像 14.59 GiB（18 个仓库）；
+构建缓存 11.29 GiB（BuildKit 口径 15.83 GB）；散落项 6 个：`shared/` 下 3 份 `.env.bak*`（密钥副本）、两份首版引导残留、旧的 `shared/release.lock`，待用户裁决。
 
 ## 6. 验收
 

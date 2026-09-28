@@ -96,6 +96,23 @@ python scripts/dev_stack.py verify
 
   deploy 只读 git 与 SSH，不读根 `.env`，所以**不需要**把密钥复制进临时工作树。
 
+### 云主机容量
+
+远端构建要求可用 ≥ 30 GiB（`insufficient disk capacity`），主机与 drone-agent 共用。先看容量，别等 dry-run 被挡：
+
+```powershell
+python scripts/dev_stack.py status     # capacity.level：ok / warn（< 40 GiB）/ below_build_gate（< 30 GiB）
+python scripts/dev_stack.py capacity   # 只读：按本项目 / 其他镜像 / 构建缓存分列真实占用，并列出 /opt/car-agent 下的散落项
+```
+
+- `status.capacity` 只是提示，不进 `warnings`、不改变 `status` 与退出码（长会话验收要求 status 为 ok 且零 warning）。
+- `docker system df` 在 containerd 镜像存储下的 unique / reclaimable 不可信；构建缓存对已构建镜像是冗余副本，清缓存不伤运行中的镜像；
+  按时间清缓存会被祖先链锁住，要按总量（`--all --max-used-space`）；旧 release 之间高度共享层，删旧版本收益有限。
+- 永远不做 `docker system prune -a`、`docker image prune -a`、`docker volume prune`、`compose down -v`：共享主机上它们会删掉
+  drone-agent 的镜像、构建要用的基础镜像或数据卷。
+- 删除仍按 [`deploy/cloud/README.md`](../deploy/cloud/README.md) 先列精确对象再批准；量法、回收顺序与自动轮转的落地阶段见
+  [容量治理方案](design/2026-09-28-cloud-host-capacity-governance.md) §5 与 §8。
+
 ### CI/CD 一次性摘要批准
 
 默认不带批准参数时仍然 fail closed。只有用户已经单独授权目标 SHA 的 CI/CD 变化时，才按下面

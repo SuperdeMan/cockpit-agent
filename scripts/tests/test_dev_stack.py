@@ -46,7 +46,7 @@ def _stub_launcher(directory: Path, name: str = "npm") -> Path:
     return stub
 
 
-def test_development_stack_cli_exposes_all_six_actions():
+def test_development_stack_cli_exposes_all_actions():
     result = subprocess.run(
         [sys.executable, "scripts/dev_stack.py", "--help"],
         cwd=Path(__file__).resolve().parents[2],
@@ -58,7 +58,7 @@ def test_development_stack_cli_exposes_all_six_actions():
     assert result.returncode == 0
     assert all(
         action in result.stdout
-        for action in ("target", "status", "deploy", "verify", "hmi", "dashboard")
+        for action in ("target", "status", "capacity", "deploy", "verify", "hmi", "dashboard")
     )
 
 
@@ -750,6 +750,65 @@ def _cloud_status_with_tags(tmp_path: Path, tags: list[str], *, release: str = "
         [command_result("ssh", "remote-preflight", stdout=remote_state)], urls
     )
     return dev.inspect_cloud_status(request, endpoints, runner)
+
+
+def test_low_disk_is_an_advisory_capacity_level_not_a_health_warning(tmp_path: Path):
+    """容量低于预警线 / 构建闸时 status 仍按健康判：长会话验收要求 status ok 且零 warning。"""
+    status = _cloud_status_with_tags(tmp_path, ["1" * 40])  # 远端预检读数 disk=9 字节
+
+    assert status.warnings == ()
+    assert cli._status_code(status) == (0, "ok")
+    assert dev.stack_status_to_dict(status)["capacity"] == {
+        "level": "below_build_gate",
+        "disk_available_bytes": 9,
+        "warn_below_bytes": 40 * 1024**3,
+        "build_gate_bytes": 30 * 1024**3,
+    }
+
+
+def test_local_status_has_no_capacity_reading():
+    status = dev.StackStatus("local", None, None, 7, 7, 5, (), ())
+    assert dev.stack_status_to_dict(status)["capacity"] is None
+
+
+def test_cli_capacity_requires_cloud_target_and_never_touches_the_runner(tmp_path: Path):
+    class _Forbidden:
+        def run(self, *args, **kwargs):
+            raise AssertionError("capacity must not run against a local target")
+
+    events: list[dict[str, object]] = []
+    assert cli.main(["capacity"], repo=tmp_path, status_runner=_Forbidden(), emit=events.append) == 2
+    assert events[-1]["status"] == "configuration_rejected"
+
+
+def test_cli_capacity_reports_attributed_usage_from_one_read_only_probe(tmp_path: Path):
+    from scripts.tests.test_cloud_capacity import SHA_B, _payload
+
+    dev.set_target(tmp_path, "cloud")
+    runner = FakeStatusRunner(
+        [command_result("ssh", "capacity-probe", stdout=json.dumps(_payload()))], {}
+    )
+    events: list[dict[str, object]] = []
+    arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "capacity"]
+
+    assert cli.main(arguments, repo=tmp_path, status_runner=runner, emit=events.append) == 0
+
+    event = events[-1]
+    assert (event["action"], event["status"], event["target"]) == ("capacity", "ok", "cloud")
+    assert event["car_agent"]["current_release"] == SHA_B
+    assert event["capacity"]["level"] == "warn"
+    assert len(runner.commands) == 1 and runner.commands[0][0] == "ssh"
+
+
+def test_cli_capacity_fails_closed_on_an_untrusted_probe_reply(tmp_path: Path):
+    dev.set_target(tmp_path, "cloud")
+    runner = FakeStatusRunner([command_result("ssh", stdout="not json")], {})
+    events: list[dict[str, object]] = []
+    arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "capacity"]
+
+    assert cli.main(arguments, repo=tmp_path, status_runner=runner, emit=events.append) == 1
+    assert events[-1]["status"] == "failed"
+    assert "car_agent" not in events[-1]
 
 
 def test_cloud_status_reports_the_image_that_is_actually_running(tmp_path: Path):

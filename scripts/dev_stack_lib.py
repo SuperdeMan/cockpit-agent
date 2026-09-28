@@ -19,6 +19,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from scripts.cloud_capacity import capacity_summary
 from scripts.cloud_release_lib import (
     CommandResult,
     ReleaseError,
@@ -106,6 +107,10 @@ class StackStatus:
     healthy_endpoints: int
     endpoint_results: tuple[EndpointStatus, ...]
     warnings: tuple[str, ...]
+    #: 远端 /opt/car-agent 所在盘的可用字节（云端预检读数；本地档与读不到时为 None）。
+    #: 只进 `capacity` 提示，不进 `warnings`：长会话验收要求 status 零 warning，
+    #: 低于预警线不等于栈不健康（docs/design/2026-09-28-cloud-host-capacity-governance.md §4.6）。
+    disk_available_bytes: int | None = None
 
 
 class StackStatusRunner(Protocol):
@@ -720,6 +725,7 @@ def inspect_cloud_status(
     warnings: list[str] = []
     release_sha: str | None = None
     running_release: str | None = None
+    disk_available: int | None = None
     try:
         state = discover_remote_state(cloud_request, runner=runner)
     except (ReleaseError, OSError):
@@ -748,6 +754,8 @@ def inspect_cloud_status(
             warnings.append("remote shared models are not ready")
         if state.disk_available_bytes <= 0 or state.memory_available_bytes <= 0:
             warnings.append("remote resource availability is invalid")
+        else:
+            disk_available = state.disk_available_bytes
     endpoint_results = _inspect_endpoints(endpoints, runner)
     return StackStatus(
         target="cloud",
@@ -758,6 +766,7 @@ def inspect_cloud_status(
         healthy_endpoints=sum(item.status == "healthy" for item in endpoint_results),
         endpoint_results=endpoint_results,
         warnings=tuple(warnings),
+        disk_available_bytes=disk_available,
     )
 
 
@@ -806,6 +815,11 @@ def stack_status_to_dict(status: StackStatus) -> dict[str, object]:
             for result in status.endpoint_results
         ],
         "warnings": list(status.warnings),
+        "capacity": (
+            capacity_summary(status.disk_available_bytes)
+            if status.disk_available_bytes is not None
+            else None
+        ),
     }
 
 
