@@ -31,7 +31,7 @@ def test_cross_language_wire_vectors(scenario):
     clock = Clock()
     clock.ms = scenario.get("start_ms", _VECTORS["now_ms"])
     policy = (vs.TrustPolicy(legacy=vs.simulation_binding()) if scenario.get("legacy") else
-              vs.TrustPolicy.from_env({vs.TRUST_ENV: json.dumps(_VECTORS["policy"])}))
+              vs.TrustPolicy.from_env({vs.TRUST_ENV: json.dumps(scenario.get("policy", _VECTORS["policy"]))}))
     cache = vs.VehicleStateStore(policy, wall_ms=lambda: clock.ms, monotonic=lambda: clock.mono)
     for step in scenario["steps"]:
         clock.advance(step.get("advance_ms", 0)); clock.ms += step.get("wall_delta_ms", 0)

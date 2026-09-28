@@ -714,6 +714,18 @@ func (s *Store) View(vehicleID string) map[string]any {
 	values, meta := map[string]any{}, map[string]any{}
 	for key, entry := range chosen {
 		st, c := entry.stream, entry.cell
+		shadowed := false
+		for _, authority := range s.policy.Sources {
+			_, explicit := authority.TTL[key]
+			_, wildcard := authority.TTL["*"]
+			if authority.VehicleID == vehicleID && authority.Priority > st.Binding.Priority && (explicit || wildcard) {
+				shadowed = true
+				break
+			}
+		}
+		if shadowed {
+			continue
+		}
 		status := c.Quality
 		if mono >= c.ExpiresMono {
 			status = "stale"

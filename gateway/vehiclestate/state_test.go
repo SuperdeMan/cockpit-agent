@@ -16,9 +16,10 @@ func TestCrossLanguageWireVectors(t *testing.T) {
 		Now       int64           `json:"now_ms"`
 		Policy    json.RawMessage `json:"policy"`
 		Scenarios []struct {
-			Name   string `json:"name"`
-			Start  int64  `json:"start_ms"`
-			Legacy bool   `json:"legacy"`
+			Policy json.RawMessage `json:"policy"`
+			Name   string          `json:"name"`
+			Start  int64           `json:"start_ms"`
+			Legacy bool            `json:"legacy"`
 			Steps  []struct {
 				Raw         *string                      `json:"raw"`
 				AdvanceMS   int64                        `json:"advance_ms"`
@@ -36,7 +37,11 @@ func TestCrossLanguageWireVectors(t *testing.T) {
 	}
 	for _, scenario := range fixture.Scenarios {
 		t.Run(scenario.Name, func(t *testing.T) {
-			policy, err := ParsePolicy(string(fixture.Policy), "v1")
+			policyJSON := scenario.Policy
+			if len(policyJSON) == 0 {
+				policyJSON = fixture.Policy
+			}
+			policy, err := ParsePolicy(string(policyJSON), "v1")
 			if err != nil {
 				t.Fatal(err)
 			}

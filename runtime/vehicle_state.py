@@ -481,6 +481,12 @@ class VehicleStateStore:
         values, metadata = {}, {}
         mono = self._mono()
         for key, (_, stream, cell) in candidates.items():
+            # Enrolled coverage defines authority, including before the first
+            # checkpoint and after a reboot omits a field. Packet availability
+            # cannot promote a lower-priority source into that authority.
+            if any(source.vehicle_id == vehicle_id and source.priority > stream.binding.priority
+                   and source.ttl(key) is not None for source in self.policy.sources.values()):
+                continue
             status = "stale" if mono >= cell.expires_mono else cell.quality
             if status == "good":
                 values[key] = copy.deepcopy(cell.value)

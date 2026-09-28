@@ -4,6 +4,7 @@ import base64
 import copy
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +38,21 @@ def step(event, *, accepted=True, reason="", **checks):
 
 def build():
     scenarios = []
+    high, _, high_key = simulation_source("v1", source_id="primary", priority=10)
+    high = replace(high, ttl_ms={"speed_kmh":1000}, units={"speed_kmh":"km/h"})
+    high_sample = payload(high); high_sample["signals"] = [high_sample["signals"][0]]
+    high_sample["signals"][0]["value"] = 80
+    reboot_missing = payload(high, emitted=NOW+100, source_epoch="boot-2", epoch_started_at_ms=NOW+100, signals=[])
+    reboot_fresh = payload(high, seq=2, emitted=NOW+100, source_epoch="boot-2", epoch_started_at_ms=NOW+100,
+                           signals=[dict(high_sample["signals"][0], value=50, observed_at_ms=NOW+100)])
+    scenarios.append({"name":"enrolled-authority-cannot-be-replaced-by-missing-checkpoints", "policy":public_policy((A,high)), "steps":[
+        step(wire(), states={"v1":{"battery":72}}),
+        step(wire(high_sample,key=high_key,binding=high), states={"v1":{"battery":72,"speed_kmh":80}}),
+        step(wire(reboot_missing,key=high_key,binding=high), advance_ms=100, states={"v1":{"battery":72}}),
+        step(wire(payload(seq=2,emitted=NOW+100)), states={"v1":{"battery":72}}),
+        step(wire(reboot_fresh,key=high_key,binding=high), states={"v1":{"battery":72,"speed_kmh":50}}),
+        step(wire(payload(seq=3,emitted=NOW+1101)), advance_ms=1001, states={"v1":{"battery":72}}),
+    ]})
     def negative(name, data, reason):
         scenarios.append({"name": name, "steps": [step(wire(data), accepted=False, reason=reason, states={"v1": {}, "v2": {}})]})
 

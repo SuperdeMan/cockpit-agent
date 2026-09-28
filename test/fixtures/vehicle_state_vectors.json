@@ -47,6 +47,113 @@
   },
   "scenarios": [
     {
+      "name": "enrolled-authority-cannot-be-replaced-by-missing-checkpoints",
+      "policy": {
+        "version": 1,
+        "sources": [
+          {
+            "key_id": "test-v1-val-simulator",
+            "vehicle_id": "v1",
+            "source_id": "val-simulator",
+            "kind": "simulated",
+            "public_key": "ZmH9AN+7hhPjQngVpycwaMFXMYfV/6J0kZJ/FCLfy60=",
+            "priority": 0,
+            "ttl_ms": {
+              "*": 1000,
+              "battery": 10000
+            },
+            "units": {
+              "speed_kmh": "km/h",
+              "battery": "%",
+              "hvac_temp": "degC",
+              "cabin_temp": "degC",
+              "volume": "%"
+            }
+          },
+          {
+            "key_id": "test-v1-primary",
+            "vehicle_id": "v1",
+            "source_id": "primary",
+            "kind": "simulated",
+            "public_key": "58AlyurWpSc8bS31ikIKZVUYm7xH5EdsgPpvMKynZNY=",
+            "priority": 10,
+            "ttl_ms": {
+              "speed_kmh": 1000
+            },
+            "units": {
+              "speed_kmh": "km/h"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "raw": "{\"version\":2,\"key_id\":\"test-v1-val-simulator\",\"payload\":\"eyJ2ZWhpY2xlX2lkIjoidjEiLCJzb3VyY2VfaWQiOiJ2YWwtc2ltdWxhdG9yIiwic291cmNlX2Vwb2NoIjoiYm9vdC0xIiwiZXBvY2hfc3RhcnRlZF9hdF9tcyI6MTgwMDAwMDAwMDAwMCwiZW1pdHRlZF9hdF9tcyI6MTgwMDAwMDAwMDAwMCwic291cmNlX3NlcSI6MSwic25hcHNob3QiOnRydWUsInNpZ25hbHMiOlt7ImtleSI6InNwZWVkX2ttaCIsInZhbHVlIjowLCJvYnNlcnZlZF9hdF9tcyI6MTgwMDAwMDAwMDAwMCwicXVhbGl0eSI6Imdvb2QiLCJ1bml0Ijoia20vaCJ9LHsia2V5IjoiYmF0dGVyeSIsInZhbHVlIjo3Miwib2JzZXJ2ZWRfYXRfbXMiOjE4MDAwMDAwMDAwMDAsInF1YWxpdHkiOiJnb29kIiwidW5pdCI6IiUifV19\",\"signature\":\"NYaDwWRuoPBR33UVQXtt+7waLugApxDRkLXtisS+TvMDH1UunrRrOUxTkRt8gujZOki49KJ4rfneE2FzaxxSDQ==\"}",
+          "accepted": true,
+          "reason": "",
+          "states": {
+            "v1": {
+              "battery": 72
+            }
+          }
+        },
+        {
+          "raw": "{\"version\":2,\"key_id\":\"test-v1-primary\",\"payload\":\"eyJ2ZWhpY2xlX2lkIjoidjEiLCJzb3VyY2VfaWQiOiJwcmltYXJ5Iiwic291cmNlX2Vwb2NoIjoiYm9vdC0xIiwiZXBvY2hfc3RhcnRlZF9hdF9tcyI6MTgwMDAwMDAwMDAwMCwiZW1pdHRlZF9hdF9tcyI6MTgwMDAwMDAwMDAwMCwic291cmNlX3NlcSI6MSwic25hcHNob3QiOnRydWUsInNpZ25hbHMiOlt7ImtleSI6InNwZWVkX2ttaCIsInZhbHVlIjo4MCwib2JzZXJ2ZWRfYXRfbXMiOjE4MDAwMDAwMDAwMDAsInF1YWxpdHkiOiJnb29kIiwidW5pdCI6ImttL2gifV19\",\"signature\":\"lNk4E97J+K5uLMy7f4WbmsEbpbyw57uYBTGliA2P0CSVFaISt3hYJmBmsH0KQuygj1/sUMHUedtyeLyz8mJaBg==\"}",
+          "accepted": true,
+          "reason": "",
+          "states": {
+            "v1": {
+              "battery": 72,
+              "speed_kmh": 80
+            }
+          }
+        },
+        {
+          "raw": "{\"version\":2,\"key_id\":\"test-v1-primary\",\"payload\":\"eyJ2ZWhpY2xlX2lkIjoidjEiLCJzb3VyY2VfaWQiOiJwcmltYXJ5Iiwic291cmNlX2Vwb2NoIjoiYm9vdC0yIiwiZXBvY2hfc3RhcnRlZF9hdF9tcyI6MTgwMDAwMDAwMDEwMCwiZW1pdHRlZF9hdF9tcyI6MTgwMDAwMDAwMDEwMCwic291cmNlX3NlcSI6MSwic25hcHNob3QiOnRydWUsInNpZ25hbHMiOltdfQ==\",\"signature\":\"bzrecWvi23HvJ0JkfUCFfpMVBBR3Ry04hfKBiajRYGFLQGuFuXbjeoTVn6f+eo99VfLIC5/AeCwOrh2MBzYDAQ==\"}",
+          "accepted": true,
+          "reason": "",
+          "advance_ms": 100,
+          "states": {
+            "v1": {
+              "battery": 72
+            }
+          }
+        },
+        {
+          "raw": "{\"version\":2,\"key_id\":\"test-v1-val-simulator\",\"payload\":\"eyJ2ZWhpY2xlX2lkIjoidjEiLCJzb3VyY2VfaWQiOiJ2YWwtc2ltdWxhdG9yIiwic291cmNlX2Vwb2NoIjoiYm9vdC0xIiwiZXBvY2hfc3RhcnRlZF9hdF9tcyI6MTgwMDAwMDAwMDAwMCwiZW1pdHRlZF9hdF9tcyI6MTgwMDAwMDAwMDEwMCwic291cmNlX3NlcSI6Miwic25hcHNob3QiOnRydWUsInNpZ25hbHMiOlt7ImtleSI6InNwZWVkX2ttaCIsInZhbHVlIjowLCJvYnNlcnZlZF9hdF9tcyI6MTgwMDAwMDAwMDEwMCwicXVhbGl0eSI6Imdvb2QiLCJ1bml0Ijoia20vaCJ9LHsia2V5IjoiYmF0dGVyeSIsInZhbHVlIjo3Miwib2JzZXJ2ZWRfYXRfbXMiOjE4MDAwMDAwMDAxMDAsInF1YWxpdHkiOiJnb29kIiwidW5pdCI6IiUifV19\",\"signature\":\"ZlsCuP9RIUgmv2p5XtfF/N9412Uukyb9YJ4Vc1J79IQ/31GCMVkCCfQIo8NrJd+zxO9PS0DZKOyeOSc6v1/zDw==\"}",
+          "accepted": true,
+          "reason": "",
+          "states": {
+            "v1": {
+              "battery": 72
+            }
+          }
+        },
+        {
+          "raw": "{\"version\":2,\"key_id\":\"test-v1-primary\",\"payload\":\"eyJ2ZWhpY2xlX2lkIjoidjEiLCJzb3VyY2VfaWQiOiJwcmltYXJ5Iiwic291cmNlX2Vwb2NoIjoiYm9vdC0yIiwiZXBvY2hfc3RhcnRlZF9hdF9tcyI6MTgwMDAwMDAwMDEwMCwiZW1pdHRlZF9hdF9tcyI6MTgwMDAwMDAwMDEwMCwic291cmNlX3NlcSI6Miwic25hcHNob3QiOnRydWUsInNpZ25hbHMiOlt7ImtleSI6InNwZWVkX2ttaCIsInZhbHVlIjo1MCwib2JzZXJ2ZWRfYXRfbXMiOjE4MDAwMDAwMDAxMDAsInF1YWxpdHkiOiJnb29kIiwidW5pdCI6ImttL2gifV19\",\"signature\":\"vWjIlxoypvJTgfedEbkEDlAKcCYnw0O9ZoYBqJwTmtLJ6cliehffjXrciI32hkr06swUT0jVZN7LfQAlXuGdDQ==\"}",
+          "accepted": true,
+          "reason": "",
+          "states": {
+            "v1": {
+              "battery": 72,
+              "speed_kmh": 50
+            }
+          }
+        },
+        {
+          "raw": "{\"version\":2,\"key_id\":\"test-v1-val-simulator\",\"payload\":\"eyJ2ZWhpY2xlX2lkIjoidjEiLCJzb3VyY2VfaWQiOiJ2YWwtc2ltdWxhdG9yIiwic291cmNlX2Vwb2NoIjoiYm9vdC0xIiwiZXBvY2hfc3RhcnRlZF9hdF9tcyI6MTgwMDAwMDAwMDAwMCwiZW1pdHRlZF9hdF9tcyI6MTgwMDAwMDAwMTEwMSwic291cmNlX3NlcSI6Mywic25hcHNob3QiOnRydWUsInNpZ25hbHMiOlt7ImtleSI6InNwZWVkX2ttaCIsInZhbHVlIjowLCJvYnNlcnZlZF9hdF9tcyI6MTgwMDAwMDAwMTEwMSwicXVhbGl0eSI6Imdvb2QiLCJ1bml0Ijoia20vaCJ9LHsia2V5IjoiYmF0dGVyeSIsInZhbHVlIjo3Miwib2JzZXJ2ZWRfYXRfbXMiOjE4MDAwMDAwMDExMDEsInF1YWxpdHkiOiJnb29kIiwidW5pdCI6IiUifV19\",\"signature\":\"rj0AEYn5YAQ2vOGOuKmibRpBaQKii1bnOvboUCPEE71CuFh3PSA/eDpOT0VOFjVYWH7vXYjkeC6A8Vcdl/8NAQ==\"}",
+          "accepted": true,
+          "reason": "",
+          "advance_ms": 1001,
+          "states": {
+            "v1": {
+              "battery": 72
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "two-cars-freshness-sequence-and-epochs",
       "steps": [
         {
