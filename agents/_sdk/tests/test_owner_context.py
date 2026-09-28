@@ -32,7 +32,7 @@ class _RecordingMemory:
 
 
 def _ctx(occ="occ-2", mem=None):
-    return Context("s1", "u1", "v1", mem or _RecordingMemory(), occ)
+    return Context("s1", "u1", "v1", mem or _RecordingMemory(), occ, meta={"granted_scopes": "profile.read"})
 
 
 def test_fetch_history_and_save_profile_all_carry_the_owner():
@@ -54,7 +54,7 @@ def test_fetch_history_and_save_profile_all_carry_the_owner():
 
 def test_missing_occupant_normalizes_to_primary():
     mem = _RecordingMemory()
-    ctx = Context("s1", "u1", "v1", mem, "")
+    ctx = Context("s1", "u1", "v1", mem, "", meta={"granted_scopes": "profile.read"})
 
     async def go():
         await ctx.fetch("profile.places")

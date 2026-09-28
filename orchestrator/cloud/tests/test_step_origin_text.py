@@ -297,7 +297,7 @@ def test_t2_single_step_stream_in_continuation_turn_reads_the_origin():
     """T2 单步流式直通那条路同样接了判据（「新增挂点必须枚举全部执行路径」）。"""
     stream_raw: list[str] = []
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=None):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=None, context_scopes=None):
         stream_raw.append(ctx.raw_text)
         yield ("speech", "已建提醒")
         yield ("final", agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK,
@@ -359,7 +359,7 @@ def test_engine_stream_single_step_hands_the_step_context():
     seen = []
 
     class _Clients:
-        async def call_agent_stream(self, endpoint, intent, slots, ctx, meta, timeout=None):
+        async def call_agent_stream(self, endpoint, intent, slots, ctx, meta, timeout=None, context_scopes=None):
             seen.append(ctx.raw_text)
             yield ("final", agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.OK, speech="ok"))
@@ -464,7 +464,7 @@ def test_loop_stream_span_marks_the_swap(monkeypatch):
     """真栈 RS10 第 3 趟走的正是这条路（T2 单步流式）：日志证明读了起点原话，span 却没格子。"""
     spans = _capture_spans(monkeypatch)
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=None):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=None, context_scopes=None):
         yield ("final", agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK, speech="ok"))
 
     async def unused(*_a, **_k):
@@ -487,7 +487,7 @@ def test_engine_stream_span_marks_the_swap(monkeypatch):
     spans = _capture_spans(monkeypatch)
 
     class _Clients:
-        async def call_agent_stream(self, endpoint, intent, slots, ctx, meta, timeout=None):
+        async def call_agent_stream(self, endpoint, intent, slots, ctx, meta, timeout=None, context_scopes=None):
             yield ("final", agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.OK, speech="ok"))
 

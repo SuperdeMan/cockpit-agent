@@ -119,7 +119,7 @@ def test_t2_stream_gates_a_response_only_step_the_same_way():
     executor = _Executor({})
     aggregator = _Aggregator()
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("speech", "已为您避开")
         yield ("speech", "此路段。")
         yield ("speech", "前方畅通。")

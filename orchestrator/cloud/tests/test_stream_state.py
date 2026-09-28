@@ -244,7 +244,7 @@ class _Spy:
         self.script = script
         self.stream_calls, self.unary_calls = [], []
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         self.stream_calls.append(intent)
         for item in self.script:
             yield item

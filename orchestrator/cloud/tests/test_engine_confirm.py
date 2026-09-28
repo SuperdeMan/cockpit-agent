@@ -634,7 +634,7 @@ def test_batch_reminder_cleanup_crosses_agent_clarify_and_engine_resume():
             return []
 
     memory = _Memory()
-    agent_ctx = Context("sess-1", "u1", "v1", memory)
+    agent_ctx = Context("sess-1", "u1", "v1", memory, meta={"granted_scopes": "profile.read"})
     agent = ReminderAgent()
     agent.store = ReminderStore(dsn="")
     asyncio.run(agent.store.init())

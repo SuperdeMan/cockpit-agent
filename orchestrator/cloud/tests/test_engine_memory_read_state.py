@@ -66,7 +66,7 @@ class _Spy:
         self.unary_calls.append(intent)
         return _Resp(speech="（chitchat 兜底）")
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         self.unary_calls.append(intent)
         yield ("final", _Resp(speech="（chitchat 兜底）"))
 
@@ -146,7 +146,7 @@ def test_memory_question_with_memory_unavailable_is_answered_honestly(outcome_sp
     assert outcome_spy[-1] == "memory_unavailable"
 
 
-@pytest.mark.parametrize("state", [mr.FOUND, mr.NONE, mr.OFF])
+@pytest.mark.parametrize("state", [mr.FOUND, mr.NONE])
 def test_memory_question_reaches_the_planner_when_memory_is_readable(state):
     """**误伤对照**：读得到（哪怕是空的）就照旧进 Planner——「没有」也是一个可以如实答的事实。"""
     spy = _Spy(memory_state=state)
@@ -207,3 +207,11 @@ def test_constraint_question_without_a_session_constraint_reaches_the_planner():
     spy = _Spy()
     _run(_engine(spy), "我今天说过不吃辣吗", "s-cr-3")
     assert spy.unary_calls, "空账被短路吞掉了"
+
+
+def test_memory_off_is_not_empty_and_not_a_dependency_outage(outcome_spy):
+    spy = _Spy(memory_state=mr.OFF)
+    final = _final(_run(_engine(spy), "你还记得我不吃辣吗", "s-memory-off"))
+    assert final["speech"] == mr.MEMORY_OFF_SPEECH
+    assert not spy.unary_calls and spy.llm_calls == 0
+    assert outcome_spy[-1] == "memory_off"

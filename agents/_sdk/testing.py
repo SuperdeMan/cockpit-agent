@@ -27,7 +27,8 @@ from .result import AgentResult
 
 def make_context(session_id: str = "test-sess", user_id: str = "u1",
                  vehicle_id: str = "v1", context_values: dict | None = None,
-                 history: list | None = None) -> Context:
+                 history: list | None = None,
+                 granted_permissions=("profile.read", "location.read", "vehicle.read.state", "camera.frame")) -> Context:
     mem = AsyncMock()
     mem.get_context.return_value = context_values or {}
     mem.get_session.return_value = history or []
@@ -44,7 +45,20 @@ def make_context(session_id: str = "test-sess", user_id: str = "u1",
         return items, memory_read.read_state(items)
 
     mem.recall_read.side_effect = _recall_read
-    return Context(session_id, user_id, vehicle_id, mem)
+    # Positive business fixtures carry explicit read grants. Security tests pass
+    # an empty set or construct the real Context/servicer directly.
+    ctx = Context(session_id, user_id, vehicle_id, mem,
+                  meta={"granted_scopes": ",".join(granted_permissions)})
+    import json, time
+    aliases = {"vehicle.battery": "battery", "vehicle.speed": "speed_kmh", "vehicle.gear": "gear"}
+    values = {aliases[k]: v for k, v in (context_values or {}).items() if k in aliases}
+    if values:
+        ctx._projection_meta = {"vehicle_observation": json.dumps({
+            "version": 2, "vehicle_id": vehicle_id, "state": values,
+            "signals": {k: {"quality": "good", "freshness": "bounded",
+                            "expires_at_ms": int(time.time() * 1000) + 60000,
+                            "source_kind": "simulated"} for k in values}})}
+    return ctx
 
 
 async def run_handle(agent, intent_name: str, slots: dict | None = None,

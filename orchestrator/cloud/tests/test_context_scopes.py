@@ -16,19 +16,19 @@ from orchestrator.cloud.models import PlanContext, Step
 
 def _ctx(prefs, granted_permissions=None):
     return SimpleNamespace(
-        prefs=prefs,
-        granted_permissions=list(granted_permissions or []),
+        prefs=prefs, user_id="owner", vehicle_id="v1",
+        granted_permissions=list(["profile.read", "location.read", "vehicle.read.state"] if granted_permissions is None else granted_permissions),
     )
 
 
 # ── _merge_meta scope 过滤 ──
 
-def test_merge_meta_no_filter_when_scopes_none():
-    """context_scopes=None（edge/stream/legacy 路径）→ 不过滤，保持既有行为。"""
+def test_merge_meta_omitted_receiver_scopes_no_longer_broadcast_sensors():
+    """Old callers still work but do not implicitly acquire sensor context."""
     ctx = _ctx({"current_lat": "39.9", "vehicle_battery": "80", "answer_length": "short"})
     out = Clients._merge_meta(ctx, {"trace_id": "t"})
-    assert out["current_lat"] == "39.9"
-    assert out["vehicle_battery"] == "80"
+    assert "current_lat" not in out
+    assert "vehicle_battery" not in out
     assert out["answer_length"] == "short"
     assert out["trace_id"] == "t"
 
@@ -55,11 +55,11 @@ def test_merge_meta_keeps_location_when_declared():
     assert "vehicle_battery" not in out      # 未声明 vehicle_state
 
 
-def test_merge_meta_keeps_battery_when_vehicle_state_declared():
+def test_merge_meta_does_not_trust_a_battery_number_without_mirror_provenance():
     ctx = _ctx({"current_lat": "39.9", "vehicle_battery": "80"})
     out = Clients._merge_meta(ctx, {}, context_scopes=["vehicle_state"])
     assert "current_lat" not in out          # 未声明 location
-    assert out["vehicle_battery"] == "80"
+    assert "vehicle_battery" not in out
 
 
 def test_merge_meta_step_meta_overrides_prefs():

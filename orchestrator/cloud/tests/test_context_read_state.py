@@ -21,7 +21,7 @@ def _agent(agent_id):
 
 
 def _ctx(user_id="u1"):
-    return SimpleNamespace(session_id="sess", user_id=user_id, occupant_id="primary")
+    return SimpleNamespace(session_id="sess", user_id=user_id, occupant_id="primary", granted_permissions=["profile.read", "location.read"])
 
 
 class _ReadClients:

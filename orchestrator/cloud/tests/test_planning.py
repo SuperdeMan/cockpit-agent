@@ -684,7 +684,7 @@ def test_replan_keeps_ref_rendered_knowledge_next_to_observation_and_goal(monkey
     decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
         "按天气结果继续",
         [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
-        agents, PlanContext(),
+        agents, PlanContext(user_id="owner", granted_permissions=["profile.read"]),
         working_set=WorkingSet(history=[{"role": "user", "text": "history-marker"}]),
         skill_names=["full:test"], exemplar_names=["full:test#1"],
     ))

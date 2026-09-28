@@ -3,6 +3,9 @@
 WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 """
 from __future__ import annotations
+
+from .context_view import ContextChanged
+from runtime import context_access
 import asyncio
 import contextvars
 import json
@@ -1798,6 +1801,7 @@ class PlanBuilder:
         granted_permissions: 用户已授予的权限列表。规划时过滤掉越权能力，
         LLM 看不到用户无权调用的 Agent/意图（越权能力不暴露给 LLM）。
         """
+        working_set.bind_view(ctx)
         agents = list(working_set.catalog)
         # 权限过滤：只保留用户有权调用的 Agent；被挡下的那半留在手里当**理由**
         scope_blocked_agents: list = []
@@ -2394,12 +2398,16 @@ class PlanBuilder:
         if correction:
             user_msg += correction
         try:
+            working_set.context_view.check()
             raw = await self._llm([
                 {"role": "system", "content": _planner_system()},
                 {"role": "user", "content": user_msg},
             ])
+            working_set.context_view.check()
             logger.info("LLM plan raw: %s", (raw or "")[:500])
             return raw
+        except ContextChanged:
+            raise
         except Exception as e:
             logger.warning("LLM plan exception: %s", e)
             return ""
@@ -2418,6 +2426,7 @@ class PlanBuilder:
         if correction:
             user_msg += correction
         try:
+            working_set.context_view.check()
             content, calls = await self._llm_tools([
                 {"role": "system", "content": _planner_system(
                     toolcall=True, clarification=clarification,
@@ -2425,9 +2434,12 @@ class PlanBuilder:
                 {"role": "user", "content": user_msg},
             ], _submit_plan_tools(
                 catalog, clarification=clarification, plan_only=plan_only))
+        except ContextChanged:
+            raise
         except Exception as e:
             logger.warning("LLM plan toolcall exception: %s", e)
             return "", None
+        working_set.context_view.check()
         args = next((c.get("arguments") for c in (calls or [])
                      if isinstance(c, dict) and c.get("name") == _SUBMIT_PLAN_NAME
                      and isinstance(c.get("arguments"), dict)), None)
@@ -2463,11 +2475,14 @@ class PlanBuilder:
         解析出来的批一进来就换成运行时 ID（`assign_runtime_ids`）——在「已完成步复用」「被拒诉求再试」两道筛**之前**，
         于是它们改写到前序观察的引用永远不会被同名的局部 ID 截胡。
         """
+        if getattr(ctx, "pending_operation_id", "") and not context_access.allowed(ctx, "profile"):
+            raise ContextChanged("stored_context_not_readable")
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
         catalog = _assemble_capability_catalog(agents)
         if working_set is not None:
             working_set.catalog_stats = dict(catalog.catalog_stats)
+            working_set.bind_view(ctx)
         ctx_block = working_set.render_context() if working_set is not None else ""
         sk_block = _skills.render_for_names(
             skill_names, capability_refs=catalog.pair_to_ref)
@@ -2501,11 +2516,17 @@ class PlanBuilder:
         steps: list[Step] = []
         for attempt in range(2):
             try:
+                if working_set is not None:
+                    working_set.context_view.check()
                 raw = await self._llm([
                     {"role": "system", "content": _REPLAN_SYSTEM},
                     {"role": "user", "content": f"{prompt}{correction}"},
                 ])
+                if working_set is not None:
+                    working_set.context_view.check()
                 data = json.loads(self._extract_json(raw))
+            except ContextChanged:
+                raise
             except Exception as exc:
                 logger.warning("Replan failed: %s", exc)
                 return ReplanDecision(done=True)

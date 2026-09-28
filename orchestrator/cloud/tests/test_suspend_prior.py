@@ -72,7 +72,7 @@ class _Spy:
         self.unary_seq = list(unary_seq or [])
         self.unary_calls: list[tuple[str, dict, dict]] = []
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         return
         yield  # pragma: no cover — 空流：D0 无事件 → 安全回退 executor
 
@@ -500,7 +500,7 @@ def test_loop_suspend_excludes_streamed_and_seed_results():
     seed = StepResult("z1", StepStatus.OK, speech="上轮已播报过的结论")
     calls = {"n": 0}
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         from cockpit.agent.v1 import agent_pb2
         calls["n"] += 1
         if calls["n"] == 1:

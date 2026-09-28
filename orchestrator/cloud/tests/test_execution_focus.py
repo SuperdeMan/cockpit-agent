@@ -264,6 +264,7 @@ def test_nothing_to_add_leaves_the_focus_exactly_as_it_was():
 # ── 装配面：assemble 真的把它接上了吗 ─────────────────────────────────────
 
 class _Ctx:
+    granted_permissions = ["profile.read", "location.read"]
     session_id = "s1"
     user_id = "u1"
     occupant_id = "primary"
@@ -489,7 +490,7 @@ def _build(text, last_intent, intents=("sunroof.open", "sunroof.close")):
     agents = [_agent("edge-vehicle", *intents)]
     ws = WorkingSet(catalog=agents,
                     focus=Focus(last_intent=last_intent) if last_intent else None)
-    plan = asyncio.run(builder.build(text, ws, PlanContext(session_id="s1")))
+    plan = asyncio.run(builder.build(text, ws, PlanContext(session_id="s1", user_id="u1", granted_permissions=["profile.read", "location.read"])))
     return plan, calls
 
 

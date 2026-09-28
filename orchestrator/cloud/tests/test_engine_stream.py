@@ -65,7 +65,7 @@ class _StreamSpy:
         self.stream_calls: list[tuple[str, dict]] = []
         self.unary_calls: list[tuple[str, dict]] = []
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         self.stream_calls.append((intent, dict(meta or {})))
         if self.stream_error:
             raise RuntimeError("ExecuteStream unavailable")

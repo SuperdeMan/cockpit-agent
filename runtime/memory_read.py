@@ -94,3 +94,12 @@ def is_memory_recall_question(text: str | None) -> bool:
 MEMORY_UNAVAILABLE_SPEECH = "记忆服务这会儿连不上，我暂时看不到之前记下的内容，稍后再问我一次。"
 #: 会话历史读不到时的话术（执行史 / 数据源两条读出口用）。
 HISTORY_UNAVAILABLE_SPEECH = "我这会儿查不到这个会话的记录，稍后再试。"
+
+
+MEMORY_OFF_SPEECH = "本轮未读取个人记忆，暂时无法核对您之前说过什么。"
+
+
+def memory_read_failure_speech(state: str) -> str:
+    return MEMORY_OFF_SPEECH if state == OFF else MEMORY_UNAVAILABLE_SPEECH
+
+HISTORY_OFF_SPEECH = "本轮未读取历史记录，暂时无法核对之前执行过什么。"

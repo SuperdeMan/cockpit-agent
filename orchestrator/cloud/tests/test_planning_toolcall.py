@@ -58,7 +58,7 @@ async def _no_resolve(query, top_k=1):
 def _build(builder, text="找家川菜馆", *, agents=None, ctx=None, focus=None):
     return asyncio.run(builder.build(
         text, WorkingSet(catalog=agents or _agents(), focus=focus),
-        ctx or PlanContext(session_id="t")))
+        ctx or PlanContext(session_id="t", user_id="owner", granted_permissions=["profile.read", "location.read"])))
 
 
 _ARGS_OK = {"complexity": "simple", "goal": "找川菜",
@@ -1197,7 +1197,7 @@ def test_builder_sends_the_permission_filtered_catalog_in_tool_schema(monkeypatc
     builder = PlanBuilder(spy.llm, _no_resolve, llm_tool_fn=spy.llm_tools)
 
     asyncio.run(builder.build(
-        "找家川菜馆", WorkingSet(catalog=[visible, hidden]), PlanContext(session_id="t"),
+        "找家川菜馆", WorkingSet(catalog=[visible, hidden]), PlanContext(session_id="t", user_id="owner", granted_permissions=["profile.read", "location.read"]),
         granted_permissions=[],
     ))
 
@@ -1221,7 +1221,7 @@ def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
     builder = PlanBuilder(spy.llm, _no_resolve, llm_tool_fn=spy.llm_tools)
 
     plan = asyncio.run(builder.build(
-        "找家川菜馆", WorkingSet(catalog=[visible, hidden]), PlanContext(session_id="t"),
+        "找家川菜馆", WorkingSet(catalog=[visible, hidden]), PlanContext(session_id="t", user_id="owner", granted_permissions=["profile.read", "location.read"]),
         granted_permissions=[],
     ))
 

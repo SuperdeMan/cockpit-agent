@@ -1,5 +1,7 @@
 """把 BaseAgent 包装成 gRPC Agent 服务并自注册到 Registry。"""
 from __future__ import annotations
+
+from runtime.context_access import project_meta
 import asyncio
 import contextlib
 import os
@@ -64,7 +66,7 @@ def _context(req, memory) -> Context:
     的既有惯例）——**改这一处，全部 Agent 的 recall/remember 自动按乘员隔离**（M4 P4）。"""
     c = req.context
     occ = (dict(getattr(req, "meta", {}) or {}).get("occupant_id") or "").strip()
-    return Context(c.session_id, c.user_id, c.vehicle_id, memory, occ or "primary")
+    return Context(c.session_id, c.user_id, c.vehicle_id, memory, occ or "primary", meta=dict(req.meta))
 
 
 class _Servicer(agent_pb2_grpc.AgentServicer):
@@ -82,14 +84,16 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
                                 dict(request.meta), dict(request.intent.slots))
         if reason:
             return rejected(reason)
-        meta = dict(request.meta)
+        ctx = _context(request, self.agent.memory)
+        meta = project_meta(ctx, dict(request.meta), getattr(getattr(self.agent, "manifest", None), "context_scopes", ()))
+        ctx._projection_meta = meta
         _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack
         # 观测：agent 进程内的 span/结构化日志自动携带 trace/session（一处设置全 Agent 覆盖）
         set_trace_id(meta.get("trace_id", ""))
         set_session_id(request.session_id)
         try:
             res = await self.agent.handle(
-                _intent_view(request), _context(request, self.agent.memory), meta)
+                _intent_view(request), ctx, meta)
             return _result_to_proto(res)
         except Exception as e:
             return agent_pb2.ExecuteResponse(
@@ -107,7 +111,8 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
             yield agent_pb2.ExecuteEvent(final=rejected(reason))
             return
         iv, ctx = _intent_view(request), _context(request, self.agent.memory)
-        meta = dict(request.meta)
+        meta = project_meta(ctx, dict(request.meta), getattr(getattr(self.agent, "manifest", None), "context_scopes", ()))
+        ctx._projection_meta = meta
         _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack
         set_trace_id(meta.get("trace_id", ""))
         set_session_id(request.session_id)

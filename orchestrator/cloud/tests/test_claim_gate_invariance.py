@@ -165,7 +165,7 @@ def test_t2_the_review_split_is_held_and_the_result_carries_what_was_released():
 
     prefix = "这" * 160
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("speech", prefix + "已")
         yield ("speech", "为您避开此路段。")
         yield ("speech", "前方畅通。")
@@ -214,7 +214,7 @@ def test_t2_final_is_what_was_released_even_when_the_agent_final_text_differs():
             captured["speech"] = results[-1].speech
             return {"speech": results[-1].speech, "actions": [], "cards": []}
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("speech", "已为您避开此路段。")
         yield ("speech", "前方畅通。")
         from cockpit.agent.v1 import agent_pb2

@@ -68,14 +68,7 @@ THIRD_PARTY_DENY_PREFIXES: set[str] = {
 }
 
 
-def is_scope_covered(required: str, effective: set[str]) -> bool:
-    """判断 required scope 是否被 effective 集合覆盖（支持父子覆盖）。
-
-    拥有 vehicle.control 覆盖 vehicle.control.hvac；
-    拥有 vehicle.control.hvac 不覆盖 vehicle.control.window。
-    """
-    parts = required.split(".")
-    return any(".".join(parts[:i]) in effective for i in range(len(parts), 0, -1))
+from runtime.scope import is_scope_covered  # noqa: E402,F401 — shared unchanged semantics
 
 
 def deny_third_party(scopes: set[str]) -> set[str]:

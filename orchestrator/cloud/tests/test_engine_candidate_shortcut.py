@@ -84,7 +84,7 @@ class _Spy:
             return self.unary_seq.pop(0)
         return _Resp(speech=f"（{intent} 兜底）")
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         """**流式与 unary 共用同一份响应队列**，这是刻意的。
 
         单步计划走 D0 流式直通而不是 executor——本仓为「新增挂点没枚举全部执行路径」

@@ -57,6 +57,8 @@ CATEGORY_OF: dict[str, str] = {
     "candidate_missing": CAT_AMBIGUOUS,  # 引用了候选、一份都没有
     "fact_answered": CAT_SESSION,        # 候选聚合 / 挂起状态 / 数据源 / 执行史
     "constraint_noted": CAT_SESSION,     # 纯偏好陈述已登记（W13 F09-a）
+    "memory_off": CAT_PERMISSION,      # 未读取，不等同空记录或依赖故障
+    "context_invalidated": CAT_PERMISSION,
     "memory_unavailable": CAT_FAILURE,   # 在问记忆而记忆读不到（批 5 W17）：说查不到，不说没有
     # 规划轮出口
     "not_addressed": CAT_NOT_ADDRESSED,  # 语音源 + 模型判非受话

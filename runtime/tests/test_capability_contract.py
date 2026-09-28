@@ -57,6 +57,7 @@ def test_frozen_production_inventory_and_legacy_roundtrip():
     from scripts.capability_inventory import collect_manifests
     from registry.store import _manifest_to_dict, _dict_to_manifest
     count = 0
+    strict_migrations = set()
     for m in collect_manifests():
         cc.validate_manifest(m)
         restored = _dict_to_manifest(_manifest_to_dict(m))
@@ -69,9 +70,13 @@ def test_frozen_production_inventory_and_legacy_roundtrip():
                 cc.validate_capability(restored, c)
                 count += 1
             else:
+                strict_migrations.add((restored.agent_id, c.intent))
                 with pytest.raises(cc.ContractError):
                     cc.validate_capability(restored, c)
-    assert count == 156
+    assert count == 152
+    assert strict_migrations == {("road-safety", intent) for intent in (
+        "safety.driving_advice", "safety.driver_state", "safety.weather_alert", "safety.road_condition")}
+    assert len(cc.migration_inventory()) == 156  # immutable historical whitelist
 
 
 def test_description_only_edits_keep_abi_but_authority_edits_do_not():

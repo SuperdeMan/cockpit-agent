@@ -335,7 +335,7 @@ class LoopController:
                     async for kind, payload in self._stream(
                             step.endpoint, step.intent, step.slots,
                             step_call_context(step, ctx), step.meta,   # W16-b
-                            timeout=timeout):
+                            timeout=timeout, context_scopes=step.context_scopes):
                         if kind == "speech":
                             if gate is not None:
                                 payload = gate.feed(payload)

@@ -109,7 +109,7 @@ class _EscSpy:
         self.unary_ctx_raw_texts: list[str] = []
         self.calls: list[tuple[str, str, dict, dict]] = []
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         self.stream_calls.append((intent, dict(slots or {}), dict(meta or {})))
         self.stream_ctx_raw_texts.append(str(getattr(ctx, "raw_text", "") or ""))
         self.calls.append(("stream", intent, dict(slots or {}), dict(meta or {})))

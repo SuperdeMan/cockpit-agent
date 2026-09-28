@@ -59,6 +59,9 @@ async def install_privacy_delete_responder(
     await require_ready_shared_redis_backend(engine.session)
 
     async def delete(user_id: str, _action: str) -> bool:
+        manager = getattr(engine, "context", None)
+        if manager is not None:
+            manager.invalidate_owner(user_id)
         return await engine.session.delete_owner(user_id)
 
     return await install_delete_responder(

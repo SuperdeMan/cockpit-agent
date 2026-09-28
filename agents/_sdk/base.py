@@ -10,6 +10,7 @@ ws2 P0：注入 RegistryClient，AgentClient 经 Registry 动态解析 endpoint�
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from runtime import context_access, memory_read
 
 from .clients import LLMClient, MemoryClient, RegistryClient
 from .ledger import TaskLedger
@@ -31,7 +32,7 @@ class IntentView:
 class Context:
     """会话上下文句柄。按需向 Memory 拉取声明的 scopes（隐私最小化）。"""
     def __init__(self, session_id: str, user_id: str, vehicle_id: str, memory: MemoryClient,
-                 occupant_id: str = "primary"):
+                 occupant_id: str = "primary", *, meta: dict | None = None):
         self.session_id = session_id
         self.user_id = user_id
         self.vehicle_id = vehicle_id
@@ -39,20 +40,56 @@ class Context:
         # **只用于记忆归属**——权限判定在编排层按 granted_scopes，与本字段无关（RFC §6.1 红线）。
         self.occupant_id = occupant_id or "primary"
         self._memory = memory
+        authority = dict(meta if meta is not None else get_current_meta() or {})
+        self.granted_permissions = [s.strip() for s in authority.get("granted_scopes", "").split(",") if s.strip()]
+        self.prefs = {"memory_enabled": authority.get("memory_enabled", "true")}
+        self.read_states = {}
+        self._projection_meta = {}
+        self._read_disabled = set()
+        self._read_binding = (self.session_id, self.user_id, self.vehicle_id, self.occupant_id)
+        self._read_domains = {d for d in context_access.READ_SCOPES if context_access.allowed(self, d)}
+
+    def _can_read(self, domain="profile"):
+        bound = (self.session_id, self.user_id, self.vehicle_id, self.occupant_id) == self._read_binding
+        allowed = domain in self._read_domains and domain not in self._read_disabled and bound and context_access.allowed(self, domain)
+        if not allowed:
+            self._read_disabled.add(domain)
+            self.read_states[domain] = memory_read.OFF
+        return allowed
+
 
     async def fetch(self, *scopes: str) -> dict:
-        if not scopes:
-            return {}
-        # M-B：带上本轮 owner——每个 Agent 早就持有 ctx.occupant_id，缺的一直是
-        # 把它传下去这一步，于是 profile.* 读写恒落 primary。
-        return await self._memory.get_context(
-            self.session_id, self.user_id, self.vehicle_id, list(scopes),
+        # The legacy KV interface remains a dict; read_states keeps denial/off
+        # distinct from an authoritative empty result.
+        values = {}
+        vehicle_keys = {"vehicle.battery": "battery", "vehicle.speed": "speed_kmh", "vehicle.gear": "gear"}
+        if any(s.startswith("vehicle.") for s in scopes):
+            if self._can_read("vehicle_state"):
+                observed, _ = context_access.vehicle_projection(self._projection_meta, self.vehicle_id)
+                values = {s: str(observed[vehicle_keys[s]]) for s in scopes
+                          if s in vehicle_keys and vehicle_keys[s] in observed}
+                self.read_states["vehicle_state"] = memory_read.FOUND if values else memory_read.UNAVAILABLE
+        requested = [s for s in scopes if s.startswith("profile.") and self._can_read("profile")]
+        if not requested:
+            return values
+        profile = await self._memory.get_context(
+            self.session_id, self.user_id, self.vehicle_id, requested,
             occupant_id=self.occupant_id)
+        if not self._can_read():
+            return {}
+        self.read_states["profile"] = memory_read.read_state(profile)
+        values.update({k: v for k, v in profile.items() if k in requested})
+        return values
 
     async def history(self, last_n: int = 6) -> list[dict]:
-        return await self._memory.get_session(
-            self.session_id, last_n, user_id=self.user_id,
-            occupant_id=self.occupant_id)
+        if not self._can_read():
+            return []
+        values = await self._memory.get_session(
+            self.session_id, last_n, user_id=self.user_id, occupant_id=self.occupant_id)
+        if not self._can_read():
+            return []
+        self.read_states["profile"] = memory_read.read_state(values)
+        return values
 
     async def save_profile(self, key: str, value) -> bool:
         """写用户画像字段（如常用地点 places）。value 为可 JSON 序列化对象。
@@ -92,22 +129,27 @@ class Context:
         """语义召回与当前问题相关的偏好/事件（如点餐前取口味）。无 user_id 返回空。
         精确画像读取传 predicate_prefix（如 "place." "taste."）走谓词精确而非向量。
         subject 非空=只取「关于该人」的记忆（G6，如 subject="老婆" 取老婆的口味）。"""
-        if not self.user_id:
+        if not self._can_read():
             return []
-        return await self._memory.recall(
+        values = await self._memory.recall(
             self.user_id, query, occupant_id=self.occupant_id, scopes=scopes,
             kinds=kinds, top_k=top_k,
             predicate_prefix=predicate_prefix, min_score=min_score,
             min_confidence=min_confidence, max_age_days=max_age_days, subject=subject)
+        return values if self._can_read() else []
 
     async def recall_read(self, query: str = "", **kw) -> tuple[list[dict], str]:
         """`recall` 的三态版（批 5 W17）→ `(items, state)`；无 user_id 返回 `([], "off")`。
         state ∈ `runtime.memory_read`：found / none / unavailable / off。"""
         from runtime import memory_read
-        if not self.user_id:
+        if not self._can_read():
             return [], memory_read.OFF
         kw.setdefault("occupant_id", self.occupant_id)
-        return await self._memory.recall_read(self.user_id, query, **kw)
+        values, state = await self._memory.recall_read(self.user_id, query, **kw)
+        if not self._can_read():
+            return [], memory_read.OFF
+        self.read_states["profile"] = state
+        return values, state
 
     async def resolve_person_place(self, person_word: str) -> dict | None:
         """人称词 → 常去地点（M2 记忆图谱 P1 关系边一跳，「去接孩子放学」）。
@@ -115,11 +157,12 @@ class Context:
         返回 `{person, place, object_ref}`；**查不到或有歧义返回 None**——调用方必须
         诚实追问，绝不用相似度猜（导航到错学校比查不到更糟）。
         """
-        if not self.user_id or not person_word:
+        if not self._can_read() or not person_word:
             return None
         try:
-            return await self._memory.resolve_person_place(
+            value = await self._memory.resolve_person_place(
                 self.user_id, person_word, occupant_id=self.occupant_id)
+            return value if self._can_read() else None
         except Exception as e:
             import logging
             logging.getLogger("agent.sdk").debug("resolve_person_place skipped: %s", e)

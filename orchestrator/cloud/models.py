@@ -464,6 +464,7 @@ class PlanContext:
     task_identity: dict = field(default_factory=dict)
     result_steps: dict = field(default_factory=dict)  # projection index of existing Step objects
     pending_result_states: dict = field(default_factory=dict)  # request-local, owner-filtered records
+    context_view: object = field(default=None, repr=False, compare=False)  # request-local; never serialized
 
 
 @dataclass

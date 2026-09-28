@@ -79,7 +79,7 @@ def _build(reply, text, focus=None):
     working_set = WorkingSet(catalog=_agents(), history=[
         {"role": "user", "text": "附近的咖啡店"},
         {"role": "assistant", "text": "为您找到 10 家咖啡厅，推荐：NOWWA挪瓦咖啡、库迪咖啡、瑞幸咖啡。"}], focus=focus)
-    return asyncio.run(builder.build(text, working_set, PlanContext(session_id="t")))
+    return asyncio.run(builder.build(text, working_set, PlanContext(session_id="t", user_id="owner", granted_permissions=["profile.read", "location.read"])))
 
 
 def _intents(plan):

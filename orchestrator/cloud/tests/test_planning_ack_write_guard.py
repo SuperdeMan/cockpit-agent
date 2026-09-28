@@ -81,7 +81,7 @@ def _build(reply, text, history=None):
 
     builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
     working_set = WorkingSet(catalog=_agents(), history=list(history or []))
-    return asyncio.run(builder.build(text, working_set, PlanContext(session_id="t")))
+    return asyncio.run(builder.build(text, working_set, PlanContext(session_id="t", user_id="owner", granted_permissions=["profile.read", "location.read"])))
 
 
 def _intents(plan):

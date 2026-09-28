@@ -9,16 +9,17 @@ fallback: chitchat
 
 capabilities:
   - intent: safety.driving_advice
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
         destination:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: unspecified
         vehicle_models: []
@@ -57,12 +58,13 @@ capabilities:
   # 判据（本仓既有）：**改实现不等于加能力——planner 只看得见 manifest。**
   # examples 按「只有本能力答得了」写：这几句除了安全助手没有第二个域该接。
   - intent: safety.driver_state
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters: {}
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: unspecified
         vehicle_models: []
@@ -84,16 +86,17 @@ capabilities:
   # 天然不判别化**；P1 把它们批量导入范例库当金标，冲突就被激活成了判定尺的自相矛盾。
   # 裁定：裸问预警本身归 info.alerts；带驾驶影响/上路注意归本条。
   - intent: safety.weather_alert
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
         city:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: unspecified
         vehicle_models: []
@@ -108,16 +111,21 @@ capabilities:
     slots: [city]
     examples: ["这天气预警影响开车吗", "有预警的话路上要注意什么"]
   - intent: safety.road_condition
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
         route:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+        origin:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: reject
       applicability:
         status: unspecified
         vehicle_models: []
@@ -161,4 +169,4 @@ route_hints:
     guard: '(?:视频|音乐|歌曲|游戏|软件|程序|空调|设备|手机|电脑|大灯|远光|近光|雾灯|日行灯|氛围灯|阅读灯|转向灯|刹车灯|尾灯|示宽灯|双闪|路口|红绿灯|信号灯|交通灯|闯)'
 
 requires_permissions: [location.read, network.external]
-context_scopes: [location]   # 透传给子 agent（navigation）
+context_scopes: [location, vehicle_state]   # 透传给子 agent（navigation）

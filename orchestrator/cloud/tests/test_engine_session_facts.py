@@ -91,7 +91,7 @@ class _Spy:
             return self.unary_seq.pop(0)
         return _Resp(speech=f"（{intent} 兜底）")
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         self.unary_calls.append(intent)
         yield ("final", self.unary_seq.pop(0) if self.unary_seq
                else _Resp(speech=f"（{intent} 兜底）"))

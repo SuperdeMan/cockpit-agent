@@ -303,7 +303,7 @@ def _build(text, focus, prefs, tool_replies, text_replies):
     spy = _Spy(text_replies, tool_replies)
     builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve,
                           llm_tool_fn=spy.llm_tools)
-    ctx = PlanContext(session_id="retry-matrix")
+    ctx = PlanContext(session_id="retry-matrix", user_id="owner", granted_permissions=["profile.read", "location.read"])
     ctx.prefs = dict(prefs)
     plan = asyncio.run(builder.build(
         text, WorkingSet(catalog=_agents(), focus=focus), ctx))

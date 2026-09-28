@@ -11,7 +11,8 @@ from contextvars import ContextVar
 import grpc
 
 from runtime.grpcio import aio_channel
-from runtime import admission, memory_read
+from runtime import admission, memory_read, context_access
+from .context_view import check_current, check_context
 from runtime import capability_contract as cap_contract
 
 logger = logging.getLogger("planner.clients")
@@ -254,7 +255,9 @@ class Clients:
             model=model, temperature=temperature,
             max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
         self._stamp_llm_meta(req, thinking=thinking)
+        check_current()
         resp = await self._llm_stub().Complete(req, timeout=60 if thinking else 30)
+        check_current()
         self._llm_model_used = str(resp.model_used or "")
         return resp.content
 
@@ -291,7 +294,9 @@ class Clients:
             temperature=0.3, max_tokens=max_tokens)
         req.tools.update(tools or {})
         self._stamp_llm_meta(req)
+        check_current()
         resp = await self._llm_stub().Complete(req, timeout=30)
+        check_current()
         self._llm_model_used = str(resp.model_used or "")
         calls: list[dict] = []
         if resp.HasField("tool_calls"):
@@ -316,45 +321,34 @@ class Clients:
             self._ch_agents[endpoint] = aio_channel(endpoint)
         return agent_pb2_grpc.AgentStub(self._ch_agents[endpoint])
 
-    # 敏感上下文键 → 所需 scope。Agent 经 manifest context_scopes 声明后才下发（最小化）。
-    _SENSITIVE_SCOPE = {
-        "current_lat": "location", "current_lng": "location",
-        "current_accuracy_m": "location", "current_location_at": "location",
-        "current_location_source": "location", "vehicle_battery": "vehicle_state",
-        # M4 P4：车外单帧的引用。只有 manifest 声明 context_scopes: [vision] 的 Agent 收得到
-        # ——图像引用属敏感上下文，不该随每轮广播给全部 Agent。
-        "vision_frame_id": "vision",
-    }
-
     @classmethod
     def _merge_meta(cls, ctx, meta: dict | None, context_scopes=None) -> dict:
-        """会话级偏好（ctx.prefs）作底，step.meta 覆盖——后者携带 confirmed 等运行期标记。
-
-        context_scopes 非 None（cloud unary 下发）时按声明最小化敏感键：未声明 location/
-        vehicle_state 的 Agent 收不到精确位置/电量；非敏感偏好（answer_length 等）始终下发。
-        None（edge/stream/legacy 路径）= 不过滤，保持既有行为（电量供端侧安全门控）。"""
+        """One projection for unary/stream/legacy after merging runtime metadata."""
+        check_context(ctx)
         prefs = dict(getattr(ctx, "prefs", None) or {})
-        if context_scopes is not None:
-            allowed = set(context_scopes or [])
-            prefs = {k: v for k, v in prefs.items()
-                     if cls._SENSITIVE_SCOPE.get(k) is None
-                     or cls._SENSITIVE_SCOPE.get(k) in allowed}
-        # granted_scopes 是网关鉴权后进入 PlanContext 的权威权限。prefs 与 step.meta
-        # 都可能含客户端/Planner 伪造值，合并前后都必须剥离，再仅从 ctx 重建。
-        prefs.pop("granted_scopes", None)
         prefs.pop(cap_contract.HEADER, None)
-        safe_meta = dict(meta or {})
-        safe_meta.pop("granted_scopes", None)
-        merged = {**prefs, **safe_meta}
-        granted = sorted({
-            str(scope).strip()
-            for scope in (getattr(ctx, "granted_permissions", None) or [])
-            if str(scope).strip()
-        })
+        merged = {**prefs, **dict(meta or {})}
+        merged.pop("granted_scopes", None)
+        for key in ("current_lat", "current_lng", "current_accuracy_m", "current_location_at",
+                    "current_location_source", "vision_frame_id", "occupant_name"):
+            merged.pop(key, None)
+            if key in prefs:
+                merged[key] = prefs[key]
+        # Client/step metadata cannot supply authoritative vehicle observations.
+        merged.pop("vehicle_battery", None)
+        merged.pop("vehicle_observation", None)
+        view = check_context(ctx)
+        if view is not None and "vehicle_state" in (context_scopes or ()):
+            values, provenance = view.vehicle(consume=True, keys=context_access.VEHICLE_KEYS)
+            if values:
+                import json
+                merged["vehicle_observation"] = json.dumps({
+                    "version": 2, "vehicle_id": ctx.vehicle_id, "state": values,
+                    "signals": {k: provenance["signals"][k] for k in values}}, separators=(",", ":"))
+        merged = context_access.project_meta(ctx, merged, context_scopes)
+        granted = sorted(context_access.grants(ctx))
         if granted:
             merged["granted_scopes"] = ",".join(granted)
-        # 观测贯通：trace_id 随 meta 下发——SDK server 据此 set_trace_id，Agent 进程内
-        # span/日志/LLM 调用自动归属本轮 trace；子调用经父 meta 透传天然继承。
         tid = getattr(ctx, "trace_id", "") or ""
         if tid:
             merged.setdefault("trace_id", tid)
@@ -406,11 +400,16 @@ class Clients:
         if denied is not None:
             return denied
         req = self._exec_request(intent, slots, ctx, meta, context_scopes)
-        return await stub.Execute(req, timeout=timeout)
+        view = check_context(ctx)
+        if view is not None:
+            timeout = view.remaining(timeout)
+        result = await stub.Execute(req, timeout=timeout)
+        check_context(ctx)
+        return result
 
     async def call_agent_stream(self, endpoint: str, intent: str, slots: dict,
                                 ctx=None, meta: dict | None = None,
-                                timeout: float | None = None):
+                                timeout: float | None = None, context_scopes=None):
         """流式调用 Agent.ExecuteStream，归一化为 (kind, payload) 元组：
         ("speech", str) / ("action", AgentAction) / ("final", ExecuteResponse)。
         供 engine 单步开放域流式直通（边想边说）。
@@ -424,8 +423,12 @@ class Clients:
         if denied is not None:
             yield ("final", denied)
             return
-        req = self._exec_request(intent, slots, ctx, meta)
+        req = self._exec_request(intent, slots, ctx, meta, context_scopes)
+        view = check_context(ctx)
+        if view is not None:
+            timeout = view.remaining(timeout)
         async for ev in stub.ExecuteStream(req, timeout=timeout):
+            check_context(ctx)
             which = ev.WhichOneof("event")
             if which == "speech_delta":
                 yield ("speech", ev.speech_delta)

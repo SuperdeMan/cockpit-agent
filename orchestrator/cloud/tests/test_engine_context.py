@@ -61,7 +61,7 @@ class _CtxSpy:
         return self._memories
 
     # 单步计划会先尝试流式；spy 不支持 → 抛错 → engine 回退 unary（覆盖回退路径）
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         raise RuntimeError("no stream")
         yield  # pragma: no cover
 

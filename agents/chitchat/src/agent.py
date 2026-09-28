@@ -282,13 +282,13 @@ class ChitchatAgent(BaseAgent):
 
     async def _build_messages(self, intent, ctx, meta):
         """返回 `(msgs, 本轮召回到的记忆)`——后者供确定性出处披露判定。
-        **记忆读不到 + 在问记忆 ⇒ 返回 `(None, None)`**：调用方走诚实话术，不让模型拿着一份
+        **记忆读不到 + 在问记忆 ⇒ 返回 `(None, 读态)`**：调用方走诚实话术，不让模型拿着一份
         「兜底的空」去答「你没说过」（两条路径都经这里，一个入口）。"""
         text = intent.raw_text or intent.slots.get("text", "")
         sys = _system(meta, text)
         mem_ctx, mems, state = await self._memory_context(intent, ctx)
-        if state == memory_read.UNAVAILABLE and memory_read.is_memory_recall_question(text):
-            return None, None
+        if state in (memory_read.UNAVAILABLE, memory_read.OFF) and memory_read.is_memory_recall_question(text):
+            return None, state
         if mem_ctx:
             sys = f"{sys}\n\n{mem_ctx}"
         msgs = [{"role": "system", "content": sys}]
@@ -357,7 +357,7 @@ class ChitchatAgent(BaseAgent):
         model = _resolve_model(meta, intent.slots)
         msgs, mems = await self._build_messages(intent, ctx, meta)
         if msgs is None:            # W17：记忆读不到、又在问记忆 ⇒ 诚实说查不到
-            return AgentResult(speech=memory_read.MEMORY_UNAVAILABLE_SPEECH)
+            return AgentResult(speech=memory_read.memory_read_failure_speech(mems))
         reply = await self.llm.complete(msgs, model=model, temperature=0.8, max_tokens=max_tokens)
         if not reply.strip():  # MiMo 偶发空响应：兜底重试一次
             reply = await self.llm.complete(msgs, model=model, temperature=0.9, max_tokens=max_tokens)
@@ -387,8 +387,8 @@ class ChitchatAgent(BaseAgent):
         model = _resolve_model(meta, intent.slots)
         msgs, mems = await self._build_messages(intent, ctx, meta)
         if msgs is None:            # W17：同 handle，一个入口
-            yield ("speech", memory_read.MEMORY_UNAVAILABLE_SPEECH)
-            yield ("final", AgentResult(speech=memory_read.MEMORY_UNAVAILABLE_SPEECH))
+            yield ("speech", memory_read.memory_read_failure_speech(mems))
+            yield ("final", AgentResult(speech=memory_read.memory_read_failure_speech(mems)))
             return
         buf = ""
         held = ""

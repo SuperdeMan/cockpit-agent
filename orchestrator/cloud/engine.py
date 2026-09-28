@@ -5,6 +5,8 @@ WS3 §3。串联 planning / executor / aggregator / session。
 且 confirmed 标记严格限定在挂起那一步——后续 require_confirm 步骤各自再走确认（架构 §9.1）。
 """
 from __future__ import annotations
+
+from .context_view import CURRENT_VIEW, ContextChanged
 import asyncio
 import dataclasses
 import json
@@ -413,7 +415,7 @@ def _context_stats_attrs(working_set) -> dict:
         out["history_trimmed"] = "true"
     # 批 5 W17：两格读态（found / none / unavailable / off）——生产里「记忆到底多常读不到」的读数；
     # 值域封闭（`runtime.memory_read.READ_STATES`），不是用户内容。
-    for key in ("history_state", "memory_state"):
+    for key in ("history_state", "memory_state", "vehicle_state"):
         value = stats.get(key)
         if isinstance(value, str) and value in memory_read.READ_STATES:
             out[key] = value
@@ -478,17 +480,34 @@ class PlannerEngine:
         # （规划期 catalog 过滤 + dispatch 执行期硬拒同源复用），编排层不再持权限引擎。
         # trust-cap 强上限（K4）待 scope 层次化/IdP 后接线，届时扩 check_permission，不在此处复注入。
         self.context = ContextManager(clients, session)  # 上下文统一门面（装配+焦点态）
+        self.context.vehicle_reader = getattr(getattr(executor, "_mirror", None), "view", None)
         self.loop = loop or LoopController(
             planner, executor, aggregator, self._suspend,
             stream_fn=getattr(clients, 'call_agent_stream', None))
 
     async def run(self, request) -> AsyncIterator[dict]:
+        ctx = self._build_context(request)
+        view = self.context.bind_view(ctx)
+        token = CURRENT_VIEW.set(view)
+        try:
+            async for event in self._run_bound(request, ctx):
+                view.check()
+                yield event
+        except ContextChanged:
+            await _emit_engine_lifecycle(ctx, "cloud.context_invalidated", "system.context_changed")
+            event = {"kind": "final", "speech": "本轮上下文或授权已变化，已停止继续处理；已提交的操作请先核对结果。", "actions": []}
+            await self._emit_outcome(ctx, "context_invalidated", event, [])
+            yield event
+        finally:
+            view.invalidate()
+            CURRENT_VIEW.reset(token)
+
+    async def _run_bound(self, request, ctx) -> AsyncIterator[dict]:
         """编排主循环（外层）：委托 _orchestrate，并把本轮对话落库到 memory。
 
         对话记忆在本轮结束后按 用户→助手 顺序写入——规划阶段读到的是"此前"历史，
         当前这句不污染指代消解（task 2）。memory_enabled=false 时整轮不读写。
         """
-        ctx = self._build_context(request)
         set_trace_id(ctx.trace_id)
         set_session_id(ctx.session_id)  # 云端进程内观测事件/日志自动带会话维度
         # 运行时硬化 D2：请求级 LLM pin——planner/aggregator 的 LLM 调用与 Agent 同脑
@@ -1173,12 +1192,12 @@ class PlannerEngine:
             # 批 5 W17：在问记忆、而记忆**读不到**（RPC 失败 / 服务自报后端掉线）⇒ 说查不到，
             # 不让 chitchat 拿着一份「兜底的空」去答「你没说过」。读得到（哪怕是空的）照旧进规划。
             if (memory_read.is_memory_recall_question(text)
-                    and working_set.memory_state == memory_read.UNAVAILABLE):
-                logger.warning("memory question while memory is unavailable: %s", text[:40])
-                await _emit_engine_lifecycle(
-                    ctx, "cloud.memory_unavailable", "system.memory_unavailable")
-                yield {"kind": "final", "speech": memory_read.MEMORY_UNAVAILABLE_SPEECH,
-                       "actions": [], "_outcome": "memory_unavailable"}
+                    and working_set.memory_state in (memory_read.UNAVAILABLE, memory_read.OFF)):
+                state = working_set.memory_state
+                outcome = "memory_off" if state == memory_read.OFF else "memory_unavailable"
+                await _emit_engine_lifecycle(ctx, "cloud." + outcome, "system." + outcome)
+                yield {"kind": "final", "speech": memory_read.memory_read_failure_speech(working_set.memory_state),
+                       "actions": [], "_outcome": outcome}
                 return
 
             # W13 F09-a：**纯偏好陈述**（「我不吃辣，也不想排长队」）是系统持有的事实的登记，
@@ -1821,6 +1840,8 @@ class PlannerEngine:
     async def _previous_assistant_text(self, ctx: PlanContext, working_set=None,
                                        mem_on: bool = True) -> str:
         """助手上一句：有工作集就从它的历史取，没有（确认那条出口）就读一次最近一对历史；都读不到 ⇒ 空串。"""
+        if working_set is not None:
+            working_set = working_set.projected()
         history = list(getattr(working_set, "history", None) or []) if working_set is not None else None
         if history is None:
             if not mem_on:
@@ -1929,7 +1950,7 @@ class PlannerEngine:
         # 数据源出口本就「有账才劫持」——读不到就是没账，照常进 Planner（域内直答仍在）；
         # 执行史没有第二个能答的人，读不到只能说「查不到」，绝不说「没有记录」。
         history_unavailable = (getattr(working_set, "history_state", "")
-                               == memory_read.UNAVAILABLE)
+                               in (memory_read.UNAVAILABLE, memory_read.OFF))
         # **有账才劫持**：账本空说明这一轮之前没有任何外部数据卡，那就不是
         # 「系统持有的事实」，照常进 Planner——`info.stock` 那条域内直答
         # （重判 5：确定性面早就都在）比一句「我没记到」有用得多。
@@ -1939,7 +1960,9 @@ class PlannerEngine:
             return ("data_provenance", session_facts.provenance_answer(history))
         if session_facts.is_execution_audit_question(text):
             if history_unavailable:
-                return ("execution_audit", memory_read.HISTORY_UNAVAILABLE_SPEECH)
+                speech = (memory_read.HISTORY_OFF_SPEECH if working_set.history_state == memory_read.OFF
+                          else memory_read.HISTORY_UNAVAILABLE_SPEECH)
+                return ("execution_audit", speech)
             return ("execution_audit", session_facts.audit_answer(
                 history, with_time=session_facts.asks_when(text)))
         return None
@@ -1996,7 +2019,7 @@ class PlannerEngine:
             # 边生成边流，长回答会超过旧的 30s，然后走「只流了话术」那档、把已流出的整段替掉
             async for kind, payload in self.clients.call_agent_stream(
                     step.endpoint, step.intent, step.slots,
-                    step_call_context(step, ctx), step.meta):   # W16-b：这一步的起点原话
+                    step_call_context(step, ctx), step.meta, context_scopes=step.context_scopes):   # W16-b：这一步的起点原话
                 if kind == "speech":
                     payload = softener.feed(payload)
                     if gate is not None:
@@ -3428,18 +3451,8 @@ class PlannerEngine:
         # 短路里、不依赖下发，而 B4 判据是「无消费方的声明只会漂移」。本步才是它
         # 真正的消费方，所以到这里才落。
         #
-        # 挂在 `_apply_focus_meta` 而不是 executor：三条执行路径里 D0 流式直通
-        # 走的是 `call_agent_stream(..., step.meta)` 且 `context_scopes=None`
-        # （`_merge_meta` 那条最小化在这条路上整个不生效）——写在 step.meta 上是
-        # **唯一在全部路径上都成立**的做法。「新增挂点必须枚举全部执行路径」，
-        # 本项目已经栽过三次。
-        #
-        # ⚠ **逐步选组，不是全局取最新**（I-030 段 A，2026-08-22）。此前一律下发
-        # 最新那一组，于是「先看瑞幸菜单、再说在麦当劳点第一个」时 `mcd.order`
-        # 那步拿到的是 `source_intent=luckin.menu`——桥侧按域前缀拒收
-        # （**那一侧是 fail-safe 的，没翻错**），但麦当劳那组明明还在焦点里，
-        # 用户的「第一个」就这么白丢了。判据是**结构的、零领域词**：
-        # 步的 intent 域 == 组的 `source_intent` 域。
+        # Focus 是派生 metadata 的唯一生产者；unary/D0/T2 最终都再按
+        # 主体权限与接收方 context_scopes 过滤，不能靠某条快路径绕过。
         for step in plan.steps:
             if "candidates" not in (step.context_scopes or []):
                 continue

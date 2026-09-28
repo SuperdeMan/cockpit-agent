@@ -398,7 +398,7 @@ def test_stream_yields_speech_deltas_for_single_cloud_step():
     executor = _Executor({})
     aggregator = _Aggregator()
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("speech", "正在搜索")
         yield ("speech", "附近的充电站")
         from cockpit.agent.v1 import agent_pb2
@@ -436,7 +436,7 @@ def test_t2_stream_result_is_stamped_with_executed_intent():
     executor = _Executor({})
     aggregator = _Aggregator()
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         from cockpit.agent.v1 import agent_pb2
         from google.protobuf.struct_pb2 import Struct
         data = Struct()
@@ -465,7 +465,7 @@ def test_stream_failure_falls_back_to_executor():
     })
     aggregator = _Aggregator()
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         raise RuntimeError("agent does not support streaming")
         yield  # make it an async generator
 
@@ -502,7 +502,7 @@ def test_stream_need_confirm_suspends_in_loop():
         suspend_calls.append(step_result)
         return {"kind": "final", "speech": step_result.speech, "need_confirm": True}
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         from cockpit.agent.v1 import agent_pb2
         yield ("speech", "确认")
         yield ("final", agent_pb2.ExecuteResponse(
@@ -563,7 +563,7 @@ def test_stream_emits_step_agent_span(monkeypatch):
         suspend_calls.append(step_result)
         return {"kind": "final", "speech": step_result.speech, "need_confirm": True}
 
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         from cockpit.agent.v1 import agent_pb2
         yield ("speech", "确认")
         yield ("final", agent_pb2.ExecuteResponse(
@@ -851,7 +851,7 @@ def _capture_response_only_stream_result(stream_fn):
 
 
 def test_t2_response_only_action_before_final_is_dropped_and_failed_closed():
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         from cockpit.agent.v1 import agent_pb2
 
         yield ("action", {"type": "external.write", "payload": {"id": "x"}})
@@ -868,7 +868,7 @@ def test_t2_response_only_action_before_final_is_dropped_and_failed_closed():
 
 
 def test_t2_response_only_action_without_final_is_terminal_without_unary_fallback():
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("action", {"type": "external.write", "payload": {"id": "x"}})
 
     executor, captured, events = _capture_response_only_stream_result(stream_fn)
@@ -882,7 +882,7 @@ def test_t2_response_only_action_without_final_is_terminal_without_unary_fallbac
 
 
 def test_t2_response_only_legal_speech_stream_is_unchanged():
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         from cockpit.agent.v1 import agent_pb2
 
         yield ("speech", "先停车，")
@@ -908,7 +908,7 @@ def test_t2_response_only_legal_speech_stream_is_unchanged():
 
 def test_stream_speech_then_lost_final_does_not_rerun():
     """场景 1：话术已流出、final 丢失 → 不许 unary 重跑（否则话术播两遍）。"""
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("speech", "正在为您查询")
         # 没有 final：流在这里断了
 
@@ -922,7 +922,7 @@ def test_stream_speech_then_lost_final_does_not_rerun():
 def test_stream_action_then_lost_final_marks_outcome_uncertain():
     """场景 2：action 已发出、final 丢失 → 不重跑（重跑=重复副作用），
     且结果标为不确定，不假装成功。"""
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("action", {"type": "vehicle.control",
                           "payload": {"command": "hvac.on"}})
 
@@ -947,7 +947,7 @@ def test_stream_action_then_lost_final_marks_outcome_uncertain():
 
 
 def test_stream_speech_then_lost_final_stamps_empty_result_source():
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("speech", "正在查询")
 
     aggregator = _Aggregator()
@@ -983,7 +983,7 @@ def test_stream_action_then_lost_final_goes_through_readback():
     这里验「查了再说」。step 声明了 state_match 且镜像证实动作生效 →
     话术从「无法确认」升级为「已经生效」。
     """
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("action", {"type": "vehicle.control",
                           "payload": {"command": "hvac.on"}})
 
@@ -1012,7 +1012,7 @@ def test_stream_action_then_lost_final_goes_through_readback():
 def test_stream_no_output_still_falls_back_to_unary():
     """场景 3：零输出（Agent 不支持流式 / 立刻断） → 仍必须回退 unary。
     这条是防修过头的对照：`_outcome_uncertain` 那档不能把正常回退也吃掉。"""
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         return
         yield  # pragma: no cover - 使其成为 async generator
 
@@ -1023,7 +1023,7 @@ def test_stream_no_output_still_falls_back_to_unary():
 
 def test_stream_empty_speech_delta_is_not_output():
     """空 delta 不算流出过输出——否则一个空串就能把 unary 回退整条关掉。"""
-    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30, context_scopes=None):
         yield ("speech", "")
 
     executor, _events = _run_stream_case(stream_fn)

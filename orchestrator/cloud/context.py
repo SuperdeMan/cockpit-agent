@@ -14,6 +14,9 @@
 """
 from __future__ import annotations
 
+from runtime import context_access
+from .context_view import ActiveViews, RequestView, ContextChanged, project_focus, project_working_set
+
 import asyncio
 import inspect
 import json
@@ -397,27 +400,54 @@ class WorkingSet:
     # **声明式**判据置位（本轮命中了某条 `scope: clause` 的 route_hint ⇒ 这一轮有一个
     # 自带完整语义的确定性诉求，不靠指代也说得清），编排核心不认识任何领域词。
     suppress_sticky_places: bool = False
+    context_view: object = field(default=None, repr=False, compare=False)
+    source_states: dict = field(default_factory=dict)
+
+    def bind_view(self, ctx):
+        view = getattr(ctx, "context_view", None)
+        if self.context_view is not None and view is not self.context_view:
+            raise ContextChanged("context_view_owner_changed")
+        if not isinstance(view, RequestView):
+            view = RequestView(ctx)
+            ctx.context_view = view
+        view.check()
+        self.context_view = view
+        visible = self.projected()
+        self.history, self.memories = visible.history, visible.memories
+        self.history_state, self.memory_state = visible.history_state, visible.memory_state
+        self.focus = visible.focus
+        return self
+
+    def projected(self):
+        return project_working_set(self)
 
     def render_context(self) -> str:
         """焦点 + 记忆 + 历史块，统一字符预算、按优先级裁剪。
 
         优先级：焦点 > 记忆 > 历史（焦点/画像比旧对话轮更值得留）。无焦点且预算内时输出与旧
         `_format_memory + _format_history` 逐字一致（不扰动既有 LLM 行为）。"""
-        focus_block = _render_focus(self.focus,
+        visible = self.projected()
+        focus_block = _render_focus(visible.focus,
                                     drop_sticky_places=self.suppress_sticky_places)
-        mem_block = _render_memory(self.memories)
+        mem_block = _render_memory(visible.memories)
+        # Vehicle facts remain a permissioned reference. Consumers requesting
+        # vehicle_state receive a fresh bounded projection at dispatch, rather
+        # than injecting all telemetry into every planning prompt.
+        if self.context_view is not None:
+            self.source_states["vehicle"] = self.context_view.vehicle()[1]
         budget_left = max(0, _CTX_BUDGET - len(focus_block) - len(mem_block))
-        exchanges = int(self.history_exchanges or 0) or _HISTORY_EXCHANGES
+        exchanges = int(visible.history_exchanges or 0) or _HISTORY_EXCHANGES
         hist_block, hist_stats = _render_history_with_stats(
-            self.history, budget=budget_left, exchanges=exchanges)
+            visible.history, budget=budget_left, exchanges=exchanges)
         out = focus_block + mem_block + hist_block
         self.context_stats = {
             "ctx_chars": len(out),
             "focus_chars": len(focus_block),
             "memory_chars": len(mem_block),
+            "vehicle_state": self.source_states.get("vehicle", {}).get("state", memory_read.OFF),
             "history_chars": len(hist_block),
-            "history_state": self.history_state,
-            "memory_state": self.memory_state,
+            "history_state": visible.history_state,
+            "memory_state": visible.memory_state,
             "history_exchanges": exchanges,
             **hist_stats,
         }
@@ -1996,6 +2026,19 @@ class ContextManager:
         self.top_k = top_k if top_k is not None else int(
             os.getenv("PLANNER_CATALOG_TOP_K", "20"))
         self.history_n = history_n
+        self.active_views = ActiveViews()
+        self.vehicle_reader = None
+
+    def bind_view(self, ctx):
+        view = getattr(ctx, "context_view", None)
+        if not isinstance(view, RequestView):
+            view = self.active_views.bind(ctx, self.vehicle_reader)
+        view.check()
+        return view
+
+    def invalidate_owner(self, user_id):
+        self.active_views.invalidate_owner(user_id)
+
 
     async def assemble(self, text: str, ctx, *, mem_on: bool = True,
                        granted_permissions: list[str] | None = None) -> WorkingSet:
@@ -2012,11 +2055,13 @@ class ContextManager:
         async def _off():
             return [], memory_read.OFF
 
+        view = self.bind_view(ctx)
+        private_on = mem_on and context_access.allowed(ctx, "profile")
         exchanges = _pinned_history_exchanges(ctx)
         (history, history_state), (memories, memory_state), focus, (catalog, registry_agents) = \
             await asyncio.gather(
-                self._history(ctx, exchanges=exchanges) if mem_on else _off(),
-                self._recall(text, ctx) if mem_on else _off(),
+                self._history(ctx, exchanges=exchanges) if private_on else _off(),
+                self._recall(text, ctx) if private_on else _off(),
                 self._load_focus(ctx.session_id, ctx.user_id,
                                  occupant_id=getattr(ctx, "occupant_id", ""))
                 if (mem_on and self.session) else _none(),
@@ -2037,7 +2082,12 @@ class ContextManager:
         return WorkingSet(catalog=catalog, registry_agents=registry_agents,
                           history=history, memories=memories, focus=focus,
                           history_state=history_state, memory_state=memory_state,
-                          history_exchanges=exchanges)
+                          history_exchanges=exchanges, context_view=view,
+                          source_states={
+                              "history": {"state": history_state, "source": "memory.session", "access": "allowed" if private_on else "off"},
+                              "memory": {"state": memory_state, "source": "memory.recall", "access": "allowed" if private_on else "off"},
+                              "vehicle": view.vehicle()[1],
+                          })
 
     async def _load_focus(self, session_id: str, user_id: str, occupant_id: str = ""):
         """载入会话焦点。失败/无则 None，不阻塞规划。
@@ -2282,6 +2332,10 @@ class ContextManager:
         批 5 W17：生产客户端有 `get_session_read`（服务端自报 degraded 也算读不到）；
         旧形态 / 测试替身只有 `get_session`，读态由结果与异常推断。
         """
+        view = self.bind_view(ctx)
+        if not context_access.allowed(ctx, "profile"):
+            return [], memory_read.OFF
+
         owner = dict(user_id=getattr(ctx, "user_id", "") or "",
                      occupant_id=getattr(ctx, "occupant_id", "") or "primary")
         last_n = (2 * max(1, int(exchanges)) + 2) if exchanges else self.history_n
@@ -2289,7 +2343,10 @@ class ContextManager:
         if fn:
             try:
                 turns, state = await fn(ctx.session_id, last_n, **owner)
+                view.check()
                 return list(turns or []), state
+            except ContextChanged:
+                raise
             except Exception as e:
                 logger.debug("get_session_read failed: %s", e)
                 return [], memory_read.UNAVAILABLE
@@ -2298,7 +2355,10 @@ class ContextManager:
             return [], memory_read.OFF
         try:
             turns = list(await _call_with_owner(fn, ctx.session_id, last_n, **owner) or [])
+            view.check()
             return turns, memory_read.read_state(turns)
+        except ContextChanged:
+            raise
         except Exception as e:
             logger.debug("get_session failed: %s", e)
             return [], memory_read.UNAVAILABLE
@@ -2311,6 +2371,10 @@ class ContextManager:
     async def _recall(self, text: str, ctx) -> tuple[list[dict], str]:
         """召回与本轮相关的长期偏好（供 planner）→ `(items, 读态)`。只取现行高置信语义偏好，
         阈值过滤避免污染；失败返回空 + `unavailable`、无能力 / 无 user 返回空 + `off`，不阻塞规划。"""
+        view = self.bind_view(ctx)
+        if not context_access.allowed(ctx, "profile"):
+            return [], memory_read.OFF
+
         read_fn = getattr(self.clients, "recall_read", None)
         fn = read_fn or getattr(self.clients, "recall", None)
         if not fn or not getattr(ctx, "user_id", ""):
@@ -2329,9 +2393,12 @@ class ContextManager:
             else:
                 mems = list(await fn(ctx.user_id, text, **kwargs) or [])
                 state = memory_read.read_state(mems)
+        except ContextChanged:
+            raise
         except Exception as e:
             logger.debug("recall failed: %s", e)
             return [], memory_read.UNAVAILABLE
+        view.check()
         if mems:
             logger.info("memory recall for %s: %d items %s", ctx.user_id,
                         len(mems), [m.get("predicate") for m in mems])

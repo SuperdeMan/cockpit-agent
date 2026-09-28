@@ -25,7 +25,7 @@ def _agent(agent_id, intents):
 
 
 def _ctx(user_id="u1"):
-    return SimpleNamespace(session_id="sess", user_id=user_id)
+    return SimpleNamespace(session_id="sess", user_id=user_id, granted_permissions=["profile.read", "location.read"])
 
 
 class _Clients:
@@ -370,7 +370,7 @@ def test_focus_update_and_load_roundtrip():
                             slots={"position": "副驾", "temperature": "26"})])
     asyncio.run(cm.update_focus(
         "sess-f", plan, [_ok("s1")], user_id="u1"))
-    ctx = SimpleNamespace(session_id="sess-f", user_id="u1")
+    ctx = SimpleNamespace(session_id="sess-f", user_id="u1", granted_permissions=["profile.read", "location.read"])
     ws = asyncio.run(cm.assemble("再调高一点", ctx))
     assert ws.focus is not None and ws.focus.obj == "空调"
     assert "对象=空调" in ws.render_context()
@@ -383,7 +383,7 @@ def test_focus_not_loaded_when_mem_off():
                             slots={"position": "副驾"})])
     asyncio.run(cm.update_focus(
         "sess-f", plan, [_ok("s1")], user_id="u1"))
-    ctx = SimpleNamespace(session_id="sess-f", user_id="u1")
+    ctx = SimpleNamespace(session_id="sess-f", user_id="u1", granted_permissions=["profile.read", "location.read"])
     ws = asyncio.run(cm.assemble("再调高一点", ctx, mem_on=False))
     assert ws.focus is None
 
@@ -475,7 +475,7 @@ def test_history_is_fetched_with_the_owner_key():
             return []
 
     cm = ContextManager(_OwnerAware([_agent("a", ["a.x"])]))
-    ctx = SimpleNamespace(session_id="sess", user_id="u1", occupant_id="occ-2")
+    ctx = SimpleNamespace(session_id="sess", user_id="u1", occupant_id="occ-2", granted_permissions=["profile.read"])
     asyncio.run(cm.assemble("hi", ctx))
     assert seen["owner"] == ("u1", "occ-2")
 

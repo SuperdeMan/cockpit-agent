@@ -86,7 +86,7 @@ class _MultiturnSpy:
         self.planner_prompts: list[str] = []
         self.agent_calls: list[tuple[str, dict, dict]] = []
 
-    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
+    async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None, context_scopes=None):
         raise RuntimeError("stream disabled")
         yield  # pragma: no cover
 
