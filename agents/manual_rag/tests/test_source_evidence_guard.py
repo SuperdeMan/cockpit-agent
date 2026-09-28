@@ -203,3 +203,31 @@ def test_sibling_question_does_not_get_replaced_by_an_alert_from_the_other_claus
     assert "雨刮器通过拨杆" in result.speech
     assert "source_evidence_guard" not in result.data
     agent.llm.complete.assert_awaited_once()
+
+
+def test_guard_keeps_a_controlled_icon_outside_the_text_evidence_pages(tmp_path):
+    from agents.manual_rag.tests.test_local_index_provider import _visual_package_path, _catalog_path
+    from agents.manual_rag.src.index_format import load_manual_package
+    index = _visual_package_path(tmp_path)
+    loaded = load_manual_package(index)
+    pages = {c["page_start"]: c["content"] for c in loaded.index["chunks"] if c["page_start"] in (89, 95)}
+    profile = _profile(loaded.index["document"], pages)
+    profile["documents"][loaded.index["document"]["document_id"]]["guards"][0]["subjects"] = ["后雾灯"]
+    resource = tmp_path / "guarded-visual.yaml"
+    resource.write_text(yaml.safe_dump(profile, allow_unicode=True), encoding="utf-8")
+    kb = ManualIndexRetriever(index, catalog_path=_catalog_path(tmp_path, index), source_evidence_path=resource)
+    result = asyncio.run(kb.guarded_evidence("仪表上的后雾灯图标是什么意思？"))
+    images = [image for chunk in result.chunks for image in chunk.images]
+    assert any(image.asset_id.endswith(":p0192:i04") and image.match_kind == "visual_caption" for image in images)
+    assert {89, 95, 192} <= {chunk.page_start for chunk in result.chunks}
+    assert all(text in result.speech for text in pages.values())
+
+
+def test_visual_page_budget_never_silently_discards_required_conditions(indexed_source, monkeypatch):
+    kb, _ = indexed_source
+    monkeypatch.setattr(kb, "_visual_evidence", lambda *_: {
+        page: [({"asset_id": f"synthetic:{page}"}, "visual_caption")] for page in (97, 98, 99)})
+    result = asyncio.run(kb.guarded_evidence("胎压灯未更新如何复位？"))
+    assert not result.available
+    assert not result.chunks and not result.speech
+    assert len(kb._evidence_guards[0].parts) == 2

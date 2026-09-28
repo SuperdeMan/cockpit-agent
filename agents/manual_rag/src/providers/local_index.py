@@ -33,7 +33,7 @@ import yaml
 
 from agents.manual_rag.src.index_format import IndexFormatError, load_manual_package
 from agents.manual_rag.src.toc import TocEntry, build_table_of_contents
-from agents.manual_rag.src.source_evidence import load_evidence_guards
+from agents.manual_rag.src.source_evidence import MAX_EVIDENCE_PAGES, load_evidence_guards
 from runtime import question_shape
 from runtime.clause_split import split_clauses
 from .base import Chunk, GuardedEvidence, KnowledgeRetriever, ManualImage
@@ -471,7 +471,10 @@ class ManualIndexRetriever(KnowledgeRetriever):
             raise ManualIndexError("手册原文证据配置不可用") from exc
 
     async def guarded_evidence(self, query: str, vehicle_model: str = "") -> GuardedEvidence | None:
-        if self._model_mismatch(vehicle_model) or self.scope_veto(query):
+        if self._model_mismatch(vehicle_model):
+            return None
+        variants, veto = self._in_scope_variants(query)
+        if veto:
             return None
         guard = next((item for item in self._evidence_guards if item.matches(query)), None)
         if guard is None:
@@ -479,9 +482,15 @@ class ManualIndexRetriever(KnowledgeRetriever):
         if not guard.available:
             return GuardedEvidence(guard.guard_id, False)
         parts = guard.select(query)
-        pages = list(dict.fromkeys(part.page for part in parts))
+        visual_by_page = self._visual_evidence(query, variants)
+        # Exact icon/alias matches get image budget before ordinary page art.
+        # Their original page must accompany them; never orphan a picture or
+        # drop a required condition page to make room.
+        pages = list(dict.fromkeys([*visual_by_page, *(part.page for part in parts)]))
+        if len(pages) > MAX_EVIDENCE_PAGES:
+            return GuardedEvidence(guard.guard_id, False)
         ranked = [(1.0, 1.0, True, self._chunks_by_page[page]) for page in pages]
-        chunks = self._materialize(ranked, {})
+        chunks = self._materialize(ranked, visual_by_page)
         # Retain complete source clauses, including alternatives and conditions;
         # no LLM may shorten, combine, or infer their applicability.
         speech = "手册原文：\n" + "\n".join(f"{part.label}：{part.text.strip()}" for part in parts)
@@ -1020,6 +1029,18 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 rankings.append(ranking)
         return rankings
 
+    def _visual_evidence(self, query: str, variants: list[_Variant]) -> dict[int, list[tuple[dict[str, Any], str]]]:
+        """One controlled-caption/alias matching path for retrieval and guards."""
+        visual_by_page: dict[int, list[tuple[dict[str, Any], str]]] = {}
+        seen_assets: set[str] = set()
+        for text in [query, *(variant.content for variant in variants)]:
+            for asset, kind in self._matched_visual_assets(text):
+                if asset["asset_id"] in seen_assets:
+                    continue
+                seen_assets.add(asset["asset_id"])
+                visual_by_page.setdefault(asset["page_start"], []).append((asset, kind))
+        return visual_by_page
+
     async def retrieve(self, query: str, vehicle_model: str = "",
                        top_k: int = 4) -> list[Chunk]:
         if not str(query or "").strip() or top_k <= 0:
@@ -1032,14 +1053,7 @@ class ManualIndexRetriever(KnowledgeRetriever):
 
         # 受控视觉目录按原话与同义词换过的内容都匹配（「胎压灯亮了」→ 胎压监测报警指示灯）；
         # 短 caption 仍要求视觉语境。
-        visual_by_page: dict[int, list[tuple[dict[str, Any], str]]] = {}
-        seen_assets: set[str] = set()
-        for text in [query, *(variant.content for variant in variants)]:
-            for asset, kind in self._matched_visual_assets(text):
-                if asset["asset_id"] in seen_assets:
-                    continue
-                seen_assets.add(asset["asset_id"])
-                visual_by_page.setdefault(asset["page_start"], []).append((asset, kind))
+        visual_by_page = self._visual_evidence(query, variants)
 
         ranked = self._rank(self._prepare_variants(variants), visual_by_page)
         carried = self._carried_rankings(query)

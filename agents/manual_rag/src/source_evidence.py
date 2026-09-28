@@ -12,6 +12,7 @@ import re
 
 import yaml
 
+MAX_EVIDENCE_PAGES = 4
 
 @dataclass(frozen=True)
 class EvidencePart:
@@ -107,7 +108,7 @@ def load_evidence_guards(path: Path, document: dict, pages: dict[int, str]) -> t
             raise ValueError("source evidence requires unconditional context")
         if sum(len(part.text) for part in parts) > 2400:
             raise ValueError("source evidence exceeds complete-answer budget")
-        if len({part.page for part in parts}) > 4:
+        if len({part.page for part in parts}) > MAX_EVIDENCE_PAGES:
             raise ValueError("source evidence exceeds card page budget")
         # An enrolled but unavailable profile must remain recognizable so the
         # caller abstains instead of silently returning to free generation.

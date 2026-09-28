@@ -137,6 +137,10 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "") -> dict:
             failures.append("answer_missing:" + term)
     if expect.get("source_evidence"):
         failures.extend(judge_source_evidence(query, obs, detail, card))
+    images = {image.get("asset_id") for c in manual_cards(card) for image in c.get("images", [])}
+    for asset_id in expect.get("image_assets") or []:
+        if asset_id not in images:
+            failures.append("manual_image_missing:" + asset_id)
     return {"failures": failures, "manual_dispatched": manual_dispatched,
             "manual_presented": has_manual(card), "intents": sorted(intents - {""})}
 
@@ -144,15 +148,17 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "") -> dict:
 SOURCE_EVIDENCE = ROOT / "agents/manual_rag/resources/source_evidence.yaml"
 
 
+def manual_cards(node: dict) -> list[dict]:
+    if not isinstance(node, dict):
+        return []
+    return ([node] if node.get("type") == "manual" else []) + [
+        child for item in node.get("items", []) for child in manual_cards(item)]
+
+
 def judge_source_evidence(query: str, obs: dict, detail: dict, card: dict) -> list[str]:
     """Rebuild pinned source slices; keywords or numeric membership are insufficient."""
     from agents.manual_rag.src.source_evidence import load_evidence_guards
-    def cards(node):
-        if not isinstance(node, dict):
-            return []
-        return ([node] if node.get("type") == "manual" else []) + [
-            child for item in node.get("items", []) for child in cards(item)]
-    manual = cards(card)
+    manual = manual_cards(card)
     if len(manual) != 1 or manual[0].get("_prov", {}).get("mode") != "real":
         return ["source_evidence_card_missing"]
     try:

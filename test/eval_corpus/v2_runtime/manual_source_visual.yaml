@@ -1,0 +1,21 @@
+version: 1
+revision: 2026-09-28a
+split: regression
+note: 来源条件与受控原图同时成立；保留原六句语料及其旧 hash。
+cases:
+  - id: MSV01
+    family: manual_source_visual
+    turns:
+      - say: 胎压监测报警指示灯是什么意思？
+        expect:
+          manual: true
+          source_evidence: true
+          image_assets: ["xiaomi-su7-2024-user-manual:p0192:i01"]
+  - id: MSV02
+    family: manual_source_visual
+    turns:
+      - say: 仪表盘上的胎压灯是什么图标？
+        expect:
+          manual: true
+          source_evidence: true
+          image_assets: ["xiaomi-su7-2024-user-manual:p0192:i01"]

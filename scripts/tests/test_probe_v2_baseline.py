@@ -134,3 +134,20 @@ def test_custom_source_corpus_is_read_only_and_does_not_change_frozen_twenty():
     assert result["fast_intent_none"] == 6
     assert all(turn["expect"]["source_evidence"] for case in cases for turn in case["turns"])
     assert len(probe.load_cases()) == 20
+
+
+def test_image_assertion_rejects_an_illustration_in_place_of_the_controlled_icon():
+    expected = {"image_assets": ["manual:p192:warning"]}
+    card = {"type": "manual", "images": [{"asset_id": "manual:p257:illustration"}]}
+    assert probe.judge(expected, obs(card_text=json.dumps(card)), {})["failures"] == [
+        "manual_image_missing:manual:p192:warning"]
+    card["images"] = [{"asset_id": "manual:p192:warning"}]
+    assert not probe.judge(expected, obs(card_text=json.dumps(card)), {})["failures"]
+
+
+def test_source_visual_questions_pass_the_unchanged_read_only_preflight():
+    from scripts.probe_manual_rag_full_coverage import validate_live_query_safety
+    cases = probe.load_cases(probe.CORPUS.with_name("manual_source_visual.yaml"))
+    result = validate_live_query_safety([
+        {"id": case["id"], "query": turn["say"]} for case in cases for turn in case["turns"]])
+    assert result["fast_intent_none"] == 2
