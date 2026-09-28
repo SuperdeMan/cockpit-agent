@@ -75,7 +75,6 @@
 | `backups.keep_all_hours` | 48 | 近期每套都留 |
 | `backups.daily_days` / `backups.weekly_weeks` | 14 / 8 | 更早的按天、按周各留最新一套 |
 | `backups.min_complete_sets` | 3 | 任何时候不少于 3 套完整备份 |
-| `imports.applied_ttl_days` | 14 | 迁移包在 APPLIED 且独立 verify 通过后的保留期 |
 | `build_cache.max_used_space` | `20GB` | BuildKit 自身口径；主机级，需 drone 共识（§4.4） |
 | `capacity.warn_free_gib` / `capacity.target_free_gib` | 40 / 45 | 在 30 GiB 闸之上留 10–15 GiB 余量 |
 
@@ -93,8 +92,9 @@
 **当前 release 的瞬态产物**：激活写入 `VERIFIED` 后立即删 `builds/<sha>/{src,transport.tar,upload/source.tar}` 与本次
 `incoming/releases/<upload>/transport.tar`。它们只在激活时被读（`activate-release.sh:117`、`:214`），回滚只读 release 目录与镜像（`:240–265`）。
 
-**别名 tag**：`build_release` 打完 `car-agent-release/<svc>:<sha>` 后立即去掉构建工程的 `car-agent-release-<sha>-<svc>:latest`
-（只删标签不删镜像）；此后不再有「两族 tag 都要删、只删一族层不释放」的坑。
+**别名 tag**：已激活版本的构建工程别名 `car-agent-release-<sha>-<svc>:latest` 在回收收尾时去掉（只在它与同服务的
+release tag 指向同一镜像时才去，只删标签不删镜像）；退役时两族 tag 一起删。`remote-build.sh` 保持零删除（原方案想在构建里去别名，
+与「构建永不删除」的既有规格冲突，改由 retention 收尾完成）。
 
 **失败产物**：从未成功激活的 SHA（构建失败、`VERIFY_FAILED_ROLLED_BACK`、中断留下的 `.staging-*`）超过 `failed_ttl_hours` 后按同一路径退役。
 
@@ -135,7 +135,8 @@
 - journald：drop-in 设 `SystemMaxUse=1G`（现 0.99 GiB，默认上限可到 4 GiB），只重启 `systemd-journald`，不影响容器。
 - apport core dump：由同一 host timer 删除 `/var/lib/apport/coredump` 里超过 7 天的文件，**但要等 drone 确认后才启用**——
   drone 正用现存 5 个 core 取栈排查 `sim/collect.py` 的 SIGABRT，在那之前主机上的 core 一律不碰。
-- 容器日志：本项目在 `compose.cloud.yaml` 为各服务设 `json-file` 的 `max-size: 10m`、`max-file: 3`（随 P1 发布生效）；daemon 级默认值放 P3。
+- 容器日志：推迟到 P3 与 daemon 级默认值一起做。应用容器每次发布都会重建，日志实测最大约 6 MB；为此改 `compose.cloud.yaml`
+  还会让 postgres / redis / nats 重建，不值得。
 
 ### 4.6 容量可观测
 
@@ -148,10 +149,11 @@
 
 ### 4.7 规则修订（批准后先改文档、再改实践）
 
-- `deploy/cloud/README.md:51–52` 改为：「按 `retention-policy.json` 的已批准策略，发布产物、失败产物、备份与迁移包由发布 / 备份事务自动轮转，
-  每次写证据；策略外对象、数据卷、`.env` 与业务数据的删除仍须先列精确对象并逐项批准。」`:243`、`:261`、`:278–284` 同步修改。
-- `CLAUDE.md:143` 与 `AGENTS.md:68` 补一句：按已批准保留策略自动轮转的发布产物、构建缓存与备份，不属于需要逐轮授权的「数据删除」；
-  策略本身的修改仍需授权。
+- `deploy/cloud/README.md:51–52` 改为：「按 `retention-policy.json` 的已批准策略，发布产物（含失败产物）与备份由发布 / 备份事务自动轮转，
+  每次写证据；策略外对象——数据卷、`.env`、业务数据、迁移包、镜像归档、worktree——的删除仍须先列精确对象并逐项批准。」
+  `:243`、`:261`、`:278–284` 同步修改（P1 已落地，见 §5）。
+- `CLAUDE.md:143` 与 `AGENTS.md:68` 补一句：按已批准保留策略自动轮转的发布产物与备份，不属于需要逐轮授权的「数据删除」；
+  策略本身的修改、策略外对象与数据卷仍需授权。构建缓存的主机级上限属于 P2，另按系统配置授权。
 - `docs/dev-guide.md` 增加容量排查一节（内容取 §8）。
 
 ### 4.8 与 drone-agent 的分工（对接方：drone-agent 当前的 Claude 会话，2026-09-28 起）
@@ -164,16 +166,17 @@
   已停容器由 compose 管理、可写层约 10 MB；`artifacts/` 是已提交记录引用的证据，不按时间删，ULog 定期压缩。
 - 技术意见：按总量 20 GB 做 LRU 对 drone 够用（重建代价大的只有 ROS 2 基础层，PX4 工具链在 M0 基础镜像里不受缓存清理影响）；
   每小时可以，但要同时避让 `~/drone-agent/stack.lock`（已并入 §4.4）；不调用 buildx history；需重启 dockerd 的改动只在双方约定的维护窗口做。
-- 待定：§4.4 缓存上限、§4.5 journald 与 core dump 上限需 drone 用户确认；5 个 core 在 drone 取栈修复之前保留。
-
-取得确认前，本项目不单方面改主机级设置；确认结果回填本节。
+- **drone 用户已确认（2026-09-28 晚）**：a) 缓存上限 20 GB、每小时一次、避让两个项目的锁；b) journald `SystemMaxUse=1G`；
+  c) `/var/lib/apport/coredump` 超过 7 天自动删除。现存 5 个 collector core 由 drone 在真实栈验证修复（`sim/collect.py` 改为 `os._exit(0)` 退出）后自行删除。
+  drone 构建文件中 apt 索引每个提交重建（每次部署缓存约涨 1 GB）的根因修复因冻结门禁暂缓，期间由 a) 兜住。
+- 安装仍需本项目用户对 P2（系统配置红线）单独授权；安装前先与 drone 约定窗口。
 
 ## 5. 分阶段落地
 
 | 阶段 | 内容 | 需要的授权 | 交付与验证 |
 |---|---|---|---|
 | P0 可观测 | §4.6：`status` 容量字段与 warning、只读 `capacity`；§8 写入 dev-guide | 常规提交与推送（只改 `scripts/`、`docs/`，不涉基础设施锚） | 单测覆盖字段校验与阈值；真机只读跑一次 `capacity`，与本次 ctr 读数对账 |
-| P1 本项目保留 | §4.1–4.3、§4.5 的容器日志、§4.7 规则修订 | 本方案批准；`deploy/cloud/**` 基础设施锚重批一次；随后 deploy `--apply` | 纯函数单测 + 沿用 `_run_cloud_bash` 替身写法的 bash 集成测试；先在真机跑只读 `retention --dry-run` 逐项对账再发布；验收见 §6 |
+| P1 本项目保留 | §4.1–4.3、§4.7 规则修订 | 本方案批准；`deploy/cloud/**` 基础设施锚重批一次；随后 deploy `--apply` | 纯函数单测 + 沿用 `_run_cloud_bash` 替身写法的 bash 集成测试；先在真机跑只读 `retention --dry-run` 逐项对账再发布；验收见 §6 |
 | P2 主机级 | §4.4 缓存上限 timer（避让两个项目的锁）；§4.5 journald 与 core dump；§4.8 与 drone 取得共识 | 系统配置授权（红线）+ drone 用户确认 | 安装后手动触发首轮，记录前后 `buildx du` Total、可用空间与下一次构建耗时 |
 | P3 可选 | daemon.json（`builder.gc`、`live-restore`、日志默认值）在一个维护窗口里一次重启；评估 containerd snapshotter 取舍与扩盘 | 维护窗口 + 两项目停机授权 | 单独方案 |
 
@@ -182,7 +185,16 @@
 `dev_stack status` 增加 `capacity`，`dev_stack capacity` 输出按项目归属的读数；`docs/dev-guide.md` 增加「云主机容量」。
 新增 19 条单测、`test_dev_stack.py` 新增 5 条，两处关键逻辑的变异（不扣容器链、不扣其他 release 的共享层）各判红；`scripts/tests` 全量 1542 passed / 11 skipped。
 真机只读读数（本仓 `7b346c90` 构建进行中）：可用 65.18 GiB（ok）；本项目镜像 3.54 GiB、文件 1.79 GiB；其他镜像 14.59 GiB（18 个仓库）；
-构建缓存 11.29 GiB（BuildKit 口径 15.83 GB）；散落项 6 个：`shared/` 下 3 份 `.env.bak*`（密钥副本）、两份首版引导残留、旧的 `shared/release.lock`，待用户裁决。
+构建缓存 11.29 GiB（BuildKit 口径 15.83 GB）；散落项 6 个：`shared/` 下 3 份 `.env.bak*`（密钥副本）、两份首版引导残留、旧的 `shared/release.lock`，用户已批准删除。
+
+**P1 实现（2026-09-28，待基础设施审批与发布）**：`deploy/cloud/retention-policy.json`（单一声明源，`cloud_capacity` 的预警线也改读它）；
+`deploy/cloud/retention.py`（宿主上唯一的删除点：纯函数算计划，执行前逐对象重验根目录 / 名字 / 非符号链接 / 当前版本 / 在用镜像 /
+compose 工程目录，构建证据先迁再删，调用方以 `--lock-fd` 证明持有事务锁，apply 写证据）；`remote-release.sh` 在 deploy / rollback 成功后回收，
+新增 `retention --dry-run|--apply`；`backup.sh` 以 GFS 轮转替换「列 7 天候选」，自身仍零删除；`REQUIRED_INSTALLED` 与 `SHARED_SCRIPT_NAMES`
+增加 `retention.py` 与策略文件（16 个安装项）；本地 `dev_stack retention`（缺省 dry-run）。规则按 §4.7 修订 `deploy/cloud/README.md`、
+`CLAUDE.md`、`AGENTS.md`。相对批准稿的三处收窄：迁移包仍人工逐项批准（低频、与迁移证据绑定）；容器日志上限推迟到 P3；别名 tag 改在 retention 收尾去掉。
+测试：`test_retention.py` 23 条（本机 2 条需 Linux 的符号链接 / `/proc` 用例跳过，由 CI 覆盖），三处守卫变异各判红；`remote-release.sh` 事件序列、
+`backup.sh` 规格、引导清单与 CLI 用例同步更新。
 
 ## 6. 验收
 

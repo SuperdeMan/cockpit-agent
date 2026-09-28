@@ -103,6 +103,7 @@ python scripts/dev_stack.py verify
 ```powershell
 python scripts/dev_stack.py status     # capacity.level：ok / warn（< 40 GiB）/ below_build_gate（< 30 GiB）
 python scripts/dev_stack.py capacity   # 只读：按本项目 / 其他镜像 / 构建缓存分列真实占用，并列出 /opt/car-agent 下的散落项
+python scripts/dev_stack.py retention  # 按已批准保留策略的计划（缺省 dry-run）；加 --apply 才执行，发布 / 备份事务里本来也会自动跑
 ```
 
 - `status.capacity` 只是提示，不进 `warnings`、不改变 `status` 与退出码（长会话验收要求 status 为 ok 且零 warning）。

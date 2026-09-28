@@ -26,6 +26,15 @@ validate_upload_id() {
     || die "invalid upload ID" 2
 }
 
+# 保留策略（retention-policy.json）只在 retention.py 里执行删除；本函数只在事务内、发布已经
+# VERIFIED / ROLLED_BACK 之后调用。回收失败不影响已完成的发布，只留警告与 retention.py 的证据。
+run_release_retention() {
+  local reason="$1"
+  python3 "${SCRIPT_ROOT}/retention.py" releases --mode apply --reason "${reason}" \
+    --lock-fd "${TRANSACTION_LOCK_FD}" >&2 \
+    || printf 'cloud-release: retention did not complete; the release itself is unaffected\n' >&2
+}
+
 prepare_upload() {
   local upload_id="$1" caller caller_group target
   caller="${SUDO_USER:-}"
@@ -66,6 +75,7 @@ main() {
       validate_full_sha "${7:-}"
       build_release "${3}" "${5}" "${7}"
       activate_release "${3}"
+      run_release_retention "deploy"
       ;;
     prepare-upload)
       [[ "${2:-}" == "--sha" && "${4:-}" == "--upload-id" ]] \
@@ -81,6 +91,15 @@ main() {
       [[ "${2:-}" == "--to" ]] || die "rollback requires --to" 2
       validate_release_selector "${3:-}"
       rollback_release "${3}"
+      run_release_retention "rollback"
+      ;;
+    retention)
+      [[ "$#" -eq 2 && ( "${2}" == "--dry-run" || "${2}" == "--apply" ) ]] \
+        || die "retention requires --dry-run or --apply" 2
+      python3 "${SCRIPT_ROOT}/retention.py" releases --mode "${2#--}" \
+        --reason manual --lock-fd "${TRANSACTION_LOCK_FD}"
+      python3 "${SCRIPT_ROOT}/retention.py" backups --mode "${2#--}" \
+        --reason manual --lock-fd "${TRANSACTION_LOCK_FD}"
       ;;
     *)
       die "unknown action" 2

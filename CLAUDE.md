@@ -141,6 +141,8 @@ JSON null 在 `map<string,string>` 边界表示“未提供”，不得字符串
 - cloud deploy 只接受 clean、已提交、main 可达 SHA；先 dry-run，再单独授权 `--apply`；
 - deploy 不自动 commit/merge/push；push 前列出完整 `origin/main..HEAD` 并单独授权；
 - remote-safe 与 remote-mutating 分开；支付、商户写、真实车控、数据删除、系统配置逐轮授权；
+  按已批准保留策略（`deploy/cloud/retention-policy.json`）在发布 / 备份事务内自动轮转的发布产物与备份不属于逐轮授权的
+  「数据删除」，策略本身的修改、策略外对象与数据卷仍逐轮授权；
 - 不切换 target、不停别人的 Docker/Metro/Gradle/pytest，不处理别人的脏工作树；
 - 三存储迁移只用 `scripts/cloud_data_migration.py`，final 先取得停写授权，replace 不 merge；
 - 迁移/发布不自动修改 `.env`、安全组、Tailscale、CI/CD、systemd 或 schema。

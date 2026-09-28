@@ -167,6 +167,11 @@ def _run_remote_release(
     (script_root / "transaction-lock.sh").write_text(
         "transaction_lock_acquire() { "
         f"printf 'lock:%s\\n' \"$1\" >>'{events.as_posix()}'; "
+        "TRANSACTION_LOCK_FD=9; "
+        "}\n"
+        # retention.py is only ever invoked through python3; record script, kind, mode, reason, fd.
+        "python3() { "
+        f"printf 'python3:%s %s %s %s %s\\n' \"${{1##*/}}\" \"$2\" \"$4\" \"$6\" \"$8\" >>'{events.as_posix()}'; "
         "}\n",
         encoding="utf-8",
         newline="\n",
@@ -1062,7 +1067,39 @@ def test_remote_release_deploy_binds_expected_current_under_one_lock(
         "lock:release",
         f"build:{target}:{upload_id}:{expected_current}",
         f"activate:{target}",
+        # retention runs inside the same lock, only after activation succeeded
+        "python3:retention.py releases apply deploy 9",
     ]
+
+
+def test_remote_release_retires_old_releases_after_a_successful_rollback(tmp_path: Path):
+    result, events = _run_remote_release(tmp_path, "rollback", "--to", "d" * 40)
+
+    assert result.returncode == 0, result.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "lock:rollback",
+        "python3:retention.py releases apply rollback 9",
+    ]
+
+
+@pytest.mark.parametrize("mode", ["--dry-run", "--apply"])
+def test_remote_release_manual_retention_covers_releases_and_backups(tmp_path: Path, mode: str):
+    result, events = _run_remote_release(tmp_path, "retention", mode)
+
+    assert result.returncode == 0, result.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "lock:release",
+        f"python3:retention.py releases {mode[2:]} manual 9",
+        f"python3:retention.py backups {mode[2:]} manual 9",
+    ]
+
+
+@pytest.mark.parametrize("tail", [(), ("--force",), ("--apply", "extra")])
+def test_remote_release_manual_retention_rejects_other_arguments(tmp_path: Path, tail):
+    result, events = _run_remote_release(tmp_path, "retention", *tail)
+
+    assert result.returncode == 2
+    assert events.read_text(encoding="utf-8").splitlines() == ["lock:release"]
 
 
 def test_remote_release_does_not_activate_when_bound_build_fails(
@@ -2202,7 +2239,11 @@ def test_backup_is_non_destructive_and_uses_logical_database_backups():
     assert "/data/obs.db" in backup
     assert "file:/data/obs.db?mode=ro&immutable=1" in backup
     assert "gzip" in backup
-    assert "-mtime +7" in backup and "-print" in backup
+    # Rotation follows the approved retention policy and happens only inside retention.py
+    # (design 2026-09-28 §4.3); backup.sh itself still deletes nothing.
+    assert 'python3 "${SHARED_ROOT}/bin/retention.py" backups --mode apply' in backup
+    assert '--lock-fd "${TRANSACTION_LOCK_FD}"' in backup
+    assert backup.index("fsync_backup_artifact \"${backup_manifest}\"") < backup.index("retention.py")
     for forbidden_env_copy in (
         'cp "${SHARED_ENV}"',
         'cat "${SHARED_ENV}"',

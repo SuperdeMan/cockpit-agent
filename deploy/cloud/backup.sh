@@ -199,8 +199,11 @@ docker stop --time 5 "${cold_redis_container}" >/dev/null
 trap - EXIT
 fsync_backup_artifact "${backup_manifest}"
 
-find "${BACKUP_ROOT}" -mindepth 2 -type f -mtime +7 -print \
-  | sort >"${candidates_partial}"
+# 轮转按 retention-policy.json 的 GFS 规则，只在 retention.py 里执行；本脚本自身不删文件。
+# cleanup-candidates.txt 记录本轮的保留集与处理结果（JSON）。轮转失败不影响刚完成的这份备份。
+python3 "${SHARED_ROOT}/bin/retention.py" backups --mode apply --reason backup \
+  --lock-fd "${TRANSACTION_LOCK_FD}" >"${candidates_partial}" \
+  || printf 'backup retention did not complete; backups are unaffected\n' >&2
 mv "${candidates_partial}" "${candidates_target}"
 
 printf 'backup completed: %s\n' "${timestamp}"

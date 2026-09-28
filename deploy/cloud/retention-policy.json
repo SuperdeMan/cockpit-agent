@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "releases": {
+    "keep_activated": 3,
+    "pinned": [],
+    "failed_ttl_hours": 72
+  },
+  "backups": {
+    "keep_all_hours": 48,
+    "daily_days": 14,
+    "weekly_weeks": 8,
+    "min_complete_sets": 3
+  },
+  "build_cache": {
+    "max_used_space": "20GB"
+  },
+  "capacity": {
+    "warn_free_gib": 40,
+    "target_free_gib": 45
+  }
+}

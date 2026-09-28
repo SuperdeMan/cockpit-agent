@@ -48,8 +48,11 @@
 - PostgreSQL、Redis 和 Collector 使用稳定命名卷。
 - 禁止执行 `docker compose down -v`。
 - 自动备份不得包含或复制 `.env`。
-- 自动任务只创建备份并列出超过 7 天的清理候选，不得自动删除文件。
-- 任何 release、worktree、镜像归档、备份或数据卷清理都必须先列出精确对象并取得批准。
+- 发布产物与备份只按已批准的保留策略自动轮转：策略唯一来源是 `retention-policy.json`（安装为
+  `/opt/car-agent/shared/retention-policy.json`，随基础设施批准锚审批），删除只发生在 `retention.py`，
+  每次写证据到 `/opt/car-agent/shared/evidence/retention/`。设计见 `docs/design/2026-09-28-cloud-host-capacity-governance.md`。
+- 策略之外的对象——数据卷、`.env`、业务数据、迁移包、镜像归档、worktree——的清理仍须先列出精确对象并逐项取得批准；
+  修改策略本身同样需要授权，并重新审批基础设施锚。
 
 ## 服务器目录
 
@@ -240,7 +243,7 @@ MiniMax long sessions 与 HMI C14，才能形成发布验收证据。
 上传完成后发布器会显式把远端 `transport.tar` 收紧为 `0600`，再进入服务端验签和构建。
 SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 BuildKit cache mount
 共享 pip wheel 下载缓存，缓存不写入最终镜像。发布失败后仍保留 build record、成功镜像
-和诊断目录，不自动删除。
+和诊断目录，72 h 诊断窗口过后才按保留策略退役（见「数据与备份」）。
 
 连接信息只通过命令行参数或以下环境变量提供，不写入仓库和发布 manifest：
 
@@ -258,7 +261,11 @@ SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 
 发布事务遵守以下边界：
 
 - 构建 26 个镜像时，`current` 和现有 30 个容器保持不变；完成全部镜像与备份后才切换。
-- 上传中断、构建失败和验收失败的目录都保留为诊断/清理候选，不自动清理。
+- 上传中断、构建失败和验收失败的目录在 72 h 诊断窗口内不自动清理，之后由保留策略退役。
+- `deploy` / `rollback` 成功后，在同一把锁内运行 `retention.py releases --mode apply`：保留当前、最近成功激活的 3 个、
+  pinned 与仍被容器 compose 工程目录引用的 release，退役其余版本的两族镜像 tag、release 目录、构建工作区与上传包；
+  已激活版本的构建工作区与上传包在激活后即清掉，构建证据移入 `shared/evidence/releases/<sha>/build/`。
+  回收失败不影响已完成的发布。手动入口为 `remote-release.sh retention --dry-run|--apply`（先 dry-run 对账）。
 - merge、git push、首次真实 `deploy --apply` 和每次 `rollback --apply` 分别取得授权。
 - 普通发布不修改 `.env`、Tailscale Serve、安全组、systemd、数据库 schema 或数据。
 - 切换后的验收对五个 Tailnet HTTPS 端点先做就绪等待：每秒重试、五个端点共享 120 s 截止（`HTTPS_READY_TIMEOUT_S`），到点仍非 200 才判失败并回滚；等待只放宽「何时判」，不放宽「判什么」，等待秒数写入 verification 证据的 `https_ready_s`。来历：2026-09-06 `60a72a2` 切栈后 27 个容器同时冷启，hmi 在第 6 s 仍未监听、curl `--fail` 当场判红，被误判回滚。
@@ -275,13 +282,16 @@ sudo systemctl status car-agent-backup.service --no-pager
 sudo systemctl list-timers car-agent-backup.timer --no-pager
 ```
 
-备份位于 `/opt/car-agent/shared/backups/`。超过 7 天的文件只会被列到：
+备份位于 `/opt/car-agent/shared/backups/`。每次备份成功后，`backup.sh` 调用 `retention.py backups` 按 GFS 轮转：
+48 h 内全部保留；更早的每天、每周各留最新一套（14 天 / 8 周）；任何时候至少 3 套完整备份，最新一套永不删除；
+超过 24 h 的 `.partial` 一并清掉。本轮保留集与处理结果（JSON）写入：
 
 ```text
 /opt/car-agent/shared/backups/cleanup-candidates.txt
 ```
 
-该文件不是删除清单的自动执行入口。需要释放空间时先展示候选、大小与时间，取得批准后再单独处理。
+证据另存 `/opt/car-agent/shared/evidence/retention/`。轮转参数只在 `retention-policy.json` 里改；
+轮转失败不影响刚完成的备份。同盘备份防不住主机丢失，异机备份另立方案。
 
 ## 应用回滚
 

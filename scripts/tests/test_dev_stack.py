@@ -58,7 +58,7 @@ def test_development_stack_cli_exposes_all_actions():
     assert result.returncode == 0
     assert all(
         action in result.stdout
-        for action in ("target", "status", "capacity", "deploy", "verify", "hmi", "dashboard")
+        for action in ("target", "status", "capacity", "retention", "deploy", "verify", "hmi", "dashboard")
     )
 
 
@@ -809,6 +809,72 @@ def test_cli_capacity_fails_closed_on_an_untrusted_probe_reply(tmp_path: Path):
     assert cli.main(arguments, repo=tmp_path, status_runner=runner, emit=events.append) == 1
     assert events[-1]["status"] == "failed"
     assert "car_agent" not in events[-1]
+
+
+def _retention_reply(status: str = "planned", *, kinds=("releases", "backups")) -> str:
+    records = {
+        "releases": {
+            "kind": "releases", "status": status, "free_bytes_before": 1, "free_bytes_after": 2,
+            "plan": {
+                "current": "c" * 40,
+                "keep": [{"sha": "c" * 40, "reasons": ["current"]}],
+                "retire": [{
+                    "sha": "2" * 40, "reason": "outside-retention-window", "tags": ["t1", "t2"],
+                    "release_dir": "2" * 40, "build_dir": None, "upload_dirs": ["u"], "staging_dirs": [],
+                }],
+                "finalize": [], "report": [],
+            },
+        },
+        "backups": {
+            "kind": "backups", "status": status,
+            "plan": {"sets": 5, "complete_sets": 5, "keep_sets": ["a", "b"],
+                     "delete_files": [["postgres", "x"]], "unknown_files": []},
+        },
+    }
+    return "\n".join(json.dumps(records[kind]) for kind in kinds) + "\n"
+
+
+def test_cli_retention_requires_cloud_target(tmp_path: Path):
+    class _Forbidden:
+        def run(self, *args, **kwargs):
+            raise AssertionError("retention must not run against a local target")
+
+    events: list[dict[str, object]] = []
+    assert cli.main(["retention"], repo=tmp_path, status_runner=_Forbidden(), emit=events.append) == 2
+    assert events[-1]["status"] == "configuration_rejected"
+
+
+@pytest.mark.parametrize(("flag", "remote", "status"), [
+    ((), "retention --dry-run", "planned"),
+    (("--apply",), "retention --apply", "applied"),
+])
+def test_cli_retention_defaults_to_dry_run_and_summarizes_both_records(
+    tmp_path: Path, flag: tuple[str, ...], remote: str, status: str,
+):
+    dev.set_target(tmp_path, "cloud")
+    runner = FakeStatusRunner([command_result("ssh", stdout=_retention_reply(status))], {})
+    events: list[dict[str, object]] = []
+    arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "retention", *flag]
+
+    assert cli.main(arguments, repo=tmp_path, status_runner=runner, emit=events.append) == 0
+
+    assert runner.commands[0][-1].endswith(remote)
+    event = events[-1]
+    assert (event["action"], event["status"], event["mode"]) == ("retention", "ok", remote.split("--")[1])
+    assert event["releases"]["retire"] == [
+        {"sha": "2" * 40, "reason": "outside-retention-window", "tags": 2, "dirs": 2}
+    ]
+    assert event["backups"]["delete_files"] == 1
+
+
+def test_cli_retention_fails_on_an_incomplete_or_mismatched_reply(tmp_path: Path):
+    dev.set_target(tmp_path, "cloud")
+    arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "retention"]
+    for reply in (_retention_reply("error"), _retention_reply(kinds=("releases",))):
+        runner = FakeStatusRunner([command_result("ssh", stdout=reply)], {})
+        events: list[dict[str, object]] = []
+        assert cli.main(arguments, repo=tmp_path, status_runner=runner, emit=events.append) == 1
+        assert events[-1]["status"] == "failed"
 
 
 def test_cloud_status_reports_the_image_that_is_actually_running(tmp_path: Path):

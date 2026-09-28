@@ -1330,6 +1330,7 @@ SHARED_SCRIPT_NAMES = (
     "verify-release.sh",
     "redis_volume_prepare.py",
     "collector_volume_replace.py",
+    "retention.py",
 )
 
 
@@ -1410,6 +1411,7 @@ SCRIPTS = (
     SHARED / "bin/verify-release.sh",
     SHARED / "bin/redis_volume_prepare.py",
     SHARED / "bin/collector_volume_replace.py",
+    SHARED / "bin/retention.py",
 )
 MODELS = {
     SHARED / "models/nlu/edge_nlu.onnx": "cda6914c715d7e48f7b1f2ef2e2e9a64843e53ec58165737b41ec4e186080cf8",
@@ -1434,6 +1436,8 @@ REQUIRED_INSTALLED = {
     "deploy/cloud/verify-release.sh": "/opt/car-agent/shared/bin/verify-release.sh",
     "deploy/cloud/redis_volume_prepare.py": "/opt/car-agent/shared/bin/redis_volume_prepare.py",
     "deploy/cloud/collector_volume_replace.py": "/opt/car-agent/shared/bin/collector_volume_replace.py",
+    "deploy/cloud/retention.py": "/opt/car-agent/shared/bin/retention.py",
+    "deploy/cloud/retention-policy.json": "/opt/car-agent/shared/retention-policy.json",
     "deploy/cloud/compose.cloud.yaml": "/opt/car-agent/shared/compose.cloud.yaml",
     "deploy/cloud/vite.hmi.cloud.config.mjs": "/opt/car-agent/shared/vite.hmi.cloud.config.mjs",
     "deploy/cloud/systemd/car-agent-backup.service": "/etc/systemd/system/car-agent-backup.service",

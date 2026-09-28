@@ -1906,6 +1906,7 @@ def test_preflight_reports_exact_bootstrap_candidates():
             "/opt/car-agent/shared/bin/verify-release.sh",
             "/opt/car-agent/shared/bin/redis_volume_prepare.py",
             "/opt/car-agent/shared/bin/collector_volume_replace.py",
+            "/opt/car-agent/shared/bin/retention.py",
             "/opt/car-agent/shared/models/nlu/edge_nlu.onnx",
         "/opt/car-agent/shared/models/nlu/labels.json",
         "/opt/car-agent/shared/models/nlu/vocab.json",
@@ -1944,6 +1945,19 @@ def test_bootstrap_requires_all_shared_transaction_scripts():
     assert "transaction-lock.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
     assert "backup.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
     assert "/opt/car-agent/shared/bin/transaction-lock.sh" in REMOTE_PREFLIGHT_SOURCE
+
+
+def test_bootstrap_requires_retention_script_and_installs_its_policy():
+    assert "retention.py" in cloud_release_lib.SHARED_SCRIPT_NAMES
+    assert 'SHARED / "bin/retention.py"' in REMOTE_PREFLIGHT_SOURCE
+    assert (
+        '"deploy/cloud/retention.py": "/opt/car-agent/shared/bin/retention.py"'
+        in REMOTE_PREFLIGHT_SOURCE
+    )
+    assert (
+        '"deploy/cloud/retention-policy.json": "/opt/car-agent/shared/retention-policy.json"'
+        in REMOTE_PREFLIGHT_SOURCE
+    )
 
 
 def test_bootstrap_requires_remote_data_migration_script():

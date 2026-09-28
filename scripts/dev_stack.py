@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.cloud_capacity import collect_capacity
+from scripts.cloud_retention import run_retention
 from scripts.cloud_release_lib import (
     ReleaseError,
     ReleaseRequest,
@@ -83,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     target_set.add_argument("name", choices=("local", "cloud"))
     commands.add_parser("status")
     commands.add_parser("capacity")
+    retention = commands.add_parser("retention")
+    retention.add_argument("--apply", action="store_true")
     deploy = commands.add_parser("deploy")
     deploy.add_argument("--sha", default="HEAD")
     deploy.add_argument("--approve-ci-cd-sha256")
@@ -450,6 +453,24 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
         )
         emit({**base, "action": "capacity", "status": "ok", **report})
         return 0
+    if args.command == "retention":
+        # Approved retention policy (design 2026-09-28 §4.2–4.3); dry-run unless --apply.
+        if selection.name != "cloud":
+            raise DevStackError("retention requires target=cloud")
+        config = _connection(args)
+        ok, summary = run_retention(
+            _cloud_request(repo, config),
+            status_runner or DefaultStackStatusRunner(),
+            apply=args.apply,
+        )
+        emit({
+            **base,
+            "action": "retention",
+            "mode": "apply" if args.apply else "dry-run",
+            "status": "ok" if ok else "failed",
+            **summary,
+        })
+        return 0 if ok else 1
     if args.command == "deploy":
         if selection.name != "cloud":
             raise DevStackError("deploy requires target=cloud")

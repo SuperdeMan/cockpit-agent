@@ -16,6 +16,7 @@ import base64
 import json
 import re
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from scripts.cloud_release_lib import CommandRunner, ReleaseError, ReleaseRequest
@@ -24,8 +25,12 @@ GIB = 1024**3
 #: Mirror of `MIN_DISK_BYTES` in deploy/cloud/remote-build.sh (remote build gate);
 #: scripts/tests/test_cloud_capacity.py reconciles the two declarations.
 BUILD_GATE_BYTES = 30 * GIB
-#: Advisory threshold. P1 of the design moves it into deploy/cloud/retention-policy.json.
-CAPACITY_WARN_FREE_BYTES = 40 * GIB
+#: Single source of retention/capacity numbers; installed on the host as
+#: /opt/car-agent/shared/retention-policy.json under the infrastructure anchor.
+RETENTION_POLICY_PATH = Path(__file__).resolve().parents[1] / "deploy" / "cloud" / "retention-policy.json"
+CAPACITY_WARN_FREE_BYTES = (
+    json.loads(RETENTION_POLICY_PATH.read_text(encoding="utf-8"))["capacity"]["warn_free_gib"] * GIB
+)
 
 #: Entries the release/backup tooling owns; anything else is reported as a stray.
 KNOWN_LAYOUT: Mapping[str, frozenset[str]] = {
