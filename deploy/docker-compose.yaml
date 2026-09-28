@@ -36,6 +36,8 @@ x-python-env: &python-env
   PLANNER_DEDUP_SIDE_EFFECTS: ${PLANNER_DEDUP_SIDE_EFFECTS:-on}
   VERIFY_OUTCOME: ${VERIFY_OUTCOME:-on}
   VERIFY_MIRROR_STALE_S: ${VERIFY_MIRROR_STALE_S:-180}
+  # Public source/vehicle/TTL policy. Signing material is edge-only below.
+  VEHICLE_STATE_TRUST: ${VEHICLE_STATE_TRUST:-}
   # 规划失败/预筛保护的全局兜底 Agent（R2.1 P5：去 planning/context 硬编码 chitchat）
   PLANNER_FALLBACK_AGENT: ${PLANNER_FALLBACK_AGENT:-chitchat}
   # R3.2 服务间 mTLS：全 env 门控，默认关（GRPC_TLS 未设/off = insecure，逐字保持现状）。
@@ -713,6 +715,7 @@ services:
     environment:
       # collector 不建 gRPC server，profile 闸在 main.py 进程入口显式调（B3）。
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
+      VEHICLE_STATE_TRUST: ${VEHICLE_STATE_TRUST:-}
       NATS_URL: nats://nats:4222
       OBS_COLLECTOR_PORT: "8092"
       DEBUG_VEHICLE_CONTROL: ${DEBUG_VEHICLE_CONTROL:-true}
@@ -809,6 +812,7 @@ services:
     environment:
       # B3 部署形态闸（本服务未用 <<: *python-env，单列）。
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
+      VEHICLE_STATE_TRUST: ${VEHICLE_STATE_TRUST:-}
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
       E2E_NAMESPACE_ADMIN_ENABLED: ${E2E_NAMESPACE_ADMIN_ENABLED:-false}
@@ -836,6 +840,7 @@ services:
     environment:
       # B3 部署形态闸（Go 侧实现见 gateway/deployprofile）。
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
+      VEHICLE_STATE_TRUST: ${VEHICLE_STATE_TRUST:-}
       CLOUD_PLANNER_ADDR: cloud-planner:50054
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # R3.1 层 2（通道鉴权）；默认关，逐字保持现状。
@@ -862,6 +867,7 @@ services:
     environment:
       # B3 部署形态闸（Go 侧实现见 gateway/deployprofile）。
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
+      VEHICLE_STATE_TRUST: ${VEHICLE_STATE_TRUST:-}
       EDGE_GATEWAY_PORT: "8090"
       EDGE_ORCHESTRATOR_ADDR: edge-orchestrator:50070
       NATS_URL: nats://nats:4222   # 主动建议（agent.proactive）→ HMI WS 投递
@@ -895,6 +901,9 @@ services:
     environment:
       # B3 部署形态闸（本服务未用 <<: *python-env，单列）。
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
+      VEHICLE_STATE_TRUST: ${VEHICLE_STATE_TRUST:-}
+      VEHICLE_STATE_KEY_ID: ${VEHICLE_STATE_KEY_ID:-}
+      VEHICLE_STATE_PRIVATE_KEY: ${VEHICLE_STATE_PRIVATE_KEY:-}
       CLOUD_GATEWAY_ADDR: cloud-gateway:8080
       NATS_URL: nats://nats:4222
       FAST_INTENT_THRESHOLD_HIGH: ${FAST_INTENT_THRESHOLD_HIGH:-0.85}
