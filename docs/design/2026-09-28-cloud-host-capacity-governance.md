@@ -1,7 +1,7 @@
 # 云主机容量治理：发布产物保留、构建缓存上限与容量可观测
 
-> 状态：**已批准，P0 已实现**（2026-09-28：用户认可 §4.1 初值；主机级事项由 drone-agent 当前的 Claude 会话对接）。
-> P0 见 §5；§4.7 的规则修订随 P1 落地，在那之前现行「逐项批准」规则继续有效，服务器与 Docker 配置不变
+> 状态：**P0、P1 已实现并在云端启用**（2026-09-28：基础设施锚 `a3346202`，对应 `887b983c`；§4.7 规则已修订）。
+> 首次策略回收为手动 apply；发布事务内的自动回收在下一次 car-agent 发布时首跑。P2 已获 drone 用户确认，待本项目用户单独授权；P3 未启动
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -202,6 +202,14 @@ releases 删完标签（`0a589e14` 两族 52 个、`56409fef` / `56f92838` 别�
 目录与证据未动；`retention` 动作随 `set -e` 中止，backups 没跑；本地 CLI 只显示一个空的 failed。修复（`retention.py` 重新列表重试、
 仍失败则逐个 inspect 且只跳过确已消失的容器；`retention` 动作两类各自执行并汇总退出码；CLI 缺哪份记录就标 missing 并透出错误原文）
 随后重新审批发布。判据：**共租主机上任何「先列再查」的读取都要容忍对方的容器随时消失；只有「确实已不存在」才能跳过。**
+
+**P1 启用（2026-09-28 17:3x CST）**：`887b983c` 审批通过（锚 `af65f910` → `a3346202`，只换 `remote-release.sh` 与 `retention.py`），
+dry-run 复核后 `dev_stack retention --apply`：releases 退役 `0a589e14` 的 release / 构建目录、`33c2a731` 的构建目录，
+收尾三个保留版本的构建工作区与 `7b346c90` 的上传包（7 个目录；构建证据与 `33c2a731` 的续建日志移入 `evidence/releases/<sha>/build/`；
+当前版本的 26 个别名因镜像在用按设计跳过）；backups 按 GFS 保留 24 套、删 95 套 380 个文件（1.0 GiB → 233 MB）。
+证据 `shared/evidence/retention/20260928T093322Z-releases.json` 与 `…093331Z-backups.json`；status 5/5 零 warning、可用 59.44 GiB；
+verify `20260928T093523Z-7b346c9.json`。发布事务内的自动回收待下一次发布首跑（需避开 drone 的安静窗口）。
+锚更换后，基于 `887b983c` 之前提交的 car-agent 工作树再部署会被判基础设施不匹配，需先同步 main。
 
 ## 6. 验收
 

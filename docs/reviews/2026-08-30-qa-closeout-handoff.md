@@ -57,6 +57,7 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 聚合修复容量处置 | 原已授权缓存剩余 580 项仍回收 0B，未扩大范围；另经用户授权清理 6 个已完成发布的重复源码/上传包，约 0.319 GiB，空闲约 30.26 GiB。全部发布/镜像/容器/卷与构建证据校验未变；`.artifacts/vehicle-state-v2/hotfix-space-cleanup-result.json` |
 | 来源条件批发布与容量（历史） | `56f92838` 首趟 apply 未创建候选上传/构建目录，原因未定；重新只读预检后按原 API 重试成功。旧获批 580 项本轮仍报告 0B，未追加删除；后续只读空闲约 32.01 GiB，不归为本次清理成果。阶段诊断与边界见 [来源条件 §4](../design/2026-09-28-manual-source-evidence-guard.md#4-首版文字发布与精确证据) |
 | 云端容量清理（2026-09-28） | 经用户批准：保留 `56409fef` / `56f92838` / `0a589e14`，删其余 20 个 release 镜像集（含 `4c1f479`，其目录保留）与 19 个 release 目录、重复源码/上传包、09-13 及更早备份 405 个、5 个 08-17/18 迁移包（元数据先归档本地），构建缓存 `until=24h`（同条件补 `--all`）。可用 31.28 → 46.87 GiB；current、运行容器、卷、共享模型与构建证据未变；status 5/5 零 warning，verify `20260928T073945Z-56409fe.json`。第二轮删除首版引导残留（含 1.13 GB 镜像归档）与两份过期 .env 副本等无用内容，可用 48.08 GiB，status 5/5；构建缓存按用户要求保留。过程与保留项见 [history](../agents-history.md)；`.artifacts/cloud-capacity-20260928/` |
+| 容量治理 P0 / P1（2026-09-28） | [方案](../design/2026-09-28-cloud-host-capacity-governance.md) P0 `66d68f64`、P1 `48007778` + `887b983c` 已启用：基础设施锚 `a3346202`；发布 / 回滚后按策略退役旧 release，备份 GFS 轮转（首次手动 apply：备份 119 → 24 套）。生产 release 仍为 `7b346c90`（另一会话发布）；status 5/5 零 warning、可用 59.44 GiB，verify `20260928T093523Z-7b346c9.json`。发布事务内自动回收待下次发布首跑；P2 主机级缓存上限待授权 |
 | v2 / Jev | CA2-02–06 与 CA2-12 首版、模拟来源签名车道已发布；CA2-07 已拆为 G1–G3、尚未实现，设备/扩展矩阵未验收。Decide、持久操作、T1e、OEM 驱动与量产多车账号/ACL 仍未实现 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
