@@ -134,7 +134,7 @@ release tag 指向同一镜像时才去，只删标签不删镜像）；退役�
 
 - journald：drop-in 设 `SystemMaxUse=1G`（现 0.99 GiB，默认上限可到 4 GiB），只重启 `systemd-journald`，不影响容器。
 - apport core dump：由同一 host timer 删除 `/var/lib/apport/coredump` 里超过 7 天的文件，**但要等 drone 确认后才启用**——
-  drone 正用现存 5 个 core 取栈排查 `sim/collect.py` 的 SIGABRT，在那之前主机上的 core 一律不碰。
+  drone 正用现存 5 个 core 取栈排查 `sim/collect.py` 的 SIGABRT，在那之前主机上的 core 一律不碰（已满足，见 §4.8）。
 - 容器日志：推迟到 P3 与 daemon 级默认值一起做。应用容器每次发布都会重建，日志实测最大约 6 MB；为此改 `compose.cloud.yaml`
   还会让 postgres / redis / nats 重建，不值得。
 
@@ -169,6 +169,8 @@ release tag 指向同一镜像时才去，只删标签不删镜像）；退役�
 - **drone 用户已确认（2026-09-28 晚）**：a) 缓存上限 20 GB、每小时一次、避让两个项目的锁；b) journald `SystemMaxUse=1G`；
   c) `/var/lib/apport/coredump` 超过 7 天自动删除。现存 5 个 collector core 由 drone 在真实栈验证修复（`sim/collect.py` 改为 `os._exit(0)` 退出）后自行删除。
   drone 构建文件中 apt 索引每个提交重建（每次部署缓存约涨 1 GB）的根因修复因冻结门禁暂缓，期间由 a) 兜住。
+- drone 修复验证通过后，于 2026-09-28 17:44 CST 删除这 5 个 core（约 633 MB；修复记在 drone 仓库 D067），`/var/lib/apport/coredump` 现为空。
+  此后 drone 有重任务会先与本项目约窗口。
 - 安装仍需本项目用户对 P2（系统配置红线）单独授权；安装前先与 drone 约定窗口。
 
 ## 5. 分阶段落地
