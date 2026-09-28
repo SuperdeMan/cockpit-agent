@@ -69,6 +69,7 @@ PDF + resources/visual_assets.yaml
 - 未出现的显著 Latin 产品名或多词协议名（如 `CarPlay`、`Android Auto`）零命中；
 - 低相关查询零命中且不调 LLM；
 - 真实手册答案里的带单位/小数数值必须能在本轮引用片段核对，否则整段弃权；
+- 结果统一声明 `_speech_verbatim=true`，避免后续多步聚合再改写数值角色、出处或弃权说明；这是呈现合同，不是执行授权，见 [原文保护](../../docs/design/2026-09-28-result-speech-fidelity.md)；
 - 安全告警继续由 `runtime/safety_signal.py` 的确定性分级建议前置；
 - 卡片带章节、PDF 页码、车型、源/内容 hash 和 `_prov.mode=real`。
 - `.mrag` 内每个图片 blob 与视觉 manifest 均有 SHA-256；启动期全量校验，运行期读图复验；

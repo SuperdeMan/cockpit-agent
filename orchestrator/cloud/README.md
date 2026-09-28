@@ -2,6 +2,9 @@
 
 云侧大脑：复杂/跨域/多轮意图的理解、规划、多 Agent 编排、结果聚合。
 
+结果声明 `data._speech_verbatim=true` 且有正文时，多步聚合确定性保留原结果；仅检查数字集合无法防止
+推荐值与阈值互换。卡片、动作和验证口径不变，详见 [原文保护契约](../../docs/design/2026-09-28-result-speech-fidelity.md)。
+
 ## v2 首批实现与后续边界
 
 CA2-02–04 已原位扩展 Step/step_record/SessionState 的来源范围、服务端 task/goal 来源引用与 ResultBundle。

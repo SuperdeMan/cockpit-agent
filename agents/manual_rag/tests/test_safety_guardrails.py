@@ -50,6 +50,7 @@ def test_zero_hit_does_not_call_llm():
         agent, "manual.query", raw_text="车载冰箱最低能到几度"))
     assert agent.llm.complete.await_count == 0, "零命中不得调用 LLM"
     assert res.status == "ok"
+    assert res.data["_speech_verbatim"] is True
     assert "没" in res.speech or "未" in res.speech, f"应诚实弃权，实得：{res.speech}"
 
 
@@ -95,6 +96,7 @@ def test_real_manual_source_keeps_manual_wording():
     agent.kb.retrieve = _real
     res = asyncio.run(run_handle(agent, "manual.query", raw_text="胎压多少正常"))
     assert (res.ui_card or {}).get("source_type") == "manual"
+    assert res.data["_speech_verbatim"] is True
     system = agent.llm.complete.await_args[0][0][0]["content"]
     assert "车型手册问答助手" in system
 

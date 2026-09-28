@@ -217,7 +217,15 @@ class Aggregator:
             if line and line not in refused_lines:
                 refused_lines.append(line)
         said = [r for r in spoken if r.status == StepStatus.OK and (r.speech or "").strip()]
-        if refused and not any((r.speech or "").strip() for r in spoken):
+        if any(isinstance(r.data, dict) and r.data.get("_speech_verbatim") is True
+               and (r.speech or "").strip() for r in results):
+            # A guarded answer can contain several valid numbers with different
+            # meanings. Set membership cannot detect exchanging their roles.
+            # Compose the whole response without another model call: rewriting
+            # only the other steps can still invent a conflicting answer to the
+            # protected part of the user's question.
+            speech = self._literal_speech(results)
+        elif refused and not any((r.speech or "").strip() for r in spoken):
             speech = "".join(self._sentence(line) for line in refused_lines)
         elif len(said) == 1 and not any(r.status == StepStatus.FAILED for r in spoken):
             # 多步里只有一步有话可说——最常见的是续接轮：恢复出来的种子不带话术（上一轮已经播过）。没有东西要合并，
@@ -248,6 +256,22 @@ class Aggregator:
         if s and s[-1] not in "。！？!?；;":
             s += "。"
         return s
+
+    @classmethod
+    def _literal_speech(cls, results: list[StepResult]) -> str:
+        """Preserve producer meaning, status and order; change punctuation only."""
+        lines = []
+        for result in results:
+            if result.status == StepStatus.FAILED and cls._exec_confirmed_by_state(result):
+                line = _EXEC_UNCERTAIN_SPEECH
+            else:
+                line = strip_markdown_speech(result.speech or "").strip()
+                if not line and result.status == StepStatus.FAILED:
+                    friendly = cls._ERROR_FRIENDLY.get(result.error or "", result.error or "处理失败")
+                    line = f"抱歉，{friendly}。"
+            if line:
+                lines.append(cls._sentence(line))
+        return "\n\n".join(lines)
 
     @staticmethod
     def compose_actions(results: list[StepResult]) -> list[dict]:

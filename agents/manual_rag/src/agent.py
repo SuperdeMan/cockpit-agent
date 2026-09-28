@@ -256,6 +256,11 @@ class ManualRagAgent(BaseAgent):
         第三轮执行音量。**一次安全警告必须是会话状态，不能是一句话说完就没了。**
         """
         data = {"safety_signal": level, **extra}
+        # This producer has already applied source, numeric and safety guards.
+        # A second model rewrite could swap a recommendation and an alarm
+        # threshold even though both numbers appear in the cited material.
+        # The presentation hint never grants action or confirmation authority.
+        data["_speech_verbatim"] = True
         if level:
             # signal 取原话里命中的那个词，不取整句——整句进 prompt 会把
             # 用户的措辞当成告警名字（「慢一点开可以吗」不是一个告警）。
