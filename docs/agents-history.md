@@ -10232,4 +10232,27 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   修成重新列表重试、逐个 inspect 且只跳过确已消失的容器，`retention` 动作两类各自执行，CLI 透出远端错误。复跑：退役与收尾 7 个目录，
   备份 119 → 24 套（1.0 GiB → 233 MB），证据在 `shared/evidence/retention/`；status 5/5 零 warning、可用 59.44 GiB；verify `20260928T093523Z-7b346c9.json`。
 - 读数：`scripts/tests` 1574 passed / 13 skipped；全量 10258 passed / 34 skipped（多出的 2 个 skip 是需 Linux 的符号链接 / `/proc` 用例）。
-  发布事务内的自动回收待下一次 car-agent 发布首跑；锚更换后旧工作树需先同步 main 才能部署。
+  锚更换后旧工作树需先同步 main 才能部署。
+- 发布 `55165e50`（与 drone 约定在其 M2 复跑结束、激活之前；应用代码与 `7b346c90` 相同）：发布事务内自动回收首跑（reason=deploy）——
+  退役 `56f92838`，收尾 `55165e50` 与已停用的 `7b346c90`（删 52 个 tag、3 个目录；当前版本别名因在用跳过）；激活前备份走新 `backup.sh`，
+  轮转 25 套均在策略内。服务器恰 3 套 release 镜像，`builds/` 为空；status 5/5 零 warning、可用 59.95 GiB，verify `20260928T094959Z-55165e5.json`。
+  残余：两次审批的上传目录属于从未激活的 SHA，保留策略只报告不删，需人工清。
+- P0 报出的 `shared/` 6 个残留（3 份 `.env.bak*`、`4c1f479` 清单 / 校验和、旧 `release.lock`）首次撞另一会话的发布锁未执行，17:56 CST 在发布锁内删除；
+  全程未读 `.env` 副本，活跃 `.env` 的 stat 前后一致。复核时 capacity 把 P1 安装的 `shared/retention-policy.json` 报成残留：
+  已知布局是手写的第二份清单，P1 加安装目标时没同步。已补入，并用测试对账预检 `REQUIRED_INSTALLED`（修前判红）；真机未知条目清零。
+
+## 2026-09-28：容量治理 P2 主机级维护安装
+
+- 用户授权 P2（系统配置）；drone 会话确认锁语义，并给了安装窗口。`a53034b6` 新增 `deploy/host/`：
+  - `host-capacity-gc` 每小时删除 7 天以上的 apport `core.*`，并按已批准策略给构建缓存封顶，上限经 car 的 `retention.py` 读取；
+  - journald drop-in 设 `SystemMaxUse=1G`。
+
+  这批文件不进基础设施锚：主机级配置由两个项目共用，进锚的话每次调整都要重批锚，还会逼所有工作树先同步 main。
+- 锁：对 car 的发布锁和 drone 的 `stack.lock` 各做一次非阻塞 flock 探测，拿到立即释放；任一被占就跳过当轮，prune 期间不持锁。
+  两边取锁都不等待，持锁会让对方直接失败。锁文件缺失时整轮失败。AGENTS / CLAUDE 规则同步补上：GC 的自动清理不逐轮授权，
+  安装、更新、卸载属于系统配置。
+- 验证：新增 15 条单测，锁逻辑的两处变异都被判红；`scripts/tests` 1595 passed / 14 skipped。主机预检用临时文件补验了 Linux 上的
+  flock 语义，并跑了 `systemd-analyze verify` 和真实 dry-run。18:39 CST 安装：journald 重启正常，timer 下次触发 19:04:57；
+  首轮 success、回收 0B，64 个容器的 ID 前后一致。
+- 口径：`--max-used-space 20GB` 按 1024 进制解析为 20 GiB，`buildx du` 却按 1000 进制显示，du 约 21.47GB 以内都不会回收。
+  首轮 0B 与此一致，§6 验收按这个口径读。下一次构建耗时待下次发布记录。证据在 `.artifacts/cloud-capacity-20260928/p2-host-capacity-gc/`。

@@ -109,6 +109,9 @@ python scripts/dev_stack.py retention  # 按已批准保留策略的计划（缺
 - `status.capacity` 只是提示，不进 `warnings`、不改变 `status` 与退出码（长会话验收要求 status 为 ok 且零 warning）。
 - `docker system df` 在 containerd 镜像存储下的 unique / reclaimable 不可信；构建缓存对已构建镜像是冗余副本，清缓存不伤运行中的镜像；
   按时间清缓存会被祖先链锁住，要按总量（`--all --max-used-space`）；旧 release 之间高度共享层，删旧版本收益有限。
+- 主机级 `host-capacity-gc` 每小时把构建缓存封顶到策略上限（`build_cache.max_used_space`），并删除 7 天以上的 core dump；
+  car 或 drone 任一方持锁时跳过当轮。在主机上用 `systemctl list-timers host-capacity-gc.timer` 与
+  `journalctl -u host-capacity-gc -o cat -n 5` 查看状态和每轮记录；安装、更新与回滚见 [`deploy/host/README.md`](../deploy/host/README.md)。
 - 永远不做 `docker system prune -a`、`docker image prune -a`、`docker volume prune`、`compose down -v`：共享主机上它们会删掉
   drone-agent 的镜像、构建要用的基础镜像或数据卷。
 - 删除仍按 [`deploy/cloud/README.md`](../deploy/cloud/README.md) 先列精确对象再批准；量法、回收顺序与自动轮转的落地阶段见

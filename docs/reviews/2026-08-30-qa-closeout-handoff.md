@@ -1,7 +1,7 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-28（车辆来源签名已启用并复验；固定语料原始 6 红、人工补充 4 个未完成轮，QA 仍非全绿）
+> 更新时间：2026-09-28（车辆来源签名已启用并复验；固定语料原始 6 红、人工补充 4 个未完成轮，QA 仍非全绿；随后 `55165e50` 发布容量治理 P1，应用代码不变）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
@@ -26,8 +26,8 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | 研究采纳起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；运行时首批版本见下行；后续纯文档提交允许领先 production |
-| 生产 release | `7b346c908e67e9bfe79d8c769f43a5895e8612a5`，2026-09-28，启用模拟车辆来源签名；上一版 `56409fef` 为未签名兼容车道，保留既有来源条件/原图修复。旧版回滚边界见 [车辆状态 §7](../design/2026-09-27-v2-vehicle-state-and-simulation.md#7-签名启用配置审查) |
-| status / verify | `ok`、5/5 healthy、零 warning，release/running SHA 均为 `7b346c90`；统一 verify `verified`：`20260928T091042Z-7b346c9.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`。首趟记忆问句过度澄清导致 7/8，失败证据保留，未将方差销账 |
+| 生产 release | `55165e50ab6d70a4ab679ba0e537a30eb2cdb571`，2026-09-28，容量治理 P1（发布事务内策略回收首跑）；相对 `7b346c90` 只改 `deploy/cloud`、`scripts`、文档与规则，应用代码相同，模拟车辆来源签名照旧启用。`7b346c908e67e9bfe79d8c769f43a5895e8612a5` 启用模拟车辆来源签名；再前一版 `56409fef` 为未签名兼容车道，保留既有来源条件/原图修复。旧版回滚边界见 [车辆状态 §7](../design/2026-09-27-v2-vehicle-state-and-simulation.md#7-签名启用配置审查) |
+| status / verify | `55165e50`：`ok`、5/5 healthy、零 warning，release/running SHA 一致；统一 verify `verified`：`20260928T094959Z-55165e5.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`。`7b346c90` 的统一 verify 为 `20260928T091042Z-7b346c9.json`；其首趟记忆问句过度澄清导致 7/8，失败证据保留，未将方差销账 |
 | CA2-06/12 后端验证 | `89b19956`：10148 passed / 34 skipped / 9 warnings，4727.69 s；四道门禁、edge smoke、Go 五包通过；有状态故障实验 16/16。工作树额外缺两项 NLU vocab，不混同主仓 32 skip 口径；[本包 §8](../design/2026-09-27-v2-vehicle-state-and-simulation.md#8-验证登记) |
 | 当前后端与门禁 | `7b346c90` 精确干净工作树全量 10202 passed / 32 skipped / 11 warnings，529.58 s；四门禁与 smoke 通过，[CI](https://github.com/SuperdeMan/cockpit-agent/actions/runs/36399631781) 8 项 success。警告为既有 Starlette、AsyncMock 未 await 与 Bert tokenizer 弃用；后续容量治理/文档提交不借用本批结果 |
 | 来源条件与图标专项（历史） | release/runner `56409fef`：文字六句 ×3 为 17/18，图标两句 ×3 为 6/6；已派发手册条件完整，6 份受控图标 hash 相同。共 35 次调用仅 Planner、均 pinned MiniMax-M3；零动作/确认/26 键车态差异/证据错误/残留挂起。不转写为 `7b346c90` 或整本新成绩 |
@@ -57,7 +57,7 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 聚合修复容量处置 | 原已授权缓存剩余 580 项仍回收 0B，未扩大范围；另经用户授权清理 6 个已完成发布的重复源码/上传包，约 0.319 GiB，空闲约 30.26 GiB。全部发布/镜像/容器/卷与构建证据校验未变；`.artifacts/vehicle-state-v2/hotfix-space-cleanup-result.json` |
 | 来源条件批发布与容量（历史） | `56f92838` 首趟 apply 未创建候选上传/构建目录，原因未定；重新只读预检后按原 API 重试成功。旧获批 580 项本轮仍报告 0B，未追加删除；后续只读空闲约 32.01 GiB，不归为本次清理成果。阶段诊断与边界见 [来源条件 §4](../design/2026-09-28-manual-source-evidence-guard.md#4-首版文字发布与精确证据) |
 | 云端容量清理（2026-09-28） | 经用户批准：保留 `56409fef` / `56f92838` / `0a589e14`，删其余 20 个 release 镜像集（含 `4c1f479`，其目录保留）与 19 个 release 目录、重复源码/上传包、09-13 及更早备份 405 个、5 个 08-17/18 迁移包（元数据先归档本地），构建缓存 `until=24h`（同条件补 `--all`）。可用 31.28 → 46.87 GiB；current、运行容器、卷、共享模型与构建证据未变；status 5/5 零 warning，verify `20260928T073945Z-56409fe.json`。第二轮删除首版引导残留（含 1.13 GB 镜像归档）与两份过期 .env 副本等无用内容，可用 48.08 GiB，status 5/5；构建缓存按用户要求保留。过程与保留项见 [history](../agents-history.md)；`.artifacts/cloud-capacity-20260928/` |
-| 容量治理 P0 / P1（2026-09-28） | [方案](../design/2026-09-28-cloud-host-capacity-governance.md) P0 `66d68f64`、P1 `48007778` + `887b983c` 已启用：基础设施锚 `a3346202`；发布 / 回滚后按策略退役旧 release，备份 GFS 轮转（首次手动 apply：备份 119 → 24 套）。生产 release 仍为 `7b346c90`（另一会话发布）；status 5/5 零 warning、可用 59.44 GiB，verify `20260928T093523Z-7b346c9.json`。发布事务内自动回收待下次发布首跑；P2 主机级缓存上限待授权 |
+| 容量治理 P0 / P1（2026-09-28） | [方案](../design/2026-09-28-cloud-host-capacity-governance.md) P0 `66d68f64`、P1 `48007778` + `887b983c` 已启用：基础设施锚 `a3346202`；发布 / 回滚后按策略退役旧 release，备份 GFS 轮转（首次手动 apply：备份 119 → 24 套）。随后发布 `55165e50`，发布事务内自动回收首跑：退役 `56f92838`、收尾 `55165e50` / `7b346c90`（删 52 个 tag、3 个目录，当前版本别名因在用跳过），激活前备份轮转 25 套均在策略内；服务器上恰 3 套 release 镜像。status 5/5 零 warning、可用 59.95 GiB，verify `20260928T094959Z-55165e5.json`。P2 `a53034b6` 已安装（18:39 CST）：主机级 `host-capacity-gc` 每小时给构建缓存封顶到 20 GiB（`buildx du` 显示约 21.47GB）、删除 7 天以上的 core dump，journald 上限 1G；不在基础设施锚内，见 `deploy/host/README.md` |
 | v2 / Jev | CA2-02–06 与 CA2-12 首版、模拟来源签名车道已发布；CA2-07 已拆为 G1–G3、尚未实现，设备/扩展矩阵未验收。Decide、持久操作、T1e、OEM 驱动与量产多车账号/ACL 仍未实现 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
