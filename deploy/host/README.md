@@ -20,6 +20,7 @@
   2. 读取 car-agent 已批准策略 `/opt/car-agent/shared/retention-policy.json` 的 `build_cache.max_used_space`
      （由 car-agent 的 `retention.py` 校验，它是该策略唯一的校验者），执行
      `docker buildx prune --builder default --force --all --max-used-space <上限>`，前后各记一次 `buildx du` 的 Total。
+     docker 按 1024 进制解析上限（`20GB` 即 20 GiB），`buildx du` 按 1000 进制显示，所以 du 显示约 21.47GB 以内都不会回收，这不是 GC 失效。
 - 锁：对 car-agent 的 `/opt/car-agent/shared/locks/release.lock` 和 drone-agent 的 `/home/ubuntu/drone-agent/stack.lock`
   各做一次非阻塞 flock 探测，拿到后立即释放；任一被占，本轮就跳过缓存封顶。prune 期间不持有任何锁：两个项目都用非阻塞方式取锁，
   持锁会让对方的发布或批次直接失败。锁文件缺失或不是普通文件时，本轮以失败退出，不做 prune。

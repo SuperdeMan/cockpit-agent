@@ -1,7 +1,7 @@
 # 云主机容量治理：发布产物保留、构建缓存上限与容量可观测
 
 > 状态：**P0、P1 已实现并在云端启用**（2026-09-28：基础设施锚 `a3346202`，对应 `887b983c`；§4.7 规则已修订）。
-> 首次策略回收为手动 apply；发布 `55165e50` 时发布事务内的自动回收已首跑通过。P2 已获本项目用户授权与 drone 确认，实现在 `deploy/host/`，待安装；P3 未启动
+> 首次策略回收为手动 apply；发布 `55165e50` 时发布事务内的自动回收已首跑通过。P2 已安装并启用（`a53034b6`，2026-09-28 18:39 CST，主机级 `host-capacity-gc` 与 journald 上限，见 §5）；P3 未启动
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -226,12 +226,23 @@ verify `20260928T093523Z-7b346c9.json`。
 （删 52 个 tag、3 个目录）；激活前备份走新 `backup.sh`，25 套均在策略内、未删。status 5/5 零 warning、可用 59.95 GiB；
 verify `20260928T094959Z-55165e5.json`。残余：审批用的上传目录属于从未激活的 SHA，按「无激活证据只报告」规则不会自动删，需人工清或在策略中补一类。
 
+**P2 实现与安装（2026-09-28，`a53034b6`）**：`deploy/host/` 下有 `host_capacity_gc.py`、`host-capacity-gc.service` / `.timer`、journald drop-in 与 README，
+不在基础设施锚内。drone 确认：它四处取锁都用 `fcntl.flock(LOCK_EX | LOCK_NB)`，锁文件常驻不删；同意「只探测、立即释放、prune 期间不持锁」，
+也同意「锁文件缺失时整轮失败」。测试 `scripts/tests/test_host_capacity_gc.py` 15 条；真 flock 用例需要 Linux，本机跳过，改在主机上用临时文件补验；
+两处锁逻辑的变异都被测试判红。`scripts/tests` 全量 1595 passed / 14 skipped。
+18:38–18:39 CST 安装。先跑预检，全部通过：暂存文件哈希一致、4 个目标不存在、临时文件上的 flock 语义符合预期、`systemd-analyze verify` 通过、
+对真实主机 dry-run 显示两把锁空闲且零错误。安装后：journald 重启为 active，写入读回正常，drop-in 生效（占用 1013M）；
+timer 下次触发 19:04:57 CST；首轮 `Result=success`，回收 0B（Total 前后都是 20.23GB）；64 个容器的 ID 前后一致。
+**单位**：docker 的字节参数按 1024 进制解析（go-units `RAMInBytes`），`20GB` 实为 20 GiB；`buildx du` 按 1000 进制显示，
+所以 du 显示超过约 21.47GB 才会回收，首轮回收 0B 与此一致。§6 第 4 条按这个口径读。下一次构建的耗时待下次发布时记录。
+证据在 `.artifacts/cloud-capacity-20260928/p2-host-capacity-gc/`。
+
 ## 6. 验收
 
 1. 连续 14 天（或至少 20 次发布）不做人工清理，发布从未被 30 GiB 闸挡住，稳态可用 ≥ 45 GiB。
 2. 任意时刻本项目 release 镜像集 ≤ 3 + pinned；已激活 release 在 `builds/`、`incoming/` 里没有重复源码包；失败产物存活不超过 72 h。
 3. 备份套数与大小符合 GFS 预算，至少 3 套完整备份，最新一套能通过 `backup.sh` 现有的恢复校验。
-4. P2 之后，`buildx du` 的 Total 不超过上限加一次构建的增量。
+4. P2 之后，`buildx du` 的 Total 不超过上限加一次构建的增量（上限 `20GB` 按 20 GiB 解析，约合 du 显示的 21.47GB，见 §5 P2 记录）。
 5. 每次自动回收都有证据 JSON，抽查可复现；守卫测试覆盖当前版本、保留集、在用镜像、pinned、迁移 fence、compose 工程目录引用、数据卷与 `.env`。
 6. `status` 在低于 40 GiB 时给出 warning；`capacity` 的读数与 ctr 手工核算一致。
 7. 回滚到保留窗口内的上一版：`rollback` dry-run 通过；是否做一次真机回滚演练另行授权（README 记录回滚至今未在真机演练）。

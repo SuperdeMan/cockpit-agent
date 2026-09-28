@@ -10240,3 +10240,19 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - P0 报出的 `shared/` 6 个残留（3 份 `.env.bak*`、`4c1f479` 清单 / 校验和、旧 `release.lock`）首次撞另一会话的发布锁未执行，17:56 CST 在发布锁内删除；
   全程未读 `.env` 副本，活跃 `.env` 的 stat 前后一致。复核时 capacity 把 P1 安装的 `shared/retention-policy.json` 报成残留：
   已知布局是手写的第二份清单，P1 加安装目标时没同步。已补入，并用测试对账预检 `REQUIRED_INSTALLED`（修前判红）；真机未知条目清零。
+
+## 2026-09-28：容量治理 P2 主机级维护安装
+
+- 用户授权 P2（系统配置）；drone 会话确认锁语义，并给了安装窗口。`a53034b6` 新增 `deploy/host/`：
+  - `host-capacity-gc` 每小时删除 7 天以上的 apport `core.*`，并按已批准策略给构建缓存封顶，上限经 car 的 `retention.py` 读取；
+  - journald drop-in 设 `SystemMaxUse=1G`。
+
+  这批文件不进基础设施锚：主机级配置由两个项目共用，进锚的话每次调整都要重批锚，还会逼所有工作树先同步 main。
+- 锁：对 car 的发布锁和 drone 的 `stack.lock` 各做一次非阻塞 flock 探测，拿到立即释放；任一被占就跳过当轮，prune 期间不持锁。
+  两边取锁都不等待，持锁会让对方直接失败。锁文件缺失时整轮失败。AGENTS / CLAUDE 规则同步补上：GC 的自动清理不逐轮授权，
+  安装、更新、卸载属于系统配置。
+- 验证：新增 15 条单测，锁逻辑的两处变异都被判红；`scripts/tests` 1595 passed / 14 skipped。主机预检用临时文件补验了 Linux 上的
+  flock 语义，并跑了 `systemd-analyze verify` 和真实 dry-run。18:39 CST 安装：journald 重启正常，timer 下次触发 19:04:57；
+  首轮 success、回收 0B，64 个容器的 ID 前后一致。
+- 口径：`--max-used-space 20GB` 按 1024 进制解析为 20 GiB，`buildx du` 却按 1000 进制显示，du 约 21.47GB 以内都不会回收。
+  首轮 0B 与此一致，§6 验收按这个口径读。下一次构建耗时待下次发布记录。证据在 `.artifacts/cloud-capacity-20260928/p2-host-capacity-gc/`。
