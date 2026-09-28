@@ -10181,3 +10181,30 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   `salvage_wire_accepted` 重试后仍 salvage、仅保留安全一步，覆盖首轮计划。此轮漏答是独立规划残余；不把前版 18/18 借过来。
   09-12/13 评估已有补槽收益及保留重试结论，本轮不改策略/.env，新样本归原评估项。两批合计 35 次调用仅 Planner、全 pinned，
   零动作/确认/车态差异/证据错误/残留挂起。当前索引 `56409fef-evidence-manifest.json`，详细原始 hash、trace 与边界见来源条件记录 §5。
+
+
+## 2026-09-28：云主机容量清理（只读盘点 → 用户批准的 A–E）
+
+- 起因：可用约 32 GiB，距远端构建 30 GiB 闸约 2 GiB。只读盘点改用 `ctr -n moby`（images / content / snapshots usage）按层核算：
+  `docker system df` 在 containerd 镜像存储下不可信（镜像可回收 -113%、drone 各镜像 unique 加总超过整盘）。本地构建层最多落三份：
+  BuildKit 缓存快照（随机 ID）+ 镜像解包快照（`sha256:<chainID>`）+ 压缩 blob；>50MB 的 92 个镜像层有 73 个在缓存里有同尺寸孪生。
+  构建缓存 26.4 GiB 中 drone-agent 15.1、本项目 7.6；层跨 release 高度共享，原「保留最近 6 份」只能腾出约 3 GiB。
+- 用户批准「按建议执行」，全程持 release 锁、迁移 fence 为空、current 始终 `56409fef`：B 保留 `56409fef` / `56f92838` / `0a589e14`，
+  删其余 20 个 release 镜像集（两族 tag 1014 个引用、520 个镜像、零报错，含首版 `4c1f479` 的 26 个；`releases/4c1f479` 目录保留）与 19 个 release 目录；
+  C 删 5 份 `builds/<sha>` 的 `src/`、`transport.tar`、`upload/source.tar` 与 3 个 incoming 上传包，88 份构建证据 hash 前后一致；
+  D 删 2026-09-13 及更早的 405 个备份文件（含 2 个 `.partial`）；E 删 `shared/imports/` 5 个 08-17/18 迁移包，先把 16 个
+  journal / status / preflight / evidence 元数据归档到本地并逐个对 hash；A `docker buildx prune -f --filter until=24h`。
+- 读数：可用 31.28 → **46.87 GiB**（磁盘 73% → 59%）：C+D+E +1.61、B +8.50、A +5.48（不带 `--all` 3.27；同一 `until` 加 `--all` 再 2.21）。
+  运行容器 37 个、卷、10 个共享模型 hash 均不变；status 5/5 零 warning；verify `20260928T073945Z-56409fe.json`（`e2e_remote_safe`，minimax / MiniMax-M3）。
+- 估算偏差：A 预估 19.6 GiB、实得 5.48。按每条缓存自己的 LastUsedAt 分桶漏了两件事：命中缓存只刷新叶子记录，剩下 811 条 ≥24h 记录里
+  793 条（21.7 GB）是 24h 内记录的祖先，按时间删不掉；不带 `--all` 会跳过与镜像同层的 shared 记录并连带锁住其父链。
+  要再腾空间只能 `-af`（今天的缓存一起清，两个项目下次都无缓存重建），未做。09-28 早先授权的 580 项回收 0B 的更可能原因是
+  prune 附带的 `private=""` / `immutable=""` 过滤永不匹配（该批合计也只有 0.63 GiB）。
+- 第二轮（用户「无用的内容可以删除，构建缓存先保留」）：删盘点时漏掉的 `incoming/` 根下 08-16 首版引导残留 23 个文件
+  （`car-agent-images-4c1f479.tar` 1.13 GB、models / 源码两个 tar，以及权限 0664、与现行 .env 不同的 `cloud.env`）、18 个空上传目录、
+  19 个已删 release 的构建证据残留（同名残留会让该 SHA 无法重建；先连同两份 `/tmp/r5-cleanup-*` 清单归档到本地，92 个文件对 hash）、
+  `/opt/car-agent/backups` 空骨架、`shared/backups/env/.env.pre-s2s-20260828`（未读、与现行 .env 不同）、`/home/ubuntu` 下 08-17 的
+  5 个 anchor / bootstrap 暂存目录与误写的 `{{.Image}}`、空卷 `car-agent_redis-data`、无引用镜像 `4c1f479-edge-gateway:latest`。
+  可用 46.90 → **48.08 GiB**；现行 `.env` stat、容器、三个数据卷不变；status 5/5 零 warning。保留：`builds/33c2a731`（含 09-27 事故续建日志）、
+  `releases/4c1f479`（postgres / redis / nats 三个容器的 compose 工程目录标签仍指向它）、apt 缓存（apt 会自动重建）、journald、drone-agent 全部。
+- 结构性问题未改：BuildKit 缓存无有效上限（无 daemon.json）、release 保留与备份轮转仍靠手工。证据 `.artifacts/cloud-capacity-20260928/`。
