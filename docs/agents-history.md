@@ -10232,4 +10232,8 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   修成重新列表重试、逐个 inspect 且只跳过确已消失的容器，`retention` 动作两类各自执行，CLI 透出远端错误。复跑：退役与收尾 7 个目录，
   备份 119 → 24 套（1.0 GiB → 233 MB），证据在 `shared/evidence/retention/`；status 5/5 零 warning、可用 59.44 GiB；verify `20260928T093523Z-7b346c9.json`。
 - 读数：`scripts/tests` 1574 passed / 13 skipped；全量 10258 passed / 34 skipped（多出的 2 个 skip 是需 Linux 的符号链接 / `/proc` 用例）。
-  发布事务内的自动回收待下一次 car-agent 发布首跑；锚更换后旧工作树需先同步 main 才能部署。
+  锚更换后旧工作树需先同步 main 才能部署。
+- 发布 `55165e50`（与 drone 约定在其 M2 复跑结束、激活之前；应用代码与 `7b346c90` 相同）：发布事务内自动回收首跑（reason=deploy）——
+  退役 `56f92838`，收尾 `55165e50` 与已停用的 `7b346c90`（删 52 个 tag、3 个目录；当前版本别名因在用跳过）；激活前备份走新 `backup.sh`，
+  轮转 25 套均在策略内。服务器恰 3 套 release 镜像，`builds/` 为空；status 5/5 零 warning、可用 59.95 GiB，verify `20260928T094959Z-55165e5.json`。
+  残余：两次审批的上传目录属于从未激活的 SHA，保留策略只报告不删，需人工清。

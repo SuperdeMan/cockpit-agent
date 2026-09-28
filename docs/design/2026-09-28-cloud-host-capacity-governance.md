@@ -1,7 +1,7 @@
 # 云主机容量治理：发布产物保留、构建缓存上限与容量可观测
 
 > 状态：**P0、P1 已实现并在云端启用**（2026-09-28：基础设施锚 `a3346202`，对应 `887b983c`；§4.7 规则已修订）。
-> 首次策略回收为手动 apply；发布事务内的自动回收在下一次 car-agent 发布时首跑。P2 已获 drone 用户确认，待本项目用户单独授权；P3 未启动
+> 首次策略回收为手动 apply；发布 `55165e50` 时发布事务内的自动回收已首跑通过。P2 已获 drone 用户确认，待本项目用户单独授权；P3 未启动
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -208,8 +208,13 @@ dry-run 复核后 `dev_stack retention --apply`：releases 退役 `0a589e14` 的
 收尾三个保留版本的构建工作区与 `7b346c90` 的上传包（7 个目录；构建证据与 `33c2a731` 的续建日志移入 `evidence/releases/<sha>/build/`；
 当前版本的 26 个别名因镜像在用按设计跳过）；backups 按 GFS 保留 24 套、删 95 套 380 个文件（1.0 GiB → 233 MB）。
 证据 `shared/evidence/retention/20260928T093322Z-releases.json` 与 `…093331Z-backups.json`；status 5/5 零 warning、可用 59.44 GiB；
-verify `20260928T093523Z-7b346c9.json`。发布事务内的自动回收待下一次发布首跑（需避开 drone 的安静窗口）。
+verify `20260928T093523Z-7b346c9.json`。
 锚更换后，基于 `887b983c` 之前提交的 car-agent 工作树再部署会被判基础设施不匹配，需先同步 main。
+
+**发布事务内自动回收首跑（2026-09-28 17:47 CST）**：与 drone 约定在其 M2 复跑结束后发布 `55165e50`（应用代码与 `7b346c90` 相同）。
+证据 `shared/evidence/retention/20260928T094743Z-releases.json` 与 `…094708Z-backups.json`。回收 reason=deploy：保留当前 + `7b346c90` / `56409fef` + `4c1f479`（compose 工程目录），退役 `56f92838`，收尾 `55165e50` 与已停用的 `7b346c90`
+（删 52 个 tag、3 个目录）；激活前备份走新 `backup.sh`，25 套均在策略内、未删。status 5/5 零 warning、可用 59.95 GiB；
+verify `20260928T094959Z-55165e5.json`。残余：审批用的上传目录属于从未激活的 SHA，按「无激活证据只报告」规则不会自动删，需人工清或在策略中补一类。
 
 ## 6. 验收
 
