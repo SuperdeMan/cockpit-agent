@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 更新：2026-09-28。状态：**目标态分期实施；CA2-02–06/12 已有首版，06/12 启用验收单列，其余按实施方案推进**。
+> 更新：2026-09-28。状态：**目标态分期实施；CA2-02–06/12 已有首版，06/12 来源签名已启用；权限化 View 等其余工作按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
@@ -94,6 +94,11 @@ CA2-03 首版已引入服务端稳定 ID 和来源关系，来源片段不是已
 跨端历史卡片恢复、独立持久操作与完整设备重启矩阵尚未验收；不得用本轮 WS 投影宣称目标态全部完成。
 
 ## 4. 可信车辆状态与联邦视图
+
+当前模拟车道已启用 Ed25519：公共信任表透传全部观测消费者，私钥仅给 edge 生产者；
+真实 NATS 快照与 HTTP/WS 投影已验签，仍标 `source_kind=simulated`。本包证据见
+[车辆状态 §8.4](../design/2026-09-27-v2-vehicle-state-and-simulation.md#84-签名车道启用与真栈复验2026-09-28)。
+下述联邦权限化 View 属 CA2-07，不能用来源认证代替模型字段授权。
 
 CA2-06/12 首版已形成版本 2 观测信封、受控公钥→车辆/来源绑定、epoch/seq、逐信号采样/接收/过期时间、
 质量与单位；Python/Go 读者共用对照向量，签名启用与发布证据见 [本包记录](../design/2026-09-27-v2-vehicle-state-and-simulation.md)。

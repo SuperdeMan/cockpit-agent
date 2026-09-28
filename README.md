@@ -21,7 +21,7 @@
 [首批实施](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)与
 [Capability v2](docs/design/2026-09-27-v2-capability-contract.md)；发布验收以 QA 交接为准。
 [车辆状态与故障仿真](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)首版已通过离线验证并发布 v1 兼容车道：
-逐车辆/逐信号镜像、过期展示和两车故障实验已接齐；来源签名仅离线验证，云端启用待配置授权。
+逐车辆/逐信号镜像、过期展示和两车故障实验已接齐；云端 Ed25519 来源签名已启用并经真栈复验，来源仍为模拟。
 Jev Decide、量产多车身份/ACL 与持久操作仍未实现。
 Jev 先走离线/影子评测，再按任务启用排序建议。
 直接从 [路线图](docs/roadmap.md)、[目标架构](docs/architecture/cockpit-agent-v2-target-architecture.md)

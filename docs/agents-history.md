@@ -10208,3 +10208,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   可用 46.90 → **48.08 GiB**；现行 `.env` stat、容器、三个数据卷不变；status 5/5 零 warning。保留：`builds/33c2a731`（含 09-27 事故续建日志）、
   `releases/4c1f479`（postgres / redis / nats 三个容器的 compose 工程目录标签仍指向它）、apt 缓存（apt 会自动重建）、journald、drone-agent 全部。
 - 结构性问题未改：BuildKit 缓存无有效上限（无 daemon.json）、release 保留与备份轮转仍靠手工。证据 `.artifacts/cloud-capacity-20260928/`。
+
+## 2026-09-28：CA2-06/12 模拟来源签名启用
+
+- 在三键与 Compose 具体范围呈现后按用户“继续”执行：云端生成 Ed25519，仅追加 VEHICLE_STATE_TRUST / KEY_ID / PRIVATE_KEY；私钥没有导出，旧配置及 0600 权限、原基础设施批准摘要保持。
+- `d72be998` 接齐公共策略/端侧私钥透传与可重复只读探针；合并主线后以 `7b346c90` 完整测试、推送与发布。构建 26/26，无本批额外清理或构建历史 API 调用；并发容量治理由另一任务维护，未覆盖其工作。
+- 实际 NATS 快照验签，隔离校验器篡改/重放拒绝；11 个必要读者/23 服务公共策略一致，私钥仅 edge；HTTP/WS 只读 16/16。模拟来源不冒充实车或操作因果证明。
+- 固定语料 20×3、103 测量轮，原始 6 红加人工发现 4 个未完成轮；212 条已记录调用均 pinned MiniMax-M3，零动作/车态变化/证据错误/残留挂起。手册超时不能误归为未派发，真实业务残余和量尺盲区保留。
+- 初次主仓全量因并发改动中止，正式读数来自干净隔离树；首趟只读探针撞 verify 发布锁后串行通过；首趟统一 verify 因记忆问句过度澄清失败，再跑通过，未据此标记缺陷修复。全部失败证据保留。
+- 入口、架构、路线图与 QA 已同步；下一包 CA2-07 拆为字段/授权表 → 统一模型投影 → 失效与验收，尚未实施。当前发布数字只看 QA 交接 §2，批次明细见 `docs/design/2026-09-27-v2-vehicle-state-and-simulation.md` §8.4；本地证据索引 `.artifacts/vehicle-state-signing/7b346c90-evidence-manifest.json`。

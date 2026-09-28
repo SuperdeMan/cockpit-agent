@@ -96,7 +96,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
   契约摘要仅证明版本一致，不能授予权限或替代确认；具体规则见 [CA2-05](docs/design/2026-09-27-v2-capability-contract.md)。
 
 - 车辆观测统一经 `runtime/vehicle_state.py` / Go `gateway/vehiclestate` 校验；请求车辆必须显式传到读取方。
-  `VEHICLE_STATE_TRUST` 是公钥/身份/TTL 策略，私钥仅给 edge；签名模拟状态不等于实车或动作因果证明。
+  `VEHICLE_STATE_TRUST` 是公钥/身份/TTL 策略；`VEHICLE_STATE_KEY_ID` 与 `VEHICLE_STATE_PRIVATE_KEY` 仅给 edge。签名不提升来源的 simulated 属性。
   缺失/过期信号不填 `0/P/OFF`，新信号不能刷新旧信号；接入与配置审查见 [CA2-06/12](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。
 
 ## 4. 当前真实状态（2026-09-28）
@@ -109,7 +109,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 - 本仓仍是 Phase 1 工程化 PoC；CA2-02–05 的步骤范围、服务端身份、ResultBundle 与能力契约首版已实现，
   验证进度见 [首批记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。Jev Decide、T1e 与真实车辆驱动未实现。
-- CA2-06/12 已完成离线验证和 v1 兼容车道发布；云端仍是未签名模拟来源，签名配置待授权。
+- CA2-06/12 已完成兼容发布与来源签名真栈复验；云端观测已验签，来源仍为 simulated，不代表实车或动作因果证明。
   证据与接续看 [本包记录](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)，不把连接身份认证当观测来源认证。
 - Android 包身份与设备验收看 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)，不得用服务端 SHA 代替 APK 身份。
 - 历史手册基线 `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 的读数只属该 SHA，
@@ -125,7 +125,7 @@ v2 的可重复旅程、故障矩阵与模型收益门槛见 [实施方案](docs
 
 | 主题 | 启动条件 / 唯一接续入口 |
 |---|---|
-| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-01/JV00 小基线与 CA2-02–04 首版按 [实施记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)接续验收；Decide 尚未实现 |
+| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-02–06/12 首版与签名车道已落地，下一包 CA2-07 权限化 Context View；R0 业务残余与设备验收继续分项，Jev 仍未接入 |
 | 手册召回、条件与复合问句 | [2026-09-26 设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §8；挂确认已有 CA2-04 闭环，已登记胎压条件见 [来源护栏](docs/design/2026-09-28-manual-source-evidence-guard.md)；规划/回忆残余继续重证，Jev 不能代修 |
 | 对话评审四轮 | [逐条重证与分批落地](docs/design/2026-09-24-conversation-review-round4-remediation.md) §7；已修项不重新立项，未触发项保持条件 |
 | 对话评审三轮 | [修复记录](docs/design/2026-09-23-conversation-review-round3-remediation.md)；历史批次与待裁决项按原表追溯 |
