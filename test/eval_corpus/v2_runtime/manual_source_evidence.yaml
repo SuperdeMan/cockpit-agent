@@ -1,0 +1,35 @@
+version: 1
+revision: 2026-09-28a
+split: regression
+note: 来源条件回归；只读问句，禁止确认；完整片段比对，不以关键词通过代替人工复核。
+cases:
+  - id: MSE01
+    family: manual_source_conditions
+    turns:
+      - say: 胎压黄灯亮了，还能继续开吗？应该补到多少？
+        expect: {manual: true, source_evidence: true}
+  - id: MSE02
+    family: manual_source_conditions
+    turns:
+      - say: 根据手册，胎压灯常亮是什么意思，应该怎么处理？
+        expect: {manual: true, source_evidence: true}
+  - id: MSE03
+    family: manual_source_conditions
+    turns:
+      - say: 根据手册，胎压灯闪烁是什么意思，应该补到多少？
+        expect: {manual: true, source_evidence: true}
+  - id: MSE04
+    family: manual_source_conditions
+    turns:
+      - say: 胎压灯亮着，胎压还没补到推荐值，根据手册能直接做显示复位吗？
+        expect: {manual: true, source_evidence: true}
+  - id: MSE05
+    family: manual_source_conditions
+    turns:
+      - say: 胎压已补到推荐值但显示未更新、胎压灯还亮着，根据手册复位有什么前提？
+        expect: {manual: true, source_evidence: true}
+  - id: MSE06
+    family: manual_source_conditions
+    turns:
+      - say: 根据手册，胎压报警后，冷胎和热胎的压力条件分别是什么？
+        expect: {manual: true, source_evidence: true}

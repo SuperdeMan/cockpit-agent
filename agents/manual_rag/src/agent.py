@@ -373,6 +373,27 @@ class ManualRagAgent(BaseAgent):
         if (basis == "clause" and self._toc_router is not None
                 and self.kb.scope_veto(lookup) and not self.kb.scope_veto(raw)):
             lookup, basis = raw, "raw_slot_vetoed"
+        evidence_reader = getattr(self.kb, "guarded_evidence", None)
+        if level and callable(evidence_reader):
+            evidence = await evidence_reader(lookup, vehicle_model=vehicle_model)
+            if evidence is not None:
+                if not evidence.available:
+                    return AgentResult(
+                        speech=(f"{alert_advice(level)}当前无法核验本车型相关处置的完整手册条件，"
+                                "请核对随车手册或联系服务中心，不能据此判断故障已排除。"),
+                        data=self._safety_data(level, question, source_type="manual",
+                                              grounding_rejected="source_evidence",
+                                              source_evidence_guard=evidence.guard_id),
+                        ui_card=self._card([], "manual"),
+                    )
+                return AgentResult(
+                    speech=f"{alert_advice(level)}{evidence.speech}",
+                    data=self._safety_data(level, question, source_type="manual",
+                                          retrieval="source_evidence", retrieval_basis=basis,
+                                          source_evidence_guard=evidence.guard_id,
+                                          source_evidence_ids=list(evidence.evidence_ids)),
+                    ui_card=self._card(evidence.chunks, "manual"),
+                )
         chunks = await self.kb.retrieve(                   # 1) retrieve
             lookup, vehicle_model=vehicle_model)
         chunks, stage, sections = await self._route_if_unsure(lookup, chunks)

@@ -1,8 +1,10 @@
 """The baseline must expose product failures without confusing missing evidence with success."""
 import json
 import asyncio
+import hashlib
 
 import pytest
+import yaml
 
 from scripts import probe_v2_baseline as probe
 
@@ -78,3 +80,57 @@ def test_full_state_probe_does_not_drop_a_new_vehicle_signal(monkeypatch):
         "stub", attempts=2, expected={**state, "rear_view_mirror_heating": True}, include_unmanaged=True))
     assert not wrong.settled
     assert wrong.reachable and not wrong.missing
+
+
+@pytest.fixture
+def source_card(tmp_path, monkeypatch):
+    source = "仅在压力恢复且显示未更新时才复位；仍报警则停止并检查。"
+    document = {"document_id": "synthetic", "source_sha256": "a"*64, "content_sha256": "b"*64}
+    resource = {"schema_version": 1, "documents": {"synthetic": {
+        "source_sha256": "a"*64, "content_sha256": "b"*64,
+        "guards": [{"id": "guard", "subjects": ["胎压"], "parts": [{
+            "id": "condition", "label": "原文", "page": 1, "start": 0, "end": len(source),
+            "sha256": hashlib.sha256(source.encode()).hexdigest(),
+        }]}]}}}
+    path = tmp_path / "source.yaml"
+    path.write_text(yaml.safe_dump(resource, allow_unicode=True), encoding="utf-8")
+    monkeypatch.setattr(probe, "SOURCE_EVIDENCE", path)
+    card = {"type": "manual", "_prov": {"mode": "real"}, "document": document,
+            "chunks": [{"page_start": 1, "content": source}]}
+    return card, source
+
+
+def test_source_probe_compares_whole_condition_instead_of_shared_keywords(source_card):
+    card, source = source_card
+    detail = {"spans": [{"attrs": {"agent_id": "manual-rag"}}], "llm_calls": []}
+    good = probe.judge({"manual": True, "source_evidence": True},
+                       obs(speech=source, card_text=json.dumps(card)), detail, query="胎压灯该如何复位？")
+    assert not good["failures"]
+    bad = probe.judge({"manual": True, "source_evidence": True},
+                      obs(speech=source.replace("且显示未更新", ""), card_text=json.dumps(card)),
+                      detail, query="胎压灯该如何复位？")
+    assert bad["failures"] == ["source_condition_lost:condition"]
+
+
+@pytest.mark.parametrize("mutation", ["hash", "source", "model_rewrite"])
+def test_source_probe_rejects_unproven_or_regenerated_evidence(source_card, mutation):
+    card, source = source_card
+    detail = {"llm_calls": []}
+    if mutation == "hash":
+        card["document"]["source_sha256"] = "c"*64
+    elif mutation == "source":
+        card["chunks"][0]["content"] = "无需任何前提，直接复位。"
+    else:
+        detail["llm_calls"] = [{"caller": "manual-rag"}]
+    assert probe.judge_source_evidence("胎压灯复位？", obs(speech=source), detail, card)
+
+
+def test_custom_source_corpus_is_read_only_and_does_not_change_frozen_twenty():
+    from scripts.probe_manual_rag_full_coverage import validate_live_query_safety
+    corpus = probe.CORPUS.with_name("manual_source_evidence.yaml")
+    cases = probe.load_cases(corpus)
+    result = validate_live_query_safety([
+        {"id": case["id"], "query": turn["say"]} for case in cases for turn in case["turns"]])
+    assert result["fast_intent_none"] == 6
+    assert all(turn["expect"]["source_evidence"] for case in cases for turn in case["turns"])
+    assert len(probe.load_cases()) == 20

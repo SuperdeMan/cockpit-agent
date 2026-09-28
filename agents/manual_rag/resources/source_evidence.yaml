@@ -1,0 +1,44 @@
+# Only reviewed source coordinates and hashes; private manual text stays in the index.
+schema_version: 1
+documents:
+  xiaomi-su7-2024-user-manual:
+    source_sha256: ef16d204c2ad711b2aa6c2a5f2a6607cfc2d47ed3f5d5a4e1db4085f75e4705d
+    content_sha256: 530b8538484d076cccb3739bde80fec3927b15514a65c7abfd3ad56fdad233b5
+    guards:
+    - id: tire-pressure-warning
+      subjects:
+      - 胎压
+      - 轮胎气压
+      - 轮胎压力
+      parts:
+      - id: alert-and-disposition
+        label: 告警状态与处置
+        page: 257
+        start: 110
+        end: 207
+        sha256: c2e1920b02b17f4c077485c47b73677214ca9bc538cca396b6d642a5d21f92fa
+      - id: pressure-spec
+        label: 轮胎压力参数
+        page: 245
+        start: 326
+        end: 340
+        sha256: 6874cd1e34a7b41d364ee99336be145c7903e7417f9f52a772d1167282c76c48
+      - id: label-and-temperature
+        label: 标签与温度条件
+        page: 256
+        start: 851
+        end: 931
+        sha256: c36c08a449933500f83cf43dc9d38fcc273e34b868cdaf4b381edc4ee4fa9234
+      - id: reset-conditions
+        label: 显示复位条件
+        page: 257
+        start: 211
+        end: 315
+        sha256: 2b86572c1ed2805529a87d3d6f4d40f27d5e9722c2018b0bf9740e3c50cb3fce
+        when_any:
+        - 复位
+        - 重置
+        - 更新
+        - 熄灭
+        - 消除
+        - 重新激活

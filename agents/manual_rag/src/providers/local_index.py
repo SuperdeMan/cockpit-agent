@@ -33,9 +33,10 @@ import yaml
 
 from agents.manual_rag.src.index_format import IndexFormatError, load_manual_package
 from agents.manual_rag.src.toc import TocEntry, build_table_of_contents
+from agents.manual_rag.src.source_evidence import load_evidence_guards
 from runtime import question_shape
 from runtime.clause_split import split_clauses
-from .base import Chunk, KnowledgeRetriever, ManualImage
+from .base import Chunk, GuardedEvidence, KnowledgeRetriever, ManualImage
 
 
 _CJK_SEQUENCE_RE = re.compile(r"[\u3400-\u9fff]+")
@@ -356,7 +357,8 @@ class ManualIndexRetriever(KnowledgeRetriever):
 
     def __init__(self, index_path: str | Path, *, vehicle_model: str = "",
                  retrieval_config_path: str | Path | None = None,
-                 catalog_path: str | Path | None = None):
+                 catalog_path: str | Path | None = None,
+                 source_evidence_path: str | Path | None = None):
         self.index_path = Path(index_path)
         try:
             self.package = load_manual_package(self.index_path)
@@ -460,6 +462,31 @@ class ManualIndexRetriever(KnowledgeRetriever):
         self._toc = build_table_of_contents(bundle["chunks"])
         self._toc_by_id = {entry.entry_id: entry for entry in self._toc}
         self._chunks_by_page = {chunk.raw["page_start"]: chunk for chunk in self._chunks}
+        try:
+            self._evidence_guards = load_evidence_guards(
+                Path(source_evidence_path) if source_evidence_path else resources / "source_evidence.yaml",
+                self.document, {page: chunk.raw["content"] for page, chunk in self._chunks_by_page.items()},
+            )
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            raise ManualIndexError("手册原文证据配置不可用") from exc
+
+    async def guarded_evidence(self, query: str, vehicle_model: str = "") -> GuardedEvidence | None:
+        if self._model_mismatch(vehicle_model) or self.scope_veto(query):
+            return None
+        guard = next((item for item in self._evidence_guards if item.matches(query)), None)
+        if guard is None:
+            return None
+        if not guard.available:
+            return GuardedEvidence(guard.guard_id, False)
+        parts = guard.select(query)
+        pages = list(dict.fromkeys(part.page for part in parts))
+        ranked = [(1.0, 1.0, True, self._chunks_by_page[page]) for page in pages]
+        chunks = self._materialize(ranked, {})
+        # Retain complete source clauses, including alternatives and conditions;
+        # no LLM may shorten, combine, or infer their applicability.
+        speech = "手册原文：\n" + "\n".join(f"{part.label}：{part.text.strip()}" for part in parts)
+        return GuardedEvidence(guard.guard_id, True, speech, tuple(chunks),
+                               tuple(part.part_id for part in parts))
 
     def _validate_scope_markers(self) -> None:
         """「别的车型」「本车没有的对象」是对这本手册的断言：若手册里其实写着它，声明就是

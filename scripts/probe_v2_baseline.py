@@ -50,8 +50,8 @@ def digest(value) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def load_cases() -> list[dict]:
-    data = yaml.safe_load(CORPUS.read_text(encoding="utf-8"))
+def load_cases(corpus: Path = CORPUS) -> list[dict]:
+    data = yaml.safe_load(corpus.read_text(encoding="utf-8"))
     cases = data["cases"]
     if data.get("version") != 1 or data.get("split") != "regression":
         raise ValueError("expected versioned regression corpus")
@@ -71,11 +71,14 @@ def load_cases() -> list[dict]:
     return cases
 
 
-def freeze(expected_sha: str, provider: str, model: str) -> dict:
+def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS) -> dict:
     if not re.fullmatch(r"[a-f0-9]{40}", expected_sha):
         raise ValueError("expected release must be a full SHA")
     if _git("status", "--porcelain"):
         raise ValueError("freeze requires committed, clean inputs")
+    corpus = corpus.resolve()
+    relative_corpus = corpus.relative_to(ROOT).as_posix()
+    _git("ls-files", "--error-unmatch", "--", relative_corpus)
     trees = {name: {p: _git("rev-parse", f"{expected_sha}:{p}") for p in paths}
              for name, paths in ASSET_GROUPS.items()}
     return {
@@ -85,17 +88,18 @@ def freeze(expected_sha: str, provider: str, model: str) -> dict:
         "decision": {"status": "not_implemented", "model": None, "rubric": None},
         "apk": {"status": "not_measured"},
         "runtime_config": {"status": "not_attested", "note": "no secrets exported"},
-        "split": "regression", "corpus_sha256": digest(load_cases()),
+        "split": "regression", "corpus_path": relative_corpus,
+        "corpus_sha256": digest(load_cases(corpus)),
         "committed_asset_tree_oids": trees, "assets_sha256": digest(trees),
         "private_manual_package": "approved hash in pinned manual_catalog; no package exported",
-        "scopes": list(SCOPES), "vehicle": "v1", "cases": len(load_cases()),
+        "scopes": list(SCOPES), "vehicle": "v1", "cases": len(load_cases(corpus)),
         "metrics": ["no_actions", "vehicle_unchanged", "manual_dispatched",
                     "manual_presented", "pending_addressed", "answer_terms",
                     "request_to_final_ms", "actual_model", "provider_usage"],
     }
 
 
-def judge(expect: dict, obs: dict, detail: dict) -> dict:
+def judge(expect: dict, obs: dict, detail: dict, *, query: str = "") -> dict:
     """Separate planning/dispatch from presentation; a spoken hint is not a card."""
     spans = detail.get("spans") or []
     attrs = [s.get("attrs") or {} for s in spans if isinstance(s, dict)]
@@ -131,8 +135,42 @@ def judge(expect: dict, obs: dict, detail: dict) -> dict:
     for term in expect.get("answer_terms") or []:
         if term not in str(obs.get("speech") or ""):
             failures.append("answer_missing:" + term)
+    if expect.get("source_evidence"):
+        failures.extend(judge_source_evidence(query, obs, detail, card))
     return {"failures": failures, "manual_dispatched": manual_dispatched,
             "manual_presented": has_manual(card), "intents": sorted(intents - {""})}
+
+
+SOURCE_EVIDENCE = ROOT / "agents/manual_rag/resources/source_evidence.yaml"
+
+
+def judge_source_evidence(query: str, obs: dict, detail: dict, card: dict) -> list[str]:
+    """Rebuild pinned source slices; keywords or numeric membership are insufficient."""
+    from agents.manual_rag.src.source_evidence import load_evidence_guards
+    def cards(node):
+        if not isinstance(node, dict):
+            return []
+        return ([node] if node.get("type") == "manual" else []) + [
+            child for item in node.get("items", []) for child in cards(item)]
+    manual = cards(card)
+    if len(manual) != 1 or manual[0].get("_prov", {}).get("mode") != "real":
+        return ["source_evidence_card_missing"]
+    try:
+        item = manual[0]
+        pages = {c["page_start"]: c["content"] for c in item.get("chunks", [])}
+        guards = load_evidence_guards(SOURCE_EVIDENCE, item.get("document", {}), pages)
+        guard = next(g for g in guards if g.matches(query))
+        if not guard.available:
+            return ["source_evidence_unverifiable"]
+        parts = guard.select(query)
+        speech = re.sub(r"\s+", "", str(obs.get("speech") or ""))
+        failures = ["source_condition_lost:" + part.part_id for part in parts
+                    if re.sub(r"\s+", "", part.text.strip()) not in speech]
+    except (ValueError, KeyError, TypeError, StopIteration):
+        return ["source_evidence_unverifiable"]
+    if any(call.get("caller") == "manual-rag" for call in detail.get("llm_calls", [])):
+        failures.append("source_evidence_generated")
+    return failures
 
 
 def _redact(value):
@@ -191,7 +229,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                 pending = obs["operation_id"]
             if pending in (obs.get("closed_operation_ids") or []):
                 pending = ""
-            verdict = judge(turn.get("expect") or {}, obs, detail)
+            verdict = judge(turn.get("expect") or {}, obs, detail, query=turn["say"])
             if turn.get("cancel_pending") and pending:
                 verdict["failures"].append("pending_not_closed")
             after = await audit._settled_vehicle_state(collector, required_keys=set(baseline.value),
@@ -230,13 +268,20 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
 
 
 async def run(args):
-    cases = load_cases()
+    corpus = Path(getattr(args, "corpus", CORPUS)).resolve()
+    cases = load_cases(corpus)
+    if corpus != CORPUS.resolve():
+        from scripts.probe_manual_rag_full_coverage import validate_live_query_safety
+        validate_live_query_safety([
+            {"id": case["id"], "query": turn["say"]}
+            for case in cases for turn in case["turns"] if not turn.get("cancel_pending")
+        ])
     if args.ids:
         wanted = set(args.ids.split(","))
         cases = [c for c in cases if c["id"] in wanted]
         if {c["id"] for c in cases} != wanted:
             raise ValueError("unknown case ID")
-    manifest = freeze(args.expected_sha, args.provider, args.model)
+    manifest = freeze(args.expected_sha, args.provider, args.model, corpus)
     ws, collector, secret = identity._endpoints()
     payload = {"manifest": manifest, "selected_ids": [c["id"] for c in cases],
                "repeat": args.repeat, "runs": [], "release_start": audit.cloud_release_snapshot(args.expected_sha)}
@@ -286,12 +331,14 @@ def main():
     p.add_argument("--model", default="MiniMax-M3")
     p.add_argument("--repeat", type=int, default=3)
     p.add_argument("--ids", default="")
+    p.add_argument("--corpus", type=Path, default=CORPUS,
+                   help="committed regression corpus; custom corpora must pass the read-only question preflight")
     p.add_argument("--out", default=".artifacts/v2-runtime/baseline.json")
     args = p.parse_args()
     if args.repeat < 1 or args.repeat > 5:
         p.error("repeat must be 1..5")
     if args.dry_run:
-        print(json.dumps({"cases": load_cases(), "scopes": SCOPES}, ensure_ascii=False, indent=2))
+        print(json.dumps({"cases": load_cases(args.corpus), "scopes": SCOPES}, ensure_ascii=False, indent=2))
         return 0
     try:
         return asyncio.run(run(args))

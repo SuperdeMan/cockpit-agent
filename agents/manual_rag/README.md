@@ -70,7 +70,8 @@ PDF + resources/visual_assets.yaml
 - 低相关查询零命中且不调 LLM；
 - 真实手册答案里的带单位/小数数值必须能在本轮引用片段核对，否则整段弃权；
 - 结果统一声明 `_speech_verbatim=true`，避免后续多步聚合再改写数值角色、出处或弃权说明；这是呈现合同，不是执行授权，见 [原文保护](../../docs/design/2026-09-28-result-speech-fidelity.md)；
-- 原文保护不验证上游条件完整性；2026-09-28 V211 复验仍发现生成答案省略灯状态/复位前提，未关闭，详见上述修复记录 §5；
+- 已登记的胎压告警改用指纹绑定的原文证据，完整保留灯状态/处置、参数和温度条件；只有明确询问复位时才增加完整复位段。
+  原文保护不代表所有上游生成已正确，机制与发布验收见 [来源条件护栏](../../docs/design/2026-09-28-manual-source-evidence-guard.md)；
 - 安全告警继续由 `runtime/safety_signal.py` 的确定性分级建议前置；
 - 卡片带章节、PDF 页码、车型、源/内容 hash 和 `_prov.mode=real`。
 - `.mrag` 内每个图片 blob 与视觉 manifest 均有 SHA-256；启动期全量校验，运行期读图复验；
@@ -85,6 +86,22 @@ PDF + resources/visual_assets.yaml
   exemplar 负责泛化，manifest route hint 只兜生产已复现的高风险窄句形。
 
 ## 私有索引资产
+
+`resources/source_evidence.yaml` 只登记已有手册的 document/source/content 指纹、页码、字符区间与片段 SHA-256，
+不复制私有正文。真实 Provider 的可选 `guarded_evidence` 返回核验后的完整片段和原页卡；已登记主题证据失配时
+返回不可用，Agent 明确弃权并标 `grounding_rejected=source_evidence`，不会转回模型生成。配置格式错误则启动失败。
+现阶段只登记胎压告警；其它主题、普通问题和未登记手册沿用原路径。新增主题必须分别核对来源条件与反例。
+`source_evidence_guard/ids` 是诊断字段，不是车辆观测、执行授权或故障已排除的证明。
+
+专项复用基线 runner，新增语料不改变原 20 例基线；自定义语料必须是已提交文件，并在发送前通过问句/端侧零意图预检：
+
+```powershell
+python scripts/probe_v2_baseline.py --corpus test/eval_corpus/v2_runtime/manual_source_evidence.yaml `
+  --expected-sha <full-release-sha> --provider minimax --model MiniMax-M3 --repeat 3 --out .artifacts/manual-source-evidence/live.json
+```
+
+`source_evidence` 断言从线上卡片按本地受控指纹重建完整片段，与最终话术逐段核对，同时禁止 manual-rag 模型调用。
+格式空白归一不允许省掉条件；仍需读最终话术，不把机器断言当整段安全验收。
 
 源 PDF、抽取正文与图片不进入 Git。生成包放 `models/manual_rag/`，该目录只跟踪说明和
 `.gitkeep`，包体全部 ignored。在线镜像不安装 PDF 解析器；`pypdf`/`PyYAML` 只属于离线建库。
