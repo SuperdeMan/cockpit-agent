@@ -36,8 +36,11 @@ def parse_retention_records(stdout: str) -> dict[str, Mapping[str, Any]]:
         if kind not in {"releases", "backups"} or kind in records:
             raise RetentionReplyError("retention reply has an unexpected record")
         records[kind] = record
-    if set(records) != {"releases", "backups"}:
-        raise RetentionReplyError("retention reply is incomplete")
+    if not records:
+        raise RetentionReplyError("retention reply has no records")
+    # A kind that printed nothing (crashed or never ran) is reported, not hidden behind a bare failure.
+    for kind in ("releases", "backups"):
+        records.setdefault(kind, {"kind": kind, "status": "missing"})
     return records
 
 

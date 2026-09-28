@@ -96,10 +96,12 @@ main() {
     retention)
       [[ "$#" -eq 2 && ( "${2}" == "--dry-run" || "${2}" == "--apply" ) ]] \
         || die "retention requires --dry-run or --apply" 2
+      # 两类各自独立：一类失败不挡另一类，两份记录都输出，退出码取最后一个非零值。
       python3 "${SCRIPT_ROOT}/retention.py" releases --mode "${2#--}" \
-        --reason manual --lock-fd "${TRANSACTION_LOCK_FD}"
+        --reason manual --lock-fd "${TRANSACTION_LOCK_FD}" || code=$?
       python3 "${SCRIPT_ROOT}/retention.py" backups --mode "${2#--}" \
-        --reason manual --lock-fd "${TRANSACTION_LOCK_FD}"
+        --reason manual --lock-fd "${TRANSACTION_LOCK_FD}" || code=$?
+      return "${code}"
       ;;
     *)
       die "unknown action" 2

@@ -870,11 +870,28 @@ def test_cli_retention_defaults_to_dry_run_and_summarizes_both_records(
 def test_cli_retention_fails_on_an_incomplete_or_mismatched_reply(tmp_path: Path):
     dev.set_target(tmp_path, "cloud")
     arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "retention"]
-    for reply in (_retention_reply("error"), _retention_reply(kinds=("releases",))):
+    for reply in (_retention_reply("error"), _retention_reply(kinds=("releases",)), "no json at all\n"):
         runner = FakeStatusRunner([command_result("ssh", stdout=reply)], {})
         events: list[dict[str, object]] = []
         assert cli.main(arguments, repo=tmp_path, status_runner=runner, emit=events.append) == 1
         assert events[-1]["status"] == "failed"
+
+
+def test_cli_retention_surfaces_the_remote_error_instead_of_a_bare_failure(tmp_path: Path):
+    """2026-09-28 真机：releases 在 inspect 竞态里报错，backups 没跑——CLI 只剩一个空的 failed。"""
+    dev.set_target(tmp_path, "cloud")
+    reply = json.dumps({"kind": "releases", "status": "error",
+                        "error": "command failed: docker inspect --format"}) + "\n"
+    runner = FakeStatusRunner([command_result("ssh", stdout=reply, returncode=2)], {})
+    events: list[dict[str, object]] = []
+    arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "retention"]
+
+    assert cli.main(arguments, repo=tmp_path, status_runner=runner, emit=events.append) == 1
+
+    event = events[-1]
+    assert event["status"] == "failed"
+    assert event["releases"]["error"] == "command failed: docker inspect --format"
+    assert event["backups"]["status"] == "missing"
 
 
 def test_cloud_status_reports_the_image_that_is_actually_running(tmp_path: Path):

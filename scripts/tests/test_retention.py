@@ -221,6 +221,47 @@ class FakeDocker:
         raise AssertionError(f"unexpected command {argv}")
 
 
+class ChurningDocker(FakeDocker):
+    """A co-tenant removes a container between `docker ps` and `docker inspect`."""
+
+    def __init__(self, *args, failures: int, vanished: bool = True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.failures = failures
+        self.vanished = vanished
+        self.listing = ["container-1", "gone-soon"]
+
+    def __call__(self, argv):
+        argv = list(argv)
+        if argv[:3] == ["docker", "ps", "-aq"]:
+            self.calls.append(tuple(argv))
+            return "\n".join(self.listing) + "\n"
+        if argv[:2] == ["docker", "inspect"]:
+            self.calls.append(tuple(argv))
+            if "gone-soon" in argv[4:] and self.failures > 0:
+                self.failures -= 1
+                if self.vanished and self.failures == 0:
+                    self.listing = ["container-1"]
+                raise ret.RetentionError("No such object: gone-soon")
+            return "\n".join(f"{iid}|" for iid in self.used)
+        return super().__call__(argv)
+
+
+def test_container_facts_survive_a_container_vanishing_between_ps_and_inspect(tmp_path: Path):
+    docker = ChurningDocker(tmp_path, {}, {"sha256:cur"}, failures=1)
+    used, _ = ret._container_facts(docker, tmp_path)
+    assert used == {"sha256:cur"}
+
+
+def test_container_facts_fall_back_to_one_by_one_and_skip_only_vanished_containers(tmp_path: Path):
+    docker = ChurningDocker(tmp_path, {}, {"sha256:cur"}, failures=ret.INSPECT_ATTEMPTS + 1)
+    used, _ = ret._container_facts(docker, tmp_path)
+    assert used == {"sha256:cur"}
+
+    stuck = ChurningDocker(tmp_path, {}, {"sha256:cur"}, failures=99, vanished=False)
+    with pytest.raises(ret.RetentionError):
+        ret._container_facts(stuck, tmp_path)
+
+
 def _tree(root: Path, *dirs: str) -> None:
     for relative in dirs:
         (root / relative).mkdir(parents=True, exist_ok=True)

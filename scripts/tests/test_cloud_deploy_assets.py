@@ -160,6 +160,7 @@ def _run_remote_release(
     tmp_path: Path,
     *remote_args: str,
     build_fails: bool = False,
+    retention_fails: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     script_root = tmp_path / "shared" / "bin"
     script_root.mkdir(parents=True)
@@ -172,6 +173,7 @@ def _run_remote_release(
         # retention.py is only ever invoked through python3; record script, kind, mode, reason, fd.
         "python3() { "
         f"printf 'python3:%s %s %s %s %s\\n' \"${{1##*/}}\" \"$2\" \"$4\" \"$6\" \"$8\" >>'{events.as_posix()}'; "
+        "[[ \"$2\" != \"${CAR_AGENT_TEST_RETENTION_FAIL:-}\" ]] || return 2; "
         "}\n",
         encoding="utf-8",
         newline="\n",
@@ -218,6 +220,7 @@ def _run_remote_release(
         env={
             **os.environ,
             "CAR_AGENT_TEST_BUILD_FAIL": "1" if build_fails else "0",
+            "CAR_AGENT_TEST_RETENTION_FAIL": retention_fails,
         },
         text=True,
         encoding="utf-8",
@@ -1092,6 +1095,30 @@ def test_remote_release_manual_retention_covers_releases_and_backups(tmp_path: P
         f"python3:retention.py releases {mode[2:]} manual 9",
         f"python3:retention.py backups {mode[2:]} manual 9",
     ]
+
+
+def test_remote_release_manual_retention_runs_backups_even_when_releases_fail(tmp_path: Path):
+    """2026-09-28 真机：releases 在 inspect 竞态里失败后脚本即退出，backups 没跑。"""
+    result, events = _run_remote_release(tmp_path, "retention", "--apply", retention_fails="releases")
+
+    assert result.returncode == 2
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "lock:release",
+        "python3:retention.py releases apply manual 9",
+        "python3:retention.py backups apply manual 9",
+    ]
+
+
+def test_remote_release_deploy_succeeds_even_if_retention_fails(tmp_path: Path):
+    target = "a" * 40
+    result, events = _run_remote_release(
+        tmp_path, "deploy", "--sha", target, "--upload-id", f"{target}-{'c' * 32}",
+        "--expected-current", "b" * 40, retention_fails="releases",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "retention did not complete" in result.stderr
+    assert events.read_text(encoding="utf-8").splitlines()[-1] == "python3:retention.py releases apply deploy 9"
 
 
 @pytest.mark.parametrize("tail", [(), ("--force",), ("--apply", "extra")])

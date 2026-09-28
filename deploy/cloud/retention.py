@@ -159,15 +159,42 @@ def _image_tags(runner: Runner) -> dict[str, str]:
     return tags
 
 
+CONTAINER_TEMPLATE = '{{.Image}}|{{index .Config.Labels "com.docker.compose.project.working_dir"}}'
+INSPECT_ATTEMPTS = 3
+
+
+def _inspect_containers(runner: Runner) -> str:
+    """`docker inspect` over every container, tolerating co-tenant churn.
+
+    On the shared host another project creates and removes containers at any time; a
+    container that vanishes between `ps` and `inspect` fails the whole batch (2026-09-28).
+    Retry with a fresh listing, then fall back to one-by-one and skip only containers
+    that are really gone: a vanished container cannot hold an image or a directory.
+    """
+    ids: list[str] = []
+    for _ in range(INSPECT_ATTEMPTS):
+        ids = runner(["docker", "ps", "-aq", "--no-trunc"]).split()
+        if not ids:
+            return ""
+        try:
+            return runner(["docker", "inspect", "--format", CONTAINER_TEMPLATE, *ids])
+        except RetentionError:
+            continue
+    lines = []
+    for container in ids:
+        try:
+            lines.append(runner(["docker", "inspect", "--format", CONTAINER_TEMPLATE, container]))
+        except RetentionError:
+            if container in runner(["docker", "ps", "-aq", "--no-trunc"]).split():
+                raise
+    return "\n".join(lines)
+
+
 def _container_facts(runner: Runner, root: Path) -> tuple[frozenset[str], frozenset[str]]:
-    ids = runner(["docker", "ps", "-aq", "--no-trunc"]).split()
-    if not ids:
-        return frozenset(), frozenset()
-    template = '{{.Image}}|{{index .Config.Labels "com.docker.compose.project.working_dir"}}'
     used: set[str] = set()
     compose_dirs: set[str] = set()
     prefix = str(root / "releases") + "/"
-    for line in runner(["docker", "inspect", "--format", template, *ids]).splitlines():
+    for line in _inspect_containers(runner).splitlines():
         image_id, _, working_dir = line.strip().partition("|")
         if image_id:
             used.add(image_id)

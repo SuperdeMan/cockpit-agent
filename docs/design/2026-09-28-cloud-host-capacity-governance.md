@@ -196,6 +196,13 @@ compose 工程目录，构建证据先迁再删，调用方以 `--lock-fd` 证�
 测试：`test_retention.py` 23 条（本机 2 条需 Linux 的符号链接 / `/proc` 用例跳过，由 CI 覆盖），三处守卫变异各判红；`remote-release.sh` 事件序列、
 `backup.sh` 规格、引导清单与 CLI 用例同步更新。
 
+**P1 首次真机 apply 暴露的共租竞态（2026-09-28 17:2x CST）**：`48007778` 审批通过（锚 `af65f910`）、dry-run 逐项对账无误后执行 apply，
+releases 删完标签（`0a589e14` 两族 52 个、`56409fef` / `56f92838` 别名 52 个；当前版本的 26 个别名因镜像在用被跳过）后，
+在重读容器时失败：`docker ps` 与 `docker inspect` 之间同机 drone 正在部署、删掉了容器，批量 inspect 整体报错 ⇒ retention 以 error 退出，
+目录与证据未动；`retention` 动作随 `set -e` 中止，backups 没跑；本地 CLI 只显示一个空的 failed。修复（`retention.py` 重新列表重试、
+仍失败则逐个 inspect 且只跳过确已消失的容器；`retention` 动作两类各自执行并汇总退出码；CLI 缺哪份记录就标 missing 并透出错误原文）
+随后重新审批发布。判据：**共租主机上任何「先列再查」的读取都要容忍对方的容器随时消失；只有「确实已不存在」才能跳过。**
+
 ## 6. 验收
 
 1. 连续 14 天（或至少 20 次发布）不做人工清理，发布从未被 30 GiB 闸挡住，稳态可用 ≥ 45 GiB。
