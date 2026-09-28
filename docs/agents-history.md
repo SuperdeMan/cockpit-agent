@@ -10208,3 +10208,20 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   可用 46.90 → **48.08 GiB**；现行 `.env` stat、容器、三个数据卷不变；status 5/5 零 warning。保留：`builds/33c2a731`（含 09-27 事故续建日志）、
   `releases/4c1f479`（postgres / redis / nats 三个容器的 compose 工程目录标签仍指向它）、apt 缓存（apt 会自动重建）、journald、drone-agent 全部。
 - 结构性问题未改：BuildKit 缓存无有效上限（无 daemon.json）、release 保留与备份轮转仍靠手工。证据 `.artifacts/cloud-capacity-20260928/`。
+
+
+## 2026-09-28：云主机容量治理方案 P0 / P1 落地并启用
+
+- 方案 [`design/2026-09-28-cloud-host-capacity-governance.md`](design/2026-09-28-cloud-host-capacity-governance.md) 经用户批准（初值：保留 3 个 release、
+  失败产物 72 h、备份 48 h / 14 天 / 8 周且至少 3 套、缓存上限 20 GB、预警 40 GiB）。主机级事项由 drone-agent 的 Claude 会话对接，
+  其用户已确认缓存上限、journald 1G 与 core dump 7 天（P2 待本项目系统配置授权）；drone 在其 5 个 core 取栈修复前要求保留。
+- P0 `66d68f64`：`status.capacity` 只作提示、不进 warnings（长会话验收要求零 warning）；只读 `dev_stack capacity` 用 ctr 按层归属。
+  首跑即报出 `shared/` 下另外 3 份 `.env.bak*` 与首版残留，经批准删除。
+- P1 `48007778` + `887b983c`：`retention-policy.json` 单一声明源；`retention.py` 为宿主唯一删除点；发布 / 回滚成功后回收，
+  `backup.sh` 改 GFS 轮转且自身零删除；`dev_stack retention` 缺省 dry-run；README / CLAUDE / AGENTS 规则改为「按批准策略轮转、策略外逐项批准」。
+  两次基础设施审批（锚 `bd0671c4` → `af65f910` → `a3346202`），审批材料由脚本按目标提交生成并断言路径常量一致。
+- 真机首个 apply 失败在共租竞态：删完标签后重读容器时 drone 正在部署删掉了容器，批量 `docker inspect` 整体报错，目录 / 证据 / 备份未动；
+  修成重新列表重试、逐个 inspect 且只跳过确已消失的容器，`retention` 动作两类各自执行，CLI 透出远端错误。复跑：退役与收尾 7 个目录，
+  备份 119 → 24 套（1.0 GiB → 233 MB），证据在 `shared/evidence/retention/`；status 5/5 零 warning、可用 59.44 GiB；verify `20260928T093523Z-7b346c9.json`。
+- 读数：`scripts/tests` 1574 passed / 13 skipped；全量 10258 passed / 34 skipped（多出的 2 个 skip 是需 Linux 的符号链接 / `/proc` 用例）。
+  发布事务内的自动回收待下一次 car-agent 发布首跑；锚更换后旧工作树需先同步 main 才能部署。
