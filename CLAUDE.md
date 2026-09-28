@@ -80,6 +80,8 @@ Manifest 约定：
 - 契约判据统一在 `runtime/capability_contract.py`，冻结迁移清单不是能力发现表；接入样例见 `agents/_sdk/README.md`；
 - 主卡用 `display_priority`；需要候选/位置/车态等上下文时显式声明 `context_scopes`；
 - 改派其他能力使用 `AgentResult.data["_escalate"]`，每轮最多一跳。
+- 原文呈现使用严格布尔 `AgentResult.data["_speech_verbatim"]`；聚合按通用结果合同处理，不加领域/车型分支。
+  此标记不授予执行权，也不能替代生产者的来源、数值含义和条件完整性验证。
 
 新增 manifest/proto 字段必须沿以下链路核对：SDK loader → Registry 持久化 round-trip →
 Planner `Step` 装配 → pending serialize/restore → Executor/D0/T2 消费。LLM 同名字段无权覆盖。

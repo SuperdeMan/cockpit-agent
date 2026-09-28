@@ -1,6 +1,6 @@
 # Cockpit Agent v2 与 Jev 分批实施方案
 
-> 更新：2026-09-27。状态：**CA2-01/JV00 小基线持续重证，CA2-02–05 首版已发布；05 固定小集复验完成，规划残余及设备/扩展验收待补**。
+> 更新：2026-09-28。状态：**CA2-02–05 首版已发布；CA2-06/12 离线与模拟兼容车道真栈验证完成，来源签名启用待配置授权；接续顺序以路线图为准**。
 > 原规划基线：`47c62b44d335a3c76da90f89f05fa2fc887c2742`；进度与精确证据见 [首批执行记录](2026-09-26-v2-runtime-r0-r1-execution.md)。
 > [路线图](../roadmap.md)决定优先级，[目标架构](../architecture/cockpit-agent-v2-target-architecture.md)决定边界。
 > CA2-01–22 与 JV00–09 沿用两份研究编号，是可领取的本地任务，不是已创建的 GitHub Issue。
@@ -51,12 +51,15 @@ MODEL=模型与评测，UI=HMI/Android，QA=验证，SEC=权限/隐私，OPS=发
 | CA2-05 / RT+EDGE | Capability v2 增量：effect、参数类型/单位/区域、车型/软件版本、前置条件、幂等/验证声明；迁移清单与 Registry 往返 | 01 | 新写能力缺声明拒准入，旧能力逐项登记；存在/可用/授权分开；含描述-only 变化的路由回归；不一次改名所有 Agent |
 | CA2-06 / EDGE+RT | 认证车辆身份、source epoch/seq、逐信号时效/质量/来源；生产者/路由/全部镜像兼容接线 | 01；上线消费受 05 约束 | 两车隔离、乱序/重启/局部陈旧通过；旧单车事件仅显式仿真适配；新鲜度缺失不放行新安全写档 |
 | CA2-07 / RT+SEC | WorkingSet 的联邦权限化 View；各权威读取状态/引用、pinned 条目与 prompt 投影分开 | 05,06 | 未授权字段进入模型前剔除；found/none/unavailable/off 不混；撤权即时收紧；可退旧只读路径 |
-| CA2-12 / QA+EDGE | 有状态 SimulatedVehicleDriver/故障 harness（拟新增）；基于既有模拟 VAL，注入 ACK 丢失、状态改变与重启 | 06；契约参考 05 | 不返回固定 OK；source=simulated，随机种子/事件轨迹可重放；持续为 R2/R3/R4 提供故障验证 |
+| CA2-12 / QA+EDGE | 有状态 SimulatedVehicleDriver/故障 harness；基于既有模拟 VAL，注入 ACK 丢失、状态改变与重启 | 06；契约参考 05 | 不返回固定 OK；source=simulated，随机种子/事件轨迹可重放；持续为 R2/R3/R4 提供故障验证 |
 
 CA2-05 必须单列“为了回答而建立任务/规划”与“改变车辆/商户/用户数据”的副作用类别。
 
 CA2-05 首版实现与验证见 [能力契约](2026-09-27-v2-capability-contract.md)：原位扩展生产者、Registry、Step/挂起和接收方，
 不改变数据库 schema。声明目录与在线目录分别统计；可信车型/版本绑定仍由 CA2-06/07 承接。
+CA2-06/12 的逐车辆/逐信号读取与故障实验已实现，模拟兼容车道已部署；离线签名验证与线上来源认证
+分栏登记在 [本包记录](2026-09-27-v2-vehicle-state-and-simulation.md#8-验证登记)。上线回归发现的聚合数值改写
+优先按 [原文保护](2026-09-28-result-speech-fidelity.md)修复，其他规划/检索残余不随状态迁移关闭。
 `effect=write` 不能直接推出“凡问句一律禁止”：既有研究已发现这会误伤充电规划等正当请求。
 先用现有 effect 字段兼容，再在契约 PR 冻结更细分类及消费方；模型不提供该分类权威。
 

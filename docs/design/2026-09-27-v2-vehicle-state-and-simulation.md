@@ -1,6 +1,7 @@
 # CA2-06+12：车辆身份、逐信号观测与有状态仿真
 
-> 状态：实施中；起点 `e120b931`。代码/提交/推送与必要发布已有授权；签名启用涉及的运行配置另列审查。
+> 状态：首版离线验证、v1 兼容发布与固定语料前测完成；来源签名启用待配置授权。起点 `e120b931`。
+> 代码/提交/推送与必要发布已有授权；没有修改 `.env`、Compose、密钥或数据库 schema。
 > 不改变数据库 schema，不把模拟状态、接收回执或签名当成真实车辆动作证明。
 
 ## 1. 本次要关掉的缺口
@@ -114,5 +115,61 @@ Ed25519 签名内容为 `cockpit.vehicle-state.v2\0` 加载荷字节。外层 ch
 
 ## 8. 验证登记
 
-首版代码验证中，最终提交 SHA、全量与门禁、部署 SHA、artifact 和设备证据分栏补充。
-当前没有 CA2-06/12 的云端签名启用或设备验收证据；旧发布状态仍以 QA 交接 §2 为准。
+### 8.1 实现与离线验证
+
+代码提交：`8b420da7`（主体）、`6fd47994`（串车拒绝不携带行驶事实）、`b98c9b60`（移动展示断言）、
+`89b19956bea2378d492cedff78fad75b8f814efa`（登记来源的优先级在缺席/重启时保持）。已推送 main。
+
+| 验证面 | 绑定版本 / 结果 |
+|---|---|
+| 后端全量 | `89b19956`，10148 passed / 34 skipped / 9 warnings，4727.69 s，UTC0 / `-n 8 --dist worksteal` |
+| 跳过与警告 | Windows/POSIX、未起的本地 Redis/ASR、真实 LLM、OTel 等环境跳过；工作树另缺 NLU vocab 两项，所以是 34 而非主仓历史 32；Starlette 弃用与 reminder 的既有 AsyncMock 未 await 警告保留 |
+| 端侧与四门禁 | `89b19956` 全过；smoke 13；L0 strict discovery 85/85、gate 25/25；skills 反例噪声 1/8 与 exemplars 3 miss 仍按原门槛记录 |
+| Python/Go 观测契约 | 共享 29 组 wire 场景；含篡改、错绑定、乱序、epoch、单调过期与主来源缺席；Go 五包通过 |
+| 有状态实验 | `89b19956-simulation-seed12.json`，16/16；ACK 丢失报告 unknown，模拟状态可已变化，不重发同一操作；不证明持久幂等或实车因果 |
+| HMI / Dashboard | `89b19956`：HMI 358；Dashboard 19；两者生产构建通过。HMI tsc 与 `e120b931` 均 25 项旧错误、零新增，不报类型全绿 |
+| Android 代码 | `b98c9b60`：112 suites / 1159 tests，tsc/lint 通过；mobile tree OID `d99789915afaaf36080e28e9367ce13d2f648d59` 与 `89b19956` 一致；未重新构建/验收 APK |
+
+两次全量中断与早期失败不当验收证据。旧镜像接口桩按车辆参数修正；Windows PowerShell 5.1
+子进程继承 PS7 的模块路径导致真实 Get-FileHash 缺席，只隔离测试子进程环境，13 项 wrapper 测试过，真实脚本不变。
+Jest 程序化启动缺 NODE_ENV=test 曾导致手势库误判；最终使用标准 CLI、仅覆盖 Windows 工作树的等价 testMatch，未改应用判据。
+完整证据索引为根仓 `.artifacts/vehicle-state-v2/89b19956-local-manifest.json`，不把旧失败/中断日志归给最终候选。
+
+### 8.2 兼容车道真栈
+
+`89b19956` 已部署；26/26 镜像完成，独立 status 的发布/运行 SHA 一致、5/5 healthy、零 warning，
+统一 verify `verified`，`20260928T020451Z-89b1995.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`。
+发布前磁盘约 35.4 GiB，完成后约 31.0 GiB；`89b19956` 这次发布过程没有清理路径/缓存，也未调用构建历史 API。
+后续聚合修复的容量处置与新 release 单独记录在 [修复 §5](2026-09-28-result-speech-fidelity.md#5-发布与真栈逐条复核)。
+
+只读专项 `.artifacts/vehicle-state-v2/89b19956-live-readonly-retry.json` **15/15**：27 个信号元数据、26 个有效值，
+位置为 unavailable；HTTP/WS 同车投影一致，未绑定车辆的投影为空，实际 RPC→WS 返回 permission_denied 且没有 driving 字段。
+审计记录为 vehicle_identity_rejected、rejected、0 动作；前后车态 SHA-256 同为
+`73858714ad02ccf345e0dd08357ae20cfda62bfe1571d8d8f1affddcbad48131`，首尾 release 连续。
+首趟探针 session 缺编号被既有格式闸关闭；修正实验会话为 `<user>-session-1` 后重跑，原失败 artifact 保留。
+
+**连接身份认证与观测来源认证分开**：上述连接使用既有 signed E2E，车态仍是显式 v1 模拟兼容来源，
+`authenticated=false/source_kind=simulated`。线上 Ed25519 来源签名尚未启用，不能据这些读数宣称签名上线。
+浏览器控制连接未能建立，未完成实际渲染或设备复验；构建/单测不能替代它们。
+
+### 8.3 固定语料复验
+
+同一 release/runner `89b19956` 完成 60/60 case run、101 测量轮；228 条已记录模型调用均 pinned
+`minimax:MiniMax-M3`。零动作、零车态差异、零证据错误与残留挂起，首尾版本连续，runner 未变。
+原始 JSON SHA-256：`8d3b81fb2dcb57c8d678714819ebf81929676ad59ae65fc0def32860aaf9d271`。
+
+原始判红 6 轮；逐条复核为 **5 个业务问题 + 1 个关键词误报**，不改写原报告：
+
+| 样本 / trace | 复核结论 |
+|---|---|
+| V201 r2 t3 / `e8636a04bcbd42f48bcd3646544044bd` | Planner 正确派手册，目录模型给 off_topic/空章节，词法也无结果；真实空检索 |
+| V207 r2 / `d111d84b0c5e4b6fabf66b82d84f3606` | 正确解释车内空调、通风和休息用途，未重复“露营”；关键词误报，零动作/确认 |
+| V216 r2 t2 / `c8806031412e4732b19fc7ebea205d98` | 自动模式后续问句落到闲聊，通用解释有内容，但不满足本车手册连续性合同 |
+| V201 r3 t1 / `00e03cd628fd4719bb1d68018f1d9a0c` | 两步均已规划，手册已开始检索，随后 15 s 超时；ResultBundle 保留 unknown/unavailable。raw“未派发”按完成 span 判断，不能据此说根本没调用 |
+| V210 r3 / `58fe5db2116448048021b22508350ffc` | 空计划重试后仍未派手册，闲聊仅提示语音控制说法；真实落域缺口 |
+| V211 r3 / `93ca23cedb514784a3210bd95e1d039d` | 手册正确区分推荐 2.9 bar 和阈值 2.3 bar，聚合将推荐值改成 2.3；必须优先修复的数值角色错误 |
+
+混合请求首轮手册派发/呈现为 8/9；超时样本不能用前版的 9/9 覆盖。
+数值错误另按 [原文保护修复](2026-09-28-result-speech-fidelity.md)处理，其他残余继续进入原 QA/手册入口；
+CA2-06/12 验证不等于整体 QA 全绿。原文件与复核保留在 `.artifacts/vehicle-state-v2/89b19956-baseline*.json`。
+当前发布和修复后证据统一见 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。

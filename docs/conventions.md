@@ -346,7 +346,7 @@
 | `VERIFY_OUTCOME` | 执行后对账总开关（M2 P1 Outcome Verifier）：`on`/默认=按 `capability.verification` 声明对账；`off`=声明照读但不执行（一键回 M2 前） | 否（默认 `on`） |
 | `VERIFY_MIRROR_STALE_S` | 未签名模拟兼容车道的逐信号 TTL 秒；新电量不刷新旧挡位。签名模式使用受控 ttl_ms；缺失/过期为 UNKNOWN | 否（默认 180；0 仅保留 legacy-unbounded 兼容语义） |
 | `VEHICLE_STATE_TRUST` | 版本化公钥、车辆/来源绑定、来源类型、优先级、逐信号 TTL/单位及通道 token 指纹；错误配置不回落 legacy | 代码已支持；Compose 透传与云端启用待 [单独批准](design/2026-09-27-v2-vehicle-state-and-simulation.md#7-签名启用配置审查) |
-| `VEHICLE_STATE_KEY_ID` / `VEHICLE_STATE_PRIVATE_KEY` | 仅实际 edge 观测生产者使用；Ed25519 私钥不交给读者，不进日志或 Git。新代码关闭签名须同时清空三个键；整版回滚按原 Compose | 尚未启用，配置操作单独授权 |
+| `VEHICLE_STATE_KEY_ID` / `VEHICLE_STATE_PRIVATE_KEY` | 仅实际 edge 观测生产者使用；Ed25519 私钥不交给读者，不进日志或 Git。dev/demo 退回模拟兼容车道须同时清空三个键；prod 不允许此降级；整版回滚按原 Compose | 尚未启用，配置操作单独授权 |
 | `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留有 `route_hints` 的 Agent、`PLANNER_FALLBACK_AGENT` 与 edge 车控）| 否（默认 20） |
 | `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算。**硬约束**（2026-09-19 W02）：历史整对从最旧丢起、最后一对按句收缩、记忆按条裁，绝不超预算 | 否（默认 1400；生产未覆盖 ⇒ 1400） |
 | `PLANNER_ACTS` | W06（2026-09-20）对话行为标注段：`on`/默认 = prompt 里让模型在**修改当前任务的某个参数**时额外输出顶层 `acts:["correct"]`（继续/恢复 = `resume`）；prompt-only、不进 submit_plan schema（同 emotion / clarify：schema 可见性诱发多填）；`off` 一键回今天。词表 `planning.ACTS`，缺省 [] = 今天的行为。唯一决策消费方：engine `_apply_task_patch`——`correct` ∧ 单步 ∧ 与焦点 `active_task` 同 intent ∧ 帧未过期 ⇒ 缺槽从活动任务继承（新值优先）、任务帧记成同一 `task_id` 的下一版（`plan.task_patch`）；没有标签绝不猜（误继承陈旧目的地比漏继承更危险）。span 列 `acts` / `task_patch` / `task_revision` | 否（默认 `on`） |

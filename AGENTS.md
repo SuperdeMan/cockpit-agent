@@ -86,6 +86,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 - 先复用 Step、WorkingSet、SessionState、Ledger、Verifier；不再建一套会话、重试或授权判据。
 - 稳定 goal_id 由服务端持有；`PLANNER_GOALS` 保持 off，模型覆盖关系不能授予执行权。
+- 领域答案声明 `_speech_verbatim=true` 时，聚合必须保留原文语义，不交模型二次改写；保真不等于上游事实或条件正确。
 - Jev 仅经拟新增网关 Decide 提供建议；不作为聊天/业务 Agent，off 零外呼、shadow 零副作用。
 - 新目标态字段/脚本/开关未实现时明确标注；不把模型概率、仿真或 ACK 当真实执行证明。
 - 每个实现包保留旧数据兼容、实际 dispatch 出口覆盖与回退；schema/配置/CI/CD/生产变更仍按 §3.2 授权。
@@ -106,7 +107,8 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 - 本仓仍是 Phase 1 工程化 PoC；CA2-02–05 的步骤范围、服务端身份、ResultBundle 与能力契约首版已实现，
   验证进度见 [首批记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。Jev Decide、T1e 与真实车辆驱动未实现。
-- CA2-06/12 的逐车/逐信号观测与故障仿真首版已形成；离线验证、签名配置和真栈状态看 [本包记录](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)，未启用不报已上线。
+- CA2-06/12 已完成离线验证和 v1 兼容车道发布；云端仍是未签名模拟来源，签名配置待授权。
+  证据与接续看 [本包记录](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)，不把连接身份认证当观测来源认证。
 - Android 包身份与设备验收看 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)，不得用服务端 SHA 代替 APK 身份。
 - 历史手册基线 `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 的读数只属该 SHA，
   完整发布流水已迁到 [入口状态快照](docs/history/2026-09-26-entry-status-snapshot.md)，不再往本节堆批次。
