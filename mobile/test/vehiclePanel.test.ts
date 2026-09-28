@@ -103,8 +103,20 @@ test('P21：页脚与空态是用户话术', async () => {
   const view = await mount(createElement(VehiclePanel, { p, vehState: {} }))
   try {
     const texts = textsOf(view)
-    expect(texts).toContain('与座舱实时同步')
+    expect(texts).toContain('车辆状态')
+    expect(texts).not.toContain('与座舱实时同步')
     expect(texts.some((t) => t.includes('还没收到车况'))).toBe(true)
     expect(texts.some((t) => /vehicle_state|镜像/.test(t))).toBe(false)
+  } finally { await act(async () => { view.unmount() }) }
+})
+
+test('CA2-06：保留模拟与部分过期说明，不把旧读数说成实时车况', async () => {
+  const stateLabel = '模拟车况 · 部分状态待更新'
+  const view = await mount(createElement(VehiclePanel, { p, vehState: { battery: 72 }, stateLabel }))
+  try {
+    const texts = textsOf(view)
+    expect(texts).toContain(stateLabel)
+    expect(texts).toContain('--') // 缺失的挡位仍为未知，不补 P。
+    expect(texts).not.toContain('与座舱实时同步')
   } finally { await act(async () => { view.unmount() }) }
 })
