@@ -39,7 +39,7 @@
 | `proactive/` | 主动消息全局治理 |
 | `observability/` | 事件、collector、trace、日志、指标 |
 | `hmi/` / `mobile/` / `dashboard/` | 三个客户端/观测界面 |
-| `deploy/` | Compose、Helm、K8s；不是 `.env` 真相源 |
+| `deploy/` | Compose、Helm、K8s；`deploy/host/` 是共用云主机的维护；不是 `.env` 真相源 |
 | `scripts/` | codegen、构建、部署、迁移、探针 |
 | `test/` | E2E、评测基线、旅程、CDP |
 | `docs/` | 架构、设计、review、指南、历史 |
@@ -142,7 +142,8 @@ JSON null 在 `map<string,string>` 边界表示“未提供”，不得字符串
 - deploy 不自动 commit/merge/push；push 前列出完整 `origin/main..HEAD` 并单独授权；
 - remote-safe 与 remote-mutating 分开；支付、商户写、真实车控、数据删除、系统配置逐轮授权；
   按已批准保留策略（`deploy/cloud/retention-policy.json`）在发布 / 备份事务内自动轮转的发布产物与备份不属于逐轮授权的
-  「数据删除」，策略本身的修改、策略外对象与数据卷仍逐轮授权；
+  「数据删除」，主机级 `host-capacity-gc`（`deploy/host/`）按该策略封顶构建缓存、删 7 天以上 core dump 同理，
+  但安装 / 更新 / 卸载它属于系统配置；策略本身的修改、策略外对象与数据卷仍逐轮授权；
 - 不切换 target、不停别人的 Docker/Metro/Gradle/pytest，不处理别人的脏工作树；
 - 三存储迁移只用 `scripts/cloud_data_migration.py`，final 先取得停写授权，replace 不 merge；
 - 迁移/发布不自动修改 `.env`、安全组、Tailscale、CI/CD、systemd 或 schema。

@@ -1,0 +1,14 @@
+# Source: car-agent repository, deploy/host/ (see deploy/host/README.md).
+[Unit]
+Description=Host capacity GC: cap the shared BuildKit cache, expire old core dumps
+Requisite=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/host-capacity-gc
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min

@@ -1,0 +1,11 @@
+# Source: car-agent repository, deploy/host/ (see deploy/host/README.md).
+[Unit]
+Description=Run the host capacity GC hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10m
+Unit=host-capacity-gc.service
+
+[Install]
+WantedBy=timers.target

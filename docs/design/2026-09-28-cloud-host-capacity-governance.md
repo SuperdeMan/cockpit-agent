@@ -1,7 +1,7 @@
 # 云主机容量治理：发布产物保留、构建缓存上限与容量可观测
 
 > 状态：**P0、P1 已实现并在云端启用**（2026-09-28：基础设施锚 `a3346202`，对应 `887b983c`；§4.7 规则已修订）。
-> 首次策略回收为手动 apply；发布 `55165e50` 时发布事务内的自动回收已首跑通过。P2 已获 drone 用户确认，待本项目用户单独授权；P3 未启动
+> 首次策略回收为手动 apply；发布 `55165e50` 时发布事务内的自动回收已首跑通过。P2 已获本项目用户授权与 drone 确认，实现在 `deploy/host/`，待安装；P3 未启动
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -119,10 +119,15 @@ release tag 指向同一镜像时才去，只删标签不删镜像）；退役�
 
 ### 4.4 构建缓存上限（主机级，需与 drone-agent 共识）
 
-- **做法**：主机级 systemd timer（`host-buildcache-gc`，每小时一次）执行
-  `docker buildx prune --builder default -f --all --max-used-space <cap>`，`cap` 读自 §4.1；对本项目 release 锁
-  与 drone 的 `~/drone-agent/stack.lock` 各做一次非阻塞 flock，任一拿不到就跳过本轮（drone 侧 09-28 提出，避免在对方批次或部署中途清缓存）；
-  每轮结果写 journal 与证据。
+- **做法**：主机级 systemd timer `host-capacity-gc`（每小时一次，随机延迟不超过 10 分钟；同一 timer 兼做 §4.5 的 core dump 清理，
+  所以不叫 buildcache）执行 `docker buildx prune --builder default --force --all --max-used-space <cap>`。
+  `cap` 读自 §4.1，经 car-agent 的 `retention.py` 校验。对本项目 release 锁与 drone 的 `/home/ubuntu/drone-agent/stack.lock`
+  各做一次非阻塞 flock 探测，拿到后立即释放；任一被占就跳过本轮（drone 侧 09-28 提出，避免在对方批次或部署中途清缓存）。
+  prune 期间不持有任何锁：两个项目取锁都不等待，car 用 `flock -n`，drone 四处获取方（部署 / 批次、控制台实时运行、任务台监管者、账本）
+  都用 `fcntl.flock(LOCK_EX | LOCK_NB)`。持锁会让对方撞上的获取直接失败。锁文件缺失或不是普通文件时，本轮失败退出、不 prune（drone 已确认）。
+  每轮一行 JSON 写入 journald，失败时 unit 进入 failed。
+- **放在哪**：源码在 `deploy/host/`（[安装清单与步骤](../../deploy/host/README.md)），不在 `deploy/cloud/**` 的基础设施锚内，也不随发布安装。
+  主机级配置归两个项目共用；若进本项目的锚，每次调整都要重批锚，还会逼所有工作树先同步 main 才能部署。安装与更新按系统配置逐次授权。
 - **按总量而不按时间**：§1 第 4 条已实测时间过滤会被祖先链锁住；`--max-used-space` 由 BuildKit 按最近使用排序回收到上限，
   `--all` 覆盖与镜像同层的 shared 记录。
 - **为什么现在不改 daemon.json**：`builder.gc` 需要重启 dockerd；未开 live-restore 时会停掉两个项目的全部容器（09-27 已发生过），
@@ -132,8 +137,9 @@ release tag 指向同一镜像时才去，只删标签不删镜像）；退役�
 
 ### 4.5 主机日志与崩溃转储（主机级，需共识）
 
-- journald：drop-in 设 `SystemMaxUse=1G`（现 0.99 GiB，默认上限可到 4 GiB），只重启 `systemd-journald`，不影响容器。
-- apport core dump：由同一 host timer 删除 `/var/lib/apport/coredump` 里超过 7 天的文件，**但要等 drone 确认后才启用**——
+- journald：drop-in `/etc/systemd/journald.conf.d/60-host-capacity.conf` 设 `SystemMaxUse=1G`（现 0.99 GiB，默认上限可到 4 GiB），
+  只重启 `systemd-journald`，不影响容器。
+- apport core dump：由同一 host timer 删除 `/var/lib/apport/coredump` 里超过 7 天的 `core.*` 普通文件（不递归），**但要等 drone 确认后才启用**——
   drone 正用现存 5 个 core 取栈排查 `sim/collect.py` 的 SIGABRT，在那之前主机上的 core 一律不碰（已满足，见 §4.8）。
 - 容器日志：推迟到 P3 与 daemon 级默认值一起做。应用容器每次发布都会重建，日志实测最大约 6 MB；为此改 `compose.cloud.yaml`
   还会让 postgres / redis / nats 重建，不值得。
@@ -179,7 +185,7 @@ release tag 指向同一镜像时才去，只删标签不删镜像）；退役�
 |---|---|---|---|
 | P0 可观测 | §4.6：`status` 容量字段与 warning、只读 `capacity`；§8 写入 dev-guide | 常规提交与推送（只改 `scripts/`、`docs/`，不涉基础设施锚） | 单测覆盖字段校验与阈值；真机只读跑一次 `capacity`，与本次 ctr 读数对账 |
 | P1 本项目保留 | §4.1–4.3、§4.7 规则修订 | 本方案批准；`deploy/cloud/**` 基础设施锚重批一次；随后 deploy `--apply` | 纯函数单测 + 沿用 `_run_cloud_bash` 替身写法的 bash 集成测试；先在真机跑只读 `retention --dry-run` 逐项对账再发布；验收见 §6 |
-| P2 主机级 | §4.4 缓存上限 timer（避让两个项目的锁）；§4.5 journald 与 core dump；§4.8 与 drone 取得共识 | 系统配置授权（红线）+ drone 用户确认 | 安装后手动触发首轮，记录前后 `buildx du` Total、可用空间与下一次构建耗时 |
+| P2 主机级 | §4.4 缓存上限 timer（避让两个项目的锁）；§4.5 journald 与 core dump；§4.8 与 drone 取得共识 | 系统配置授权（红线）+ drone 用户确认；不涉基础设施锚 | 安装后手动触发首轮，记录前后 `buildx du` Total、可用空间与下一次构建耗时 |
 | P3 可选 | daemon.json（`builder.gc`、`live-restore`、日志默认值）在一个维护窗口里一次重启；评估 containerd snapshotter 取舍与扩盘 | 维护窗口 + 两项目停机授权 | 单独方案 |
 
 **P0 实现记录（2026-09-28）**：`scripts/cloud_capacity.py`（预警线 40 GiB；构建闸是 `remote-build.sh` `MIN_DISK_BYTES` 的镜像声明，由测试对账；

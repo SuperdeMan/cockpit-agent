@@ -67,7 +67,8 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
   `--allow-mutating` 和本轮人工授权。
 - 支付、商户写、真实车控、数据删除、系统配置不因通用 deploy/E2E 授权自动放行。按已批准保留策略
   （`deploy/cloud/retention-policy.json`）在发布 / 备份事务内自动轮转的发布产物与备份不属于逐轮授权的「数据删除」；
-  策略本身的修改、策略外对象与数据卷仍需逐项授权。
+  主机级 `host-capacity-gc`（`deploy/host/`）按该策略给构建缓存封顶、删除 7 天以上的 core dump，同样不逐轮授权，
+  但安装、更新、卸载它属于系统配置。策略本身的修改、策略外对象与数据卷仍需逐项授权。
 - 三存储迁云只用 `scripts/cloud_data_migration.py`；final 必须先取得停写授权。
 - 不修改 `.env`、安全组、Tailscale、CI/CD、systemd、数据库 schema，除非用户逐项授权。
 - 当前共享主机 Docker 29.1.3 已实证构建历史查询可使 daemon 崩溃；禁止调用 `docker buildx history`
