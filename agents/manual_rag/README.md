@@ -48,6 +48,8 @@ JV05 从 09-26 的词法 + 目录路由 + 复合问句主语承接基线起步�
 PDF + resources/visual_assets.yaml
     -> scripts/build_manual_index.py -> models/manual_rag/*.mrag
     -> 检索用哪句话：原话优先；指代主语 / 规划器已拆出的本步分句才用 question 槽
+    -> 已登记的安全告警：guarded_evidence -> 指纹/片段完整核验 -> 直接呈现原文和原页卡
+         已登记但证据不匹配 -> 明确弃权；未登记/非告警 -> 以下原检索与生成链
     -> ManualIndexRetriever
          范围闸：外车型 / 本车没有的对象 / 未知专名与型号码 -> 零命中
          查询理解：问句壳剥离（runtime.question_shape）+ 档挡折叠 + 受控同义词 / 意图扩展
@@ -96,6 +98,7 @@ PDF + resources/visual_assets.yaml
 专项复用基线 runner，新增语料不改变原 20 例基线；自定义语料必须是已提交文件，并在发送前通过问句/端侧零意图预检：
 
 ```powershell
+python scripts/dev_stack.py target show
 python scripts/probe_v2_baseline.py --corpus test/eval_corpus/v2_runtime/manual_source_evidence.yaml `
   --expected-sha <full-release-sha> --provider minimax --model MiniMax-M3 --repeat 3 --out .artifacts/manual-source-evidence/live.json
 ```

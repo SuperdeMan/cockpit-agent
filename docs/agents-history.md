@@ -10154,3 +10154,30 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 证据索引 `.artifacts/vehicle-state-v2/0a589e14-evidence-manifest.json`；[保真修复与人工复核](design/2026-09-28-result-speech-fidelity.md)。
   架构 v1.56、AGENTS/CLAUDE/README、实施方案、路线图、手册残余与 QA 交接同步；下一步先补来源条件遗漏，再按授权启用签名并接 CA2-07。
   未完成浏览器实际渲染、APK/设备、OEM 或完整 QA 验收，未接入 Jev。
+
+
+## 2026-09-28：胎压手册来源条件护栏
+
+- `56f928385f7b4e547744415edae02a1221844e2e` 在 manual-rag 内增加受控原文片段：手册准入仍由原 catalog 负责，
+  新资源只存源/内容 hash、页码、字符边界和片段 hash。未知灯状态保留闪烁/常亮两种条件，复位段只在明确询问时呈现；
+  已登记证据不可核验时弃权，不回模型生成。普通问题、其它主题与编排器执行授权不变，未复制私有正文入 Git。
+- 反例先得 2 failed / 1 passed；相关手册/探针/聚合 168 passed。精确主仓全量 10186 passed / 32 skipped / 11 warnings，
+  366.16 s，四门禁/edge smoke 与 CI 通过。原 20 例种子未改，新增已提交六句语料及完整片段量尺；自定义语料必须先过只读预检。
+- 首趟 apply 未创建候选上传/构建目录，具体原因未留存；确认生产仍为 `0a589e14` 且只读预检正常后，按原发布 API 重试成功。
+  status 5/5、零 warning，运行/发布 SHA 一致；verify `20260928T053445Z-56f9283.json`。
+- release/runner 均为 `56f92838`，六句 ×3 共 18/18，通过完整来源片段比对和全文复核；27 次模型调用仅 Planner、均 pinned MiniMax-M3，
+  manual-rag 生成与聚合调用为 0。复位段仅出现在明确询问的 6 轮，零动作/确认/26 键车态差异/证据错误/残留挂起，版本连续。
+- 原获批剩余 580 缓存按原范围重查仍回收 0B。已安装 Buildx 0.30.1 已自动将 id= 转为正则，先前过滤符归因已纠正；
+  未删除新路径、未放宽范围或容量门。后续只读空闲约 32.01 GiB，不归为本次清理成果。所有已存发布、镜像、容器、数据与证据保留。
+- 当前车辆观测仍为未签名模拟来源。来源签名的三项运行配置已再次明确询问，尚未得到单独答复；未生成密钥或改 .env/Compose。
+  下一步按路线图为该配置授权与复验，再 CA2-07；取消后错误回忆及其他 RAG/设备/声学残余未关闭。
+- [实施与证据](design/2026-09-28-manual-source-evidence-guard.md)，根仓索引 `.artifacts/manual-source-evidence/56f92838-evidence-manifest.json`。
+  架构更新至 v1.57，README/AGENTS/路线图/实施方案/QA 交接同步，不把本窄项关闭写成整体 QA 全绿。
+
+- 补充：首版文字验收后离线查到受控胎压图标被新分支丢失，新增图文包反例先红；`56409fefb64b4e4019fc8144cd17ce6be5ab8fe3`
+  复用原 caption/alias 匹配并优先附图标原页，不挤掉必需条件页；超预算则返回不可用。相关 172 passed，全量 10190/32/11，356.15 s，四门禁/smoke/CI 通过。
+  该版已发布，独立 5/5/零 warning，verify `20260928T062451Z-56409fe.json`。图标 6/6，受控图片 hash 与原包一致。
+- 同版文字 17/18，已派发手册的 17 轮条件全部完整；MSE01 r2 `68e86285b5d84fab9be198a1baab2c36` 首轮有效 salvage 有安全+手册，
+  `salvage_wire_accepted` 重试后仍 salvage、仅保留安全一步，覆盖首轮计划。此轮漏答是独立规划残余；不把前版 18/18 借过来。
+  09-12/13 评估已有补槽收益及保留重试结论，本轮不改策略/.env，新样本归原评估项。两批合计 35 次调用仅 Planner、全 pinned，
+  零动作/确认/车态差异/证据错误/残留挂起。当前索引 `56409fef-evidence-manifest.json`，详细原始 hash、trace 与边界见来源条件记录 §5。

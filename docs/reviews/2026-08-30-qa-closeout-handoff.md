@@ -1,21 +1,23 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-28（CA2-06/12 模拟兼容车道与聚合原文保护已发布；来源签名待授权，手册上游条件遗漏未关闭）
+> 更新时间：2026-09-28（胎压来源条件与受控图标已发布；文字专项 17/18、图标 6/6；规划重试漏答与车辆签名授权仍待处理）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。最后一次已登记生产 release 是 `0a589e14f3e1d3432f2a22f53dbb02e074c7949b`，
-包含 CA2-02–06 的契约与逐车辆/逐信号观测，以及 CA2-12 仿真首版；已独立核对 status/运行 SHA、完成 verify 与只读身份专项。
+**QA 验收仍非全绿**。最后一次已登记生产 release 是 `56409fefb64b4e4019fc8144cd17ce6be5ab8fe3`，
+包含 CA2-02–06/12 首版、聚合原文保护与已登记胎压来源条件护栏；已独立核对 status/运行 SHA、完成 verify 与本批手册条件专项。
 来源签名仅离线验证，云端仍是明确标识的未签名模拟兼容车道。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
 v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定语料三次复验为 101 测量轮，raw 6 红：
 5 个业务问题与 1 个关键词误报；混合诉求手册展示为 8/9，有一次已派发后的 15 秒超时。
-其中手册推荐胎压被汇总层改写的问题已按 [原文保护](../design/2026-09-28-result-speech-fidelity.md)修复，当前 release 的
-保真专项 3/3；但其中一次手册生成省略了来源条件，整段安全内容仍未签收。其他检索/指代/落域问题、
+其中聚合改写已在 `0a589e14` 的 [原文保护](../design/2026-09-28-result-speech-fidelity.md)专项验证 3/3；
+随后暴露的胎压条件遗漏及新分支原图缺失，由 [来源条件与图标护栏](../design/2026-09-28-manual-source-evidence-guard.md#5-受控图标补口)修复。
+当前文字专项 17/18：一轮规划重试丢掉手册步骤，到达手册的 17 轮条件均完整；图标专项 6/6。
+这不代表所有手册生成都已安全正确。其他检索/指代/落域问题、
 双端设备与声学未验面保留。Jev 尚未接入，不宣称完整 v2 或 QA 已签收。
 已完成批次仍使用原 SHA，历史证据见 §3–4 和 [agents-history](../agents-history.md)。
 
@@ -24,13 +26,16 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | 研究采纳起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；运行时首批版本见下行；后续纯文档提交允许领先 production |
-| 生产 release | `0a589e14f3e1d3432f2a22f53dbb02e074c7949b`，2026-09-28，包含 CA2-06/12 模拟兼容车道及聚合原文保护；上一版/回退基线 `89b19956bea2378d492cedff78fad75b8f814efa` |
-| status / verify | `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 均为 `0a589e14`；verify `verified`，`20260928T042042Z-0a589e1.json`，`e2e_remote_safe` / `minimax:MiniMax-M3` |
+| 生产 release | `56409fefb64b4e4019fc8144cd17ce6be5ab8fe3`，2026-09-28，来源条件与受控图标补口；上一版 `56f928385f7b4e547744415edae02a1221844e2e` 缺受控原图，再前版 `0a589e14` 有已知生成条件遗漏，回退需保留这些限制 |
+| status / verify | `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 均为 `56409fef`；verify `verified`，`20260928T062451Z-56409fe.json`，`e2e_remote_safe` / `minimax:MiniMax-M3` |
 | CA2-06/12 后端验证 | `89b19956`：10148 passed / 34 skipped / 9 warnings，4727.69 s；四道门禁、edge smoke、Go 五包通过；有状态故障实验 16/16。工作树额外缺两项 NLU vocab，不混同主仓 32 skip 口径；[本包 §8](../design/2026-09-27-v2-vehicle-state-and-simulation.md#8-验证登记) |
-| 当前后端与门禁 | `0a589e14` 精确主仓全量 10159 passed / 32 skipped / 11 warnings，875.48 s；四门禁与 smoke 通过，[CI](https://github.com/SuperdeMan/cockpit-agent/actions/runs/36372928398) success |
+| 当前后端与门禁 | `56409fef` 精确主仓全量 10190 passed / 32 skipped / 11 warnings，356.15 s；四门禁与 smoke 通过，[CI](https://github.com/SuperdeMan/cockpit-agent/actions/runs/36385907100) success |
+| 当前来源条件与图标专项 | release/runner `56409fef`：文字六句 ×3 为 17/18，图标两句 ×3 为 6/6；已派发手册条件均完整，6 份受控图标 hash 对账相同。共 35 次调用仅 Planner、均 pinned MiniMax-M3；零动作/确认/26 键车态差异/证据错误/残留挂起。不转写为原 20 例或整本新成绩 |
+| 当前专项红轮 | MSE01 r2 / `68e86285b5d84fab9be198a1baab2c36`：首个有效 salvage 有安全与手册两步，通道修复重试仍 salvage、只剩安全，覆盖首轮计划；无手册派发/卡。原策略有历史补槽收益，保留并登记到既有评估项，不关闭重试或用多步骤合并猜覆盖 |
+| 前版来源条件专项 | `56f92838` 的六句 ×3 为 18/18，27 次 Planner 调用；随后发现图标原图丢失，已由当前版修复。该前版成绩不转借当前版 |
 | 聚合原文保护专项 | release/runner `0a589e14`：V211 ×3，原文保留/推荐值/真实手册卡均 3/3，7 次调用均 MiniMax-M3 且没有聚合模型调用；零动作/确认/26 键车态变化/残留挂起。raw 3 PASS 中 r3 上游省略灯状态与复位前提，人工保留为安全内容问题；不报整题 3/3 验收 |
-| 当前车辆身份只读专项 | release/runner `0a589e14`，15/15，HTTP/WS 隔离和错车拒绝保持；`.artifacts/vehicle-state-v2/0a589e14-live-readonly-retry.json`。首趟仅 status 前置未过，原 artifact 保留；之后独立 status 与完整重跑通过 |
-| 当前挂确认结果专项 | release/runner `0a589e14`，V201–V203 ×3，9 case run / 21 测量轮；完整答案/卡与取消后结果引用各 9/9，零动作/车态变化/残留挂起。raw 21 PASS 中 V201 三次回忆回答均否认既有内容，人工记为残余；[逐条边界](../design/2026-09-28-result-speech-fidelity.md#51-挂确认结果回归与剩余回忆问题) |
+| 前版车辆身份只读专项 | release/runner `0a589e14`，15/15，HTTP/WS 隔离和错车拒绝保持；`.artifacts/vehicle-state-v2/0a589e14-live-readonly-retry.json`。首趟仅 status 前置未过，原 artifact 保留；之后独立 status 与完整重跑通过 |
+| 前版挂确认结果专项 | release/runner `0a589e14`，V201–V203 ×3，9 case run / 21 测量轮；完整答案/卡与取消后结果引用各 9/9，零动作/车态变化/残留挂起。raw 21 PASS 中 V201 三次回忆回答均否认既有内容，人工记为残余；[逐条边界](../design/2026-09-28-result-speech-fidelity.md#51-挂确认结果回归与剩余回忆问题) |
 | 历史手册专项（本轮未重跑全量） | `5a2f4c9d`：章节 187/187、视觉 35/35、胎压复合句 16/20（有手册步 16/16）、词法自信三句 8/9、调节类 6/6、口语语料 39/43 与 38/43（失败在规划层）、指代 8/9、空调模式 3/3、多步按话术 3/3、原 36 题可发送子集 31/31，车态零差异；[二批记录](../design/2026-09-26-manual-rag-colloquial-recall.md) §8 |
 | 手册证据限制 | `.artifacts/manual-rag-colloquial/live-*-5a2f4c9d*.json` 属旧 release；5 条旧表述被预检拦下，不能报当前 36/36；当时挂确认无手册卡，后续 CA2-04 的 9 个样本闭环不改写旧结论 |
 | 历史 QA 证据 | §3–4、T24/T47 等分别绑定自己的 release/provider，不转借当前 release；旧入口发布行见 [快照](../history/2026-09-26-entry-status-snapshot.md) |
@@ -46,8 +51,9 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | CA2-06/12 真栈专项 | release/runner `89b19956`，只读 15/15：HTTP/WS 车辆隔离、错车 RPC→WS 拒绝不携带 driving/动作、审计拒绝、26 个有效车态值前后相同；27 个信号元数据中位置 unavailable。signed E2E 连接不等于观测来源已签名 |
 | CA2-06/12 固定语料 | release/runner `89b19956`，60/60 case run / 101 测量轮；raw 6 红=5 业务问题+1 关键词误报，228 次已记录调用均 MiniMax-M3；零动作/车态变化/证据失败/残留挂起；混合手册展示 8/9。[逐条复核](../design/2026-09-27-v2-vehicle-state-and-simulation.md#83-固定语料复验) |
 | CA2-06/12 客户端 | `89b19956`：HMI 358、dashboard 19 与两者生产构建通过；HMI tsc 与基线同为 25 项旧错，零新增。Android `b98c9b60`：112 suites / 1159 tests + tsc/lint；mobile tree 与 release 相同。浏览器实际渲染与 APK/设备未验，见本包 §8.1 |
-| 当前证据索引 | `.artifacts/vehicle-state-v2/0a589e14-evidence-manifest.json`；当前 mobile/HMI/dashboard/gateway/runtime tree 与 `89b19956` 相同，测试 SHA 仍按原记录，不转写为当前 release 新跑 |
+| 当前证据索引 | `.artifacts/manual-source-evidence/56409fef-evidence-manifest.json`；旧聚合/车辆/客户端证据仍按自己的 SHA 引用，不转写为本版新跑 |
 | 聚合修复容量处置 | 原已授权缓存剩余 580 项仍回收 0B，未扩大范围；另经用户授权清理 6 个已完成发布的重复源码/上传包，约 0.319 GiB，空闲约 30.26 GiB。全部发布/镜像/容器/卷与构建证据校验未变；`.artifacts/vehicle-state-v2/hotfix-space-cleanup-result.json` |
+| 本批发布与容量 | `56f92838` 首趟 apply 未创建候选上传/构建目录，原因未定；重新只读预检后按原 API 重试成功。旧获批 580 项本轮仍报告 0B，未追加删除；后续只读空闲约 32.01 GiB，不归为本次清理成果。阶段诊断与边界见 [来源条件 §4](../design/2026-09-28-manual-source-evidence-guard.md#4-首版文字发布与精确证据) |
 | v2 / Jev | CA2-02–06 与 CA2-12 首版兼容车道已发布；线上来源签名待配置授权，设备/扩展矩阵未验收。Decide、持久操作、T1e、OEM 驱动与量产多车账号/ACL 仍未实现 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
@@ -184,8 +190,9 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 
 2026-09-28 接续：手册口语/复合句尚有规划方差；CA2-04 已承接确认轮完整结果，但不能替代上游派发/成功完成。
 本次新增空检索、后续问句落域和已派发超时按 [手册 §8 后续记录](../design/2026-09-26-manual-rag-colloquial-recall.md)维护；
-聚合数值角色改写已修；V211 新发现的上游条件遗漏见 [保真修复 §5](../design/2026-09-28-result-speech-fidelity.md#5-发布与真栈逐条复核)，
-优先补条件保留的判据和回归，不修改原自动 PASS。来源签名启用单独待配置授权。
+聚合数值角色改写已修；V211 上游条件遗漏已由 [来源条件护栏](../design/2026-09-28-manual-source-evidence-guard.md#5-受控图标补口)
+在已派发的登记车型/主题内消除遗漏；图标补口通过。仍有 MSE01 一次重试丢步骤的真实漏答，见同记录 §5，
+不因来源护栏成功销账。车辆来源签名启用单独待配置授权。
 取消后的答案回忆还存在三次错误否认已回答内容；完整结果引用本身仍在，根因待定位，见同修复记录 §5.1。
 会话四轮未关项按 [原待办](../design/2026-09-24-conversation-review-round4-remediation.md) §7 重证；
 Android 按 [总表](../design/2026-09-14-android-remaining-todos.md)。统一优先级见 [路线图](../roadmap.md)，

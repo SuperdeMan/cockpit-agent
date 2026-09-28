@@ -124,7 +124,7 @@ v2 的可重复旅程、故障矩阵与模型收益门槛见 [实施方案](docs
 | 主题 | 启动条件 / 唯一接续入口 |
 |---|---|
 | v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-01/JV00 小基线与 CA2-02–04 首版按 [实施记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)接续验收；Decide 尚未实现 |
-| 手册口语召回与复合问句 | [2026-09-26 设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §8；挂确认结果已有 CA2-04 样本闭环；规划/指代方差继续按原表与首批记录接续，Jev 不能代替重证 |
+| 手册召回、条件与复合问句 | [2026-09-26 设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §8；挂确认已有 CA2-04 闭环，已登记胎压条件见 [来源护栏](docs/design/2026-09-28-manual-source-evidence-guard.md)；规划/回忆残余继续重证，Jev 不能代修 |
 | 对话评审四轮 | [逐条重证与分批落地](docs/design/2026-09-24-conversation-review-round4-remediation.md) §7；已修项不重新立项，未触发项保持条件 |
 | 对话评审三轮 | [修复记录](docs/design/2026-09-23-conversation-review-round3-remediation.md)；历史批次与待裁决项按原表追溯 |
 | Android 工程、真机、真人验收与 AM5 | [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)；v2 只建立依赖，不宣称旧批全部签收 |

@@ -157,6 +157,7 @@ Jev 只输出 Choice/Noul/Score 建议；校准阈值按任务、语言、模型
 - Skills/Exemplar：保留常驻 policy、pinned、词法保留与预算；只排序可选项，范例不能直接变成执行计划。
 - RAG：按 09-26 现有词法+目录路由+主语承接生成候选，保留已规定的词法首页/视觉命中；
   先文本选择、最终排序，再统一附图；不得让被丢弃候选占图片预算。off 与旧链按文本/页码/图/hash 逐项比较。
+  已登记告警的 [来源条件证据](../design/2026-09-28-manual-source-evidence-guard.md)属于确定性来源约束，不进入可选重排，也不交模型二次改写。
 - capability/context：只改模型可见的可选投影；执行校验目录、route_hint 扫描目录和确定性上下文保持完整。
 - critic：先 shadow，只检尚未执行的新 delta；主动模式先限完整计划未派发的路径，
   D0/流式提前执行未覆盖就记 skipped，不能等待后补签。共用 RetryController，每请求至多一次语义重规划。
