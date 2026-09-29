@@ -260,10 +260,23 @@ SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 
 
 `release-infrastructure.json` 是唯一的基础设施批准锚，记录受审提交的 `deploy/cloud/**` 聚合摘要、逐文件摘要及安装位置。普通 deploy 只能读取，不能创建或更新它。命中 `runtime_config_contract`、`database_schema` 或 `secret_material` 时始终停止；`infrastructure` 只有与自身批准锚逐字一致才可继续。CI/CD 只能按上节对目标 workflow 提交树摘要做一次性精确批准，不能借此放行任何其他类别。
 
+改了 `deploy/cloud/**`（README 除外）的提交，推到 main 之后按以下步骤批准：
+
+1. 运行 `python scripts/dev_stack.py infra-approval --sha <sha>`。这一步只读取当前的锚，把候选锚、变更文件和三层根脚本写到
+   `.artifacts/infrastructure-approval/<sha>/`，并在本地跑一遍锚校验。安装映射取目标提交里的 `REQUIRED_INSTALLED`。
+2. 核对输出里的 `installs` 与 `changed_sources`，取得授权后加 `--apply` 执行：
+   - 先复核锚没被别人改过，材料经 `prepare-upload` 与 scp 暂存。
+   - 再以 `sudo -n bash -s` 执行摘要固定的根入口，依次验旧锚、持发布锁、备份、安装、验新锚；任一步失败就自动还原，
+     备份在 `shared/evidence/infrastructure-approvals/<sha>-<聚合摘要前 8 位>`。
+   - 最后回读锚，确认与候选锚逐字节一致。
+
+不支持删除或移动已安装文件，也不能改动 `transaction-lock.sh`，遇到这些情况工具会直接拒绝。锚更换后，基于旧提交的工作树要先同步 main 才能部署。
+实现见 `scripts/cloud_infra_approval.py`，它取代了 2026-09-06 到 09-28 八次审批所用的会话内临时脚本。
+
 发布事务遵守以下边界：
 
 - 构建 26 个镜像时，`current` 和现有 30 个容器保持不变；完成全部镜像与备份后才切换。
-- 上传中断、构建失败和验收失败的目录在 72 h 诊断窗口内不自动清理，之后由保留策略退役。
+- 上传中断（只上传、从未构建，包括基础设施批准留下的上传目录）、构建失败和验收失败的目录在 72 h 诊断窗口内不自动清理，之后由保留策略退役。
 - `deploy` / `rollback` 成功后，在同一把锁内运行 `retention.py releases --mode apply`：保留当前、最近成功激活的 3 个、
   pinned 与仍被容器 compose 工程目录引用的 release，退役其余版本的两族镜像 tag、release 目录、构建工作区与上传包；
   已激活版本的构建工作区与上传包在激活后即清掉，构建证据移入 `shared/evidence/releases/<sha>/build/`。

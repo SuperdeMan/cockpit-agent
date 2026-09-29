@@ -117,6 +117,20 @@ python scripts/dev_stack.py retention  # 按已批准保留策略的计划（缺
 - 删除仍按 [`deploy/cloud/README.md`](../deploy/cloud/README.md) 先列精确对象再批准；量法、回收顺序与自动轮转的落地阶段见
   [容量治理方案](design/2026-09-28-cloud-host-capacity-governance.md) §5 与 §8。
 
+### 基础设施批准锚
+
+改了 `deploy/cloud/**`（README 除外）的提交，要先把云端批准锚移到该提交，deploy 才会放行。步骤（每次都需授权）：
+
+```powershell
+python scripts/dev_stack.py target show
+python scripts/dev_stack.py infra-approval --sha <sha>           # 只读取当前锚；材料与本地校验写到 .artifacts/infrastructure-approval/<sha>/
+python scripts/dev_stack.py infra-approval --sha <sha> --apply   # 核对 installs / changed_sources 之后再执行
+```
+
+- 目标提交要在 main 上且工作树干净。锚在准备之后被人改过、或材料被改过时，`--apply` 都会拒绝。
+- 根脚本失败会自动还原。如果输出 `rollback_failed`，按 stderr 里给出的备份目录人工恢复。
+- 锚更换后，其他工作树基于旧提交的部署会被判基础设施不匹配，先同步 main。流程细节见 [`deploy/cloud/README.md`](../deploy/cloud/README.md)。
+
 ### CI/CD 一次性摘要批准
 
 默认不带批准参数时仍然 fail closed。只有用户已经单独授权目标 SHA 的 CI/CD 变化时，才按下面

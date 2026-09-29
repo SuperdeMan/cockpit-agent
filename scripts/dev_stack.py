@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.cloud_capacity import collect_capacity
+from scripts.cloud_infra_approval import ApprovalError, apply_approval, prepare_approval
 from scripts.cloud_retention import run_retention
 from scripts.cloud_release_lib import (
     ReleaseError,
@@ -86,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("capacity")
     retention = commands.add_parser("retention")
     retention.add_argument("--apply", action="store_true")
+    approval = commands.add_parser("infra-approval")
+    approval.add_argument("--sha", default="HEAD")
+    approval.add_argument("--apply", action="store_true")
     deploy = commands.add_parser("deploy")
     deploy.add_argument("--sha", default="HEAD")
     deploy.add_argument("--approve-ci-cd-sha256")
@@ -471,6 +475,21 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             **summary,
         })
         return 0 if ok else 1
+    if args.command == "infra-approval":
+        # Move the release infrastructure anchor to a reviewed commit (deploy/cloud/README.md「基础设施批准」):
+        # without --apply only reads the anchor and writes checked materials under .artifacts/.
+        if selection.name != "cloud":
+            raise DevStackError("infra-approval requires target=cloud")
+        config = _connection(args)
+        request = ReleaseRequest(repo, args.sha, repo / ".artifacts" / "infrastructure-approval", config)
+        mode = "apply" if args.apply else "prepare"
+        try:
+            outcome = (apply_approval if args.apply else prepare_approval)(request, release_runner)
+        except (ApprovalError, ReleaseError) as exc:
+            emit({**base, "action": "infra-approval", "mode": mode, "status": "failed", "error": str(exc)})
+            return 1
+        emit({**base, "action": "infra-approval", "mode": mode, **outcome})
+        return 0
     if args.command == "deploy":
         if selection.name != "cloud":
             raise DevStackError("deploy requires target=cloud")

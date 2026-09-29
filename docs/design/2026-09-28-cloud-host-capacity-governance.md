@@ -96,7 +96,7 @@
 release tag 指向同一镜像时才去，只删标签不删镜像）；退役时两族 tag 一起删。`remote-build.sh` 保持零删除（原方案想在构建里去别名，
 与「构建永不删除」的既有规格冲突，改由 retention 收尾完成）。
 
-**失败产物**：从未成功激活的 SHA（构建失败、`VERIFY_FAILED_ROLLED_BACK`、中断留下的 `.staging-*`）超过 `failed_ttl_hours` 后按同一路径退役。
+**失败产物**：从未成功激活的 SHA（构建失败、`VERIFY_FAILED_ROLLED_BACK`、中断留下的 `.staging-*`、只上传未构建的包——含基础设施批准留下的上传目录，2026-09-29 补）超过 `failed_ttl_hours` 后按同一路径退役。
 
 **守卫**（任一不满足即跳过该对象并记入证据）：持 release 锁且迁移 fence 为空；绝不触碰当前 release、保留集及其镜像；
 镜像只按 tag 删除、不带 `-f`，被任何容器使用即跳过；路径须匹配固定正则、非符号链接、位于固定根下；

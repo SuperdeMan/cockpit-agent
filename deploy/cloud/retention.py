@@ -322,10 +322,13 @@ def plan_releases(facts: ReleaseFacts, policy: Mapping) -> dict:
         if sha in activation:
             retire.append({**objects(sha), "reason": "outside-retention-window"})
             continue
+        # An upload that was never built is an abandoned attempt too: a deploy uploads and builds in one
+        # invocation, so one left behind met a busy lock or a failure; infrastructure approvals leave one each.
         failed_attempt = (
             sha in failed
             or (sha in facts.build_dirs and sha not in facts.release_dirs)
             or sha in staging_by_sha
+            or (sha in uploads_by_sha and sha not in facts.release_dirs)
         )
         if failed_attempt and facts.now - newest(sha) > ttl:
             retire.append({**objects(sha), "reason": "failed-past-ttl"})

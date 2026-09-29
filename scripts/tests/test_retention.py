@@ -164,6 +164,25 @@ def test_failed_attempts_wait_out_their_ttl_and_unknown_releases_are_only_report
     ]
 
 
+def test_uploads_that_were_never_built_expire_like_failed_attempts():
+    # 2026-09-28: each infrastructure approval left an upload directory that was only ever reported.
+    stale, fresh = "a" * 40, "b" * 40
+    stale_upload, fresh_upload = f"{stale}-{'1' * 32}", f"{fresh}-{'2' * 32}"
+    facts = _facts(
+        release_dirs={C: NOW},
+        upload_dirs={stale_upload: NOW - timedelta(hours=73), fresh_upload: NOW - timedelta(hours=17)},
+        states={C: ((_ts(1), "VERIFIED"),)},
+        tag_ids={},
+    )
+    plan = ret.plan_releases(facts, _policy())
+
+    assert [(item["sha"], item["reason"], item["upload_dirs"]) for item in plan["retire"]] == [
+        (stale, "failed-past-ttl", [stale_upload]),
+    ]
+    assert plan["retire"][0]["release_dir"] is None and plan["retire"][0]["build_dir"] is None
+    assert [(item["sha"], item["reason"]) for item in plan["report"]] == [(fresh, "failed-within-ttl")]
+
+
 def test_activated_releases_drop_their_build_workspace_upload_and_matching_alias_only():
     upload = f"{C}-{'e' * 32}"
     facts = _facts(

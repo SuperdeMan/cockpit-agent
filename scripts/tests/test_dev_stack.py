@@ -58,7 +58,9 @@ def test_development_stack_cli_exposes_all_actions():
     assert result.returncode == 0
     assert all(
         action in result.stdout
-        for action in ("target", "status", "capacity", "retention", "deploy", "verify", "hmi", "dashboard")
+        for action in (
+            "target", "status", "capacity", "retention", "infra-approval", "deploy", "verify", "hmi", "dashboard",
+        )
     )
 
 
@@ -892,6 +894,56 @@ def test_cli_retention_surfaces_the_remote_error_instead_of_a_bare_failure(tmp_p
     assert event["status"] == "failed"
     assert event["releases"]["error"] == "command failed: docker inspect --format"
     assert event["backups"]["status"] == "missing"
+
+
+def test_cli_infra_approval_requires_cloud_target(tmp_path: Path):
+    class _Forbidden:
+        def run(self, *args, **kwargs):
+            raise AssertionError("an approval must not run against a local target")
+
+    events: list[dict[str, object]] = []
+    assert cli.main(["infra-approval"], repo=tmp_path, release_runner=_Forbidden(), emit=events.append) == 2
+    assert events[-1]["status"] == "configuration_rejected"
+
+
+@pytest.mark.parametrize(("flag", "mode", "step"), [((), "prepare", "prepare_approval"),
+                                                    (("--apply",), "apply", "apply_approval")])
+def test_cli_infra_approval_prepares_unless_apply_is_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: tuple[str, ...], mode: str, step: str,
+):
+    dev.set_target(tmp_path, "cloud")
+    runner, calls = object(), []
+
+    def record(name: str):
+        def step_function(request, used_runner):
+            calls.append((name, request.revision, request.artifact_root, used_runner))
+            return {"status": "prepared" if name == "prepare_approval" else "approved"}
+        return step_function
+
+    monkeypatch.setattr(cli, "prepare_approval", record("prepare_approval"))
+    monkeypatch.setattr(cli, "apply_approval", record("apply_approval"))
+    events: list[dict[str, object]] = []
+    arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)),
+                 "infra-approval", "--sha", "a" * 40, *flag]
+
+    assert cli.main(arguments, repo=tmp_path, release_runner=runner, emit=events.append) == 0
+
+    assert calls == [(step, "a" * 40, tmp_path / ".artifacts" / "infrastructure-approval", runner)]
+    assert (events[-1]["action"], events[-1]["mode"]) == ("infra-approval", mode)
+
+
+def test_cli_infra_approval_reports_a_refusal_as_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    dev.set_target(tmp_path, "cloud")
+
+    def refuse(request, runner):
+        raise cli.ApprovalError("the installed anchor changed after these materials were prepared; prepare again")
+
+    monkeypatch.setattr(cli, "apply_approval", refuse)
+    events: list[dict[str, object]] = []
+    arguments = ["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "infra-approval", "--apply"]
+
+    assert cli.main(arguments, repo=tmp_path, release_runner=object(), emit=events.append) == 1
+    assert events[-1]["status"] == "failed" and "prepare again" in events[-1]["error"]
 
 
 def test_cloud_status_reports_the_image_that_is_actually_running(tmp_path: Path):
