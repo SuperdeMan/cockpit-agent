@@ -10280,3 +10280,5 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   - 效果：三个审批上传目录转为「在过期窗口内」。
 - 验证：新增 20 条用例（批准 15、dev_stack 4、保留 1），「锚在准备后变过」与新保留规则两处变异都被判红；
   `scripts/tests` 1615 passed / 14 skipped。锚更换后，其他工作树要基于 main ≥ `1eb2bcf1` 才能部署。
+- 经用户同意，更正 QA 交接 §1 / §2 的生产 release：CA2-07 线在 `b095caca` 之后又部署了纯文档提交 `01cf47cd`（21:16 激活，排除 `.md` 后零差异），
+  交接页没跟上。现登记 `01cf47cd`，其 verify 为 `20260928T131738Z-01cf47c.json`，09-29 复核 status 5/5 零 warning；CA2-07 的专项与全量成绩仍属 `b095caca`，不转借。

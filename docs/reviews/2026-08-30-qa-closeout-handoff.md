@@ -1,14 +1,14 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-28（CA2-07 Cloud/Agent 权限视图已部署复验；权限检查通过，正向回答与 R0 业务残余仍开）
+> 更新时间：2026-09-28（CA2-07 Cloud/Agent 权限视图已部署复验；权限检查通过，正向回答与 R0 业务残余仍开）；2026-09-29 更正生产 release 为其后的纯文档提交 `01cf47cd`
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。当前登记的 release 为 `b095caca46a4a4188e2b26927327117c62326acb`，
-包含 CA2-07 的 Cloud/Agent 权限化上下文视图；主体权限、接收需求与在途读取失效机制已落地。
+**QA 验收仍非全绿**。当前 release 为 `01cf47cd4455ea1912a4e61c16fe183e86d4d295`：它在 `b095caca` 之上只改文档，
+应用代码与 `b095caca` 相同，包含 CA2-07 的 Cloud/Agent 权限化上下文视图；主体权限、接收需求与在途读取失效机制已落地。
 权限专项和固定语料已复验，S2S 直接历史、调试 HTTP 与量产全局身份边界未关闭；车态仍是模拟来源。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
@@ -26,8 +26,8 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | 研究采纳起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；运行时首批版本见下行；后续纯文档提交允许领先 production |
-| 生产 release | `b095caca46a4a4188e2b26927327117c62326acb`，2026-09-28，CA2-07 Cloud/Agent 权限视图；上一版 `55165e50` 为容量治理 P1、应用仍沿用 `7b346c90`。来源签名保持启用，.env/token/schema 未因本包修改 |
-| status / verify | `b095caca`：ok、5/5 healthy、零 warning，release/running SHA 一致；统一 verify verified：`20260928T112855Z-b095cac.json`，e2e_remote_safe / minimax:MiniMax-M3 |
+| 生产 release | `01cf47cd4455ea1912a4e61c16fe183e86d4d295`，2026-09-28 21:16 CST 激活；相对 `b095caca` 只改文档与 README（排除 `.md` 后零差异），应用代码与 `b095caca` 相同。`b095caca46a4a4188e2b26927327117c62326acb`（19:27 激活）是 CA2-07 Cloud/Agent 权限视图；再前一版 `55165e50` 为容量治理 P1、应用仍沿用 `7b346c90`。来源签名保持启用，.env/token/schema 未因这两版修改 |
+| status / verify | `01cf47cd`：ok、5/5 healthy、零 warning，release/running SHA 一致（2026-09-29 复核）；统一 verify verified：`20260928T131738Z-01cf47c.json`，e2e_remote_safe / minimax:MiniMax-M3。`b095caca` 的 verify 为 `20260928T112855Z-b095cac.json`；CA2-07 专项与全量成绩属 `b095caca`，未对 `01cf47cd` 重跑 |
 | CA2-06/12 后端验证 | `89b19956`：10148 passed / 34 skipped / 9 warnings，4727.69 s；四道门禁、edge smoke、Go 五包通过；有状态故障实验 16/16。工作树额外缺两项 NLU vocab，不混同主仓 32 skip 口径；[本包 §8](../design/2026-09-27-v2-vehicle-state-and-simulation.md#8-验证登记) |
 | 当前后端与门禁 | `b095caca` 干净工作树全量 10309 passed / 35 skipped / 11 warnings，463.81 s；四门禁、smoke 与 [CI 8 项](https://github.com/SuperdeMan/cockpit-agent/actions/runs/36414421462) success。35 skip 按 Windows/POSIX/本地服务等条件登记，11 warning 为既有 Starlette/AsyncMock/Bert 弃用；实现提交 `0265bc40` 的 10293/34/11、567.24 s 单独留档，不转借 |
 | 来源条件与图标专项（历史） | release/runner `56409fef`：文字六句 ×3 为 17/18，图标两句 ×3 为 6/6；已派发手册条件完整，6 份受控图标 hash 相同。共 35 次调用仅 Planner、均 pinned MiniMax-M3；零动作/确认/26 键车态差异/证据错误/残留挂起。不转写为 `7b346c90` 或整本新成绩 |
