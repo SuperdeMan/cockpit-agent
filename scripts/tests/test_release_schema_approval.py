@@ -47,6 +47,9 @@ def test_unapproved_schema_change_stays_hard_blocked():
     rejected = plan([SQL], {SQL: SQL_DIFF})
     assert rejected.status == "plan_rejected"
     assert rejected.blocking_changes == (ControlledChange(SQL, "database_schema"),)
+    ddl = plan(["memory/pg_store.py"], {"memory/pg_store.py": "+ALTER TABLE m ADD COLUMN c INT\n"})
+    assert ddl.status == "plan_rejected"
+    assert ddl.blocking_changes == (ControlledChange("memory/pg_store.py", "database_schema"),)
     stale = plan([SQL], {SQL: SQL_DIFF}, target="e" * 64, approved="d" * 64)
     assert stale.status == "plan_rejected" and stale.blocking_changes
 
