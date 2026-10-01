@@ -35,8 +35,8 @@
 > ⚠ **为什么 `TAILNET_FQDN` 不写进 `.env.example`**：那个文件在发布闸里被分类为
 > `runtime_config_contract`（`scripts/cloud_release_lib.py::CONTROLLED_EXACT`），
 > 而该类别**没有任何放行通道**——`infrastructure` 有 `release-infrastructure.json`
-> 的 digest 批准，`ci_cd` 仅有下文按目标 workflow 提交树摘要的一次性 CLI 批准；
-> `runtime_config_contract` / `database_schema` / `secret_material` 一律硬阻断。
+> 的 digest 批准，`ci_cd` 与 `database_schema` 各有下文的一次性 CLI 摘要批准；
+> `runtime_config_contract` / `secret_material` 一律硬阻断。
 > 且 `changed_paths` 取的是「已部署 SHA → 目标 SHA」
 > 的全量 diff，所以只要这一笔在 main 上，`cloud_release.py deploy` 就**永远** `plan_rejected`
 > ——连「先发一次版把它消化掉」都不行，发版本身就是被拒的那个动作。
@@ -213,6 +213,22 @@ if ($submitted.artifact_directory -cne $dry.artifact_directory) { throw "submitt
 `status=submitted` 只证明 apply 返回值与本次 SHA、摘要、基线和 artifact 闭合，**不等于最终
 verify 成功**。随后仍须在每个真栈动作前独立执行 `target show`，依次完成 `status`、`verify`、
 MiniMax long sessions 与 HMI C14，才能形成发布验收证据。
+
+### 数据库 schema 的一次性批准（CA2-08 起）
+
+任何 `.sql` 改动或生产 `.py` 新增 DDL 行都归 `database_schema`。没有批准时照旧 `plan_rejected`；
+批准只能在用户对**这一次** schema 变更逐项授权之后使用，发布授权本身不包含它。流程与 CI/CD 相同：
+
+1. 无批准 dry-run，确认 `blocking_changes` 里只剩 `database_schema`，人工核对每个路径的 diff，
+   取同一次输出的 `target_database_schema_sha256`；
+2. `python scripts/dev_stack.py deploy --sha $sha --approve-database-schema-sha256 $digest` 再 dry-run，
+   要求 `status=dry_run`、零阻断、两个摘要相等；
+3. 同一 SHA 与摘要加 `--apply`，之后照常独立 status / verify。
+
+摘要 = 每个 schema 路径「已部署 blob、目标 blob」的 sha256 规范化后再哈希：无关提交不改变它，
+任一 schema 文件再改或已部署基线不同都会改变它。批准是一次性 CLI 参数，不写远端锚、不支持环境变量；
+无 schema 变化却给批准 → `configuration_rejected`；它不放行任何其他类别。schema 随服务启动的
+`CREATE/ALTER ... IF NOT EXISTS` 生效，发布事务激活前已有 PG 备份；回滚只退代码，不自动 DROP。
 
 切回 local 的固定次序是 `python scripts/dev_stack.py target set local` → 人工启动
 Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。

@@ -830,6 +830,7 @@ def cloud_release_argv(
     *,
     apply: bool,
     approved_ci_cd_digest: str | None = None,
+    approved_database_schema_digest: str | None = None,
 ) -> list[str]:
     """Build the allow-listed delegation argv for the existing release CLI."""
     argv = [sys.executable, str(Path(repo) / "scripts" / "cloud_release.py")]
@@ -837,6 +838,8 @@ def cloud_release_argv(
         argv.extend(["deploy", "--sha", sha])
         if approved_ci_cd_digest is not None:
             argv.extend(["--approve-ci-cd-sha256", approved_ci_cd_digest])
+        if approved_database_schema_digest is not None:
+            argv.extend(["--approve-database-schema-sha256", approved_database_schema_digest])
         if apply:
             argv.append("--apply")
         return argv

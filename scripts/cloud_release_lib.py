@@ -105,6 +105,8 @@ class ReleasePlan:
     approved_infrastructure_digest: str | None = None
     target_ci_cd_digest: str | None = None
     approved_ci_cd_digest: str | None = None
+    target_database_schema_digest: str | None = None
+    approved_database_schema_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,7 @@ class ReleaseRequest:
     artifact_root: Path
     ssh: SshConfig
     approved_ci_cd_digest: str | None = None
+    approved_database_schema_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -527,6 +530,22 @@ def diff_contains_schema_change(path: str, diff: str) -> bool:
     return False
 
 
+def database_schema_paths(
+    changed_paths: Sequence[str], diff_by_path: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Every changed path the gate treats as a schema change: `.sql` or production DDL."""
+    paths: set[str] = set()
+    for path in changed_paths:
+        normalized = path.replace("\\", "/")
+        category = classify_changed_path(normalized)
+        if category == "database_schema" or (
+            category == "application"
+            and diff_contains_schema_change(normalized, diff_by_path.get(path, ""))
+        ):
+            paths.add(normalized)
+    return tuple(sorted(paths))
+
+
 def make_release_plan(
     *,
     deployed_sha: str,
@@ -537,9 +556,17 @@ def make_release_plan(
     approved_infrastructure_digest: str | None = None,
     target_ci_cd_digest: str | None = None,
     approved_ci_cd_digest: str | None = None,
+    target_database_schema_digest: str | None = None,
+    approved_database_schema_digest: str | None = None,
 ) -> ReleasePlan:
     if not FULL_SHA_RE.fullmatch(target_sha):
         raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
+    for digest, label in (
+        (target_database_schema_digest, "target database schema digest"),
+        (approved_database_schema_digest, "approved database schema digest"),
+    ):
+        if digest is not None and not SHA256_RE.fullmatch(digest):
+            raise ReleaseError(f"{label} is invalid", category="configuration")
     if (
         target_infrastructure_digest is not None
         and not SHA256_RE.fullmatch(target_infrastructure_digest)
@@ -582,6 +609,20 @@ def make_release_plan(
         and approved_ci_cd_digest is not None
         and target_ci_cd_digest == approved_ci_cd_digest
     )
+    # One-time database_schema approval (CA2-08): the digest binds every schema path's
+    # deployed and target blobs, so it releases exactly the reviewed transition.
+    has_schema_changes = bool(database_schema_paths(changed_paths, diff_by_path))
+    if approved_database_schema_digest is not None and not has_schema_changes:
+        raise ReleaseError(
+            "database schema digest approval was provided without database schema changes",
+            category="configuration",
+        )
+    schema_approved = (
+        has_schema_changes
+        and target_database_schema_digest is not None
+        and approved_database_schema_digest is not None
+        and target_database_schema_digest == approved_database_schema_digest
+    )
     blocking: set[ControlledChange] = set()
     for path in normalized_paths:
         category = classify_changed_path(path)
@@ -589,10 +630,12 @@ def make_release_plan(
             continue
         if category == "infrastructure" and infrastructure_approved:
             continue
+        if category == "database_schema" and schema_approved:
+            continue
         if category != "application":
             blocking.add(ControlledChange(path, category))
             continue
-        if diff_contains_schema_change(path, diff_by_path.get(path, "")):
+        if diff_contains_schema_change(path, diff_by_path.get(path, "")) and not schema_approved:
             blocking.add(ControlledChange(path, "database_schema"))
 
     ordered_blocking = tuple(sorted(blocking))
@@ -612,6 +655,8 @@ def make_release_plan(
         approved_infrastructure_digest=approved_infrastructure_digest,
         target_ci_cd_digest=target_ci_cd_digest,
         approved_ci_cd_digest=approved_ci_cd_digest,
+        target_database_schema_digest=target_database_schema_digest,
+        approved_database_schema_digest=approved_database_schema_digest,
     )
 
 
@@ -786,6 +831,42 @@ def compute_ci_cd_digest(repo: Path, target_sha: str) -> str | None:
     }
     canonical = json.dumps(
         per_file,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _committed_blob_digest(repo: Path, revision: str, path: str) -> str | None:
+    if _git(repo, "cat-file", "-e", f"{revision}:{path}", check=False).returncode != 0:
+        return None
+    return hashlib.sha256(_git_blob(repo, revision, path)).hexdigest()
+
+
+def compute_database_schema_digest(
+    repo: Path, deployed_sha: str, target_sha: str, schema_paths: Sequence[str]
+) -> str | None:
+    """Digest of the exact schema transition: each path's deployed and target blob.
+
+    None when nothing schema-bearing changed. Unrelated commits keep the digest;
+    any edit to a schema-bearing file (or a different deployed baseline for it)
+    changes it, so an approval can never cover a revision nobody reviewed.
+    """
+    for sha in (deployed_sha, target_sha):
+        if not FULL_SHA_RE.fullmatch(sha):
+            raise ReleaseError("database schema digest needs full commit SHAs", category="configuration")
+    if not schema_paths:
+        return None
+    transitions = {
+        path: [
+            _committed_blob_digest(repo, deployed_sha, path),
+            _committed_blob_digest(repo, target_sha, path),
+        ]
+        for path in sorted(set(schema_paths))
+    }
+    canonical = json.dumps(
+        {"schema_version": 1, "transitions": transitions},
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -1096,6 +1177,8 @@ def _expected_manifest(
         "approved_infrastructure_sha256": plan.approved_infrastructure_digest,
         "target_ci_cd_sha256": plan.target_ci_cd_digest,
         "approved_ci_cd_sha256": plan.approved_ci_cd_digest,
+        "target_database_schema_sha256": plan.target_database_schema_digest,
+        "approved_database_schema_sha256": plan.approved_database_schema_digest,
     }
 
 
@@ -1776,6 +1859,12 @@ def execute_deploy(
         target_sha,
     )
     ci_cd_digest = compute_ci_cd_digest(request.repo, target_sha)
+    schema_digest = compute_database_schema_digest(
+        request.repo,
+        deployed_sha,
+        target_sha,
+        database_schema_paths(changed_paths, diff_by_path),
+    )
     plan = make_release_plan(
         deployed_sha=deployed_sha,
         target_sha=target_sha,
@@ -1787,6 +1876,8 @@ def execute_deploy(
         ),
         target_ci_cd_digest=ci_cd_digest,
         approved_ci_cd_digest=request.approved_ci_cd_digest,
+        target_database_schema_digest=schema_digest,
+        approved_database_schema_digest=request.approved_database_schema_digest,
     )
     if plan.status == "plan_rejected":
         return CloudReleaseResult(

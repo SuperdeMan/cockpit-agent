@@ -54,7 +54,8 @@ _PLAN_FIELDS = frozenset(
         "status", "deployed_sha", "target_sha", "changed_paths",
         "blocking_changes", "target_infrastructure_sha256",
         "approved_infrastructure_sha256", "target_ci_cd_sha256",
-        "approved_ci_cd_sha256", "artifact_directory", "bootstrap", "remote",
+        "approved_ci_cd_sha256", "target_database_schema_sha256",
+        "approved_database_schema_sha256", "artifact_directory", "bootstrap", "remote",
     }
 )
 _CONFIG_FIELDS = frozenset({"status", "error_category"})
@@ -93,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     deploy = commands.add_parser("deploy")
     deploy.add_argument("--sha", default="HEAD")
     deploy.add_argument("--approve-ci-cd-sha256")
+    deploy.add_argument("--approve-database-schema-sha256")
     deploy.add_argument("--apply", action="store_true")
     for command in ("verify", "hmi", "dashboard"):
         commands.add_parser(command)
@@ -163,7 +165,8 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
     for name in ("target_infrastructure_sha256", "approved_infrastructure_sha256"):
         if payload[name] is not None and not isinstance(payload[name], str):
             raise DevStackError("cloud release response is invalid")
-    for name in ("target_ci_cd_sha256", "approved_ci_cd_sha256"):
+    for name in ("target_ci_cd_sha256", "approved_ci_cd_sha256",
+                 "target_database_schema_sha256", "approved_database_schema_sha256"):
         value = payload[name]
         if value is not None and (
             not isinstance(value, str) or _SHA256.fullmatch(value) is None
@@ -208,6 +211,8 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
         "approved_infrastructure_sha256": payload["approved_infrastructure_sha256"],
         "target_ci_cd_sha256": payload["target_ci_cd_sha256"],
         "approved_ci_cd_sha256": payload["approved_ci_cd_sha256"],
+        "target_database_schema_sha256": payload["target_database_schema_sha256"],
+        "approved_database_schema_sha256": payload["approved_database_schema_sha256"],
         "artifact_directory": payload["artifact_directory"],
         "bootstrap": {
             "status": bootstrap["status"],
@@ -500,6 +505,7 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             args.sha,
             apply=args.apply,
             approved_ci_cd_digest=args.approve_ci_cd_sha256,
+            approved_database_schema_digest=args.approve_database_schema_sha256,
         )
         result = release_runner.run([*release[:2], *_connection_argv(config), *release[2:]], cwd=repo, check=False)
         try:
