@@ -17,6 +17,7 @@ v2 接续顺序统一看 [路线图](../roadmap.md)。能力接入与兼容规�
 车辆观测与仿真见 [CA2-06/12](2026-09-27-v2-vehicle-state-and-simulation.md)；权限化视图首版见 [CA2-07](2026-09-28-v2-permissioned-context-view.md)，两者证据各自绑定发布 SHA。
 执行方持久准入见 [CA2-08](2026-10-01-v2-durable-operation-admission.md)：已部署启用，首批为演示商户两项写工具。
 挂起一次消费与确认绑定见 [CA2-09](2026-10-02-v2-confirmation-binding.md)：已部署。
+执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）见 [CA2-10](2026-10-02-v2-effect-evidence.md)：已部署。
 本包真栈发现的数值角色被聚合改写，已按 [结果原文保护](2026-09-28-result-speech-fidelity.md)修复并发布；
 已登记胎压的条件与原图由 [来源条件护栏](2026-09-28-manual-source-evidence-guard.md)保留；重试漏答、回忆等残余继续按 QA 主表处理。
 

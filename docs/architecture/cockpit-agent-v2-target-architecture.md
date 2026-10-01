@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 更新：2026-10-02。状态：**目标态分期实施；CA2-02–07/12 已有首版；CA2-08 准入与 CA2-09 确认绑定首版已部署；其他身份与运行时边界按实施方案推进**。
+> 更新：2026-10-02。状态：**目标态分期实施；CA2-02–07/12 已有首版；CA2-08 准入、CA2-09 确认绑定与 CA2-10 结果证据首版已部署；其他身份与运行时边界按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
@@ -104,7 +104,7 @@ CA2-07 已把下述视图接入 Cloud WorkingSet 与 Agent SDK；主体权限和
 CA2-06/12 首版已形成版本 2 观测信封、受控公钥→车辆/来源绑定、epoch/seq、逐信号采样/接收/过期时间、
 质量与单位；Python/Go 读者共用对照向量，签名启用与发布证据见 [本包记录](../design/2026-09-27-v2-vehicle-state-and-simulation.md)。
 当前驱动仍是模拟 VAL；签名只认证模拟来源，完整 tenant/user/vehicle 账号与 NATS ACL 仍属后续试点。
-可选 operation_id 只保留关联线索，动作因果和持久恢复仍待 CA2-08–11。
+可选 operation_id 现由 CA2-10 用作本次派发的观测归属（车端只给本次命令改动的样本打标，不代替授权），持久恢复仍待 CA2-11。
 
 生产者、NATS 路由/ACL、网关、Cloud/scene 镜像、collector、HMI 车态和 Verifier 必须按同一版本迁移。
 旧无车辆身份消息只能进入显式配置的单车仿真兼容车道，不能自动绑定到“当前用户的车”；
@@ -126,7 +126,7 @@ Context View 只组合授权后的事实。`found/none/unavailable/off` 分开�
 另有 failed/cancelled/unknown；这是拟定生命周期，不擅自替换现有 StepStatus 枚举。
 需要持久承诺的任务在副作用前写入准入记录，落账失败拒绝；只读、可丢失且如实告知的实验任务才可 best-effort。
 CA2-08 首版：云侧在 SDK receiver 落记录，状态复用 task_ledger 状态机（accepted 分 executing/awaiting，orphaned=结局未知）；
-上表的 submitted、observed、verified 与车端日志尚未实现，见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)。
+上表的 submitted 与车端日志尚未实现，见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)；observed / verified 由 CA2-10 作为证据输出（回执、状态满足、观测归属分开，动作前已满足不算 verified），见 [结果证据](../design/2026-10-02-v2-effect-evidence.md)。
 CA2-09 首版：挂起一次消费，确认绑定车辆/步骤/operation/能力版本/最终参数并在执行器复核，车端比对确认时的挡位，见 [确认绑定](../design/2026-10-02-v2-confirmation-binding.md)。
 车端离线日志实现同一操作契约，云端只做有协调的同步/索引。
 

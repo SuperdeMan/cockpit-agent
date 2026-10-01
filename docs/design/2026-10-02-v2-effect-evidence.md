@@ -1,6 +1,7 @@
 # CA2-10：执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）
 
-> 状态：2026-10-02 契约冻结稿，实现中。proto 只增字段（`ResultEntry.evidence`），不改数据库 schema、`.env` 或 CI/CD。
+> 状态：2026-10-02 已部署 `a772e783`（status 5/5、verify verified）。proto 只增字段（`ResultEntry.evidence`），不改数据库 schema、`.env` 或 CI/CD。
+> 模拟车上的真栈车控证据探针属于 `remote_mutating`，本包发布时未运行，见 §5。
 > 依赖：[CA2-06 车辆观测](2026-09-27-v2-vehicle-state-and-simulation.md)（逐信号质量/时效、可选 `operation_id`）、
 > [CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)、[CA2-09 确认绑定](2026-10-02-v2-confirmation-binding.md)。排序见[路线图](../roadmap.md)。
 
@@ -78,3 +79,25 @@
 2. 真 VAL + 真 `VehicleStateStore`：车端执行产生带关联键样本 → 云端镜像 → verified；已满足 → unchanged；观测丢失 → missing；首包快照只给改动键打关联。
 3. T1 / D0 / T2 同一步同一证据；防抖回放不带证据；pending_edge 行与车端改写保留证据；网关映射；共享投影。
 4. 反向验证、全量、四门禁；发布后只读核对。模拟车上的真栈车控探针属于 `remote_mutating`，另取授权。
+
+## 5. 实现与证据（2026-10-02）
+
+| 验证面 | 精确版本 / 结果 |
+|---|---|
+| 专项 | runtime 词表 22；云侧 `test_effect_evidence.py` 32（组合表、轮询、关联键、T1/D0/T2 同证据、回执丢失两条路、回放/规划/执行方边界、ResultBundle 序列化）；车端 `test_observation_ref.py` 7（真 VAL + 真驱动 + 真 `VehicleStateStore` 直到云端 `assess`） |
+| 旧结论不动 | `eval_state_match` 委托 `assess`；测试里原样保留旧实现作对照，在 1000+ 组期望 × 快照 × 槽位组合上逐值相等；`test_verify.py` 57 条照旧通过 |
+| 反向验证 | 24 处注入缺陷全部判红（含：动作前已满足算归属、任意标记算本步、首包快照全打标、关联键越出命令、执行方自带证据、回放继承、T2 观测带证据、客户端信任 verified、网关丢字段） |
+| 本地全量 | `a772e783`：10507 passed / 35 skipped / 11 warnings（302.55 s）；四门禁、smoke 13/13、`capability_inventory --check`；Go 两个网关、HMI 359/359、Android 共享模块相关 69/69 |
+| 发布 | dry-run 零阻断（无 schema 摘要）；status ok、release/running 均为 `a772e783`、5/5、零 warning；verify `20261001T184602Z-a772e78.json`（e2e_remote_safe / MiniMax-M3）verified |
+| 固定语料 | 固定语料 20×3：60/60 完成、100 轮，业务红 5（4 轮未走手册、V207 两轮缺「露营」，均为既有签名），证据错误 0、open operations 0，216 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；语料全是只读问句、不含 state_match 步，ResultBundle 未出现 evidence；p50/p95/p99 6860/19781/27782 ms |
+
+真栈车控证据：`scripts/probe_effect_evidence.py`（条件句确定性升成 T2，后件经执行器在车端执行）会在共享模拟车上开、关空调，
+属于 `remote_mutating`，需要另取本轮授权后运行；期望读数是「开」verified/attributed、「再开」unchanged/already_satisfied、「关」verified，
+且每条证据 `source_kind=simulated`、结束时车态与开始一致。
+
+## 6. 已知边界
+
+- 只有声明了 `state_match` 的能力有证据：目前是 `hvac.set` / `hvac.on` / `hvac.off`。其它车控对象要先在能力声明里写期望态，不在本包扩。
+- 最终回复之后才由车端执行的云侧动作（`pending_edge`）本轮观测不到，证据如实写 `dispatched_after_reply`；车端改写这类行时保留它。
+- 关联键是每次派发一枚的归属线索，不是幂等键；回执丢失后的恢复查询、车端操作日志归 CA2-11。
+- `verified` 只说明「本步改动的期望键被打了本步关联键的良好观测满足」；签名来源只证明来源，模拟来源永远不代表实车动作。

@@ -3,7 +3,7 @@
 > 状态：2026-10-02 全部切片已部署。机制与发布闸通道先以 `753c1a49` 惰性上线；经用户授权，schema 切片 D
 > （task_ledger `operation` 列 + mcp-bridge 通用写工具 durable）以 `fec77afb` 带一次性 schema 摘要上线，并完成真栈并发双确认。
 > 确认绑定与挂起一次消费已由 [CA2-09](2026-10-02-v2-confirmation-binding.md) 以 `56c5519f` 上线（§7 双确认里编排器派发两次的缺口由它关闭）；
-> 车端日志、因果证据与恢复对账仍归 CA2-10/11。
+> 执行结果证据已由 [CA2-10](2026-10-02-v2-effect-evidence.md) 以 `a772e783` 上线；车端日志与恢复对账仍归 CA2-11。
 > 依赖：[CA2-03 任务身份](2026-09-26-v2-task-identity.md)、[CA2-05 能力契约](2026-09-27-v2-capability-contract.md)；
 > 故障验收沿用 [CA2-12](2026-09-27-v2-vehicle-state-and-simulation.md) 的显式注入思路。排序见[路线图](../roadmap.md)。
 > 本包只建立「执行前有持久承诺」这一层；确认绑定（CA2-09）、因果证据（CA2-10）、车端日志与对账（CA2-11）不在本包。
@@ -234,5 +234,5 @@ task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`ass
   Agent 内部写（商户下单等）不在内。需确认的能力会重新挂确认，不会静默执行。
 - **结局写失败**：预览后的结局写失败会让记录停在 executing；随后的确认 120 s 内答 in_progress、之后答 unknown，用户需重新发起——宁可不执行。
 - **保留与删除**：kind=operation 行没有轮转；task_ledger 的生产隐私删除仍沿 §9.13 的既有缺口。
-- **观测**：准入决定只进结构化日志（`agent.sdk.operations`），不进 span / dashboard，归 CA2-10。
+- **观测**：准入决定只进结构化日志（`agent.sdk.operations`），不进 span / dashboard。CA2-10 首版只做了执行结果证据（`step.verify` span 与 ResultBundle `evidence`），准入决定的观测面仍未接。
 - **范围**：首批只有演示商户的两项通用写工具；workflow、reminder/scene/navigation 与端侧车控没有声明，扩大前逐项评估「账本不可用即拒绝」的代价。

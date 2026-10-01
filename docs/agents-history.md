@@ -10322,3 +10322,17 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   （内存存储删前不 await，竞态没打开）后改用让出事件循环的存储；全量 10446 / 35 / 11；门禁与 smoke 全过。
 - 发布 `56c5519f`：dry-run 零阻断，status 5/5 零 warning，verify `20261001T172435Z-56c5519.json`；固定语料 固定语料 20×3：60/60 完成、101 轮，业务红 4（3 轮未走手册；V207 抢救重试轮原样抄了 `planning.py` 的澄清结构示例「云岚国际中心」，与本包无关），证据错误 0、open operations 0，217 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；取消挂起 3/3 按寻址关闭；p50/p95/p99 7047/17375/28375 ms（p50 升高来自模型侧：规划调用中位 1404→2596 ms）。
   真栈并发写探针未复跑（演示商户写授权已用于 CA2-08）。下一包 CA2-10。
+
+## 2026-10-02：CA2-10 执行结果证据
+
+- 起因：Verifier 只有一个结论，正常路径的 SAT 不写进结果（ResultBundle 一律 unknown）；`state_match` 只看当前值，
+  动作前目标就已满足也判成功；车端发布的观测从不带操作关联，云端分不清「这一步改的」和「本来就是」。
+- 实现（`a772e783`，[设计](design/2026-10-02-v2-effect-evidence.md)）：state_match 步每次派发生成观测关联键（meta 下发，不持久化）；
+  车端只给本次 VAL 命令改动的样本打标（签名覆盖），回 `_receipt` 说明改了哪些键；`verify.assess` 按逐信号质量/时效/来源/归属
+  输出 ack / state / observed / verified 与原因码，动作前已满足永不 verified；原结论、retry、`_verify` 口径不变，
+  `eval_state_match` 委托 `assess` 并以旧实现为对照逐值比对。证据进 `data["_evidence"]`（执行方给不了、回放不继承、T2 观测不带）、
+  `step.verify` span 与 ResultBundle `evidence`（proto 增字段、网关映射、共享投影重新推导 verified）。
+- 跑变异前按清单逐条核「哪条用例会红」，发现「值已满足即收工」那处没有用例能抓，先补了「值已满足但归属未到要继续等」的轮询用例；
+  随后 24 处注入缺陷全部判红。
+- 验证：全量 10507 / 35 / 11；门禁与 smoke 全过；Go、HMI、Android 相关测试通过。发布 `a772e783`：status 5/5 零 warning，
+  verify `20261001T184602Z-a772e78.json`；固定语料 固定语料 20×3：60/60 完成、100 轮，业务红 5（4 轮未走手册、V207 两轮缺「露营」，均为既有签名），证据错误 0、open operations 0，216 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；语料全是只读问句、不含 state_match 步，ResultBundle 未出现 evidence；p50/p95/p99 6860/19781/27782 ms。模拟车上的真栈车控证据探针（remote_mutating）待授权。下一包 CA2-11。
