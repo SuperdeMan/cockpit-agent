@@ -1,6 +1,8 @@
 """Execute cloud-scheduled edge intents through the deterministic VAL."""
 from __future__ import annotations
 
+import json
+
 from google.protobuf import struct_pb2
 
 from cockpit.agent.v1 import agent_pb2
@@ -239,6 +241,26 @@ class EdgeCallExecutor:
         attrs = defs.get("attrs") or []
         return str(attrs[0]) if attrs else ""
 
+    def _confirm_state(self) -> dict:
+        """CA2-09：要求确认那一刻的行驶状态（只在本地输入可用时给；不可用时执行闸本身就会拒绝）。"""
+        if not self.val.driver.inputs_available({"speed_kmh", "gear"}):
+            return {}
+        return {"driving": bool(self.val._is_driving()), "gear": str(self.val.state.get("gear") or "")}
+
+    def _confirm_state_changed(self, raw: str) -> str:
+        """确认之后挂挡 / 起步 ⇒ 旧确认不再适用。没带快照 = 旧挂起，兼容放行（执行闸照常把守）。"""
+        if not raw:
+            return ""
+        try:
+            confirmed_state = json.loads(raw)
+        except (TypeError, ValueError):
+            confirmed_state = None
+        current = self._confirm_state()
+        if not isinstance(confirmed_state, dict) or not current or any(
+                confirmed_state.get(key) != current[key] for key in ("driving", "gear")):
+            return "车辆状态在您确认之后变了（比如挂挡或起步），为安全起见没有执行，请重新确认。"
+        return ""
+
     def execute(self, call) -> agent_pb2.ExecuteResponse:
         from observability.events import change_source
         from capabilities import build_edge_manifests
@@ -293,11 +315,22 @@ class EdgeCallExecutor:
         if self.val._need_confirm(obj) and not confirmed:
             # 确认问句念出**被派下来的这条 intent** 真会做的事（「要关闭后备箱吗？…」）——修前是通用句，
             # 规划把「关闭」错成 `trunk.open` 时用户听不出来（评审四轮，`5ca289c7` RS34）
+            # CA2-09：同时报出**问这句话时**的行驶状态；云端把它封进确认，确认派发时原样带回来比对。
+            snapshot = self._confirm_state()
             return agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.NEED_CONFIRM,
                 speech=self.val.confirm_speech(structured),
                 follow_up="说“确认”后我再执行。",
+                **({"data": _struct({"confirm_state": snapshot})} if snapshot else {}),
             )
+        if confirmed and self.val._need_confirm(obj):
+            changed = self._confirm_state_changed(call.meta.get("confirm_state", ""))
+            if changed:
+                return agent_pb2.ExecuteResponse(
+                    status=agent_pb2.ExecuteResponse.REJECTED,
+                    speech=changed,
+                    error=common_pb2.ErrorInfo(code="confirm_state_changed", message=changed),
+                )
 
         answer_length = call.meta.get("answer_length", "short")
         # 确认凭据下沉给 VAL（B1）：上面 :269 那道闸保留，形成双检查纵深——

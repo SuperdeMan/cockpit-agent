@@ -109,6 +109,9 @@ class Step:
     # persisted through suspension so the confirmed re-dispatch reaches the same executor
     # record. Not authorization, and not the client-facing pending address `op-…`.
     operation_id: str = ""
+    # CA2-09 **进程内字段**：确认恢复时由 `_restore` 从挂起记录抄来的绑定（不进 step_record）；
+    # 执行器在槽引用解析后、派发前据此复核「执行的就是用户确认的那一步」。空 = 旧记录 / 非确认恢复。
+    confirmation_binding: dict = field(default_factory=dict)
 
     def __post_init__(self):
         # Meta is transient, so reconstruct this server-owned version marker on restore.
@@ -526,6 +529,13 @@ class SessionState:
     # 只在这条挂起就是最近那个提示时才算对它的授权——对得上最近一轮才算；之后插过话（历史里有更新的 exchange / 上一轮是
     # 端侧本地轮）就是在答别的。显式「确认」不受影响（R2：插话之后回头说「确认」照旧找回它）。空 = 旧记录，证明不了 ⇒ 纯应答不授权。
     prompt_exchange_id: str = ""
+    # CA2-09：消费这条挂起的那个回合（随机 token）与时刻。确认 / 补槽 / 澄清选择 / 取消都要先赢得认领，
+    # 认领在挂起过期前不失效——认领者崩溃后的再次「确认」不会被再派发一次。空 = 未被消费。
+    claimed_by: str = ""
+    claimed_at: float = 0.0
+    # CA2-09：wait_confirm 挂起时写下「确认的是什么」（`orchestrator.cloud.confirmation.binding`）；
+    # 执行点按当前车辆与最终参数复核。空 = 旧记录（兼容放行）或非确认挂起。
+    confirmation: dict = field(default_factory=dict)
 
 
 class CyclicPlan(Exception):

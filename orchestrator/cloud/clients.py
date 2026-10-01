@@ -330,6 +330,8 @@ class Clients:
         prefs.pop(cap_contract.HEADER, None)
         # CA2-08: the operation header is server-owned (Step); clients cannot supply it.
         prefs.pop(operation.HEADER, None)
+        # CA2-09: the edge's confirmation snapshot only travels from the pending record.
+        prefs.pop("confirm_state", None)
         merged = {**prefs, **dict(meta or {})}
         if operation.HEADER in merged:
             merged[operation.HEADER] = operation.with_plan(

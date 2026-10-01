@@ -39,6 +39,7 @@ CAT_SESSION = "session_control"              # 确认 / 取消 / 挂起表 / 会
 CATEGORY_OF: dict[str, str] = {
     # 挂起表与确认（W01 / Q1）
     "pending_missing": CAT_SESSION,      # 带寻址键却对不上任何挂起
+    "pending_claimed": CAT_SESSION,      # CA2-09：同一条挂起已被另一个回合消费，本轮零动作
     "pending_ambiguous": CAT_SESSION,    # ≥2 条待确认、裸「确认」问一次
     "pending_asked": CAT_SESSION,        # 「可以吗 / 确认吗」念出挂着什么
     "no_pending": CAT_SESSION,           # 裸确认词、没有待确认

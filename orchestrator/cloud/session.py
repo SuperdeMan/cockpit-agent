@@ -57,6 +57,14 @@ CLEAR_UNAVAILABLE = "unavailable"
 CLEAR_FENCED = "privacy_fenced"
 #: 删不掉的那条在**本进程**里的墓碑寿命（秒）。墓碑只挡这一个随机 operation_id，给宽一点不伤；挂起自身 TTL 缺省 300 s。
 _TOMBSTONE_TTL = 3600
+# CA2-09：消费一条挂起（确认 / 补槽 / 澄清选择 / 取消）的唯一入口 `claim_result` 的结局。
+# 只有 `claimed` 可以继续恢复派发；其余一律不执行（`already_claimed` = 另一个回合正在或已经消费它）。
+CLAIM_OK = "claimed"
+CLAIM_TAKEN = "already_claimed"
+CLAIM_ABSENT = "absent"
+CLAIM_UNAVAILABLE = "unavailable"
+CLAIM_FENCED = "privacy_fenced"
+_CLAIM_RETRIES = 3
 
 PERSONAL_DATA_TARGETS = (
     {
@@ -390,6 +398,76 @@ class SessionStore:
             return False
         self._mem[key] = (entries, now + ttl)
         return True
+
+    async def claim_result(self, session_id: str, *, owner_user_id: str,
+                           operation_id: str, token: str) -> tuple[str, SessionState | None]:
+        """CA2-09：原子认领一条挂起，返回 `(结局, 认领时看到的那条)`。
+
+        两个回合同时续接同一条挂起时只有一个拿到 `claimed`；输的一方拿到 `already_claimed`
+        和对方已写下的那条（据此说「正在处理」），**绝不再恢复派发**。Redis 用 WATCH（挂起表 + owner
+        隐私栅栏）乐观事务，被并发改动就重读重试；内存兜底在一个事件循环内同步比较并写入。
+        认领不在挂起过期前失效，认领者收尾照旧按 operation_id 删除。
+        """
+        owner = str(owner_user_id or "").strip()
+        wanted = str(operation_id or "").strip()
+        # 空寻址键 = Q1-B 之前形状的旧记录：同会话至多一条（同键互相替换），按精确相等认领它
+        if not owner or not str(session_id or "").strip() or not token:
+            return CLAIM_ABSENT, None
+        key = self._session_key(owner, session_id)
+        r = await self._redis()
+        if self._url and r is None:
+            return CLAIM_UNAVAILABLE, None
+        if not r:
+            if self._memory_tombstoned(owner):
+                return CLAIM_FENCED, None
+            entry = self._mem.get(key)
+            if not entry or time.time() >= entry[1]:
+                return CLAIM_ABSENT, None
+            live = self._live([s for s in entry[0]
+                               if str(s.owner_user_id or "").strip() == owner
+                               and not self._closed_locally(key, s.operation_id)])
+            target = next((s for s in live if s.operation_id == wanted), None)
+            if target is None:
+                return CLAIM_ABSENT, None
+            if target.claimed_by:
+                return CLAIM_TAKEN, target
+            target.claimed_by, target.claimed_at = token, time.time()
+            return CLAIM_OK, target
+        try:
+            from redis.exceptions import WatchError
+        except ImportError:  # pragma: no cover - redis is a cloud dependency
+            WatchError = RuntimeError
+        fence = self._owner_fence_key(owner)
+        for _attempt in range(_CLAIM_RETRIES):
+            try:
+                async with r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(key, fence)
+                    if await pipe.exists(fence):
+                        return CLAIM_FENCED, None
+                    raw = await pipe.get(key)
+                    entries = [s for s in (self._live(self._decode(raw, owner)) if raw else [])
+                               if not self._closed_locally(key, s.operation_id)]
+                    target = next((s for s in entries if s.operation_id == wanted), None)
+                    if target is None:
+                        return CLAIM_ABSENT, None
+                    if target.claimed_by:
+                        return CLAIM_TAKEN, target
+                    now = time.time()
+                    target.claimed_by, target.claimed_at = token, now
+                    ttl = max(1, max(int(s.expires_at - now) for s in entries))
+                    pipe.multi()
+                    pipe.set(key, json.dumps([asdict(s) for s in entries],
+                                             ensure_ascii=False, default=str), ex=ttl)
+                    await pipe.execute()
+                    return CLAIM_OK, target
+            except WatchError:
+                continue
+            except Exception as exc:
+                logger.warning("pending claim failed (%s); reporting unavailable",
+                               type(exc).__name__)
+                return CLAIM_UNAVAILABLE, None
+        logger.warning("pending claim kept conflicting; reporting unavailable")
+        return CLAIM_UNAVAILABLE, None
 
     async def clear(self, session_id: str, *, owner_user_id: str = "",
                     operation_id: str | None = None) -> bool:

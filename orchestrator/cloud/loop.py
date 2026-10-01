@@ -313,7 +313,10 @@ class LoopController:
                     # M0a-3 同款（engine D0 有、这里曾漏）：capability 声明 require_confirm
                     # 的步不走流式直通——流中 action 会绕开 executor._enforce_capability_confirm
                     # 兜底闸直接放行到 HMI；走 executor 路径让中央闸生效。
-                    and not current.steps[0].require_confirm):
+                    and not current.steps[0].require_confirm
+                    # CA2-09：确认恢复的那一步（Agent 动态要求确认，未声明 require_confirm）也不走流式——
+                    # 执行点复核只在 executor 路径上，绕过它就把旧确认用到别的参数上。
+                    and (current.steps[0].meta or {}).get("confirmed") != "true"):
                 step = current.steps[0]
                 if hasattr(self.executor, '_resolve_slot_refs'):
                     # ⚠ **ctx 必须传**（2026-08-16，Q12 批发现）：此前这里只传两个参，

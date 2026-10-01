@@ -27,7 +27,9 @@ from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import (
-    CLEAR_UNAVAILABLE, PENDING_UNAVAILABLE, SAVE_FENCED, SAVE_OK, SessionStore)
+    CLAIM_ABSENT, CLAIM_FENCED, CLAIM_OK, CLAIM_TAKEN, CLEAR_UNAVAILABLE,
+    PENDING_UNAVAILABLE, SAVE_FENCED, SAVE_OK, SessionStore)
+from . import confirmation
 from .loop import LoopController
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
@@ -848,6 +850,11 @@ class PlannerEngine:
                            "_outcome": "pending_ambiguous"}
                     return
             if cancelled.cancelled:
+                # CA2-09：取消也是消费——与并发确认互斥。输了说明它已在执行，不能说「已取消」。
+                refused = await self._claim_pending(ctx, pending, purpose="cancel")
+                if refused is not None:
+                    yield refused
+                    return
                 just_cancelled = True
                 cleared = await self._close_pending(ctx, pending)
                 if not cancelled.compound:
@@ -902,6 +909,11 @@ class PlannerEngine:
                     yield ev
                 return
             if option is not None:
+                # CA2-09：两个并发的选择只有一个能执行选项。
+                refused = await self._claim_pending(ctx, clarify_pending, purpose="clarify")
+                if refused is not None:
+                    yield refused
+                    return
                 await self._close_pending(ctx, clarify_pending)
                 await _emit_engine_lifecycle(
                     ctx, "cloud.clarify_choice", "system.clarify_choice")
@@ -952,6 +964,11 @@ class PlannerEngine:
                     async for ev in self._reject_not_addressed(ctx):
                         yield ev
                     return
+                # CA2-09：同一条确认只有一个回合能派发（双击 / 语音加点按 / 客户端重发）。
+                refused = await self._claim_pending(ctx, pending, purpose="confirm")
+                if refused is not None:
+                    yield refused
+                    return
                 plan, seed_results = self._restore(pending, inject_confirmed=True)
                 if plan is None:
                     await self._close_pending(ctx, pending)
@@ -991,6 +1008,10 @@ class PlannerEngine:
                 if not await self._voice_admitted(ctx, text, exit_name="slot_fill", mem_on=mem_on):
                     async for ev in self._reject_not_addressed(ctx):
                         yield ev
+                    return
+                refused = await self._claim_pending(ctx, pending, purpose="slot")
+                if refused is not None:
+                    yield refused
                     return
                 # 补槽恢复绝不注入 confirmed——补槽答案不是确认（见 _restore docstring）
                 plan, seed_results = self._restore(pending, inject_confirmed=False)
@@ -2497,6 +2518,12 @@ class PlannerEngine:
                             if describe is not None else ""),
             # 评审四轮 R4-01：提出这条挂起的那一轮——纯应答只在它就是最近那个提示时才授权
             prompt_exchange_id=str(ctx.request_id or ""),
+            # CA2-09：确认的是哪一步、哪辆车、哪组最终参数与能力版本；执行点复核
+            confirmation=(confirmation.binding(pending_step, vehicle_id=ctx.vehicle_id,
+                                               task_identity=ctx.task_identity,
+                                               edge_state=(step_result.data or {}).get("confirm_state"))
+                          if step_result.status == StepStatus.NEED_CONFIRM
+                          and pending_step is not None else {}),
         )
         save_status, evicted = await self.session.save_pending_result(
             ctx.session_id, pending_state, replaces=replaces)
@@ -2755,6 +2782,41 @@ class PlannerEngine:
         if op and op not in ctx.closed_operation_ids:
             ctx.closed_operation_ids.append(op)
         return state
+
+    async def _claim_pending(self, ctx: PlanContext, pending, *, purpose: str) -> dict | None:
+        """CA2-09：消费挂起前先赢得认领。成功返回 None；失败返回本轮唯一的 final（零动作、不派发）。
+
+        确认 / 补槽 / 澄清选择 / 取消都走这里：同一条挂起只有一个回合能消费它，双击、语音加点按、
+        客户端重发都不会让同一步派发两次。输的回合不关闭挂起——那条正被另一个回合处理，由它收尾。
+        """
+        token = uuid.uuid4().hex
+        status, seen = await self.session.claim_result(
+            ctx.session_id, owner_user_id=ctx.user_id,
+            operation_id=getattr(pending, "operation_id", "") or "", token=token)
+        if status == CLAIM_OK:
+            return None
+        op = getattr(pending, "operation_id", "") or ""
+        logger.info("pending %s not claimed for %s: %s", op[:16], purpose, status)
+        if status == CLAIM_TAKEN:
+            await _emit_engine_lifecycle(ctx, "cloud.pending_claimed", "system.pending_claimed")
+            speech = ("这条操作已经在处理了，没法再撤回；稍后可以问我结果。" if purpose == "cancel"
+                      else "这条操作已经在处理了，我没有重复执行。")
+            return {"kind": "final", "speech": speech, "actions": [],
+                    "_outcome": "pending_claimed"}
+        if status == CLAIM_ABSENT:
+            await _emit_engine_lifecycle(ctx, "cloud.pending_missing", "system.pending_missing")
+            if op and op not in ctx.closed_operation_ids:
+                ctx.closed_operation_ids.append(op)
+            return {"kind": "final",
+                    "speech": "这条确认对应的操作已经不在了，麻烦您再说一遍需求。",
+                    "actions": [], "_outcome": "pending_missing"}
+        if status == CLAIM_FENCED:
+            return {"kind": "final",
+                    "speech": "正在清除你的数据，这次操作没有执行，请稍后重新发起。",
+                    "actions": [], "_outcome": "store_fenced"}
+        await _emit_engine_lifecycle(ctx, "cloud.pending_unavailable", "system.pending_unavailable")
+        return {"kind": "final", "speech": session_facts.PENDING_UNAVAILABLE_SPEECH,
+                "actions": [], "_outcome": "pending_unavailable"}
 
     def _loop_settler(self, ctx: PlanContext, plan: Plan, held_pending, mem_on: bool):
         """T2 完成轮的收口回调（批 8 ①）。返回一个带 `settle` 协程与 `done` 旗子的小对象：
@@ -3519,6 +3581,12 @@ class PlannerEngine:
                 for s in steps:
                     if s.id == state.pending_step_id:
                         s.meta = {**s.meta, "confirmed": "true"}
+                        # CA2-09：执行器在派发前按它复核（空 = 旧记录，兼容放行）
+                        s.confirmation_binding = dict(getattr(state, "confirmation", None) or {})
+                        edge_state = confirmation.edge_state_meta(s.confirmation_binding)
+                        if edge_state:
+                            # 车端在执行前比对：确认之后挂挡 / 起步 ⇒ 旧确认不再适用
+                            s.meta = {**s.meta, confirmation.EDGE_STATE_META: edge_state}
             # W16-b：被续接的那一步打标（它读本轮原话——槽答案 / 「确认」就在里面）；其余步没有
             # 起点原话的旧记录用**持久化的服务端文本**回填——与下面 safety_origin_text 的滚动升级
             # 规则同一条：只认 `safety_origin_text` / `raw_text`，goal 是 LLM 写的，无权冒充原话。

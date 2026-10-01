@@ -17,6 +17,7 @@ from . import verify as _verify
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan,
                      step_call_context, step_fingerprint, step_raw_text)
 from observability import events as obs_events
+from . import confirmation
 from runtime.slot_fidelity import (restore_dropped_qualifiers,
                                    undeclared_slots)
 
@@ -187,6 +188,17 @@ class DagExecutor:
         """执行单个 step。尾链：防抖(M2) → dispatch → _to_result → 确认兜底闸(M0a) → 对账(M2)。"""
         # 解析 slot_refs：用前序结果填 slot（**防抖判定必须在此之后**——指纹要含真实槽位）
         self._resolve_slot_refs(step, done, ctx)
+
+        # CA2-09 执行点复核：确认授权的是用户看到的那一步。按当前请求车辆与**解析后的最终参数**重算，
+        # 任何一项不同就不派发（旧记录没有绑定，兼容放行）。
+        if (step.meta or {}).get("confirmed") == "true":
+            reason = confirmation.mismatch(step, step.confirmation_binding,
+                                           vehicle_id=getattr(ctx, "vehicle_id", "") or "")
+            if reason:
+                logger.warning("Step %s(%s): confirmed step no longer matches its confirmation; not dispatched",
+                               step.id, step.intent)
+                return StepResult(step_id=step.id, status=StepStatus.FAILED,
+                                  speech=confirmation.SPEECH_MISMATCH, error=reason)
 
         preflight = self._response_only_preflight(step)
         if preflight is not None:
