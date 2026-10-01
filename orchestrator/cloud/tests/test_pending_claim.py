@@ -129,10 +129,19 @@ class _Spy:
         return [self.agent]
 
 
+class _YieldingStore(SessionStore):
+    """Reading the pending table yields like a network read, so concurrent turns both see it."""
+
+    async def load_all_result(self, *args, **kwargs):
+        result = await super().load_all_result(*args, **kwargs)
+        await asyncio.sleep(0.05)
+        return result
+
+
 def _engine(spy):
     return PlannerEngine(clients=spy, planner=PlanBuilder(llm_fn=spy.llm, registry_fn=spy.resolve),
                          executor=DagExecutor(call_agent_fn=spy.call_agent),
-                         aggregator=Aggregator(llm_fn=spy.llm), session=SessionStore(redis_url=""))
+                         aggregator=Aggregator(llm_fn=spy.llm), session=_YieldingStore(redis_url=""))
 
 
 def _req(text, *, confirm=False, operation_id="", vehicle="v1", rid="r"):
