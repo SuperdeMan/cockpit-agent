@@ -249,7 +249,7 @@ class McpBridgeAgent(BaseAgent):
     def _sync_capabilities(self) -> None:
         """把准入的工具写进 manifest.capabilities——注册中心看到的就是这份。"""
         caps = []
-        def contract(spec, effect, *, keyed=False):
+        def contract(spec, effect, *, keyed=False, admission=None):
             legacy = f"{self.manifest.agent_id}/{spec.intent}" in migration_inventory()
             declared = getattr(spec, "contract_effect", "")
             if (not legacy and not declared) or (declared and declared != effect):
@@ -259,7 +259,7 @@ class McpBridgeAgent(BaseAgent):
                 idempotency="keyed" if keyed else "unknown",
                 preconditions=("permission", "handler", "confirmation")
                 if getattr(spec, "require_confirm", False) or getattr(spec, "write", False)
-                else ("permission", "handler")))
+                else ("permission", "handler"), admission=admission))
         for intent, b in self._bindings.items():
             if not b.tool.expose:
                 continue
@@ -272,8 +272,11 @@ class McpBridgeAgent(BaseAgent):
                 require_confirm=bool(b.tool.require_confirm or b.tool.write),
                 # W11 能力效果：准入清单的 `write` 就是声明本身
                 effect="write" if b.tool.write else "read",
+                # CA2-08：通用写工具在 PG 不可用时曾照常 call_tool 且不留记录；声明持久准入后
+                # 执行前必须先落账，否则拒绝。workflow 已有草稿原子消费 + 强制账本，不在首批。
                 contract=contract(b.tool, "external_write" if b.tool.write else "read",
-                                  keyed=b.tool.idempotency_mode in {"upstream", "local_at_most_once"}),
+                                  keyed=b.tool.idempotency_mode in {"upstream", "local_at_most_once"},
+                                  admission="durable" if b.tool.write else None),
             ))
         for intent, b in self._workflow_bindings.items():
             spec = b.spec

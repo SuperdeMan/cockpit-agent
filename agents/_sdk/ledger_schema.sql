@@ -29,3 +29,9 @@ CREATE INDEX IF NOT EXISTS idx_ledger_idem ON task_ledger (user_id, idempotency_
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_active_idem
   ON task_ledger (user_id, idempotency_key)
   WHERE status IN ('accepted', 'running');
+
+-- CA2-08：执行方持久准入（kind='operation'，契约见 runtime/operation.py）。
+-- 一列 JSONB 承载阶段/绑定摘要/计划关联，其他 kind 恒为 '{}'；不存用户原话。
+-- PG16 常量默认值只改目录、不重写表；加法式、可重复执行。设计与授权记录见
+-- docs/design/2026-10-01-v2-durable-operation-admission.md §2.5 / §3。
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS operation JSONB NOT NULL DEFAULT '{}';
