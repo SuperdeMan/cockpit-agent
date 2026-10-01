@@ -131,8 +131,10 @@ PG16 的常量默认值只改目录、不重写表；可重复执行；既有行
 
 ### 3.4 迁移与证明工具
 
-task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`assemble_store_attestation` 登记；
-新列进入列指纹，下次迁移源/目标同版本即一致，状态集合不变，无需改 `deploy/cloud`。
+task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`assemble_store_attestation` 登记，
+状态集合不变，无需改 `deploy/cloud`。注意两处：列清单进入 schema 指纹；逻辑行身份取 `to_jsonb(t) - 'status'`，
+即包含新列。因此**跨越本变更的数据迁移**（一端有列、一端没有，或迁移后由启动加列）必然在 pre/post-start 比对失败，
+迁移只能在两端同为带列版本时进行。本包不执行任何数据迁移。
 
 ### 3.5 发布闸：database_schema 一次性摘要批准（前置条件，待确认）
 
@@ -169,11 +171,22 @@ task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`ass
 
 ## 6. 实现切片与状态
 
-| 切片 | 内容 | 是否需要授权才能上 main / 部署 |
-|---|---|---|
-| A | 本文、conventions 登记 | 否 |
-| B | `runtime/operation.py` 契约；能力契约 `admission` 键；Step 身份与 header；SDK 准入（无声明时不触发）；响应映射 | 否；部署后零行为变化 |
-| C | 发布闸 schema 审批通道 | 待确认 |
-| D | `ledger_schema.sql` 新列 + 首批 durable 声明 | 是（schema） |
+| 切片 | 内容 | 上 main / 部署 | 状态（2026-10-01） |
+|---|---|---|---|
+| A | 本文、conventions 登记 | 不需授权 | 已提交 |
+| B | `runtime/operation.py`；能力契约 `admission` 键；Step 身份与 header；SDK 准入（无声明时不触发）；共享内存孪生 | 不需授权；部署后零行为变化 | 离线通过 |
+| C | 发布闸 database_schema 一次性摘要批准 | 只增加可选通道，使用仍需逐次授权 | 离线通过 |
+| D | `ledger_schema.sql` 新列 + mcp-bridge 通用写工具声明 durable | **需授权**（schema） | 离线通过，仅在分支 `claude/ca2-08-operation-admission` |
+
+### 6.1 离线证据（实现提交见 git log）
+
+- 纯契约 36、SDK 准入场景 22 + 转发 2、调用方身份 12、mcp-bridge 4、发布闸 19；相关全族与全量读数见 §7。
+- 同一组 22 个准入场景经 `test/probe_operation_admission_sql.py` 跑嵌入式 PostgreSQL 16.2：
+  切片 D 之前由探针在一次性库上施加拟议列，之后由仓库 `ledger_schema.sql` 自身建列，两次均 22/22；
+  列为 `jsonb NOT NULL DEFAULT '{}'`，用到的状态只有 accepted / done / orphaned / cancelled。
+- 反向验证：准入 12 处、发布闸 5 处注入缺陷全部变红。首轮漏掉的两处（CAS 去条件、settle 不看状态）
+  是因为并发用例从未真正打开竞态、账本方法契约没有直测，已用屏障强制竞态并补直测后转红。
+- 探针依赖装在 scratchpad 隔离 venv（asyncpg / pgserver / protobuf / grpcio / pyyaml / pytest），
+  没有安装任何全局依赖，也没有启动本地 Compose。
 
 状态与证据随实现回填，不把离线通过写成已部署。
