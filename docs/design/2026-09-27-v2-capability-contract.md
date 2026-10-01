@@ -21,6 +21,8 @@
   带适配限制的写能力在可信车辆上下文落地前拒绝执行，不从客户端 meta 猜测车型。
 - preconditions 只引用 permission/confirmation/handler/val 既有权威；idempotency 只声明已知语义，
   unknown 不改成保证，元数据不启用新重试。verification 引用既有 Verification，避免维护两份期望。
+- 2026-10-01 起（CA2-08）可选键 `admission: durable` 要求执行方先落持久准入记录；缺省不出现，旧摘要与冻结清单不变，
+  只能用于 state_change / external_write 且执行方为云端 SDK Agent，见 [持久准入](2026-10-01-v2-durable-operation-admission.md)。
 
 ## 3. 兼容与实际调用
 

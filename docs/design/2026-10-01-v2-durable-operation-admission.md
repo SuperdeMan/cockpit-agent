@@ -1,6 +1,7 @@
 # CA2-08：执行方持久操作准入
 
-> 状态：2026-10-01 契约冻结稿；实现与离线验证进行中。**数据库 schema 变更与发布闸 schema 审批通道均未授权、未部署**。
+> 状态：2026-10-02 机制（切片 B）与发布闸 schema 批准通道（切片 C）已部署 `753c1a49`，零行为变化已线上核对；
+> **schema 切片 D（task_ledger 新列 + 首批 durable 声明）未授权、未合入、未部署**，只在分支 `claude/ca2-08-operation-admission`。
 > 依赖：[CA2-03 任务身份](2026-09-26-v2-task-identity.md)、[CA2-05 能力契约](2026-09-27-v2-capability-contract.md)；
 > 故障验收沿用 [CA2-12](2026-09-27-v2-vehicle-state-and-simulation.md) 的显式注入思路。排序见[路线图](../roadmap.md)。
 > 本包只建立「执行前有持久承诺」这一层；确认绑定（CA2-09）、因果证据（CA2-10）、车端日志与对账（CA2-11）不在本包。
@@ -174,13 +175,13 @@ task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`ass
 | 切片 | 内容 | 上 main / 部署 | 状态（2026-10-01） |
 |---|---|---|---|
 | A | 本文、conventions 登记 | 不需授权 | 已提交 |
-| B | `runtime/operation.py`；能力契约 `admission` 键；Step 身份与 header；SDK 准入（无声明时不触发）；共享内存孪生 | 不需授权；部署后零行为变化 | 离线通过 |
-| C | 发布闸 database_schema 一次性摘要批准 | 只增加可选通道，使用仍需逐次授权 | 离线通过 |
+| B | `runtime/operation.py`；能力契约 `admission` 键；Step 身份与 header；SDK 准入（无声明时不触发）；共享内存孪生 | 不需授权；部署后零行为变化 | 已部署 `753c1a49` |
+| C | 发布闸 database_schema 一次性摘要批准 | 只增加可选通道，使用仍需逐次授权 | 已合入 main，尚未被使用 |
 | D | `ledger_schema.sql` 新列 + mcp-bridge 通用写工具声明 durable | **需授权**（schema） | 离线通过，仅在分支 `claude/ca2-08-operation-admission` |
 
 ### 6.1 离线证据（实现提交见 git log）
 
-- 纯契约 36、SDK 准入场景 22 + 转发 2、调用方身份 12、mcp-bridge 4、发布闸 19；相关全族与全量读数见 §7。
+- 纯契约 36、SDK 准入场景 22 + 转发 2、调用方身份 12、mcp-bridge 4（仅分支）、发布闸 18；全量读数见 §7。
 - 同一组 22 个准入场景经 `test/probe_operation_admission_sql.py` 跑嵌入式 PostgreSQL 16.2：
   切片 D 之前由探针在一次性库上施加拟议列，之后由仓库 `ledger_schema.sql` 自身建列，两次均 22/22；
   列为 `jsonb NOT NULL DEFAULT '{}'`，用到的状态只有 accepted / done / orphaned / cancelled。
@@ -190,3 +191,22 @@ task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`ass
   没有安装任何全局依赖，也没有启动本地 Compose。
 
 状态与证据随实现回填，不把离线通过写成已部署。
+
+## 7. 发布与线上核对（2026-10-02）
+
+| 验证面 | 精确版本 / 结果 |
+|---|---|
+| 本地全量 | `753c1a49`：10424 passed / 35 skipped / 11 warnings，637.29 s；skip / warning 口径与 `b095caca` 相同 |
+| 门禁 | `753c1a49`：skills、exemplars、L0 strict、capability integrity 四道通过，edge smoke 13/13 |
+| 发布闸 | dry-run 零阻断：已部署 `01cf47cd` → 目标 `753c1a49`，基础设施摘要等于远端锚 `7c34debf`，无 schema 摘要 |
+| 发布 | apply `submitted`；独立 status ok、release / running 均为 `753c1a49`、5/5 healthy、零 warning |
+| verify | `20261001T161142Z-753c1a4.json`：`e2e_remote_safe`，minimax / MiniMax-M3，verified |
+| 在线契约（只读） | 17 Agent / 155 能力；没有能力声明 durable；契约漂移与旧读取方隐藏集合仍只有既有 road-safety 4 项 |
+| 生产 schema（只读） | task_ledger 仍是原 15 列，没有 `operation` 列，没有 kind=operation 行（research 106 / mcp_order 17） |
+
+本版没有重跑 20×3 固定语料：无任何能力声明 durable，模型可见内容、确认与挂起行为都没有变化，
+不把上一版语料读数转借给本版。工件在根仓 ignored 目录 `.artifacts/ca2-08/`（全量与门禁日志、dry-run / apply / status、
+在线核对 `753c1a49-online-contract.json`）。
+
+切片 D 授权后的验收：带 `--approve-database-schema-sha256` 的 dry-run / apply、独立 status / verify、
+在线只读核对（列存在、恰好两项 durable、对它们发不带操作头的写请求在准入前被拒），以及可选的演示商户并发双确认。

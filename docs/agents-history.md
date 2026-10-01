@@ -10282,3 +10282,24 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   `scripts/tests` 1615 passed / 14 skipped。锚更换后，其他工作树要基于 main ≥ `1eb2bcf1` 才能部署。
 - 经用户同意，更正 QA 交接 §1 / §2 的生产 release：CA2-07 线在 `b095caca` 之后又部署了纯文档提交 `01cf47cd`（21:16 激活，排除 `.md` 后零差异），
   交接页没跟上。现登记 `01cf47cd`，其 verify 为 `20260928T131738Z-01cf47c.json`，09-29 复核 status 5/5 零 warning；CA2-07 的专项与全量成绩仍属 `b095caca`，不转借。
+
+## 2026-10-01/02：CA2-08 执行方持久准入首版（机制上线，schema 切片待授权）
+
+- 复核：云侧所有 Agent 写路径（executor / D0 / T2 / 改派 / Agent 互调）都在 SDK `_Servicer` 进入 handler；「确认」续接不认领挂起，
+  挂起在派发后才删，并发二次确认、派发后崩溃再确认会重发同一步；通用 MCP 写在 PG 不可用时 `ledger.open` 返回 None 照样 `call_tool`，
+  首单 `done` 后迟到的第二次确认会再下一单。发布闸对任何 DDL 硬阻断且无放行通道，2026-08-18 后没有 schema 变更经过它。
+- 契约冻结（[设计](design/2026-10-01-v2-durable-operation-admission.md)）：能力契约可选键 `admission: durable`（缺省不出现、旧摘要不变）；
+  Step 持有服务端 operation_id 并随挂起持久化；SDK receiver 在 handler 前落准入记录，重复投递答 in_progress / duplicate / unknown、
+  确认不能换参数、存储不可用或缺列即拒绝，异常与无 final 的流记 unknown。存储扩展 task_ledger（kind=operation + 一列 JSONB），
+  状态全部落在既有迁移状态矩阵内；不建新表的理由与迁移边界写在设计 §2.5 / §3.4。
+- 发布闸：新增 `--approve-database-schema-sha256` 一次性摘要批准（与 CI/CD 对等，绑定每个 schema 路径的已部署/目标 blob）；
+  不持久化、不放行其他类别，使用仍需用户逐次授权。
+- 验证：纯契约、SDK 场景、调用方身份、mcp-bridge、发布闸各有专项；同一组 22 个准入场景在 scratchpad 隔离 venv 的嵌入式
+  PostgreSQL 16.2 上 22/22（建列前由探针施加拟议列、建列后由仓库 schema 自身建列）。准入 12 处、发布闸 5 处注入缺陷全部变红；
+  首轮漏掉的「CAS 去条件」「settle 不看状态」「生产 DDL 未批准」三处，分别补屏障竞态、账本方法直测与 DDL 用例后转红。
+  候选 `753c1a49` 全量 10424 passed / 35 skipped / 11 warnings（637.29 s），四门禁与 smoke 13/13。
+- 发布：`753c1a49` 推送并发布：dry-run 零阻断（基础设施摘要 = 远端锚 `7c34debf`，无 schema 摘要），apply submitted，独立 status ok、release/running 一致、5/5 healthy、零 warning，verify `20261001T161142Z-753c1a4.json`（e2e_remote_safe / MiniMax-M3）verified。
+  在线只读核对：17 Agent / 155 能力、零 durable 声明、契约漂移仍只有 road-safety 4 项；生产 task_ledger 仍是 15 列、无 operation 行。
+  未重跑 20×3 固定语料（无模型可见或确认行为变化），不转借上一版读数。
+- 未授权、未合入：分支 `claude/ca2-08-operation-admission` 的 `4775b11f`（task_ledger `operation` 列 + mcp-bridge 通用写工具 durable），
+  发布闸摘要 `55c23829…cdb23`。真栈演示商户并发双确认属商户写，另需逐轮授权。

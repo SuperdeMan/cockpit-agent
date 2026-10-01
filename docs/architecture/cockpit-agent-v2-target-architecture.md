@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 更新：2026-09-28。状态：**目标态分期实施；CA2-02–07/12 已有首版；Cloud/Agent 权限视图已部署，其他身份与运行时边界按实施方案推进**。
+> 更新：2026-10-02。状态：**目标态分期实施；CA2-02–07/12 已有首版；CA2-08 准入机制已部署未启用；其他身份与运行时边界按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
@@ -125,6 +125,8 @@ Context View 只组合授权后的事实。`found/none/unavailable/off` 分开�
 目标状态可细分为 planned、awaiting_approval、admitted、submitted、applied/observed、verified，
 另有 failed/cancelled/unknown；这是拟定生命周期，不擅自替换现有 StepStatus 枚举。
 需要持久承诺的任务在副作用前写入准入记录，落账失败拒绝；只读、可丢失且如实告知的实验任务才可 best-effort。
+CA2-08 首版：云侧在 SDK receiver 落记录，状态复用 task_ledger 状态机（accepted 分 executing/awaiting，orphaned=结局未知）；
+上表的 submitted、observed、verified 与车端日志尚未实现，见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)。
 车端离线日志实现同一操作契约，云端只做有协调的同步/索引。
 
 采用至少一次投递、接收端幂等与恢复对账。有 ACK 不等于生效，目标状态满足不等于本次动作导致它；
