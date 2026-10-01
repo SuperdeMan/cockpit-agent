@@ -39,7 +39,7 @@ from scripts.render_cloud_env import DEMO_AUTH_SCOPES  # noqa: E402
 ORDER_TEXT = "在演示咖啡店点一杯大杯拿铁"
 CANCEL_TEXT = "取消刚才那杯演示咖啡的订单"
 ORDER_RE = re.compile(r"DC[0-9A-F]{10}")
-_OWNER_RE = re.compile(r"e2e-ca208-[0-9a-f]{12}\Z")
+_OWNER_RE = re.compile(r"e2e-ca208-[0-9a-f]{12}-o1\Z")
 
 
 async def turn(ws, session: str, text: str, *, operation_id: str = "", confirm: bool = False) -> dict:
@@ -111,9 +111,10 @@ async def run(expected_sha: str, out: Path) -> int:
     if report["release_start"]["failures"]:
         out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         return 2
-    owner = "e2e-ca208-" + uuid.uuid4().hex[:12]
+    run_id = "e2e-ca208-" + uuid.uuid4().hex[:12]
+    owner = run_id + "-o1"           # the identity lane requires <run_id>-<suffix>
     session = owner + "-session-1"
-    token = sign_identity(secret, run_id="e2e-ca208-" + uuid.uuid4().hex[:8], user_id=owner,
+    token = sign_identity(secret, run_id=run_id, user_id=owner,
                           vehicle_id="v1", scopes=list(DEMO_AUTH_SCOPES), timeout_s=900)
     url = identity._ws_url_with(ws_url, token)
     report.update(owner=owner, session=session, steps=[], stop="")
