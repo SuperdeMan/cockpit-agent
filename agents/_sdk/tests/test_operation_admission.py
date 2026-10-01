@@ -1,6 +1,6 @@
 """CA2-08 receiver admission through the real SDK servicer.
 
-``MemoryOperationLedger`` mirrors the WHERE conditions of the ``operation_*``
+``agents._sdk.testing.MemoryOperationLedger`` mirrors the WHERE conditions of the ``operation_*``
 SQL in ``agents/_sdk/ledger.py``. The same ``SCENARIOS`` run against a real
 PostgreSQL through ``test/probe_operation_admission_sql.py``, which is what
 keeps this fake honest; CI runs them against the fake only.
@@ -22,97 +22,13 @@ from runtime import operation as op
 from agents._sdk.ledger import OperationStoreError
 from agents._sdk.result import AgentResult
 from agents._sdk.server import _Servicer
+from agents._sdk.testing import MemoryOperationLedger
 
 OK, REJECTED = agent_pb2.ExecuteResponse.OK, agent_pb2.ExecuteResponse.REJECTED
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
-
-
-class MemoryOperationLedger:
-    """In-memory twin of the SQL; every write re-checks the same conditions."""
-
-    def __init__(self, ready=True):
-        self.ready = ready
-        self.rows: dict[str, dict] = {}
-        self.fail_settle = False
-
-    async def operations_ready(self):
-        return self.ready
-
-    def _check(self):
-        if not self.ready:
-            raise OperationStoreError("operation_admission_unavailable")
-
-    async def operation_insert(self, *, operation_id, user_id, session_id, agent_id, trace_id, envelope):
-        self._check()
-        if operation_id in self.rows:
-            return False
-        now = _now_ms()
-        self.rows[operation_id] = {"status": op.ACCEPTED, "user_id": user_id, "agent_id": agent_id,
-                                   "session_id": session_id, "trace_id": trace_id,
-                                   "envelope": copy.deepcopy(envelope), "touched_ms": now,
-                                   "result_ref": {}}
-        return True
-
-    async def operation_get(self, operation_id):
-        self._check()
-        row = self.rows.get(operation_id)
-        if row is None:
-            return None
-        return {"status": row["status"], "user_id": row["user_id"], "agent_id": row["agent_id"],
-                "envelope": copy.deepcopy(row["envelope"]), "touched_ms": row["touched_ms"],
-                "now_ms": _now_ms()}
-
-    async def operation_claim(self, operation_id, *, observed_binding, envelope, session_id, trace_id):
-        self._check()
-        row = self.rows.get(operation_id)
-        env = row["envelope"] if row else {}
-        if (row is None or row["status"] != op.ACCEPTED or env.get("phase") != op.PHASE_AWAITING
-                or env.get("binding_sha256") != observed_binding
-                or not isinstance(env.get("expires_at_ms"), int) or env["expires_at_ms"] <= _now_ms()):
-            return False
-        row.update(envelope=copy.deepcopy(envelope), session_id=session_id, trace_id=trace_id,
-                   touched_ms=_now_ms())
-        return True
-
-    async def operation_settle(self, operation_id, *, binding, status, phase, result_ref, await_ttl_ms=0):
-        self._check()
-        if self.fail_settle:
-            raise OperationStoreError("operation_settle_failed")
-        row = self.rows.get(operation_id)
-        if row is None or row["envelope"].get("binding_sha256") != binding:
-            return False
-        if not (row["status"] == op.ORPHANED or (row["status"] == op.ACCEPTED
-                                                 and row["envelope"].get("phase") == op.PHASE_EXECUTING)):
-            return False
-        row["status"] = status
-        row["envelope"]["phase"] = phase
-        if await_ttl_ms > 0:
-            row["envelope"]["expires_at_ms"] = _now_ms() + int(await_ttl_ms)
-        row["result_ref"] = copy.deepcopy(result_ref)
-        return True
-
-    async def operation_mark_stale(self, operation_id, *, binding, stale_s, result_ref):
-        self._check()
-        row = self.rows.get(operation_id)
-        if (row is None or row["status"] != op.ACCEPTED or row["envelope"].get("phase") != op.PHASE_EXECUTING
-                or row["envelope"].get("binding_sha256") != binding
-                or row["touched_ms"] > _now_ms() - int(stale_s * 1000)):
-            return False
-        row.update(status=op.ORPHANED, result_ref=copy.deepcopy(result_ref))
-        return True
-
-    async def operation_mark_expired(self, operation_id, *, binding, result_ref):
-        self._check()
-        row = self.rows.get(operation_id)
-        if (row is None or row["status"] != op.ACCEPTED or row["envelope"].get("phase") != op.PHASE_AWAITING
-                or row["envelope"].get("binding_sha256") != binding
-                or int(row["envelope"].get("expires_at_ms") or 0) > _now_ms()):
-            return False
-        row.update(status=op.CANCELLED, result_ref=copy.deepcopy(result_ref))
-        return True
 
 
 class MemoryHarness:
