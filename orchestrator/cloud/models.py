@@ -105,16 +105,23 @@ class Step:
     # CA2-02: server-owned business projection. Never read by safety/permission checks.
     input_scope: dict = field(default_factory=dict)
     goal_ids: list[str] = field(default_factory=list)
+    # CA2-08: one execution commitment of a durable capability. Server-generated here,
+    # persisted through suspension so the confirmed re-dispatch reaches the same executor
+    # record. Not authorization, and not the client-facing pending address `op-…`.
+    operation_id: str = ""
 
     def __post_init__(self):
         # Meta is transient, so reconstruct this server-owned version marker on restore.
         # It is not confirmation, authorization or an idempotency key.
-        from runtime.capability_contract import HEADER, normalize, snapshot_digest, ContractError
+        from runtime.capability_contract import (HEADER, normalize, snapshot_digest, ContractError,
+                                                 durable_admission)
+        from runtime import operation as _operation
         if self.meta is None:
             self.meta = {}
         if not isinstance(self.meta, dict):
             raise ContractError("invalid_step_meta")
         self.meta.pop(HEADER, None)
+        self.meta.pop(_operation.HEADER, None)
         if self.capability_contract or self.capability_abi or self.capability_revision:
             if (not isinstance(self.capability_abi, str) or len(self.capability_abi) != 64
                     or not self.capability_contract):
@@ -124,6 +131,16 @@ class Step:
             if expected != self.capability_revision:
                 raise ContractError("corrupt_step_contract")
             self.meta[HEADER] = expected
+        if durable_admission(self.capability_contract):
+            if not self.operation_id:
+                self.operation_id = _operation.new_operation_id()
+            try:
+                ref = _operation.OperationRef(self.operation_id, step_id=str(self.id or ""))
+            except _operation.OperationError:
+                raise ContractError("corrupt_step_operation") from None
+            self.meta[_operation.HEADER] = _operation.encode_ref(ref)
+        elif self.operation_id:
+            raise ContractError("operation_without_admission")
     # Agent manifest 声明需要的敏感上下文片段（location | vehicle_state）；
     # 编排下发时按此最小化（未声明则不下发精确位置/电量）。
     # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
@@ -160,6 +177,7 @@ def step_record(step: "Step") -> dict:
         **({"capability_contract": dict(step.capability_contract),
             "capability_abi": step.capability_abi,
             "capability_revision": step.capability_revision} if step.capability_contract else {}),
+        **({"operation_id": step.operation_id} if step.operation_id else {}),
     }
 
 

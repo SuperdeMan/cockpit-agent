@@ -21,6 +21,9 @@ _TYPES = frozenset({"string", "integer", "number", "boolean", "object", "array"}
 _PRECONDITIONS = frozenset({"permission", "confirmation", "handler", "val"})
 _REQUIRED = {"version", "revision", "effect", "parameters", "additional_parameters",
              "applicability", "preconditions", "idempotency", "verification"}
+# CA2-08: absent = the existing best-effort behaviour, so old digests do not change.
+_OPTIONAL = {"admission"}
+_ADMISSIONS = frozenset({"durable"})
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}\Z")
 _MIGRATION = Path(__file__).with_name("capability_migration.json")
 
@@ -60,7 +63,8 @@ def _strings(value, *, limit=64) -> list[str]:
 
 def normalize(raw) -> dict:
     data = _mapping(raw)
-    if set(data) != _REQUIRED or isinstance(data.get("version"), bool) or data.get("version") != 2:
+    if (set(data) - _OPTIONAL != _REQUIRED or isinstance(data.get("version"), bool)
+            or data.get("version") != 2):
         raise ContractError("unsupported_contract_schema")
     revision = data["revision"]
     if not isinstance(revision, str) or not _NAME.fullmatch(revision):
@@ -69,6 +73,11 @@ def normalize(raw) -> dict:
             raise ContractError("invalid_contract_revision")
     if not isinstance(data["effect"], str) or data["effect"] not in EFFECTS:
         raise ContractError("invalid_contract_effect")
+    if "admission" in data and (not isinstance(data["admission"], str)
+                                or data["admission"] not in _ADMISSIONS):
+        raise ContractError("invalid_admission_declaration")
+    if "admission" in data and data["effect"] not in STATE_EFFECTS:
+        raise ContractError("admission_requires_state_effect")
     if not isinstance(data["additional_parameters"], str) or data["additional_parameters"] not in {"reject", "legacy"}:
         raise ContractError("invalid_parameter_policy")
     if not isinstance(data["idempotency"], str) or data["idempotency"] not in {"unknown", "none", "idempotent", "keyed"}:
@@ -215,6 +224,16 @@ def validate_capability(manifest, cap) -> None:
     mode = getattr(getattr(cap, "verification", None), "mode", "")
     if (contract["verification"] == "declared") != bool(mode and mode != "none"):
         raise ContractError("verification_contract_conflict")
+    # Durable admission runs in the SDK receiver; edge VAL and tools have no ledger yet.
+    if durable_admission(contract) and (
+            getattr(manifest, "deployment", "") == "edge"
+            or (getattr(manifest, "kind", "") or "agent") != "agent"):
+        raise ContractError("durable_admission_unsupported_executor")
+
+
+def durable_admission(contract: dict) -> bool:
+    """CA2-08: the executor must persist an admission record before the side effect."""
+    return isinstance(contract, dict) and contract.get("admission") == "durable"
 
 
 def validate_manifest(manifest) -> None:
@@ -277,15 +296,19 @@ def call_error(manifest, cap, meta: dict, slots: dict) -> str:
 
 
 def declaration(slots, effect: str, *, verification=False, preconditions=("permission", "handler"),
-                idempotency="unknown", parameters=None, vehicle_specific=False, legacy=True) -> dict:
+                idempotency="unknown", parameters=None, vehicle_specific=False, legacy=True,
+                admission=None) -> dict:
     """Declaration builder for controlled generated capabilities; no intent-name inference."""
-    return normalize({"version": 2, "revision": "1", "effect": effect,
-                      "parameters": parameters if parameters is not None else {s: {"type": "string"} for s in slots},
-                      "additional_parameters": "legacy" if legacy else "reject",
-                      "applicability": {"status": "unspecified" if vehicle_specific else "not_vehicle_specific",
-                                        "vehicle_models": [], "software_versions": []},
-                      "preconditions": list(preconditions), "idempotency": idempotency,
-                      "verification": "declared" if verification else "none"})
+    raw = {"version": 2, "revision": "1", "effect": effect,
+           "parameters": parameters if parameters is not None else {s: {"type": "string"} for s in slots},
+           "additional_parameters": "legacy" if legacy else "reject",
+           "applicability": {"status": "unspecified" if vehicle_specific else "not_vehicle_specific",
+                             "vehicle_models": [], "software_versions": []},
+           "preconditions": list(preconditions), "idempotency": idempotency,
+           "verification": "declared" if verification else "none"}
+    if admission is not None:
+        raw["admission"] = admission
+    return normalize(raw)
 
 
 def to_proto(raw):

@@ -22,6 +22,7 @@ from google.protobuf.json_format import MessageToDict
 
 from runtime.grpcio import aio_channel
 from runtime import capability_contract as cap_contract
+from runtime import operation as operation_contract
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from .result import AgentResult
@@ -120,8 +121,10 @@ class AgentClient:
         # 转发父请求会话上下文（定位/真实电量/trace 等）给子 Agent；call_depth/call_stack
         # 由本层权威覆盖（护栏跨进程生效）。否则复合 Agent 的子调用会丢定位/电量，
         # 例如 trip-planner 内部调 charging.plan 拿不到当前位置 → 误报"请开启定位"。
+        # The parent's operation is a different execution; a durable child gets its own below.
         sub_meta = {k: str(v) for k, v in self._parent_meta.items()
-                    if k not in ("call_depth", "call_stack", cap_contract.HEADER)}
+                    if k not in ("call_depth", "call_stack", cap_contract.HEADER,
+                                 operation_contract.HEADER)}
         sub_meta["call_depth"] = str(self._depth + 1)
         sub_meta["call_stack"] = ",".join(self._stack + [caller_id])
 
@@ -155,6 +158,9 @@ class AgentClient:
                     digest = cap_contract.capability_digest(manifest, cap)
                     if digest:
                         req.meta[cap_contract.HEADER] = digest
+                    if cap_contract.durable_admission(cap_contract.contract_of(cap)):
+                        req.meta[operation_contract.HEADER] = operation_contract.encode_ref(
+                            operation_contract.OperationRef(operation_contract.new_operation_id()))
             resp = await stub.Execute(req, timeout=remaining)
         except grpc.aio.AioRpcError as e:
             # grpc.aio 用 AioRpcError(DEADLINE_EXCEEDED) 表达超时，而非 asyncio.TimeoutError。

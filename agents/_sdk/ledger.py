@@ -21,9 +21,15 @@ v2 若 engine 要主动派发长任务，它成为本存储契约的另一个客
 
 **全程 best-effort**：账本是增强不是执行依赖——PG 不可达时所有读写返回 None/[]，Agent
 照常干活，只是 ack 话术不承诺可取消/可查询（诚实降级，见 RFC §2.3）。
+
+**唯一例外是 CA2-08 的操作准入**（kind=operation，`operation_*` 方法）：声明了
+`admission: durable` 的能力必须先落账再执行，所以这些方法失败时抛 `OperationStoreError`，
+由 SDK 准入层拒绝执行——绝不静默放行。设计见
+`docs/design/2026-10-01-v2-durable-operation-admission.md`。
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -34,6 +40,13 @@ import uuid
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("agent.sdk.ledger")
+
+OPERATION_KIND = "operation"               # runtime.operation.KIND；研究/订单的读取都排除它
+DEFAULT_INIT_RETRY_S = 30.0
+
+
+class OperationStoreError(RuntimeError):
+    """操作准入的存储不可用或读写失败。调用方必须当作「不得执行」。"""
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "ledger_schema.sql")
 
@@ -226,35 +239,64 @@ class TaskLedger:
         self._pool = None
         self._pg_ok = False
         self._init_done = False
+        # CA2-08：操作准入还要求 schema 里已有 `operation` 列（发布闸授权后才加）。
+        self._operations_ok = False
+        self._init_failed_at = 0.0
+        self._init_lock = asyncio.Lock()
 
     @property
     def pg_ok(self) -> bool:
         return self._pg_ok
 
-    async def init(self) -> bool:
-        """建池 + 幂等建表。可重复调用；失败只记 warning 不抛（best-effort）。"""
-        if self._init_done:
-            return self._pg_ok
-        self._init_done = True
-        if not self._dsn:
-            logger.info("TaskLedger: 无 POSTGRES_DSN，任务账本禁用（长任务不可查询/取消）")
+    def _retry_due(self) -> bool:
+        """失败后按退避重试：一次启动期抖动不能让持久准入终身不可用。无 DSN 不重试。"""
+        if self._pg_ok or not self._dsn:
             return False
         try:
-            import asyncpg
-            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=4)
-            with open(_SCHEMA_PATH, encoding="utf-8") as f:
-                schema = f.read()
-            async with self._pool.acquire() as conn:
-                await conn.execute(schema)
-            self._pg_ok = True
-            logger.info("TaskLedger: PG 就绪（task_ledger）")
-        except Exception as e:
-            logger.warning("TaskLedger: PG 不可用（%s），任务账本禁用", e)
-            self._pg_ok = False
+            backoff = float(os.getenv("LEDGER_INIT_RETRY_S", "") or DEFAULT_INIT_RETRY_S)
+        except ValueError:
+            backoff = DEFAULT_INIT_RETRY_S
+        return time.monotonic() - self._init_failed_at >= backoff
+
+    async def init(self) -> bool:
+        """建池 + 幂等建表。可重复调用；失败只记 warning 不抛（best-effort），退避后可重试。"""
+        if self._init_done and not self._retry_due():
+            return self._pg_ok
+        async with self._init_lock:
+            if self._init_done and not self._retry_due():
+                return self._pg_ok
+            self._init_done = True
+            if not self._dsn:
+                logger.info("TaskLedger: 无 POSTGRES_DSN，任务账本禁用（长任务不可查询/取消）")
+                return False
+            try:
+                import asyncpg
+                if self._pool is not None:
+                    stale, self._pool = self._pool, None
+                    try:
+                        await stale.close()
+                    except Exception:
+                        pass
+                self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=4)
+                with open(_SCHEMA_PATH, encoding="utf-8") as f:
+                    schema = f.read()
+                async with self._pool.acquire() as conn:
+                    await conn.execute(schema)
+                    self._operations_ok = await conn.fetchval(
+                        "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() "
+                        "AND table_name='task_ledger' AND column_name='operation'") is not None
+                self._pg_ok = True
+                logger.info("TaskLedger: PG 就绪（task_ledger，操作准入%s）",
+                            "可用" if self._operations_ok else "未启用：缺 operation 列")
+            except Exception as e:
+                logger.warning("TaskLedger: PG 不可用（%s），任务账本禁用", e)
+                self._pg_ok = False
+                self._operations_ok = False
+                self._init_failed_at = time.monotonic()
         return self._pg_ok
 
     async def _ready(self) -> bool:
-        if not self._init_done:
+        if not self._init_done or self._retry_due():
             await self.init()
         return self._pg_ok
 
@@ -343,7 +385,7 @@ class TaskLedger:
                     "UPDATE task_ledger SET status=$2,"
                     " progress=CASE WHEN $3='' THEN progress ELSE $3 END,"
                     " heartbeat_at=now(), updated_at=now() "
-                    "WHERE task_id=$1 AND status=ANY($4) RETURNING *",
+                    "WHERE task_id=$1 AND status=ANY($4) AND kind<>'operation' RETURNING *",
                     task_id, RUNNING, progress or "", list(ACTIVE) + [ORPHANED])
                 if row is None:
                     # 不在可推进态（已 done/failed/cancelled，或行不存在）→ 原样回报，
@@ -387,7 +429,7 @@ class TaskLedger:
                 tag = await conn.execute(
                     "UPDATE task_ledger SET status=$2, result_ref=$3::jsonb,"
                     " progress=CASE WHEN $4='' THEN progress ELSE $4 END,"
-                    " updated_at=now() WHERE task_id=$1 AND status<>ALL($5)",
+                    " updated_at=now() WHERE task_id=$1 AND status<>ALL($5) AND kind<>'operation'",
                     task_id, status,
                     json.dumps(result_ref or {}, ensure_ascii=False),
                     progress or "", list(TERMINAL))
@@ -405,7 +447,7 @@ class TaskLedger:
                 tag = await conn.execute(
                     "UPDATE task_ledger SET status=$2, "
                     "budget=budget || jsonb_build_object('stop_reason', $3::text), "
-                    "updated_at=now() WHERE task_id=$1 AND status<>ALL($4)",
+                    "updated_at=now() WHERE task_id=$1 AND status<>ALL($4) AND kind<>'operation'",
                     task_id, CANCELLED, reason, list(TERMINAL))
             return str(tag).endswith("1")
         except Exception as e:
@@ -422,7 +464,8 @@ class TaskLedger:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
                     "SELECT * FROM task_ledger WHERE user_id=$1 AND status=ANY($2) "
-                    "AND ($3='' OR kind=$3) ORDER BY created_at DESC LIMIT $4",
+                    "AND ($3='' OR kind=$3) AND kind<>'operation' "
+                    "ORDER BY created_at DESC LIMIT $4",
                     user_id, list(ACTIVE), kind or "", limit)
                 out = []
                 for row in rows:
@@ -445,7 +488,8 @@ class TaskLedger:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
                     "SELECT * FROM task_ledger WHERE user_id=$1 AND ($2='' OR kind=$2) "
-                    "ORDER BY created_at DESC LIMIT $3", user_id, kind or "", limit)
+                    "AND kind<>'operation' ORDER BY created_at DESC LIMIT $3",
+                    user_id, kind or "", limit)
                 out = []
                 for row in rows:
                     task = row_to_task(row)
@@ -464,7 +508,8 @@ class TaskLedger:
         try:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT * FROM task_ledger WHERE task_id=$1", task_id)
+                    "SELECT * FROM task_ledger WHERE task_id=$1 AND kind<>'operation'",
+                    task_id)
                 if row is None:
                     return None
                 task = row_to_task(row)
@@ -482,9 +527,136 @@ class TaskLedger:
         UPDATE 不匹配即放弃改判（风险表「二次确认仍超时才改判」的落地形式）。"""
         await conn.execute(
             "UPDATE task_ledger SET status=$2, updated_at=now() "
-            "WHERE task_id=$1 AND status=ANY($3) "
+            "WHERE task_id=$1 AND status=ANY($3) AND kind<>'operation' "
             "AND COALESCE(heartbeat_at, created_at) < now() - ($4 || ' seconds')::interval",
             task_id, ORPHANED, list(ACTIVE), str(int(orphan_ttl())))
+
+    # ── CA2-08 操作准入（kind=operation）：失败一律抛 OperationStoreError ─────────
+    #
+    # 判定在 runtime.operation（纯函数）；这里只搬运，且每条写都带状态/phase/绑定条件，
+    # 并发时由数据库裁决谁赢。时间一律用数据库时钟，避免各 Agent 容器墙钟不一致。
+
+    async def operations_ready(self) -> bool:
+        return await self._ready() and self._operations_ok
+
+    async def _operation_conn(self):
+        if not await self.operations_ready():
+            raise OperationStoreError("operation_admission_unavailable")
+        return self._pool.acquire()
+
+    async def operation_insert(self, *, operation_id: str, user_id: str, session_id: str,
+                               agent_id: str, trace_id: str, envelope: dict) -> bool:
+        """首次准入。返回 False 表示该 operation_id 已有记录（由调用方重读裁决）。"""
+        try:
+            async with await self._operation_conn() as conn:
+                row = await conn.fetchrow(
+                    "INSERT INTO task_ledger (task_id,user_id,session_id,agent_id,kind,goal,"
+                    "idempotency_key,status,budget,result_ref,origin_trace_id,heartbeat_at,operation) "
+                    "VALUES ($1,$2,$3,$4,'operation','',$1,'accepted','{}'::jsonb,'{}'::jsonb,$5,now(),"
+                    "$6::jsonb) ON CONFLICT DO NOTHING RETURNING task_id",
+                    operation_id, user_id, session_id or "", agent_id, trace_id or "",
+                    json.dumps(envelope, ensure_ascii=False))
+            return row is not None
+        except OperationStoreError:
+            raise
+        except Exception as e:
+            raise OperationStoreError("operation_insert_failed") from e
+
+    async def operation_get(self, operation_id: str) -> dict | None:
+        """读一条准入记录，附数据库时钟下的 now_ms / touched_ms。"""
+        try:
+            async with await self._operation_conn() as conn:
+                row = await conn.fetchrow(
+                    "SELECT status, user_id, agent_id, operation, "
+                    "(extract(epoch FROM now()) * 1000)::bigint AS now_ms, "
+                    "(extract(epoch FROM COALESCE(heartbeat_at, created_at)) * 1000)::bigint "
+                    "AS touched_ms FROM task_ledger WHERE task_id=$1 AND kind='operation'",
+                    operation_id)
+        except OperationStoreError:
+            raise
+        except Exception as e:
+            raise OperationStoreError("operation_read_failed") from e
+        if row is None:
+            return None
+        return {"status": str(row["status"]), "user_id": str(row["user_id"]),
+                "agent_id": str(row["agent_id"]), "envelope": _jsonb(row["operation"]),
+                "touched_ms": int(row["touched_ms"] or 0), "now_ms": int(row["now_ms"] or 0)}
+
+    async def operation_claim(self, operation_id: str, *, observed_binding: str,
+                              envelope: dict, session_id: str, trace_id: str) -> bool:
+        """awaiting → executing 的 CAS；绑定与过期在同一条 UPDATE 里复核。"""
+        try:
+            async with await self._operation_conn() as conn:
+                row = await conn.fetchrow(
+                    "UPDATE task_ledger SET operation=$3::jsonb, session_id=$4, origin_trace_id=$5, "
+                    "heartbeat_at=now(), updated_at=now() "
+                    "WHERE task_id=$1 AND kind='operation' AND status='accepted' "
+                    "AND operation->>'phase'='awaiting' AND operation->>'binding_sha256'=$2 "
+                    "AND (operation->>'expires_at_ms')::bigint > (extract(epoch FROM now()) * 1000)::bigint "
+                    "RETURNING task_id",
+                    operation_id, observed_binding, json.dumps(envelope, ensure_ascii=False),
+                    session_id or "", trace_id or "")
+            return row is not None
+        except OperationStoreError:
+            raise
+        except Exception as e:
+            raise OperationStoreError("operation_claim_failed") from e
+
+    async def operation_settle(self, operation_id: str, *, binding: str, status: str,
+                               phase: str, result_ref: dict, await_ttl_ms: int = 0) -> bool:
+        """记录 handler 结局。只从 executing（或被并发判 unknown 的 orphaned）出发。"""
+        try:
+            async with await self._operation_conn() as conn:
+                tag = await conn.execute(
+                    "UPDATE task_ledger SET status=$2, "
+                    "operation=jsonb_set(operation, '{phase}', to_jsonb($3::text)) || "
+                    "CASE WHEN $4::bigint > 0 THEN jsonb_build_object('expires_at_ms', "
+                    "(extract(epoch FROM now()) * 1000)::bigint + $4::bigint) ELSE '{}'::jsonb END, "
+                    "result_ref=$5::jsonb, updated_at=now() "
+                    "WHERE task_id=$1 AND kind='operation' AND operation->>'binding_sha256'=$6 "
+                    "AND (status='orphaned' OR (status='accepted' AND operation->>'phase'='executing'))",
+                    operation_id, status, phase, int(await_ttl_ms),
+                    json.dumps(result_ref, ensure_ascii=False), binding)
+            return str(tag).endswith(" 1")
+        except OperationStoreError:
+            raise
+        except Exception as e:
+            raise OperationStoreError("operation_settle_failed") from e
+
+    async def operation_mark_stale(self, operation_id: str, *, binding: str,
+                                   stale_s: float, result_ref: dict) -> bool:
+        """陈旧的 executing → orphaned（结局未知）。条件在 SQL 里复核，并发心跳则放弃。"""
+        try:
+            async with await self._operation_conn() as conn:
+                tag = await conn.execute(
+                    "UPDATE task_ledger SET status='orphaned', result_ref=$3::jsonb, updated_at=now() "
+                    "WHERE task_id=$1 AND kind='operation' AND status='accepted' "
+                    "AND operation->>'phase'='executing' AND operation->>'binding_sha256'=$2 "
+                    "AND COALESCE(heartbeat_at, created_at) <= now() - make_interval(secs => $4::double precision)",
+                    operation_id, binding, json.dumps(result_ref, ensure_ascii=False), float(stale_s))
+            return str(tag).endswith(" 1")
+        except OperationStoreError:
+            raise
+        except Exception as e:
+            raise OperationStoreError("operation_mark_failed") from e
+
+    async def operation_mark_expired(self, operation_id: str, *, binding: str,
+                                     result_ref: dict) -> bool:
+        """过期的 awaiting → cancelled（确认窗口已过，什么都没执行）。"""
+        try:
+            async with await self._operation_conn() as conn:
+                tag = await conn.execute(
+                    "UPDATE task_ledger SET status='cancelled', result_ref=$3::jsonb, updated_at=now() "
+                    "WHERE task_id=$1 AND kind='operation' AND status='accepted' "
+                    "AND operation->>'phase'='awaiting' AND operation->>'binding_sha256'=$2 "
+                    "AND COALESCE((operation->>'expires_at_ms')::bigint, 0) "
+                    "<= (extract(epoch FROM now()) * 1000)::bigint",
+                    operation_id, binding, json.dumps(result_ref, ensure_ascii=False))
+            return str(tag).endswith(" 1")
+        except OperationStoreError:
+            raise
+        except Exception as e:
+            raise OperationStoreError("operation_mark_failed") from e
 
     async def close_pool(self) -> None:
         if self._pool is not None:

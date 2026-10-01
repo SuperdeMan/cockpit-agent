@@ -19,6 +19,7 @@ from observability.tracing import set_session_id, set_trace_id
 
 from .base import BaseAgent, Context, IntentView, _set_current_meta
 from .clients import RegistryClient
+from . import operations
 from .result import AgentResult
 
 _STATUS = {"ok": 0, "need_confirm": 1, "need_slot": 2, "failed": 3, "rejected": 4}
@@ -84,6 +85,10 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
                                 dict(request.meta), dict(request.intent.slots))
         if reason:
             return rejected(reason)
+        # CA2-08：durable 能力先落准入记录再进 handler；拒绝/重复时 handler 不运行。
+        gate = await operations.admit(self.agent, request)
+        if gate.response is not None:
+            return gate.response
         ctx = _context(request, self.agent.memory)
         meta = project_meta(ctx, dict(request.meta), getattr(getattr(self.agent, "manifest", None), "context_scopes", ()))
         ctx._projection_meta = meta
@@ -94,8 +99,15 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
         try:
             res = await self.agent.handle(
                 _intent_view(request), ctx, meta)
-            return _result_to_proto(res)
+            response = _result_to_proto(res)
+            await gate.settle(response)
+            return response
+        except asyncio.CancelledError:
+            await gate.settle_uncertain("cancelled")
+            raise
         except Exception as e:
+            # 副作用可能已发生：准入记录记 unknown，不当成确定失败。
+            await gate.settle_uncertain("agent_error")
             return agent_pb2.ExecuteResponse(
                 status=3,  # FAILED
                 speech=f"Agent 内部错误：{type(e).__name__}",
@@ -110,6 +122,10 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
         if reason:
             yield agent_pb2.ExecuteEvent(final=rejected(reason))
             return
+        gate = await operations.admit(self.agent, request)
+        if gate.response is not None:
+            yield agent_pb2.ExecuteEvent(final=gate.response)
+            return
         iv, ctx = _intent_view(request), _context(request, self.agent.memory)
         meta = project_meta(ctx, dict(request.meta), getattr(getattr(self.agent, "manifest", None), "context_scopes", ()))
         ctx._projection_meta = meta
@@ -123,14 +139,19 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
                 elif kind == "action":
                     yield agent_pb2.ExecuteEvent(action=payload)
                 elif kind == "final":
-                    yield agent_pb2.ExecuteEvent(final=_result_to_proto(payload))
+                    response = _result_to_proto(payload)
+                    await gate.settle(response)
+                    yield agent_pb2.ExecuteEvent(final=response)
         except Exception as e:
+            await gate.settle_uncertain("agent_error")
             yield agent_pb2.ExecuteEvent(final=agent_pb2.ExecuteResponse(
                 status=3,
                 speech=f"Agent 内部错误：{type(e).__name__}",
                 error=common_pb2.ErrorInfo(code="agent_error", message=str(e)),
             ))
         finally:
+            # 流断在 final 之前（含调用方取消）：结局未知。已记结局时这一步是空操作。
+            await gate.settle_uncertain("stream_without_final")
             _set_current_meta(None)
 
 

@@ -14,6 +14,7 @@ from runtime.grpcio import aio_channel
 from runtime import admission, memory_read, context_access
 from .context_view import check_current, check_context
 from runtime import capability_contract as cap_contract
+from runtime import operation
 
 logger = logging.getLogger("planner.clients")
 
@@ -327,7 +328,12 @@ class Clients:
         check_context(ctx)
         prefs = dict(getattr(ctx, "prefs", None) or {})
         prefs.pop(cap_contract.HEADER, None)
+        # CA2-08: the operation header is server-owned (Step); clients cannot supply it.
+        prefs.pop(operation.HEADER, None)
         merged = {**prefs, **dict(meta or {})}
+        if operation.HEADER in merged:
+            merged[operation.HEADER] = operation.with_plan(
+                merged[operation.HEADER], getattr(ctx, "task_identity", None))
         merged.pop("granted_scopes", None)
         for key in ("current_lat", "current_lng", "current_accuracy_m", "current_location_at",
                     "current_location_source", "vision_frame_id", "occupant_name"):
