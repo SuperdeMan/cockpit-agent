@@ -120,6 +120,20 @@ message ResultEntry {
   string result_ref = 9;
   string verification = 10;            // unknown/sat/unsat; OK alone is not verification
   bool pending_edge = 11;              // presentation provenance only, never an execution flag
+  VerificationEvidence evidence = 12;  // CA2-10; absent = no state verification declared
+}
+
+// CA2-10: what is known about one step's effect. The facts are deliberately separate:
+// an acknowledgement is not an effect, and a satisfied state is not proof that this step
+// caused it. Fixed vocabulary in runtime/effect_evidence.py; never authorization.
+message VerificationEvidence {
+  string ack = 1;                      // acknowledged | unknown
+  string state = 2;                    // satisfied | unsatisfied | unknown (latest good, fresh observation)
+  string observed = 3;                 // attributed | unchanged | missing | unattributed
+  bool verified = 4;                   // state satisfied by observations attributed to this step
+  repeated string reasons = 5;         // fixed codes explaining unknown / unsatisfied / unverified
+  string source_kind = 6;              // simulated | sandbox | vehicle; simulated is never a real vehicle
+  bool authenticated = 7;              // every relied-on observation came from a signed source
 }
 
 message ResultBundle {

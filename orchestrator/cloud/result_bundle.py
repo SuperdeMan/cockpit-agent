@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 
+from runtime import effect_evidence
 from runtime.execution_claim import CLAIM_STRIPPED_SPEECH, strip_execution_claims
 from .aggregator import Aggregator, strip_markdown_speech
 from .models import Plan, StepStatus
@@ -83,6 +84,13 @@ def build(ctx, results: list, event: dict) -> dict | None:
             verdict = verify.get("verdict", verify.get("status")) if isinstance(verify, dict) else ""
             if verdict in {"sat", "unsat", "unknown"}:
                 row["verification"] = verdict
+            # CA2-10：证据按固定词表重新推导后才公开；每键明细不出本模块。
+            evidence = effect_evidence.public((result.data or {}).get(effect_evidence.EVIDENCE))
+            if evidence is not None:
+                row["evidence"] = evidence
+                if verdict not in {"sat", "unsat", "unknown"}:
+                    row["verification"] = {"satisfied": "sat", "unsatisfied": "unsat"}.get(
+                        evidence["state"], "unknown")
             if (result.error in {"timeout", "step_timeout", "stream_lost", "deadline_exceeded"}
                     or (result.data or {}).get("_outcome_uncertain")):
                 row["status"] = "unknown"
@@ -94,6 +102,7 @@ def build(ctx, results: list, event: dict) -> dict | None:
                     row["pending_edge"] = True
                     row["status"] = "unknown"
                     row["answer"] = "该操作已交给车端，尚未核实执行结果。"
+                    row["evidence"] = effect_evidence.public(effect_evidence.dispatched_after_reply())
                 row["answer_state"] = "inline" if row["answer"] or result.ui_card else "unavailable"
                 if isinstance(result.ui_card, dict) and result.ui_card:
                     path = _card_path(event.get("ui_card"), result.ui_card)

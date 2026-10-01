@@ -53,3 +53,28 @@ func TestResultBundleSurvivesWithoutBecomingAnAction(t *testing.T) {
 		t.Fatalf("snapshot is not data-only: %v", r)
 	}
 }
+
+func TestResultEvidencePassesThroughOnlyWhenDeclared(t *testing.T) {
+	ev := &orchpb.HandleEvent{Event: &orchpb.HandleEvent_Final{Final: &orchpb.FinalResult{
+		Speech: "已打开空调",
+		ResultBundles: []*orchpb.ResultBundle{{Version: 1, TaskId: "task-1", Revision: 1,
+			Results: []*orchpb.ResultEntry{
+				{StepId: "s1", Status: "ok", AnswerState: "inline", Verification: "sat",
+					Evidence: &orchpb.VerificationEvidence{Ack: "acknowledged", State: "satisfied",
+						Observed: "unchanged", Reasons: []string{"already_satisfied"}, SourceKind: "simulated"}},
+				{StepId: "s2", Status: "ok", AnswerState: "inline", Verification: "unknown"},
+			},
+		}},
+	}}}
+	results := eventToMap(ev)["result_bundles"].([]any)[0].(map[string]any)["results"].([]any)
+	e, ok := results[0].(map[string]any)["evidence"].(map[string]any)
+	if !ok || e["observed"] != "unchanged" || e["verified"] != false || e["source_kind"] != "simulated" {
+		t.Fatalf("evidence lost or rewritten: %v", results[0])
+	}
+	if reasons := e["reasons"].([]string); len(reasons) != 1 || reasons[0] != "already_satisfied" {
+		t.Fatalf("reasons changed: %v", e["reasons"])
+	}
+	if _, exists := results[1].(map[string]any)["evidence"]; exists {
+		t.Fatalf("undeclared verification must not invent evidence: %v", results[1])
+	}
+}

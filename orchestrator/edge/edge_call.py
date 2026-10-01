@@ -8,6 +8,8 @@ from google.protobuf import struct_pb2
 from cockpit.agent.v1 import agent_pb2
 from cockpit.common.v1 import common_pb2
 
+from orchestrator.edge.vehicle_driver import COMMAND_REF
+from runtime import effect_evidence
 from val import VAL
 
 
@@ -333,11 +335,20 @@ class EdgeCallExecutor:
                 )
 
         answer_length = call.meta.get("answer_length", "short")
-        # 确认凭据下沉给 VAL（B1）：上面 :269 那道闸保留，形成双检查纵深——
-        # 这里是**唯一**能合法把 confirmed=True 交给 VAL 的生产路径（凭据来自
-        # `call.meta.confirmed`，由云端确认闭环写入）。
-        ok, speech = self.val.execute(
-            structured, answer_length=answer_length, confirmed=confirmed)
+        # CA2-10：云端每次派发一枚观测关联键；本条命令改动的观测样本盖上它，回执说明改了哪些键。
+        # 只认格式正确的键——它只用于归属，不是授权，也不是幂等键。
+        ref = call.meta.get(effect_evidence.META, "")
+        ref = ref if effect_evidence.valid_ref(ref) else ""
+        before = dict(self.val.state)
+        token = COMMAND_REF.set(ref)
+        try:
+            # 确认凭据下沉给 VAL（B1）：上面 :269 那道闸保留，形成双检查纵深——
+            # 这里是**唯一**能合法把 confirmed=True 交给 VAL 的生产路径（凭据来自
+            # `call.meta.confirmed`，由云端确认闭环写入）。
+            ok, speech = self.val.execute(
+                structured, answer_length=answer_length, confirmed=confirmed)
+        finally:
+            COMMAND_REF.reset(token)
         if not ok:
             return agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.REJECTED,
@@ -361,9 +372,12 @@ class EdgeCallExecutor:
             }),
             require_confirm=False,
         )
+        after = self.val.state
+        changed = [k for k in set(before) | set(after) if before.get(k) != after.get(k)]
         return agent_pb2.ExecuteResponse(
             status=agent_pb2.ExecuteResponse.OK,
             speech=speech,
-            data=_struct({"intent": intent_name, "executed": True}),
+            data=_struct({"intent": intent_name, "executed": True,
+                          effect_evidence.RECEIPT: effect_evidence.make_receipt(ref, changed)}),
             actions=[action],
         )

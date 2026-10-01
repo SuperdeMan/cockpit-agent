@@ -14,6 +14,7 @@ from collections import defaultdict, deque
 from google.protobuf.json_format import MessageToDict
 
 from . import verify as _verify
+from runtime import effect_evidence as _ev
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan,
                      step_call_context, step_fingerprint, step_raw_text)
 from observability import events as obs_events
@@ -44,6 +45,17 @@ _STREAM_LOST_FINAL_SAT_SPEECH = (
     "刚才没收到执行回执，不过我查了车辆状态，这个操作已经生效了。")
 _STREAM_LOST_FINAL_UNSAT_SPEECH = "操作指令已发出。"
 _STREAM_LOST_FINAL_SPEECH = "操作指令已发出，结果暂时无法确认，请留意车辆状态。"
+
+
+def _evidence_attrs(evidence: dict | None, details: dict | None) -> dict:
+    """CA2-10：证据进 `step.verify` span（展示退回旧样也留得住）；每键明细只在这里出现。"""
+    if not evidence:
+        return {}
+    return {"ack": evidence["ack"], "state": evidence["state"], "observed": evidence["observed"],
+            "verified": evidence["verified"], "reasons": ",".join(evidence["reasons"]),
+            "source_kind": evidence["source_kind"], "authenticated": evidence["authenticated"],
+            "evidence_keys": json.dumps(details or {}, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":"))}
 
 
 def _dedup_enabled() -> bool:
@@ -284,10 +296,13 @@ class DagExecutor:
                 speech="刚才这个操作没拿到结果，可能已经生效；我没有重复执行，"
                        "请稍后确认一下状态再决定要不要重试。",
                 actions=[], fingerprint=prior.fingerprint)
+        # CA2-10：回放没有执行，前一步的回执与证据不属于这一步。
+        data = {k: v for k, v in dict(prior.data or {}).items()
+                if k not in (_ev.RECEIPT, _ev.EVIDENCE)}
         return StepResult(
             step_id=step.id, status=StepStatus.OK, speech=prior.speech,
             ui_card=prior.ui_card, actions=[],       # ← 副作用不重放
-            follow_up=prior.follow_up, data=dict(prior.data or {}),
+            follow_up=prior.follow_up, data=data,
             fingerprint=prior.fingerprint)
 
     async def _dispatch_once(self, step: Step, ctx: PlanContext) -> StepResult:
@@ -334,7 +349,8 @@ class DagExecutor:
             return await self._verify_uncertain(step, result, ctx)
 
         attempts = 0
-        verdict = await self._evaluate(step, result, ctx, attempts)
+        sink: dict = {}
+        verdict = await self._evaluate(step, result, ctx, attempts, sink=sink)
         while (verdict == _verify.UNSAT and allow_retry
                and _verify.retry_allowed(verification, step.require_confirm, attempts)):
             attempts += 1
@@ -349,13 +365,18 @@ class DagExecutor:
             if retried.status != StepStatus.OK:
                 return retried          # 重试本身失败：交回常规失败通道，不再对账
             result = retried
-            verdict = await self._evaluate(step, result, ctx, attempts)
+            sink = {}
+            verdict = await self._evaluate(step, result, ctx, attempts, sink=sink)
 
-        if verdict == _verify.UNSAT and self._should_report(result):
+        report = verdict == _verify.UNSAT and self._should_report(result)
+        if report or sink.get("evidence"):
             data = dict(result.data or {})
-            data["_verify"] = {"verdict": _verify.UNSAT,
-                               "mode": verification.get("mode", ""),
-                               "attempts": attempts}
+            if report:
+                data["_verify"] = {"verdict": _verify.UNSAT,
+                                   "mode": verification.get("mode", ""),
+                                   "attempts": attempts}
+            if sink.get("evidence"):
+                data[_ev.EVIDENCE] = sink["evidence"]
             result = StepResult(
                 step_id=result.step_id, status=result.status, speech=result.speech,
                 ui_card=result.ui_card, actions=result.actions,
@@ -385,13 +406,17 @@ class DagExecutor:
             return result
         if (step.verification or {}).get("mode") != _verify.MODE_STATE_MATCH:
             return result
-        verdict = await self._evaluate(step, result, ctx, 0)
-        if verdict != _verify.SAT:
+        sink: dict = {}
+        verdict = await self._evaluate(step, result, ctx, 0, ack=_ev.ACK_UNKNOWN, sink=sink)
+        if verdict != _verify.SAT and not sink.get("evidence"):
             return result
         data = dict(result.data or {})
-        data["_verify"] = {"verdict": _verify.SAT,
-                           "mode": _verify.MODE_STATE_MATCH,
-                           "exec": _EXEC_UNCERTAIN, "attempts": 0}
+        if verdict == _verify.SAT:
+            data["_verify"] = {"verdict": _verify.SAT,
+                               "mode": _verify.MODE_STATE_MATCH,
+                               "exec": _EXEC_UNCERTAIN, "attempts": 0}
+        if sink.get("evidence"):
+            data[_ev.EVIDENCE] = sink["evidence"]
         return StepResult(
             step_id=result.step_id, status=result.status, speech=result.speech,
             ui_card=result.ui_card, actions=result.actions,
@@ -421,10 +446,12 @@ class DagExecutor:
           `_fingerprint(intent, slots)` 就是那把键，第三套局部实现正是要避免的东西。
         """
         verdict = _verify.UNKNOWN
+        sink: dict = {}
         if (_verify.enabled()
                 and (step.verification or {}).get("mode") == _verify.MODE_STATE_MATCH):
             verdict = await self._evaluate(
-                step, StepResult(step_id=step.id, status=StepStatus.OK), ctx, 0)
+                step, StepResult(step_id=step.id, status=StepStatus.OK), ctx, 0,
+                ack=_ev.ACK_UNKNOWN, sink=sink)
         if verdict == _verify.SAT:
             speech = _STREAM_LOST_FINAL_SAT_SPEECH
         elif verdict == _verify.UNSAT:
@@ -436,6 +463,8 @@ class DagExecutor:
             data["_verify"] = {"verdict": verdict,
                                "mode": _verify.MODE_STATE_MATCH,
                                "exec": _EXEC_STREAM_LOST_FINAL, "attempts": 0}
+        if sink.get("evidence"):
+            data[_ev.EVIDENCE] = sink["evidence"]
         logger.warning(
             "Step %s(%s): stream lost final after action — readback=%s, "
             "not re-running", step.id, step.intent, verdict)
@@ -456,25 +485,37 @@ class DagExecutor:
         return bool(result.ui_card or result.actions or (result.data or {}))
 
     async def _evaluate(self, step: Step, result: StepResult, ctx: PlanContext,
-                        attempts: int) -> str:
+                        attempts: int, *, ack: str = _ev.ACK_ACKNOWLEDGED,
+                        sink: dict | None = None) -> str:
+        """返回原结论（sat/unsat/unknown）。state_match 另把 CA2-10 证据放进 `sink["evidence"]`：
+        回执 / 状态 / 归属 / 已核实分开，三条路径（T1 / D0 / T2）都经这里，证据来自同一个函数。"""
         verification = step.verification or {}
+        evidence = details = None
         try:
             # 槽位一并交给求值器：`$slot:` 动态期望要拿它取值（`_resolve_slot_refs`
             # 已经跑过，所以这里是**真实下发的**槽，不是 planner 的原始输出）。
-            verdict = await _verify.evaluate(verification, result.data or {},
-                                             mirror=self._mirror,
-                                             slots=dict(step.slots or {}),
-                                             vehicle_id=ctx.vehicle_id)
+            if verification.get("mode") == _verify.MODE_STATE_MATCH:
+                verdict, evidence, details = await _verify.evaluate_effect(
+                    verification, self._mirror, slots=dict(step.slots or {}),
+                    vehicle_id=ctx.vehicle_id, ref=getattr(step, "observation_ref", "") or "",
+                    receipt=_ev.read_receipt(result.data), ack=ack)
+            else:
+                verdict = await _verify.evaluate(verification, result.data or {},
+                                                 mirror=self._mirror,
+                                                 slots=dict(step.slots or {}),
+                                                 vehicle_id=ctx.vehicle_id)
         except Exception as e:      # fail-open：对账是增强，绝不因它炸主链
             logger.warning("Step %s verify errored (ignored): %s", step.id, e)
             return _verify.UNKNOWN
+        if sink is not None and evidence is not None:
+            sink["evidence"] = evidence
         try:
             await obs_events.get_emitter("cloud").emit_span(
                 getattr(ctx, "trace_id", ""), "step.verify",
                 status="err" if verdict == _verify.UNSAT else "ok",
                 attrs={"step_id": step.id, "intent": step.intent,
                        "mode": verification.get("mode", ""), "verdict": verdict,
-                       "attempts": attempts})
+                       "attempts": attempts, **_evidence_attrs(evidence, details)})
         except Exception:
             pass
         return verdict
@@ -884,6 +925,10 @@ class DagExecutor:
                 "payload": payload,
                 "require_confirm": a.require_confirm,
             })
+        data = _struct_dict(resp.data)                          # F3：从 proto 读取结构化结果
+        # CA2-10：证据只由编排器写；执行方自带的同名键不算数（回执 `_receipt` 才是它该给的）。
+        if isinstance(data, dict):
+            data.pop(_ev.EVIDENCE, None)
         return StepResult(
             step_id=step_id,
             status=status,
@@ -891,7 +936,7 @@ class DagExecutor:
             ui_card=_struct_dict(resp.ui_card) or None,
             actions=actions,
             follow_up=resp.follow_up,
-            data=_struct_dict(resp.data),                       # F3：从 proto 读取结构化结果
+            data=data,
             missing_slots=list(resp.missing_slots),              # F12：缺失槽位名
         )
 

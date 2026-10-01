@@ -49,6 +49,18 @@ export type ResultEntry = {
   result_ref: string
   verification: string
   pending_edge?: boolean
+  // CA2-10：执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）；缺省 = 这一步没声明状态核验
+  evidence?: VerificationEvidence
+}
+
+export type VerificationEvidence = {
+  ack: 'acknowledged' | 'unknown'
+  state: 'satisfied' | 'unsatisfied' | 'unknown'
+  observed: 'attributed' | 'unchanged' | 'missing' | 'unattributed'
+  verified: boolean
+  reasons: string[]
+  source_kind: string
+  authenticated: boolean
 }
 
 export type ResultBundle = {

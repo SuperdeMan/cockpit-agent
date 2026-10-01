@@ -6,6 +6,8 @@ import os
 import time
 from typing import AsyncIterator
 
+from runtime import effect_evidence
+
 from .executor import DagExecutor
 from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
@@ -76,7 +78,9 @@ def summarize(result: StepResult, *, intent: str = "",
     `(intent, slots)`——不带它，「已查深圳天气」会让「广州天气」也被当成重复。
     只收标量值（槽位本来就是 `dict[str, str]`），不截断：截了就和执行侧的指纹对不上。
     """
-    data = dict(result.data or {})
+    # CA2-10：回执与证据是观测面，不是规划输入——模型看到的观测与引入它们之前逐字一致。
+    data = {k: v for k, v in dict(result.data or {}).items()
+            if k not in (effect_evidence.RECEIPT, effect_evidence.EVIDENCE)}
     if len(data) > 12:
         data = dict(list(data.items())[:12])
     observation = {

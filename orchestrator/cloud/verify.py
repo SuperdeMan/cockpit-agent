@@ -21,6 +21,8 @@ import asyncio
 import logging
 import os
 
+from runtime import effect_evidence as _ev
+
 logger = logging.getLogger("planner.verify")
 
 SAT, UNSAT, UNKNOWN = "sat", "unsat", "unknown"
@@ -136,23 +138,12 @@ def eval_state_match(expect: dict, snapshot: dict | None, slots=None) -> str:
 
     镜像为空（无 NATS / 冷启动没收到过快照）→ UNKNOWN：这是"我看不见"，不是"没做成"。
     `$slot:` 动态期望取不到值 → 那一键计入 UNKNOWN，与"镜像里没这个键"同一条通道。
+    判据只有一份（`assess`，CA2-10）：这里把快照当作「值都良好、无出处」的视图交给它。
     """
     keys = resolve_expect_keys(expect.get("keys"), slots)
-    if not keys:
-        return UNKNOWN
-    if not snapshot:
-        return UNKNOWN
-    unknown = False
-    for k, want in keys.items():
-        if want is UNRESOLVED:
-            unknown = True
-            continue
-        if k not in snapshot or snapshot[k] is None:
-            unknown = True
-            continue
-        if not _values_equal(snapshot[k], want):
-            return UNSAT
-    return UNKNOWN if unknown else SAT
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    view = {"state": dict(snapshot), "signals": {k: {"quality": "good"} for k in snapshot}}
+    return verdict_of(assess(keys, view)[0])
 
 
 # ── 调度：按 mode 选求值器 ───────────────────────────────────────────────
@@ -161,7 +152,7 @@ async def evaluate(verification: dict, data: dict, mirror=None, slots=None, vehi
     """按声明的 mode 求值。未知 mode → UNKNOWN（前向兼容：新 mode 在旧编排上不定罪）。
 
     `state_match` 在 `timeout_ms` 内轮询等收敛——车控生效有毫秒到秒级延迟（动作到端 →
-    VAL 执行 → state diff 经 NATS 回来），立刻断言必然误报。
+    VAL 执行 → state diff 经 NATS 回来），立刻断言必然误报。轮询与证据见 `evaluate_effect`。
 
     `slots` 是**本步已解析完的槽位**（`slot_refs` 填过之后），供 `$slot:` 动态期望取值。
     """
@@ -170,24 +161,138 @@ async def evaluate(verification: dict, data: dict, mirror=None, slots=None, vehi
     if mode == MODE_SCHEMA:
         return eval_schema(expect, data)
     if mode == MODE_STATE_MATCH:
-        return await _eval_state_with_wait(expect, verification, mirror, slots, vehicle_id)
+        verdict, _, _ = await evaluate_effect(verification, mirror, slots, vehicle_id)
+        return verdict
     return UNKNOWN
 
 
-async def _eval_state_with_wait(expect: dict, verification: dict, mirror,
-                                slots=None, vehicle_id=None) -> str:
+# ── CA2-10：结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）─────────────────
+#
+# 原结论（sat/unsat/unknown）仍按「最新良好观测满不满足期望」算，与 `eval_state_match` 逐值一致——
+# retry、`_verify` 与聚合器口径一律不变。证据是另一份记录：它回答「这次动作导致了它吗」，
+# 而动作前目标就已满足（执行方回执说没改任何期望键）永远不是 verified。词表在 runtime/effect_evidence.py。
+
+_VERDICT_OF = {_ev.STATE_SATISFIED: SAT, _ev.STATE_UNSATISFIED: UNSAT, _ev.STATE_UNKNOWN: UNKNOWN}
+_QUALITY_REASON = {"stale": _ev.SIGNAL_STALE, "uncertain": _ev.SIGNAL_UNCERTAIN,
+                   "unavailable": _ev.SIGNAL_UNAVAILABLE}
+
+
+def _mirror_view(mirror, vehicle_id) -> dict:
+    """逐信号视图。只有 `snapshot()` 的旧镜像按「值都良好、无出处」投影（不伪造来源）。"""
+    view_fn = getattr(mirror, "view", None)
+    if callable(view_fn):
+        view = view_fn(vehicle_id) if vehicle_id is not None else view_fn()
+        return view if isinstance(view, dict) else {}
+    snapshot = mirror.snapshot(vehicle_id) if vehicle_id is not None else mirror.snapshot()
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    return {"state": dict(snapshot), "signals": {k: {"quality": "good"} for k in snapshot}}
+
+
+def assess(keys: dict, view: dict | None, *, ref: str = "", receipt=None,
+           ack: str = _ev.ACK_ACKNOWLEDGED) -> tuple[dict, dict, bool]:
+    """一次求值（纯函数）。返回 (证据, 每键明细, 是否还在等归属)。
+
+    `keys` 是 `resolve_expect_keys` 之后的期望（取不到的槽是 `UNRESOLVED`）；`view` 为 None = 没有镜像。
+    每键明细只进 span，不进公开结果。
+    """
+    state_values = (view or {}).get("state") if isinstance(view, dict) else None
+    signals = (view or {}).get("signals") if isinstance(view, dict) else None
+    state_values = state_values if isinstance(state_values, dict) else {}
+    signals = signals if isinstance(signals, dict) else {}
+    reasons, details, kinds, authenticated = set(), {}, set(), True
+    unsatisfied = unknown = False
+    attributed = set()
+    if not keys:
+        unknown = True
+        reasons.add(_ev.EXPECTATION_UNRESOLVED)
+    if view is None:
+        unknown = True
+        reasons.add(_ev.MIRROR_UNAVAILABLE)
+    for key, want in (keys or {}).items():
+        sig = signals.get(key) if isinstance(signals.get(key), dict) else None
+        if sig is not None:
+            if sig.get("source_kind"):
+                kinds.add(str(sig["source_kind"]))
+            authenticated = authenticated and sig.get("authenticated") is True
+            if ref and sig.get("operation_id") == ref:
+                attributed.add(key)
+        if want is UNRESOLVED:
+            verdict, reason = UNKNOWN, _ev.EXPECTATION_UNRESOLVED
+        elif view is None:
+            verdict, reason = UNKNOWN, _ev.MIRROR_UNAVAILABLE
+        elif sig is None:
+            verdict, reason = UNKNOWN, _ev.SIGNAL_MISSING
+        elif sig.get("quality", "good") != "good":
+            verdict, reason = UNKNOWN, _QUALITY_REASON.get(sig.get("quality"), _ev.SIGNAL_UNAVAILABLE)
+        elif key not in state_values or state_values[key] is None:
+            verdict, reason = UNKNOWN, _ev.SIGNAL_MISSING
+        elif _values_equal(state_values[key], want):
+            verdict, reason = SAT, ""
+        else:
+            verdict, reason = UNSAT, _ev.VALUE_MISMATCH
+        unsatisfied = unsatisfied or verdict == UNSAT
+        unknown = unknown or verdict == UNKNOWN
+        if reason:
+            reasons.add(reason)
+        details[key] = {"verdict": verdict, "attributed": key in attributed,
+                        **({"reason": reason} if reason else {}),
+                        **({"observed_at_ms": sig.get("observed_at_ms")} if sig else {})}
+    state = (_ev.STATE_UNSATISFIED if unsatisfied else
+             _ev.STATE_UNKNOWN if unknown else _ev.STATE_SATISFIED)
+
+    expected = set(keys or {})
+    if receipt is not None:
+        changed = set(receipt.changed) & expected
+        if not changed:
+            observed = _ev.OBSERVED_UNCHANGED
+        elif not ref or receipt.echoed_ref != ref:
+            observed = _ev.OBSERVED_UNATTRIBUTED
+        elif changed <= attributed:
+            observed = _ev.OBSERVED_ATTRIBUTED
+        else:
+            observed = _ev.OBSERVED_MISSING
+    else:
+        observed = _ev.OBSERVED_ATTRIBUTED if attributed else _ev.OBSERVED_UNATTRIBUTED
+    if ack != _ev.ACK_ACKNOWLEDGED:
+        reasons.add(_ev.ACK_LOST)
+    if observed == _ev.OBSERVED_UNCHANGED and state == _ev.STATE_SATISFIED:
+        reasons.add(_ev.ALREADY_SATISFIED)
+    elif observed == _ev.OBSERVED_MISSING:
+        reasons.add(_ev.OBSERVATION_MISSING)
+    elif observed == _ev.OBSERVED_UNATTRIBUTED:
+        reasons.add(_ev.NOT_ATTRIBUTED)
+    evidence = _ev.summarize(ack=ack, state=state, observed=observed, reasons=reasons,
+                             source_kind=_ev.weakest_source(kinds),
+                             authenticated=authenticated and bool(kinds))
+    return evidence, details, observed == _ev.OBSERVED_MISSING
+
+
+def verdict_of(evidence: dict) -> str:
+    return _VERDICT_OF.get((evidence or {}).get("state"), UNKNOWN)
+
+
+async def evaluate_effect(verification: dict, mirror, slots=None, vehicle_id=None, *,
+                          ref: str = "", receipt=None,
+                          ack: str = _ev.ACK_ACKNOWLEDGED) -> tuple[str, dict, dict]:
+    """state_match 的带证据求值。返回 (原结论, 证据, 每键明细)。
+
+    轮询窗口沿用 M2：已满足且没有待到的归属即刻返回，否则等到 `timeout_ms`。
+    原结论只由状态决定，与旧求值器逐值一致。
+    """
+    keys = resolve_expect_keys((verification.get("expect") or {}).get("keys"), slots)
     if mirror is None:
-        return UNKNOWN
+        evidence, details, _ = assess(keys, None, ref=ref, receipt=receipt, ack=ack)
+        return verdict_of(evidence), evidence, details
     timeout_ms = int(verification.get("timeout_ms") or 0) or DEFAULT_TIMEOUT_MS
-    deadline = asyncio.get_event_loop().time() + timeout_ms / 1000.0
-    verdict = UNKNOWN
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout_ms / 1000.0
     while True:
-        snapshot = mirror.snapshot(vehicle_id) if vehicle_id is not None else mirror.snapshot()
-        verdict = eval_state_match(expect, snapshot, slots)
-        if verdict == SAT:
-            return SAT
-        if asyncio.get_event_loop().time() >= deadline:
-            return verdict          # 等到超时仍未达成：UNSAT 报、UNKNOWN 不定罪
+        evidence, details, pending = assess(keys, _mirror_view(mirror, vehicle_id),
+                                            ref=ref, receipt=receipt, ack=ack)
+        if evidence["state"] == _ev.STATE_SATISFIED and not pending:
+            return SAT, evidence, details
+        if loop.time() >= deadline:
+            return verdict_of(evidence), evidence, details
         await asyncio.sleep(_POLL_INTERVAL_S)
 
 

@@ -3,6 +3,18 @@ const object = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
 const strings = (x) => Array.isArray(x) ? x.filter((v) => typeof v === 'string') : []
 const text = (x) => typeof x === 'string' ? x : ''
 const states = new Set(['inline', 'reference', 'unavailable'])
+// CA2-10 evidence vocabulary (runtime/effect_evidence.py). Unknown values drop the whole record.
+const acks = new Set(['acknowledged', 'unknown'])
+const effectStates = new Set(['satisfied', 'unsatisfied', 'unknown'])
+const observations = new Set(['attributed', 'unchanged', 'missing', 'unattributed'])
+
+function evidence(x) {
+  if (!object(x) || !acks.has(x.ack) || !effectStates.has(x.state) || !observations.has(x.observed)) return undefined
+  // verified is derived, never trusted: an unchanged target is not caused by this step.
+  return { ack: x.ack, state: x.state, observed: x.observed,
+    verified: x.state === 'satisfied' && x.observed === 'attributed' && x.verified === true,
+    reasons: strings(x.reasons), source_kind: text(x.source_kind), authenticated: x.authenticated === true }
+}
 
 export function readResultBundles(frame) {
   if (!Array.isArray(frame?.result_bundles) || frame.result_bundles.length > 8) return []
@@ -28,6 +40,7 @@ export function readResultBundles(frame) {
         operation_id: text(r.operation_id), answer_state: r.answer_state,
         result_ref: text(r.result_ref), verification: text(r.verification),
         pending_edge: r.pending_edge === true,
+        ...(evidence(r.evidence) ? { evidence: evidence(r.evidence) } : {}),
       })),
     }))
 }

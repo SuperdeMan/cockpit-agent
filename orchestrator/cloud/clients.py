@@ -15,6 +15,7 @@ from runtime import admission, memory_read, context_access
 from .context_view import check_current, check_context
 from runtime import capability_contract as cap_contract
 from runtime import operation
+from runtime import effect_evidence
 
 logger = logging.getLogger("planner.clients")
 
@@ -332,6 +333,8 @@ class Clients:
         prefs.pop(operation.HEADER, None)
         # CA2-09: the edge's confirmation snapshot only travels from the pending record.
         prefs.pop("confirm_state", None)
+        # CA2-10: the observation reference is minted per dispatch by the Step.
+        prefs.pop(effect_evidence.META, None)
         merged = {**prefs, **dict(meta or {})}
         if operation.HEADER in merged:
             merged[operation.HEADER] = operation.with_plan(

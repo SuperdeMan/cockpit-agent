@@ -112,19 +112,32 @@ class Step:
     # CA2-09 **进程内字段**：确认恢复时由 `_restore` 从挂起记录抄来的绑定（不进 step_record）；
     # 执行器在槽引用解析后、派发前据此复核「执行的就是用户确认的那一步」。空 = 旧记录 / 非确认恢复。
     confirmation_binding: dict = field(default_factory=dict)
+    # CA2-10 **进程内字段**：声明了 state_match 的步每次构造一枚观测关联键，经 meta 下发给执行方，
+    # 执行方把它盖在本次命令改动的观测样本上。不进 step_record——确认恢复是新的一次派发，换新键。
+    # 只用于把观测归到这一次派发：不是授权，也不是幂等键（后者归 CA2-11）。
+    observation_ref: str = ""
 
     def __post_init__(self):
         # Meta is transient, so reconstruct this server-owned version marker on restore.
         # It is not confirmation, authorization or an idempotency key.
         from runtime.capability_contract import (HEADER, normalize, snapshot_digest, ContractError,
                                                  durable_admission)
+        from runtime import effect_evidence as _evidence
         from runtime import operation as _operation
+        from .verify import MODE_STATE_MATCH
         if self.meta is None:
             self.meta = {}
         if not isinstance(self.meta, dict):
             raise ContractError("invalid_step_meta")
         self.meta.pop(HEADER, None)
         self.meta.pop(_operation.HEADER, None)
+        self.meta.pop(_evidence.META, None)
+        if (self.verification or {}).get("mode") == MODE_STATE_MATCH:
+            if not _evidence.valid_ref(self.observation_ref):
+                self.observation_ref = _evidence.new_ref()
+            self.meta[_evidence.META] = self.observation_ref
+        else:
+            self.observation_ref = ""
         if self.capability_contract or self.capability_abi or self.capability_revision:
             if (not isinstance(self.capability_abi, str) or len(self.capability_abi) != 64
                     or not self.capability_contract):

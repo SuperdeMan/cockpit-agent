@@ -6,6 +6,7 @@ Neither a simulated observation nor an ACK is evidence of real vehicle actuation
 """
 from __future__ import annotations
 
+import contextvars
 import copy
 import math
 import os
@@ -16,6 +17,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from runtime.vehicle_state import StateSigner, StateContractError, simulation_binding
+
+# CA2-10: the observation reference of the command VAL is executing right now. Set only by
+# the edge-call executor around one VAL.execute; samples that command changed carry it.
+COMMAND_REF: contextvars.ContextVar[str] = contextvars.ContextVar("command_observation_ref", default="")
 
 
 def initial_state() -> dict:
@@ -124,6 +129,10 @@ class SimulatedVehicleDriver:
         snapshot = bool(snapshot or self.seq == 0)
         changes = list(changes)
         keys = list(self.state) if snapshot else [c["key"] for c in changes]
+        # Attribution covers only what the command changed: a checkpoint carried by the
+        # same packet must not stamp untouched values as caused by it (CA2-10).
+        operation_id = operation_id or COMMAND_REF.get()
+        tagged = {c.get("key") for c in changes if isinstance(c, dict)} if operation_id else set()
         signals = []
         for key in dict.fromkeys(keys):
             if key in self._silent or key not in self.state:
@@ -132,7 +141,7 @@ class SimulatedVehicleDriver:
             quality = self._quality.get(key, "unavailable" if value is None else "good")
             sample = {"key": key, "value": value, "observed_at_ms": now,
                       "quality": quality, "unit": self.signer.binding.unit(key)}
-            if operation_id:
+            if key in tagged:
                 sample["operation_id"] = operation_id
             signals.append(sample)
         self.seq += 1

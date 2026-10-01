@@ -13,13 +13,21 @@ func resultBundleToMap(bundle *orchpb.ResultBundle) map[string]any {
 	}
 	results := make([]any, 0, len(bundle.Results))
 	for _, result := range bundle.Results {
-		results = append(results, map[string]any{
+		entry := map[string]any{
 			"step_id": result.StepId, "goal_ids": stringsOrEmpty(result.GoalIds),
 			"intent": result.Intent, "status": result.Status, "answer": result.Answer,
 			"card_ref": result.CardRef, "operation_id": result.OperationId,
 			"answer_state": result.AnswerState, "result_ref": result.ResultRef, "verification": result.Verification,
 			"pending_edge": result.PendingEdge,
-		})
+		}
+		// CA2-10: present only when the step declared state verification.
+		if e := result.Evidence; e != nil {
+			entry["evidence"] = map[string]any{
+				"ack": e.Ack, "state": e.State, "observed": e.Observed, "verified": e.Verified,
+				"reasons": stringsOrEmpty(e.Reasons), "source_kind": e.SourceKind, "authenticated": e.Authenticated,
+			}
+		}
+		results = append(results, entry)
 	}
 	cards := map[string]any{}
 	for key, card := range bundle.Cards {

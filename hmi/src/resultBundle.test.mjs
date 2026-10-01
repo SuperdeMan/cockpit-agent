@@ -63,3 +63,20 @@ test('details render hidden cards without duplicating the already visible main c
   assert.equal(rows[0].card, null)
   assert.equal(rows[1].card, hidden)
 })
+
+test('effect evidence survives the projection without trusting a claimed verification', () => {
+  const evidence = { ack: 'acknowledged', state: 'satisfied', observed: 'unchanged', verified: true,
+    reasons: ['already_satisfied'], source_kind: 'simulated', authenticated: false, keys: { hvac_on: {} } }
+  const [kept] = readResultBundles({ result_bundles: [{ ...bundle, results: [{ ...entry, evidence }] }] })
+  assert.deepEqual(kept.results[0].evidence, { ack: 'acknowledged', state: 'satisfied', observed: 'unchanged',
+    verified: false, reasons: ['already_satisfied'], source_kind: 'simulated', authenticated: false })
+  const [attributed] = readResultBundles({ result_bundles: [{ ...bundle, results: [{ ...entry,
+    evidence: { ...evidence, observed: 'attributed', reasons: [] } }] }] })
+  assert.equal(attributed.results[0].evidence.verified, true)
+  for (const bad of [{ ...evidence, ack: 'sent' }, { ...evidence, observed: 'caused' }, 'verified']) {
+    const [row] = readResultBundles({ result_bundles: [{ ...bundle, results: [{ ...entry, evidence: bad }] }] })
+    assert.ok(!('evidence' in row.results[0]))
+  }
+  const [none] = readResultBundles({ result_bundles: [bundle] })
+  assert.ok(!('evidence' in none.results[0]))
+})
