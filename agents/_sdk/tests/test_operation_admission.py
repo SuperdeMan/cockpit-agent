@@ -267,6 +267,63 @@ async def concurrent_confirmations_run_once(h):
     assert {decision(r) for r in (a, b) if not r.actions} <= {op.IN_PROGRESS, op.DUPLICATE}
 
 
+async def racing_claims_admit_exactly_one(h):
+    """Both confirmations read `awaiting` before either claims; the store must pick one."""
+    agent, oid = ScriptedAgent(h.ledger), op.new_operation_id()
+    await execute(agent, request(agent.manifest, oid))
+    real_claim, arrived, both = h.ledger.operation_claim, [], asyncio.Event()
+
+    async def barrier_claim(*args, **kwargs):
+        arrived.append(1)
+        if len(arrived) >= 2:
+            both.set()
+        await asyncio.wait_for(both.wait(), 5)
+        return await real_claim(*args, **kwargs)
+
+    h.ledger.operation_claim = barrier_claim
+    agent.delay = 0.2
+    try:
+        a, b = await asyncio.gather(execute(agent, request(agent.manifest, oid, confirmed=True)),
+                                    execute(agent, request(agent.manifest, oid, confirmed=True)))
+    finally:
+        h.ledger.operation_claim = real_claim
+    assert len(arrived) >= 2 and len(agent.calls) == 2
+    assert sorted(len(r.actions) for r in (a, b)) == [0, 1]
+
+
+async def store_writes_respect_record_state(h):
+    """Ledger contract below the gate: no claim of executing/expired, no rewrite of terminal."""
+    agent, oid = ScriptedAgent(h.ledger), op.new_operation_id()
+    claim = _claim(agent.manifest, oid)
+    executing = op.envelope(claim, phase=op.PHASE_EXECUTING, attempts=1)
+    await h.ledger.operation_insert(operation_id=oid, user_id="u1", session_id="sess-1",
+                                    agent_id="mcp-bridge", trace_id="", envelope=executing)
+    assert not await h.ledger.operation_claim(oid, observed_binding=claim.binding_sha256,
+                                              envelope=executing, session_id="s", trace_id="")
+    ref = op.outcome_ref(op.STATUS_OK, outcome=op.OUTCOME_SUCCEEDED)
+    assert await h.ledger.operation_settle(oid, binding=claim.binding_sha256, status=op.DONE,
+                                           phase=op.PHASE_EXECUTING, result_ref=ref)
+    for status in (op.FAILED, op.ORPHANED, op.ACCEPTED):
+        assert not await h.ledger.operation_settle(oid, binding=claim.binding_sha256, status=status,
+                                                   phase=op.PHASE_AWAITING, result_ref=ref)
+    assert (await h.row(oid))["status"] == op.DONE
+    assert not await h.ledger.operation_mark_stale(oid, binding=claim.binding_sha256, stale_s=0,
+                                                   result_ref=ref)
+    assert (await h.row(oid))["status"] == op.DONE
+
+
+async def expired_awaiting_cannot_be_claimed(h):
+    agent, oid = ScriptedAgent(h.ledger), op.new_operation_id()
+    await execute(agent, request(agent.manifest, oid))
+    await h.expire(oid)
+    row = await h.row(oid)
+    claim = _claim(agent.manifest, oid)
+    assert not await h.ledger.operation_claim(
+        oid, observed_binding=row["envelope"]["binding_sha256"],
+        envelope=op.envelope(claim, phase=op.PHASE_EXECUTING, attempts=2), session_id="s", trace_id="")
+    assert (await h.row(oid))["envelope"]["phase"] == op.PHASE_AWAITING
+
+
 async def concurrent_first_deliveries_run_once(h):
     agent, oid = ScriptedAgent(h.ledger, delay=0.3), op.new_operation_id()
     results = await asyncio.gather(*(execute(agent, request(agent.manifest, oid, confirmed=True))
@@ -418,7 +475,9 @@ def _claim(manifest, oid, *, item="latte", confirmed=True):
 SCENARIOS = [
     first_delivery_runs_once_then_duplicates, confirmation_resumes_the_awaiting_record,
     confirmation_cannot_switch_parameters, unconfirmed_slot_fill_rebinds,
-    concurrent_confirmations_run_once, concurrent_first_deliveries_run_once,
+    concurrent_confirmations_run_once, racing_claims_admit_exactly_one,
+    store_writes_respect_record_state, expired_awaiting_cannot_be_claimed,
+    concurrent_first_deliveries_run_once,
     fresh_executing_is_in_progress, stale_executing_reads_unknown_and_never_reruns,
     late_outcome_after_stale_mark_is_recorded, expired_awaiting_is_rejected,
     another_subject_cannot_reuse_the_operation, handler_exception_is_unknown_not_failed,
