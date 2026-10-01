@@ -1220,6 +1220,11 @@ condition 列），落库的只是普通定时提醒；治理器信封的 `condi
    `save_pending()` 回传被淘汰的那条正是为此；静默丢弃是「认不出就用默认值」的确认版。
    TTL **逐条**存（`SessionState.expires_at`）——多条共用一个 Redis key 时，
    TTL 若只挂在 key 上，再存一条就等于给旧条续命，「挂起窗口以首次挂起时刻起算」会被架空。
+5. **一次消费**（CA2-09）：确认 / 补槽 / 澄清选择 / 取消都先赢得 `SessionStore.claim_result` 才能恢复或关闭；
+   输的回合零动作、不下发 `closed_operation_ids`，取消输了要说「已在处理、无法撤回」。认领在挂起过期前不失效。
+6. **确认绑定**（CA2-09）：wait_confirm 挂起带 `confirmation`（车辆 / 步骤 / CA2-08 operation / 能力版本 / 最终参数摘要，
+   含车端 `edge_state` 快照，整体封印）；执行器在槽引用解析后复核，车端按 `confirm_state` 比对档位与行驶状态。
+   见 [确认绑定](design/2026-10-02-v2-confirmation-binding.md)。
 
 **取消判定**同批收敛到 `orchestrator/cloud/pending_cancel.py`：一份词表两条语境规则
 （有挂起=STRONG 子串+WEAK 整句+复合余量续处理；无挂起=只认整句）。此前

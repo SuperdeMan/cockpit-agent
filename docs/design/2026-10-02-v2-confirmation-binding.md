@@ -1,6 +1,7 @@
 # CA2-09：挂起一次消费与确认绑定
 
-> 状态：2026-10-02 契约冻结稿，实现中；不改数据库 schema（只扩展 Redis 挂起表的 JSON 字段）。
+> 状态：2026-10-02 已部署 `56c5519f`（status 5/5、verify verified）；不改数据库 schema，只扩展 Redis 挂起表的 JSON 字段。
+> 车端 `confirm_state` 复核随同一 release 上线。真栈并发写探针本包未复跑，见 §5。
 > 依赖：[CA2-05 能力契约](2026-09-27-v2-capability-contract.md)、[CA2-06 车辆身份](2026-09-27-v2-vehicle-state-and-simulation.md)、
 > [CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)。排序见[路线图](../roadmap.md)。
 
@@ -50,3 +51,25 @@ durable 能力的重复派发已被执行方挡住；端侧 VAL 写（后备箱�
 2. 引擎：同一挂起的两个并发确认 / 补槽 / 澄清选择各只派发一次；第二个回合零动作、不关闭挂起。
 3. 绑定：换车、参数在恢复后变化、能力版本变化均不派发；旧记录放行；VAL 在确认后挡位改变时拒绝。
 4. 反向验证、全量、四门禁；真栈只读核对 + 是否复跑演示商户双确认另行征得授权。
+
+## 5. 实现与证据（2026-10-02）
+
+| 验证面 | 精确版本 / 结果 |
+|---|---|
+| 专项 | 云侧 `test_pending_claim.py` 14（存储认领、确认/补槽/澄清/取消四条路径的并发、绑定与恢复、客户端伪造快照）；端侧 `test_confirm_state.py` 4 |
+| Redis 路径 | `test/probe_pending_claim_redis.py` 在 scratchpad venv 的 fakeredis 上 6/6：8 路并发认领只有 1 个赢家、其它条目与 JSON 列表形状不被改写、TTL 保留、过期/栅栏、WATCH 冲突后重试成功（断言 EXEC 恰好两次） |
+| 反向验证 | 13 处注入缺陷全部判红。首轮漏掉「澄清路径去掉认领」：内存存储在删除前没有 await，第二个回合根本读不到挂起；改用读挂起时让出事件循环的存储后转红 |
+| 本地全量 | `56c5519f`：10446 passed / 35 skipped / 11 warnings（287.20 s）；四门禁、smoke 13/13、`capability_inventory --check` |
+| 发布 | dry-run 零阻断（无 schema 摘要），apply submitted；status ok、release/running 均为 `56c5519f`、5/5、零 warning；verify `20261001T172435Z-56c5519.json`（e2e_remote_safe / MiniMax-M3）verified |
+| 固定语料 | 固定语料 20×3：60/60 完成、101 轮，业务红 4（3 轮未走手册；V207 抢救重试轮原样抄了 `planning.py` 的澄清结构示例「云岚国际中心」，与本包无关），证据错误 0、open operations 0，217 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；取消挂起 3/3 按寻址关闭；p50/p95/p99 7047/17375/28375 ms（p50 升高来自模型侧：规划调用中位 1404→2596 ms） |
+
+真栈「两个并发确认」没有复跑：上次的演示商户写授权已用于 CA2-08；需要时用 `scripts/probe_operation_double_confirm.py`
+另取授权。期望读数是第二个回合由编排器答「这条操作已经在处理了，我没有重复执行」，执行方只收到一次确认派发。
+
+## 6. 已知边界
+
+- 认领者在派发后崩溃，之后的确认只得到「这条操作已经在处理了，我没有重复执行」，直到挂起过期（300 s）；结局查询与恢复对账归 CA2-11。
+- 车端只比对档位与是否行驶；更细的车型前置条件（车速阈值、门锁与充电口联动等）等真实车型接口，不猜量产阈值。
+- 旧挂起没有绑定或快照时兼容放行，窗口不超过挂起 TTL（`SessionState.ttl_seconds`=300 s）。
+- 规划器抢救重试轮会原样抄提示词里的澄清结构示例（`planning.py`「云岚国际中心」，固定语料 V207 r3 trace `5145fc3b40804654b6243afe5af9c4f4`）：
+  首次调用的计划是对的，重试结果覆盖了回落候选。属于 R0 规划质量残余，不在本包修；改提示词须按规划知识 A/B 走新提交。

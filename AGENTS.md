@@ -129,7 +129,7 @@ v2 的可重复旅程、故障矩阵与模型收益门槛见 [实施方案](docs
 
 | 主题 | 启动条件 / 唯一接续入口 |
 |---|---|
-| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-02–07/12 首版已落地；CA2-08 持久准入首版已部署启用（[持久准入](docs/design/2026-10-01-v2-durable-operation-admission.md)），下一包 CA2-09 确认绑定。R0、S2S/正式身份和设备验收仍分项，Jev 未接入 |
+| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-02–07/12 首版已落地；CA2-08 持久准入与 CA2-09 确认绑定首版已部署（[持久准入](docs/design/2026-10-01-v2-durable-operation-admission.md) / [确认绑定](docs/design/2026-10-02-v2-confirmation-binding.md)），下一包 CA2-10 因果/结果对账。R0、S2S/正式身份和设备验收仍分项，Jev 未接入 |
 | 手册召回、条件与复合问句 | [2026-09-26 设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §8；挂确认已有 CA2-04 闭环，已登记胎压条件见 [来源护栏](docs/design/2026-09-28-manual-source-evidence-guard.md)；规划/回忆残余继续重证，Jev 不能代修 |
 | 对话评审四轮 | [逐条重证与分批落地](docs/design/2026-09-24-conversation-review-round4-remediation.md) §7；已修项不重新立项，未触发项保持条件 |
 | 对话评审三轮 | [修复记录](docs/design/2026-09-23-conversation-review-round3-remediation.md)；历史批次与待裁决项按原表追溯 |

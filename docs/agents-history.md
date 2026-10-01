@@ -10309,3 +10309,16 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 真栈并发双确认（`scripts/probe_operation_double_confirm.py`，runner `37e2f436`）：两条 WS 的确认都消费了同一挂起，一轮下单 `DC7AA7F65555`，
   另一轮由执行方答「已经处理过」；台账 `operation:done` 1、`mcp_order:done` 1，随后 durable 退款清理。首跑在本地签名阶段因 user_id 命名失败、
   未发请求。合成用户 4 行账本保留作证据。读数：「编排器重复派发同一挂起步骤」第一次在真栈被直接看到——CA2-09 要认领挂起的根据。
+
+## 2026-10-02：CA2-09 挂起一次消费与确认绑定
+
+- 起因：CA2-08 真栈探针直接看到两轮确认消费同一挂起、编排器派发两次；确认 / 补槽 / 澄清 / 取消都是「读到 → 恢复 → 派发 → 事后删除」。
+  另核出：需确认的车控对象在 `commands.yaml` 里都不是 drive_restricted，确认后挂 D 挡，旧确认照样执行。
+- 实现（`f2741cbc`、`56c5519f`，[设计](design/2026-10-02-v2-confirmation-binding.md)）：`SessionStore.claim_result`（Redis WATCH/MULTI 比较并认领、
+  内存同步 CAS），四条消费路径先认领，输的回合零动作、取消输了如实说已在处理；wait_confirm 挂起写封印的 `confirmation` 绑定，
+  执行器在槽引用解析后复核，T2 流式不再跑已确认的步；车端随 NEED_CONFIRM 报 `confirm_state`，确认派发带回，挡位或行驶状态变了即拒绝。
+- 用 cjson 在 Lua 里改挂起 JSON 会把嵌套空数组编成对象，所以没有写 Lua，改在 Python 侧做乐观事务。
+- 验证：专项云侧 14、端侧 4；fakeredis 认领探针 6/6（含确定性 WATCH 冲突重试）；注入缺陷 13 处全部判红，首轮漏「澄清去认领」
+  （内存存储删前不 await，竞态没打开）后改用让出事件循环的存储；全量 10446 / 35 / 11；门禁与 smoke 全过。
+- 发布 `56c5519f`：dry-run 零阻断，status 5/5 零 warning，verify `20261001T172435Z-56c5519.json`；固定语料 固定语料 20×3：60/60 完成、101 轮，业务红 4（3 轮未走手册；V207 抢救重试轮原样抄了 `planning.py` 的澄清结构示例「云岚国际中心」，与本包无关），证据错误 0、open operations 0，217 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；取消挂起 3/3 按寻址关闭；p50/p95/p99 7047/17375/28375 ms（p50 升高来自模型侧：规划调用中位 1404→2596 ms）。
+  真栈并发写探针未复跑（演示商户写授权已用于 CA2-08）。下一包 CA2-10。
