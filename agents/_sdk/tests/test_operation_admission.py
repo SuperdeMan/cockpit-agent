@@ -434,10 +434,11 @@ def test_admission_scenario_against_the_memory_twin(scenario):
     asyncio.run(scenario(MemoryHarness()))
 
 
-def test_parent_operation_is_never_forwarded_and_durable_children_get_their_own():
+@pytest.mark.parametrize("child_admission", ["durable", None])
+def test_parent_operation_is_never_forwarded_and_durable_children_get_their_own(child_admission):
     from types import SimpleNamespace
     from agents._sdk.agent_client import AgentClient
-    manifest = durable_manifest()
+    manifest = durable_manifest(admission=child_admission)
     parent = op.encode_ref(op.OperationRef(op.new_operation_id()))
     sent = []
 
@@ -461,5 +462,9 @@ def test_parent_operation_is_never_forwarded_and_durable_children_get_their_own(
                                 SimpleNamespace(session_id="s", user_id="u1", vehicle_id="v1")))
     finally:
         module.agent_pb2_grpc.AgentStub = original
+    assert sent[0]["trace_id"] == "t"
+    if child_admission is None:
+        assert op.HEADER not in sent[0]
+        return
     child = op.decode_ref(sent[0][op.HEADER])
-    assert sent[0][op.HEADER] != parent and child.operation_id != op.decode_ref(parent).operation_id
+    assert child.operation_id != op.decode_ref(parent).operation_id
