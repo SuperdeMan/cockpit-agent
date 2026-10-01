@@ -10303,3 +10303,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   未重跑 20×3 固定语料（无模型可见或确认行为变化），不转借上一版读数。
 - 未授权、未合入：分支 `claude/ca2-08-operation-admission` 的 `4775b11f`（task_ledger `operation` 列 + mcp-bridge 通用写工具 durable），
   发布闸摘要 `55c23829…cdb23`。真栈演示商户并发双确认属商户写，另需逐轮授权。
+- 2026-10-02 用户授权 schema 切片与一次演示商户双确认。`fec77afb`（在新 main 上 cherry-pick，不 rebase）全量 10428 / 35 / 11、
+  门禁与 smoke 全过、真 PG 22/22；无批准计划唯一阻断 `ledger_schema.sql`，摘要 `55c23829…cdb23` 与授权一致，带摘要 dry-run 零阻断后 apply。
+  status 5/5 零 warning，verify `20261001T164344Z-fec77af.json`；在线只读：恰 2 项 durable、生产有新列、无操作头写请求被拒于准入前。
+- 真栈并发双确认（`scripts/probe_operation_double_confirm.py`，runner `37e2f436`）：两条 WS 的确认都消费了同一挂起，一轮下单 `DC7AA7F65555`，
+  另一轮由执行方答「已经处理过」；台账 `operation:done` 1、`mcp_order:done` 1，随后 durable 退款清理。首跑在本地签名阶段因 user_id 命名失败、
+  未发请求。合成用户 4 行账本保留作证据。读数：「编排器重复派发同一挂起步骤」第一次在真栈被直接看到——CA2-09 要认领挂起的根据。

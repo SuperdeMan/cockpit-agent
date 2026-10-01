@@ -1,15 +1,15 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-10-02（CA2-08 持久准入机制与发布闸 schema 批准通道已部署 `753c1a49`，零行为变化；schema 切片待授权）；2026-09-28 CA2-07 权限视图记录保留
+> 更新时间：2026-10-02（CA2-08 持久准入全部切片已部署：机制 `753c1a49` 惰性上线后，经用户授权以 `fec77afb` 上线 task_ledger 新列与演示商户 durable 声明，真栈并发双确认只下一单）；2026-09-28 CA2-07 权限视图记录保留
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。当前 release 为 `753c1a4903f1343e8c3853ec835b98c34b841c8f`：CA2-08 执行方持久准入机制首版
-（没有能力声明 `admission: durable`，线上零行为变化）与发布闸 database_schema 一次性摘要批准通道；task_ledger 新列与首批声明
-只在分支、待用户授权，见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)。其下仍包含 CA2-07 的 Cloud/Agent 权限化上下文视图；主体权限、接收需求与在途读取失效机制已落地。
+**QA 验收仍非全绿**。当前 release 为 `fec77afb3fa45a6e39e78e6cb0f5bf8ef4307ceb`：CA2-08 执行方持久准入已启用——
+task_ledger 新增 `operation` 列（经用户授权与发布闸一次性 schema 摘要上线），演示商户 `shop.order` / `shop.order_cancel`
+先落准入记录再执行；见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)。其下仍包含 CA2-07 的 Cloud/Agent 权限化上下文视图；主体权限、接收需求与在途读取失效机制已落地。
 权限专项和固定语料已复验，S2S 直接历史、调试 HTTP 与量产全局身份边界未关闭；车态仍是模拟来源。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
@@ -27,8 +27,8 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | 研究采纳起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；运行时首批版本见下行；后续纯文档提交允许领先 production |
-| 生产 release | `753c1a4903f1343e8c3853ec835b98c34b841c8f`，2026-10-02 激活：CA2-08 机制（惰性）+ 发布闸 schema 批准通道，应用改动限 SDK 准入层、Step 操作身份、能力契约可选键与发布工具；schema 与 .env/token/CI/CD 未改。前一版 `01cf47cd4455ea1912a4e61c16fe183e86d4d295`，2026-09-28 21:16 CST 激活；相对 `b095caca` 只改文档与 README（排除 `.md` 后零差异），应用代码与 `b095caca` 相同。`b095caca46a4a4188e2b26927327117c62326acb`（19:27 激活）是 CA2-07 Cloud/Agent 权限视图；再前一版 `55165e50` 为容量治理 P1、应用仍沿用 `7b346c90`。来源签名保持启用，.env/token/schema 未因这两版修改 |
-| status / verify | `753c1a49`：ok、5/5 healthy、零 warning，release/running SHA 一致；verify verified：`20261001T161142Z-753c1a4.json`，e2e_remote_safe / minimax:MiniMax-M3。前一版 `01cf47cd`：ok、5/5 healthy、零 warning，release/running SHA 一致（2026-09-29 复核）；统一 verify verified：`20260928T131738Z-01cf47c.json`，e2e_remote_safe / minimax:MiniMax-M3。`b095caca` 的 verify 为 `20260928T112855Z-b095cac.json`；CA2-07 专项与全量成绩属 `b095caca`，未对 `01cf47cd` 重跑 |
+| 生产 release | `fec77afb3fa45a6e39e78e6cb0f5bf8ef4307ceb`，2026-10-02 激活：CA2-08 切片 D，task_ledger 加 `operation JSONB NOT NULL DEFAULT '{}'`（用户逐项授权，摘要 `55c23829…cdb23`）+ mcp-bridge 两项演示写工具 durable；.env/token/CI/CD 未改，未做数据迁移。前一版 `753c1a4903f1343e8c3853ec835b98c34b841c8f` 为 CA2-08 机制（惰性）+ 发布闸 schema 批准通道。前一版 `01cf47cd4455ea1912a4e61c16fe183e86d4d295`，2026-09-28 21:16 CST 激活；相对 `b095caca` 只改文档与 README（排除 `.md` 后零差异），应用代码与 `b095caca` 相同。`b095caca46a4a4188e2b26927327117c62326acb`（19:27 激活）是 CA2-07 Cloud/Agent 权限视图；再前一版 `55165e50` 为容量治理 P1、应用仍沿用 `7b346c90`。来源签名保持启用，.env/token/schema 未因这两版修改 |
+| status / verify | `fec77afb`：ok、5/5 healthy、零 warning，release/running SHA 一致；verify verified：`20261001T164344Z-fec77af.json`，e2e_remote_safe / minimax:MiniMax-M3。`753c1a49`：同样 5/5 零 warning，verify `20261001T161142Z-753c1a4.json`。前一版 `01cf47cd`：ok、5/5 healthy、零 warning，release/running SHA 一致（2026-09-29 复核）；统一 verify verified：`20260928T131738Z-01cf47c.json`，e2e_remote_safe / minimax:MiniMax-M3。`b095caca` 的 verify 为 `20260928T112855Z-b095cac.json`；CA2-07 专项与全量成绩属 `b095caca`，未对 `01cf47cd` 重跑 |
 | CA2-06/12 后端验证 | `89b19956`：10148 passed / 34 skipped / 9 warnings，4727.69 s；四道门禁、edge smoke、Go 五包通过；有状态故障实验 16/16。工作树额外缺两项 NLU vocab，不混同主仓 32 skip 口径；[本包 §8](../design/2026-09-27-v2-vehicle-state-and-simulation.md#8-验证登记) |
 | 前版后端与门禁（CA2-07） | `b095caca` 干净工作树全量 10309 passed / 35 skipped / 11 warnings，463.81 s；四门禁、smoke 与 [CI 8 项](https://github.com/SuperdeMan/cockpit-agent/actions/runs/36414421462) success。35 skip 按 Windows/POSIX/本地服务等条件登记，11 warning 为既有 Starlette/AsyncMock/Bert 弃用；实现提交 `0265bc40` 的 10293/34/11、567.24 s 单独留档，不转借 |
 | 来源条件与图标专项（历史） | release/runner `56409fef`：文字六句 ×3 为 17/18，图标两句 ×3 为 6/6；已派发手册条件完整，6 份受控图标 hash 相同。共 35 次调用仅 Planner、均 pinned MiniMax-M3；零动作/确认/26 键车态差异/证据错误/残留挂起。不转写为 `7b346c90` 或整本新成绩 |
@@ -61,8 +61,8 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 来源条件批发布与容量（历史） | `56f92838` 首趟 apply 未创建候选上传/构建目录，原因未定；重新只读预检后按原 API 重试成功。旧获批 580 项本轮仍报告 0B，未追加删除；后续只读空闲约 32.01 GiB，不归为本次清理成果。阶段诊断与边界见 [来源条件 §4](../design/2026-09-28-manual-source-evidence-guard.md#4-首版文字发布与精确证据) |
 | 云端容量清理（2026-09-28） | 经用户批准：保留 `56409fef` / `56f92838` / `0a589e14`，删其余 20 个 release 镜像集（含 `4c1f479`，其目录保留）与 19 个 release 目录、重复源码/上传包、09-13 及更早备份 405 个、5 个 08-17/18 迁移包（元数据先归档本地），构建缓存 `until=24h`（同条件补 `--all`）。可用 31.28 → 46.87 GiB；current、运行容器、卷、共享模型与构建证据未变；status 5/5 零 warning，verify `20260928T073945Z-56409fe.json`。第二轮删除首版引导残留（含 1.13 GB 镜像归档）与两份过期 .env 副本等无用内容，可用 48.08 GiB，status 5/5；构建缓存按用户要求保留。过程与保留项见 [history](../agents-history.md)；`.artifacts/cloud-capacity-20260928/` |
 | 容量治理 P0 / P1（2026-09-28） | [方案](../design/2026-09-28-cloud-host-capacity-governance.md) P0 `66d68f64`、P1 `48007778` + `887b983c` 已启用：基础设施锚当时为 `a3346202`，2026-09-29 起为 `7c34debf`（`1eb2bcf1`，经新入库的 `dev_stack infra-approval` 批准；其他工作树需基于 main ≥ `1eb2bcf1` 才能部署）；发布 / 回滚后按策略退役旧 release，备份 GFS 轮转（首次手动 apply：备份 119 → 24 套）。随后发布 `55165e50`，发布事务内自动回收首跑：退役 `56f92838`、收尾 `55165e50` / `7b346c90`（删 52 个 tag、3 个目录，当前版本别名因在用跳过），激活前备份轮转 25 套均在策略内；服务器上恰 3 套 release 镜像。status 5/5 零 warning、可用 59.95 GiB，verify `20260928T094959Z-55165e5.json`。P2 `a53034b6` 已安装（18:39 CST）：主机级 `host-capacity-gc` 每小时给构建缓存封顶到 20 GiB（`buildx du` 显示约 21.47GB）、删除 7 天以上的 core dump，journald 上限 1G；不在基础设施锚内，见 `deploy/host/README.md`。首夜 17 轮全部 success、回收 0B（Total 20.6GB，未达上限）；只上传未构建的包（含审批上传目录）自 `1eb2bcf1` 起 72 h 后退役 |
-| CA2-08 持久准入 | `753c1a49` 全量 10424 passed / 35 skipped / 11 warnings（637.29 s），四门禁、smoke 13/13；dry-run 零阻断、apply/status/verify 见上两行；在线只读核对 17 Agent / 155 能力、零 durable 声明、契约漂移仍只有 road-safety 4 项，生产 task_ledger 无新列。22 个准入场景在嵌入式 PostgreSQL 16.2 上 22/22，注入缺陷 17 处全部判红。schema 切片 `4775b11f` 未授权未部署，摘要 `55c23829…cdb23`；未重跑固定语料，不转借上一版读数；[本包 §7](../design/2026-10-01-v2-durable-operation-admission.md#7-发布与线上核对2026-10-02) |
-| v2 / Jev | CA2-02–07/12 首版已落地；CA2-08 机制首版已部署但未启用（schema 待授权）。CA2-07 只关闭 Cloud/Agent 模型上下文路径，本包不替 S2S、调试 HTTP、正式全局身份或设备签收。Decide、T1e、OEM、确认绑定与恢复对账仍未实现 |
+| CA2-08 持久准入 | `753c1a49` 全量 10424 passed / 35 skipped / 11 warnings（637.29 s），四门禁、smoke 13/13；dry-run 零阻断、apply/status/verify 见上两行；在线只读核对 17 Agent / 155 能力、零 durable 声明、契约漂移仍只有 road-safety 4 项，生产 task_ledger 无新列。22 个准入场景在嵌入式 PostgreSQL 16.2 上 22/22，注入缺陷 17 处全部判红。切片 D `fec77afb`：全量 10428 / 35 / 11（522.94 s），在线核对恰 2 项 durable、生产已有新列、无操作头的写请求在准入前被拒；真栈并发双确认两轮消费同一挂起、只下一单 `DC7AA7F65555`、另一轮答「已经处理过」，退款清理完成。两版均未重跑固定语料，不转借上一版读数；[本包 §7](../design/2026-10-01-v2-durable-operation-admission.md#7-发布与线上核对2026-10-02) |
+| v2 / Jev | CA2-02–08/12 首版已落地；CA2-08 首批只覆盖演示商户两项通用写工具。CA2-07 只关闭 Cloud/Agent 模型上下文路径，本包不替 S2S、调试 HTTP、正式全局身份或设备签收。Decide、T1e、OEM、确认绑定与恢复对账仍未实现 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。

@@ -1,7 +1,8 @@
 # CA2-08：执行方持久操作准入
 
-> 状态：2026-10-02 机制（切片 B）与发布闸 schema 批准通道（切片 C）已部署 `753c1a49`，零行为变化已线上核对；
-> **schema 切片 D（task_ledger 新列 + 首批 durable 声明）未授权、未合入、未部署**，只在分支 `claude/ca2-08-operation-admission`。
+> 状态：2026-10-02 全部切片已部署。机制与发布闸通道先以 `753c1a49` 惰性上线；经用户授权，schema 切片 D
+> （task_ledger `operation` 列 + mcp-bridge 通用写工具 durable）以 `fec77afb` 带一次性 schema 摘要上线，并完成真栈并发双确认。
+> 车端日志、确认绑定、因果证据与恢复对账仍归 CA2-09–11。
 > 依赖：[CA2-03 任务身份](2026-09-26-v2-task-identity.md)、[CA2-05 能力契约](2026-09-27-v2-capability-contract.md)；
 > 故障验收沿用 [CA2-12](2026-09-27-v2-vehicle-state-and-simulation.md) 的显式注入思路。排序见[路线图](../roadmap.md)。
 > 本包只建立「执行前有持久承诺」这一层；确认绑定（CA2-09）、因果证据（CA2-10）、车端日志与对账（CA2-11）不在本包。
@@ -165,10 +166,10 @@ task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`ass
 
 | 事项 | 类别 | 状态 |
 |---|---|---|
-| 发布闸 database_schema 一次性摘要批准通道 | 发布治理 | 待用户确认 |
-| task_ledger 增加 `operation` 列 | 数据库 schema | 待授权 |
-| mcp-bridge 通用写工具声明 durable | 能力契约 | 随 schema 一起启用 |
-| 真栈演示商户并发双确认 | 商户写（演示，无真实交易） | 待逐轮授权 |
+| 发布闸 database_schema 一次性摘要批准通道 | 发布治理 | 已实现，2026-10-02 首次使用 |
+| task_ledger 增加 `operation` 列 | 数据库 schema | 用户 2026-10-02 授权，`fec77afb` 上线 |
+| mcp-bridge 通用写工具声明 durable | 能力契约 | 随 schema 上线 |
+| 真栈演示商户并发双确认 | 商户写（演示，无真实交易） | 用户授权一次，已执行并清理 |
 
 ## 6. 实现切片与状态
 
@@ -177,7 +178,7 @@ task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`ass
 | A | 本文、conventions 登记 | 不需授权 | 已提交 |
 | B | `runtime/operation.py`；能力契约 `admission` 键；Step 身份与 header；SDK 准入（无声明时不触发）；共享内存孪生 | 不需授权；部署后零行为变化 | 已部署 `753c1a49` |
 | C | 发布闸 database_schema 一次性摘要批准 | 只增加可选通道，使用仍需逐次授权 | 已合入 main，尚未被使用 |
-| D | `ledger_schema.sql` 新列 + mcp-bridge 通用写工具声明 durable | **需授权**（schema） | 离线通过，仅在分支 `claude/ca2-08-operation-admission` |
+| D | `ledger_schema.sql` 新列 + mcp-bridge 通用写工具声明 durable | **需授权**（schema） | 已授权，`fec77afb` 已部署 |
 
 ### 6.1 离线证据（实现提交见 git log）
 
@@ -210,3 +211,27 @@ task_ledger 已在 `cloud_data_migration_lib`、`store_identity_evidence`、`ass
 
 切片 D 授权后的验收：带 `--approve-database-schema-sha256` 的 dry-run / apply、独立 status / verify、
 在线只读核对（列存在、恰好两项 durable、对它们发不带操作头的写请求在准入前被拒），以及可选的演示商户并发双确认。
+
+### 7.1 切片 D 发布（2026-10-02，`fec77afb`）
+
+| 验证面 | 精确版本 / 结果 |
+|---|---|
+| 本地全量 | `fec77afb`：10428 passed / 35 skipped / 11 warnings，522.94 s（比 `753c1a49` 多 4 个 mcp-bridge 用例）；四门禁、smoke 13/13、`capability_inventory --check` 通过 |
+| 真 PG | 同一 22 个场景用 `fec77afb` 自带的 `ledger_schema.sql` 建列，嵌入式 PostgreSQL 16.2 上 22/22 |
+| 发布闸 | 无批准计划 rc=3，唯一阻断 `agents/_sdk/ledger_schema.sql`（database_schema），摘要 `55c23829…cdb23` 与授权一致；带 `--approve-database-schema-sha256` 的 dry-run 零阻断，apply submitted（`753c1a49` → `fec77afb`） |
+| status / verify | ok、release/running 均为 `fec77afb`、5/5 healthy、零 warning；verify `20261001T164344Z-fec77af.json`（e2e_remote_safe / MiniMax-M3）verified |
+| 在线只读核对 | durable 恰为 `shop.order`、`shop.order_cancel`；漂移与旧读取方隐藏集合 = road-safety 4 项 + 这 2 项；生产 PG 有 `operation jsonb NOT NULL DEFAULT '{}'`；对 `shop.order` 发不带操作头的写请求，在准入前被拒（`operation_id_required`，零动作） |
+| 真栈并发双确认 | `scripts/probe_operation_double_confirm.py`（runner `37e2f436`），合成签名身份、演示商户。预览后账本 `operation:accepted`（awaiting）；两条 WS 同时确认，两轮都消费了同一条挂起（同一 `closed_operation_ids`）——编排器确实把同一步派发了两次；一次下单 `DC7AA7F65555`，另一次由执行方答「这个操作已经处理过了，我没有重复执行」。确认后 `operation:done` 1、`mcp_order:done` 1；随后经 durable 准入的 `shop.order_cancel` 退款完成。发布前后连续 |
+
+第一次运行在本地签名阶段失败（身份车道要求 `<run_id>-<后缀>` 形式的 user_id），没有发出任何请求；修正后第二次运行即上表结果。
+该合成用户的 4 行账本（2 operation + 2 mcp_order）保留作证据，没有删除；演示订单已退款，演示商户状态只在其进程内存中。
+证据索引 `.artifacts/ca2-08/evidence-manifest.json`。
+
+## 8. 已知边界（本包不处理）
+
+- **同轮再规划**：T2 / 改派产生的新步骤即新 operation；同轮重复副作用仍只靠既有指纹防抖，后者只覆盖带 actions 的 OK，
+  Agent 内部写（商户下单等）不在内。需确认的能力会重新挂确认，不会静默执行。
+- **结局写失败**：预览后的结局写失败会让记录停在 executing；随后的确认 120 s 内答 in_progress、之后答 unknown，用户需重新发起——宁可不执行。
+- **保留与删除**：kind=operation 行没有轮转；task_ledger 的生产隐私删除仍沿 §9.13 的既有缺口。
+- **观测**：准入决定只进结构化日志（`agent.sdk.operations`），不进 span / dashboard，归 CA2-10。
+- **范围**：首批只有演示商户的两项通用写工具；workflow、reminder/scene/navigation 与端侧车控没有声明，扩大前逐项评估「账本不可用即拒绝」的代价。

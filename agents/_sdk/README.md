@@ -7,7 +7,7 @@
 CA2-05 已接入版本 2 能力契约，声明、准入、版本探测和参数检查见 [实施记录](../../docs/design/2026-09-27-v2-capability-contract.md)。
 CA2-07 已在 SDK 中落实主体读取权限和接收方 context_scopes 的交集；个人历史/记忆未读取与空记录分开，车辆信息只接受有界、同车的校验器投影，不回落旧 Memory KV 车态。详见 [视图契约](../../docs/design/2026-09-28-v2-permissioned-context-view.md)。
 CA2-08 已在 SDK receiver 接入持久准入：声明 `contract.admission: durable` 的能力在 handler 前落 task_ledger（kind=operation）记录，
-重复投递不再执行、存储不可用即拒绝，见 [持久准入](../../docs/design/2026-10-01-v2-durable-operation-admission.md)；所需列与首批声明待 schema 授权。
+重复投递不再执行、存储不可用即拒绝，见 [持久准入](../../docs/design/2026-10-01-v2-durable-operation-admission.md)；2026-10-02 起 task_ledger 已有该列，首批声明为演示商户两项通用写工具。
 测试可用 `agents._sdk.testing.MemoryOperationLedger`（真 PG 探针为它的保真度背书）。CA2-11 的车端日志与恢复对账仍待实现。
 当前 ledger 的 best-effort 不能直接套用到未来承诺可恢复的副作用工作流；新增写档须先具备可靠落账和对账。
 Jev 只通过拟新增的网关 Decide client 访问，Agent 不自行调用供应商或复制权限判据。
