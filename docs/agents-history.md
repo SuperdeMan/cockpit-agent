@@ -10396,3 +10396,22 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   p50/p95/p99 7375/15781/19438 ms；业务红 9 条全是既有签名类别（「未走手册」5、V207 缺「露营」2、V201 第 3 轮手册没检索到「刚才你说…」2）。
   只读核对：本次 210 条轮次全部带代际戳，Memory 拒收 0、报错 0。授权后的删除栅栏探针（runner `c624664d`，合成用户 `probe-memfence-*`）PASS：forget 把代际从 0 推到 1；用 forget 前的代际重放轮次、条目、画像三种写入全部被拒（`stale_memory_epoch`）、会话为空；新代际写入照收；清理后会话与代际键都已删除。
 - 2026-10-03 用户接受两处方案差异，下一步做 S2。
+
+## 2026-10-03：CA2-15 S2 声音证明与隐私投影（`fa9cbe9e`）+ S1b 的 CI 热修（`92e19291`）
+
+- 热修：`c624664d` 提交的真栈探针 `scripts/probe_memory_epoch.py` 只做了语法检查就入库；S1b 的源码对账测试会扫描 `scripts/` 并钉死写入方集合，
+  之后 4 次推送（含另一会话的纯文档提交）CI 全红。`92e19291` 把 `scripts/probe_*.py` 排除出扫描（与 `test/` 下的 e2e 同理），CI 转绿。
+- 起因（复核）：云端与车端直接信 meta 里的 `occupant_id` / `occupant_name`，任何拿着车辆 token 的客户端都能自称任意乘员；座舱里没认出的声音被当成车主、
+  读到车主的全部记忆；S2S `session.start` 信客户端 `user_id`、`occupant` 帧凭一句话换回流归属；手机调 llm-gateway 不带任何凭证。
+- 用户决定：没认出的声音只读普通偏好（口径 A）；只有车机免唤醒语音会被判「没认出」（打字、按键说话与手机按车主处理）；没认出的人说的话只进会话历史、不抽取。
+- 实现（[设计 §7](design/2026-10-02-v2-memory-identity-governance.md)）：identify 只在 `accept` 时签发 10 分钟的 `voice.v1` 证明（密钥由网格私钥按独立上下文派生，不新增密钥）；
+  云端、车端本地轮次与 S2S 只认证明换乘员与称呼；HMI 声明免唤醒语音没认出 ⇒ `memory_projection=normal_only`，由 Memory 用一个判据
+  （`runtime/memory_projection.py`）对 GetContext / Recall / 人称地点 / 关系执行，Agent 经服务端自有 meta 拿到、SDK 每次读都带；这一轮的话带
+  `speaker_unverified`，不触发、也不进抽取。S2S `session.start` 只为 token 主体开会话（Bearer 头或帧字段 `auth_token`），`user_id` 不符即 1008；
+  HMI 与手机都带上 token。声纹仍不进权限、确认、VAL 与支付。
+- 坑：用例参数里放了带签发时间的证明，xdist 各 worker 收集到的用例 ID 不同、整轮报错；`P1`（去掉隐私等级判据）在 Memory 用例里没变红——
+  种子里的敏感条目同时被谓词 / scope 排除，由判据单测里「偏好谓词但等级为 sensitive」那条抓到；部署进容器的文件是 CRLF，按 LF 哈希比对会全错；
+  手机 jest 整套并行时 5 个界面套件因负载超时，单独重跑全过。
+- 验证：全量 10689 / 35 / 11，四门禁、smoke 13/13；注入缺陷 19 处全部判红；HMI 364、手机 tsc / eslint / jest 通过。发布：dry-run 零阻断，
+  status 5/5 零 warning，verify `20261002T231742Z-fa9cbe9.json`；线上只读核对：无 token、只自称 `user_id`、伪造 token 三种 S2S `session.start` 都被 1008 关闭（不建会话、不写数据）；Memory / 云端 / llm-gateway / 车端四个容器里的关键文件与提交一致（部署包从 Windows worktree 打出，是 CRLF 形式）；固定语料 20×3：60/60、99 轮，证据错误 0、open operations 0，221 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 6609/21828/31516 ms；业务红 4 条全是既有签名类别（「未走手册」3，其中 V211 因此缺「2.9」；V207 缺「露营」）；手机新包 `xiaozhou-companion-prod-release-fa9cbe9ea-20261003-0726.apk`：构建 exit 0、`BUILD SUCCESSFUL`、包内 `variant=prod build=fa9cbe9ea`；装到测试机 OPPO，设备上 `base.apk` 与本地 SHA-256 一致、非 DEBUGGABLE。
+- 未做：免唤醒语音投影与手机 S2S 的真人语音实测；小米未装新包（S2S 挡位会被拒，classic 不受影响）。CA2-15 剩 S3（未批准）。

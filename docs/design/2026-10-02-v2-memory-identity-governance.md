@@ -1,7 +1,7 @@
 # CA2-15：偏好修订、任务约束、多人隔离与未知声音的隐私投影
 
 > 状态：2026-10-02 **已决策**（§4）：本轮只做 S1；S1 拆成 S1a（端点按 token 解析主体，§5）与 S1b（删除总线与代际，§6）。
-> **S1a 已部署 `e7766e98`**（§5.5）；**S1b 已部署 `910fd572`**（§6，不改 schema，代际存 Redis；§6.5）。S1 完成；**S2 已实现、待发布**（§7）；S3 未批准。
+> **S1a 已部署 `e7766e98`**（§5.5）；**S1b 已部署 `910fd572`**（§6，不改 schema，代际存 Redis；§6.5）。S1 完成；**S2 已部署 `fa9cbe9e`**（§7.7）；S3 未批准。
 > 完成判据（实施方案 CA2-15）：显式修改胜过旧偏好；任务结束不复活旧约束；
 > 未认证声音不读敏感个体记忆；forget 与在途治理同代际失效。依赖 [CA2-03 任务身份](2026-09-26-v2-task-identity.md)、
 > [CA2-07 权限视图](2026-09-28-v2-permissioned-context-view.md)。排序见[路线图](../roadmap.md)。
@@ -155,7 +155,7 @@ S2S 的 `session.start` 在生产里同样直接信客户端帧里的 `user_id`�
   61 个代际键都在代数 0；运行期间 75 分钟内 Memory 拒收 0 次、报错 0 次。
 - 授权后的删除栅栏探针（runner `c624664d`，合成用户 `probe-memfence-*`）PASS：forget 把代际从 0 推到 1；用 forget 前的代际重放轮次、条目、画像三种写入全部被拒（`stale_memory_epoch`）、会话为空；新代际写入照收；清理后会话与代际键都已删除。证据 `.artifacts/ca2-15/910fd572-memory-epoch-probe.json`（本地，不入库）。
 
-## 7. S2：声音证明与隐私投影（已实现，待发布）
+## 7. S2：声音证明与隐私投影（已部署 `fa9cbe9e`）
 
 ### 7.1 现状（2026-10-03 复核）
 
@@ -221,3 +221,12 @@ S2S 的 `session.start` 在生产里同样直接信客户端帧里的 `user_id`�
 - 全量 10689 / 35 / 11，四门禁与 smoke 13/13；HMI 364 全过、`vite build` 通过、类型检查维持 25 条基线；手机 `tsc` 与 `eslint` 通过，
   jest 1160 条——整套并行时 5 个界面套件因机器负载超时，单独重跑全部通过。
 - 坑：用例参数里直接放 `va.issue(...)` 生成的证明（带签发时间），xdist 各 worker 收集到的用例 ID 不同，整轮直接报错；改成按场景名参数化。
+
+### 7.7 发布与真栈核对（`fa9cbe9e`）
+
+- 发布：从隔离 worktree 发布；dry-run 零阻断、无 schema / CI 变更、基础设施摘要不变；status 5/5 零 warning，verify `20261002T231742Z-fa9cbe9.json`。
+- 线上只读核对：无 token、只自称 `user_id`、伪造 token 三种 S2S `session.start` 都被 1008 关闭（不建会话、不写数据）；Memory / 云端 / llm-gateway / 车端四个容器里的关键文件与提交一致（部署包从 Windows worktree 打出，是 CRLF 形式）。证据 `.artifacts/ca2-15/fa9cbe9e-s2-live-check.json`（本地，不入库）。
+- 固定语料 20×3：60/60、99 轮，证据错误 0、open operations 0，221 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 6609/21828/31516 ms；业务红 4 条全是既有签名类别（「未走手册」3，其中 V211 因此缺「2.9」；V207 缺「露营」）。
+- 手机新包 `xiaozhou-companion-prod-release-fa9cbe9ea-20261003-0726.apk`：构建 exit 0、`BUILD SUCCESSFUL`、包内 `variant=prod build=fa9cbe9ea`；装到测试机 OPPO，设备上 `base.apk` 与本地 SHA-256 一致、非 DEBUGGABLE。
+- 未做：免唤醒语音「没认出 ⇒ 只读普通偏好」的真栈语音实测（要真人在车机上说话、且账户已录声纹）；手机 S2S 的真机语音实测（要在设置里切到 S2S
+  并说话）；**小米（你日常用的那台）还没装新包**——它在 S2S 挡位下会被 1008 拒绝，默认的 classic 链路不受影响。

@@ -7,11 +7,11 @@
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。当前 release 为 `910fd572eeaa1f0ecde8a5ed1a5b840470ea7c6a`：CA2-15 S1b 删除与在途写入同代际失效（Memory owner 代际），叠加在 S1a 记忆 / 声纹 HTTP 端点只按 Bearer 主体办事之上，再叠加在 CA2-11 车端操作日志与接收端幂等、超时后的恢复查询，叠加车端条件句整句上云的修复，叠加在 CA2-10 执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）之上，
+**QA 验收仍非全绿**。当前 release 为 `fa9cbe9eac406b355138b325f1f351d270653744`：CA2-15 S2 乘员只认声音证明、车机免唤醒语音没认出时只读普通偏好、S2S 只为 token 主体开会话，叠加在 S1b 删除与在途写入同代际失效（Memory owner 代际）之上，叠加在 S1a 记忆 / 声纹 HTTP 端点只按 Bearer 主体办事之上，再叠加在 CA2-11 车端操作日志与接收端幂等、超时后的恢复查询，叠加车端条件句整句上云的修复，叠加在 CA2-10 执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）之上，
 叠加在 CA2-09 挂起一次消费与确认绑定（含车端挡位复核）和 CA2-08 之上。CA2-08 执行方持久准入已启用——
 task_ledger 新增 `operation` 列（经用户授权与发布闸一次性 schema 摘要上线），演示商户 `shop.order` / `shop.order_cancel`
 先落准入记录再执行；见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)。其下仍包含 CA2-07 的 Cloud/Agent 权限化上下文视图；主体权限、接收需求与在途读取失效机制已落地。
-权限专项和固定语料已复验；记忆 / 声纹 HTTP 端点已按 token 主体收口（CA2-15 S1a），S2S 直接历史与 `session.start` 主体、collector 调试面与量产全局身份边界未关闭；车态仍是模拟来源。
+权限专项和固定语料已复验；记忆 / 声纹 HTTP 端点与 S2S `session.start` 已按 token 主体收口（CA2-15 S1a / S2），S2S 直接历史、collector 调试面与量产全局身份边界未关闭；车态仍是模拟来源。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
 v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定语料三次复验为 101 测量轮，raw 6 红：
@@ -68,7 +68,8 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | CA2-11 车端操作日志 | `b38e5afc` 全量 10584 / 35 / 11，四门禁、smoke 13/13；22 个 CA2-08 准入场景在 SQLite 上全过，内存 / SQLite / 嵌入式 PostgreSQL 三份账本同场景一致；注入缺陷 18 处全部判红；线上卷与库已建立；固定语料 20×3：60/60 完成、99 轮，业务红 3（既有签名），证据错误 0、open operations 0，211 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；其中 15 轮后备箱确认问句经车端准入，线上日志随之出现 15 条记录、0 条 orphaned，云端 step.edge 10–14 ms（含契约探测，一次 292 ms 离群）；p50/p95/p99 7328/18500/28468 ms；授权后的后备箱探针：确认开 / 关各落一条 done、0 orphaned、车态复原。[本包 §4](../design/2026-10-02-v2-vehicle-operation-log.md#4-验证) |
 | CA2-15 S1a 端点鉴权 | `e7766e98` 全量 10614 / 35 / 11，四门禁、smoke 13/13；变异 6 条全部判红；status 5/5，verify `20261002T125956Z-e7766e9.json`；真栈只读核对：无 token / 伪造 token → 401、HMI token → 200、冒充他人 `user_id` → 403，线上 HMI 模块带 bearer 且 token 已注入；三个 e2e 本地栈用例未在云端运行，固定语料未重跑（对话链路未改）。[本包 §5](../design/2026-10-02-v2-memory-identity-governance.md#5-s1a端点按-token-解析主体已部署-e7766e98) |
 | CA2-15 S1b 删除代际 | `910fd572` 全量 10637 / 35 / 11，四门禁、smoke 13/13；注入缺陷 14 处全部判红；status 5/5，verify `20261002T153258Z-910fd57.json`；固定语料 20×3：60/60、105 轮，证据错误 0、open operations 0，196 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 7375/15781/19438 ms；业务红 9 条全是既有签名类别（「未走手册」5、V207 缺「露营」2、V201 第 3 轮手册没检索到「刚才你说…」2）；只读核对：本次 210 条轮次全部带代际戳，Memory 拒收 0、报错 0；授权后的删除栅栏探针（runner `c624664d`，合成用户 `probe-memfence-*`）PASS：forget 把代际从 0 推到 1；用 forget 前的代际重放轮次、条目、画像三种写入全部被拒（`stale_memory_epoch`）、会话为空；新代际写入照收；清理后会话与代际键都已删除。[本包 §6](../design/2026-10-02-v2-memory-identity-governance.md#6-s1b删除与在途写入同代际失效已部署-910fd572) |
-| v2 / Jev | CA2-02–11/12 首版已落地，CA2-15 S1（S1a 端点鉴权、S1b 删除代际）已部署；CA2-08 首批只覆盖演示商户两项通用写工具。CA2-07 只关闭 Cloud/Agent 模型上下文路径，本包不替 S2S、调试 HTTP、正式全局身份或设备签收。Decide、T1e、OEM、车端日志的后台同步与补偿仍未实现（CA2-11 首版只做按需恢复查询） |
+| CA2-15 S2 声音证明 | `fa9cbe9e` 全量 10689 / 35 / 11，四门禁、smoke 13/13；注入缺陷 19 处全部判红；status 5/5，verify `20261002T231742Z-fa9cbe9.json`；线上只读核对：无 token、只自称 `user_id`、伪造 token 三种 S2S `session.start` 都被 1008 关闭（不建会话、不写数据）；Memory / 云端 / llm-gateway / 车端四个容器里的关键文件与提交一致（部署包从 Windows worktree 打出，是 CRLF 形式）；固定语料 20×3：60/60、99 轮，证据错误 0、open operations 0，221 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 6609/21828/31516 ms；业务红 4 条全是既有签名类别（「未走手册」3，其中 V211 因此缺「2.9」；V207 缺「露营」）；手机新包 `xiaozhou-companion-prod-release-fa9cbe9ea-20261003-0726.apk`：构建 exit 0、`BUILD SUCCESSFUL`、包内 `variant=prod build=fa9cbe9ea`；装到测试机 OPPO，设备上 `base.apk` 与本地 SHA-256 一致、非 DEBUGGABLE；免唤醒语音投影与手机 S2S 的真人语音实测未做，小米未装新包。[本包 §7](../design/2026-10-02-v2-memory-identity-governance.md#7-s2声音证明与隐私投影已部署-fa9cbe9e) |
+| v2 / Jev | CA2-02–11/12 首版已落地，CA2-15 S1（S1a 端点鉴权、S1b 删除代际）与 S2（声音证明、隐私投影）已部署；CA2-08 首批只覆盖演示商户两项通用写工具。CA2-07 只关闭 Cloud/Agent 模型上下文路径，本包不替 S2S、调试 HTTP、正式全局身份或设备签收。Decide、T1e、OEM、车端日志的后台同步与补偿仍未实现（CA2-11 首版只做按需恢复查询） |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。
