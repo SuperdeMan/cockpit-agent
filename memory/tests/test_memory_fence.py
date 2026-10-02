@@ -311,7 +311,9 @@ def _production_sources():
         for base, dirs, files in os.walk(os.path.join(_ROOT, top)):
             dirs[:] = [d for d in dirs if d not in ("tests", "node_modules", "__pycache__")]
             for name in files:
-                if name.endswith(".py") and not name.startswith("test_"):
+                # Manual real-stack probes (scripts/probe_*.py) are test tools like the e2e
+                # scripts under test/; the epoch probe replays stale epochs on purpose.
+                if name.endswith(".py") and not name.startswith(("test_", "probe_")):
                     yield os.path.join(base, name)
 
 
