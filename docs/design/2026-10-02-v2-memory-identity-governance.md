@@ -1,7 +1,7 @@
 # CA2-15：偏好修订、任务约束、多人隔离与未知声音的隐私投影
 
 > 状态：2026-10-02 **已决策**（§4）：本轮只做 S1；S1 拆成 S1a（端点按 token 解析主体，§5）与 S1b（删除总线与代际，§6）。
-> **S1a 已部署 `e7766e98`**（§5.5）；**S1b 已部署 `910fd572`**（§6，不改 schema，代际存 Redis；§6.5）。S1 完成；S2 / S3 未批准。S2 / S3 未批准。
+> **S1a 已部署 `e7766e98`**（§5.5）；**S1b 已部署 `910fd572`**（§6，不改 schema，代际存 Redis；§6.5）。S1 完成；**S2 已实现、待发布**（§7）；S3 未批准。
 > 完成判据（实施方案 CA2-15）：显式修改胜过旧偏好；任务结束不复活旧约束；
 > 未认证声音不读敏感个体记忆；forget 与在途治理同代际失效。依赖 [CA2-03 任务身份](2026-09-26-v2-task-identity.md)、
 > [CA2-07 权限视图](2026-09-28-v2-permissioned-context-view.md)。排序见[路线图](../roadmap.md)。
@@ -154,3 +154,70 @@ S2S 的 `session.start` 在生产里同样直接信客户端帧里的 `user_id`�
 - 只读核对（Memory 容器内，只数数、不读对话内容）：本次基线 60 个会话共 210 条轮次（105 轮 × 2），**全部带代际戳、无一缺失**；
   61 个代际键都在代数 0；运行期间 75 分钟内 Memory 拒收 0 次、报错 0 次。
 - 授权后的删除栅栏探针（runner `c624664d`，合成用户 `probe-memfence-*`）PASS：forget 把代际从 0 推到 1；用 forget 前的代际重放轮次、条目、画像三种写入全部被拒（`stale_memory_epoch`）、会话为空；新代际写入照收；清理后会话与代际键都已删除。证据 `.artifacts/ca2-15/910fd572-memory-epoch-probe.json`（本地，不入库）。
+
+## 7. S2：声音证明与隐私投影（已实现，待发布）
+
+### 7.1 现状（2026-10-03 复核）
+
+| 面 | 现状 |
+|---|---|
+| 云端 | `build_context` 直接信 meta 的 `occupant_id` / `occupant_name`；车端本地轮次同样按 meta 写进对应乘员 |
+| HMI | 只有免唤醒链路（唤醒词 + 续问）做声纹识别，`accept` 才换乘员，其余回 `primary`；按键说话与打字恒 `primary` |
+| 手机 | 没有说话人概念，`occupant_id` 写死 `primary`、不带设备标识；身份就是引导页填的 token。调 llm-gateway（ASR / TTS / S2S）**不带任何凭证**，S2S `session.start` 只有 `session_id`，回流轮次无主 |
+| S2S | `session.start` 在生产里信客户端 `user_id`；`occupant` 帧热更回流归属，同样无证明 |
+
+### 7.2 判据
+
+1. **声音证明**：llm-gateway `/api/voiceprint/identify` 在 `decision=accept` 时签发短期证明 `voice.v1.<payload>.<sig>`，载荷为
+   token 主体、乘员、称呼、签发与过期时间（10 分钟）。HMAC-SHA256，密钥由各服务已挂载的网格私钥按独立上下文派生（与删除总线同一做法，
+   不新增密钥、不改 `.env`）。签发与校验只有一份实现（`runtime/voice_attestation.py`）。
+2. **乘员只认证明**：meta 里的 `occupant_id` / `occupant_name` 不再被信任。证明有效（签名对、未过期、主体等于本请求的 token 主体）
+   ⇒ 该乘员与称呼；否则乘员按 `primary`（存量语义）。云端与车端本地轮次同一判据。
+3. **没认出 ⇒ 投影**：HMI 在声纹开启、免唤醒语音这一轮没有拿到 accept 证明时声明 `voice_identity=unrecognized`；云端据此把本轮的记忆读取
+   投影为「只读普通偏好」——条目须 `kind=semantic`、`privacy_level=normal`、谓词不在 `identity.` / `person.` / `place.`、
+   scope 不在身份 / 人物 / 地点、且不是关于别人的（`subject` 为空）；人称地点解析与关系查询返回空；称呼不下发。
+   会话历史照常（座舱里当面说出来的对话）。
+4. **执行面在 Memory**：`GetContext` / `Recall` / `ResolvePersonPlace` / `QueryRelations` 新增 `projection` 字段，Memory 用同一个判据
+   （`runtime/memory_projection.py`）过滤定向读与非定向召回；云端读时带上，Agent 经服务端自有 meta `memory_projection` 拿到、SDK 读时带上，
+   客户端 prefs 与 step meta 里的同名键一律剔除；源码对账所有生产读调用都传了它。
+5. **S2S 绑定主体**：`session.start` 必须带 token（帧字段 `auth_token`，浏览器的 WebSocket 不能设请求头；E2E 签名身份照旧），
+   `user_id` 可省、给了必须等于 token 主体，否则 1008；`occupant` 帧必须带证明，否则按 `primary`。手机 S2S 补带 token（需新 APK）。
+6. **不变**：声纹仍不参与权限、确认、VAL 与支付（`test_voiceprint_not_auth.py` 的红线不动）——投影只决定「这一轮能读到哪些个性化记忆」，
+   不授予、也不收回任何动作权限。
+
+### 7.3 两条口径（2026-10-03 用户决定，均按推荐）
+
+- **哪些输入会被判「没认出」**：只有车机免唤醒语音（座舱里任何人都能触发的那条路）；打字、按键说话与手机按车主处理（与今天相同，
+  车主自己的操作不丢个人记忆）。更严的做法是按键说话也要识别（HMI 的按键链路要补 16k PCM 采集），或一切没有 accept 证明的请求都投影。
+- **没认出的人说的话进不进长期记忆**：照常落会话历史（归 `primary`），但不进长期记忆抽取——否则乘客说的「我喜欢 18 度」会被记成车主的偏好。
+
+### 7.4 兼容
+
+- HMI 随云端同一次发布；手机旧 APK 的 S2S 在发布后会被拒（1008），装新包后恢复；手机其它路径不受影响。
+- 证明 10 分钟过期：唤醒窗内锁定的乘员超时后按 `primary`，下一次唤醒自然重新识别。
+
+### 7.5 实现（2026-10-03）
+
+| 面 | 改动 |
+|---|---|
+| 共享判据 | `runtime/voice_attestation.py`（签发 / 校验，密钥按独立上下文从网格私钥派生，进程内缓存）；`runtime/memory_projection.py`（条目与 scope 两个判据，未知取值按最严） |
+| Memory | `GetContext` / `Recall` / `ResolvePersonPlace` / `QueryRelations` 读 `projection`；`AppendTurn.speaker_unverified` 的轮次照常落会话、带标记，不触发抽取、也不进抽取窗口 |
+| llm-gateway | identify 只在 `accept` 时签发证明，签给 token 主体；S2S `session.start` 只认 token 主体（请求头 Bearer 或帧字段 `auth_token`，E2E 签名身份照旧），`user_id` 给了必须相等否则 1008；`session.start` 与 `occupant` 帧的乘员只认证明，`voice_identity=unrecognized` 让回流不进抽取 |
+| 云端 | `build_context` 的乘员与称呼只来自证明，裸的 `occupant_id` / `occupant_name` 不再进 prefs；HMI 声明没认出 ⇒ `memory_projection=normal_only` 与 `speaker_unverified`；召回带投影；Agent meta 的 `memory_projection` 由服务端写，客户端 prefs 与 step meta 里的同名键剔除；两次写轮次带标记 |
+| SDK | `fetch` / `recall` / `recall_read` / `resolve_person_place` 一律带 meta 里的投影（`recall_read` 不允许调用方改写）；会话历史不投影 |
+| 车端 | 本地轮次的乘员同一判据，未认出的轮次带标记写入 |
+| HMI | 识别器只在 `accept` 时保存证明；免唤醒语音的请求带 `voice_attestation` 或 `voice_identity=unrecognized`（声纹没开时什么都不带）；S2S `session.start` 带 token，`occupant` 帧带同一份身份 |
+| 手机 | S2S `session.start` 带这台手机配置的 token（需新 APK）；手机不做声纹识别，按车主处理 |
+
+### 7.6 验证（本地）
+
+- 用例：判据 21（证明：签名 / 主体 / 过期 / 未来签发 / 他钥 / 篡改 / 超长；投影：九类条目 + scope + 未知取值）；Memory 6（召回只剩普通偏好、
+  定向读同一判据、人称地点与关系为空、未知取值按最严、未认出的话进历史不抽取、抽取窗口跳过它们）；云端 12（有效证明换人、裸声明与坏证明按
+  primary、只有声明没认出才投影、打字 / 按键说话 / 手机按车主、Agent meta 投影不能伪造、召回与写轮次带投影与标记）；S2S 9（无凭证 / 只有
+  `user_id` / 与 token 主体不符 / 坏 token 一律 1008 且不建会话，Bearer 头与帧字段都可，乘员只认证明，未认出带标记）；identify 2；SDK 1；
+  车端 2（含一条改写：原用例用裸 `occupant_id` 区分乘员，现在签真证明）；HMI 3；手机 1。
+- 注入缺陷 19 处全部判红（验签、主体、过期、敏感等级、关于别人、未知取值、Memory 召回 / scope / 抽取触发、云端信 meta 乘员 / 不投影 /
+  召回丢投影、S2S 信声明的用户 / 信乘员帧、identify 什么都签、SDK 可改写投影、车端信 meta 乘员、HMI 留下非 accept 的证明、手机不带 token）。
+- 全量 10689 / 35 / 11，四门禁与 smoke 13/13；HMI 364 全过、`vite build` 通过、类型检查维持 25 条基线；手机 `tsc` 与 `eslint` 通过，
+  jest 1160 条——整套并行时 5 个界面套件因机器负载超时，单独重跑全部通过。
+- 坑：用例参数里直接放 `va.issue(...)` 生成的证明（带签发时间），xdist 各 worker 收集到的用例 ID 不同，整轮直接报错；改成按场景名参数化。

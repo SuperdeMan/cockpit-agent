@@ -105,7 +105,7 @@ export class HandsFreeController {
         // S2S 侧同步归位 primary：不归位的话上一个人会残留到下一唤醒窗，下一位乘员
         // 识别结果回来之前收束的自答轮会被记进上一个人的记忆。
         if (fsm === 'ARMED' || fsm === 'IDLE') {
-          if (this.vp) { this.vp.reset(); this.s2s?.setOccupant('primary', '') }
+          if (this.vp) { this.vp.reset(); this.s2s?.setOccupant('primary', '', this.voiceIdentity) }
         }
         this.deps.onOrbState(orb)
       },
@@ -391,6 +391,8 @@ export class HandsFreeController {
     })
     const asr = this.deps.getAsrConfig()
     this.s2s.start(s2sUrl(this.deps.audioApi), {
+      // CA2-15 S2：会话只为 token 的主体办事（浏览器的 WebSocket 不能设请求头，token 放进 start 帧）。
+      auth_token: memoryAuthToken(),
       session_id: meta.sessionId,
       user_id: meta.userId || '',
       vehicle_id: meta.vehicleId || '',
@@ -456,6 +458,18 @@ export class HandsFreeController {
     return this.vp?.displayName ?? ''
   }
 
+  /**
+   * CA2-15 S2：本唤醒窗的声音身份，免唤醒语音的请求带上它。声纹没开 ⇒ 空（按车主处理，今天的行为）；
+   * 认出 ⇒ 网关签发的证明（云端 / 车端只认它换乘员）；没认出或还没认出 ⇒ 声明 unrecognized
+   * （这一轮只读普通偏好、不进长期记忆抽取）。
+   */
+  get voiceIdentity(): Record<string, string> {
+    if (!this.vp) return {}
+    return this.vp.attestation
+      ? { voice_attestation: this.vp.attestation }
+      : { voice_identity: 'unrecognized' }
+  }
+
   // 声纹面：设置里开了才建。**它必须可以随时死掉**——识别器不存在时 occupantId 恒 primary，
   // 整条语音链路逐字回落到 P4 之前（同 M3 给主动引擎选落点的判据）。
   private openVoiceprintIfEnabled(): void {
@@ -470,7 +484,7 @@ export class HandsFreeController {
         // 语义与 meta 口径逐字一致。
         // 称呼取识别器的（它对非 accept 一律给空串——认不出不叫名字），不取原始响应，
         // 否则 S2S 挡位会绕过这条口径、对没认出来的人直接喊 primary 的名字。
-        if (this.useS2s()) this.s2s.setOccupant(r.occupant_id || 'primary', this.vp?.displayName || '')
+        if (this.useS2s()) this.s2s.setOccupant(r.occupant_id || 'primary', this.vp?.displayName || '', this.voiceIdentity)
         this.deps.onVoiceprintResult?.(r)
       },
     })

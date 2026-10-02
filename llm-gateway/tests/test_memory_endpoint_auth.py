@@ -172,3 +172,29 @@ def test_signed_test_identities_resolve_like_the_edge_gateway(monkeypatch, enabl
     status, _payload, memory = _call(monkeypatch, "GET", "/api/memory/profile", {}, None, token=token)
     assert status == expected
     assert memory.calls == ([("ExportUser", "e2e-auth-run-o1")] if expected == 200 else [])
+
+
+def test_identify_signs_an_accepted_match_for_the_token_owner_only(monkeypatch):
+    # CA2-15 S2: the occupant is taken downstream only from this short-lived proof.
+    from runtime import voice_attestation as va
+    key = va.derive_key(b"i" * 64)
+    monkeypatch.setattr(HS, "_voice_key", lambda: key)
+    status, payload, _ = _call(monkeypatch, "POST", "/api/voiceprint/identify", {}, _PCM, token="tok-owner")
+    assert status == 200 and payload["decision"] == "accept"
+    proof = va.verify(payload[va.META], key, user_id=OWNER)
+    assert proof is not None and (proof.occupant_id, proof.display_name) == ("occ-1", "A")
+    assert va.verify(payload[va.META], key, user_id=OTHER) is None
+
+
+def test_identify_signs_nothing_when_it_did_not_recognize_the_voice(monkeypatch):
+    from runtime import voice_attestation as va
+    monkeypatch.setattr(HS, "_voice_key", lambda: va.derive_key(b"i" * 64))
+    monkeypatch.setattr(_Memory, "IdentifySpeaker", _below_threshold)
+    status, payload, _ = _call(monkeypatch, "POST", "/api/voiceprint/identify", {}, _PCM, token="tok-owner")
+    assert status == 200 and payload["occupant_id"] == "primary" and va.META not in payload
+
+
+async def _below_threshold(self, request, timeout):
+    self._seen("IdentifySpeaker", request)
+    return SimpleNamespace(occupant_id="primary", display_name="A", decision="below_threshold",
+                           score=0.3, runner_up=0.1)

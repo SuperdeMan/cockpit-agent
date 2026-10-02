@@ -99,7 +99,8 @@ class Clients:
                           occupant_id: str = "primary",
                           e2e_memory_capability: str = "",
                           turn_id: str = "", exchange_id: str = "",
-                          actions=None, sources=None, memory_epoch: str = ""):
+                          actions=None, sources=None, memory_epoch: str = "",
+                          speaker_unverified: bool = False):
         """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。
         occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。
         turn_id/exchange_id 让重试是重放而不是追加一轮新对话（M-B）。
@@ -114,7 +115,8 @@ class Clients:
                                          sources=[_turn_source_pb(s)
                                                   for s in (sources or [])
                                                   if isinstance(s, dict)],
-                                         memory_epoch=memory_epoch),
+                                         memory_epoch=memory_epoch,
+                                         speaker_unverified=speaker_unverified),
             timeout=_DEFAULT_TIMEOUT)
 
     async def get_memory_epoch(self, user_id: str) -> str:
@@ -175,14 +177,15 @@ class Clients:
 
     async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",
                      scopes: list[str] | None = None, kinds: list[str] | None = None,
-                     top_k: int = 3, min_confidence: float = 0.0) -> list[dict]:
+                     top_k: int = 3, min_confidence: float = 0.0,
+                     projection: str = "") -> list[dict]:
         """语义召回用户偏好（供 planner 注入）。返回 dict 列表（含 score）。
         RPC 失败照旧抛（既有调用方自己吞）；要三态用 `recall_read`。"""
         resp = await self._memory_stub().Recall(
             memory_pb2.RecallRequest(
                 user_id=user_id, occupant_id=occupant_id, query=query,
                 scopes=scopes or [], kinds=kinds or [], top_k=top_k,
-                min_confidence=min_confidence),
+                min_confidence=min_confidence, projection=projection),
             timeout=_DEFAULT_TIMEOUT)
         return self._recall_items(resp)
 
@@ -196,14 +199,15 @@ class Clients:
 
     async def recall_read(self, user_id: str, query: str = "", *, occupant_id: str = "",
                           scopes: list[str] | None = None, kinds: list[str] | None = None,
-                          top_k: int = 3, min_confidence: float = 0.0) -> tuple[list[dict], str]:
+                          top_k: int = 3, min_confidence: float = 0.0,
+                          projection: str = "") -> tuple[list[dict], str]:
         """`recall` 的三态版（批 5 W17）→ `(items, state)`。语义同 `get_session_read`。"""
         try:
             resp = await self._memory_stub().Recall(
                 memory_pb2.RecallRequest(
                     user_id=user_id, occupant_id=occupant_id, query=query,
                     scopes=scopes or [], kinds=kinds or [], top_k=top_k,
-                    min_confidence=min_confidence),
+                    min_confidence=min_confidence, projection=projection),
                 timeout=_DEFAULT_TIMEOUT)
         except Exception as e:
             logger.debug("recall unavailable: %s", e)
@@ -346,10 +350,15 @@ class Clients:
         prefs.pop(effect_evidence.META, None)
         # CA2-15 S1b: the memory epoch is read by the server before this turn's memory reads.
         prefs.pop("memory_epoch", None)
+        # CA2-15 S2: the read projection comes from the server's voice proof check.
+        prefs.pop("memory_projection", None)
         merged = {**prefs, **dict(meta or {})}
         merged.pop("memory_epoch", None)
+        merged.pop("memory_projection", None)
         if getattr(ctx, "memory_epoch", ""):
             merged["memory_epoch"] = ctx.memory_epoch
+        if getattr(ctx, "memory_projection", ""):
+            merged["memory_projection"] = ctx.memory_projection
         if operation.HEADER in merged:
             merged[operation.HEADER] = operation.with_plan(
                 merged[operation.HEADER], getattr(ctx, "task_identity", None))

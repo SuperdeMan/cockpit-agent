@@ -171,12 +171,14 @@ export class S2SClient {
    *  AppendTurn 会把乘员的闲聊全记进主驾记忆，多用户隔离在 S2S 挡位下被破坏
    *  （classic/逃逸轮走 send() meta 是对的，只有自答轮走这条）。每次唤醒识别落地
    *  发一次；唤醒窗结束回 primary 也发（防上一个人残留到下一窗）。 */
-  setOccupant(occupantId, displayName = '') {
+  setOccupant(occupantId, displayName = '', identity = {}) {
+    // CA2-15 S2：网关只认 identity 里的声音证明换乘员；没认出时带 voice_identity=unrecognized。
     const frame = { type: UP.OCCUPANT, occupant_id: occupantId || 'primary',
-                    display_name: displayName || '' }
+                    display_name: displayName || '', ...(identity || {}) }
     if (this._startMsg) {         // ws 未 open：并进 start 帧，开门即生效
-      this._startMsg.occupant_id = frame.occupant_id
-      this._startMsg.display_name = frame.display_name
+      delete this._startMsg.voice_attestation
+      delete this._startMsg.voice_identity
+      Object.assign(this._startMsg, frame, { type: UP.START })
       return
     }
     this._send(frame)

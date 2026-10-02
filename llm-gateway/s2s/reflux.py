@@ -94,7 +94,8 @@ class Reflux:
 
     def __init__(self, *, memory_stub_getter=None, obs=None, gate_content=None,
                  session_id: str = "", user_id: str = "", vehicle_id: str = "",
-                 occupant_id: str = "", provider_name: str = "", model: str = ""):
+                 occupant_id: str = "", provider_name: str = "", model: str = "",
+                 speaker_unverified: bool = False):
         self._stub_getter = memory_stub_getter
         self._obs = obs
         self._gate = gate_content
@@ -108,6 +109,8 @@ class Reflux:
         # CA2-15 S1b：模型手里那份记忆摘要是在哪个代际读的。回流写入都带它——
         # 会话中途记忆被删过，模型拿着的就是删除前的内容，此后的回流一律被拒，直到下次重建摘要。
         self.memory_epoch = ""
+        # CA2-15 S2：当前说话人是车机免唤醒语音里没认出来的人——回流照常进会话，不进长期记忆抽取。
+        self.speaker_unverified = bool(speaker_unverified)
 
     async def context_summary(self) -> str:
         """重注入材料（会话开场与断线重建时取）：先取代际、再读记忆，owner 按调用时的值。"""
@@ -157,7 +160,8 @@ class Reflux:
                     user_id=self.user_id, vehicle_id=self.vehicle_id,
                     occupant_id=self.occupant_id or "primary",
                     turn_id=tid, exchange_id=turn_key,
-                    memory_epoch=self.memory_epoch), timeout=5.0)
+                    memory_epoch=self.memory_epoch,
+                    speaker_unverified=self.speaker_unverified), timeout=5.0)
                 if getattr(resp, "error", "") == "stale_memory_epoch":
                     # 不是故障：摘要读于一次删除之前，这一轮不该写回（两条一起丢）。
                     logger.info("s2s 回流被拒：会话的记忆摘要读于一次删除之前")

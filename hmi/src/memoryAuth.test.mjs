@@ -49,3 +49,12 @@ test('speaker identification sends the bearer it is given', async () => {
   assert.equal(seen[0].headers.Authorization, 'Bearer tok-1')
   assert.ok(!('Authorization' in seen[1].headers))
 })
+
+test('CA2-15 S2：只有免唤醒语音的请求带声音身份；S2S 会话带 token', () => {
+  const app = readFileSync(join(here, 'App.tsx'), 'utf8')
+  const hands = readFileSync(join(here, 'handsFreeController.ts'), 'utf8')
+  assert.ok(app.includes("startsWith('voice_')") && app.includes('voiceIdentity'),
+    '打字与按键说话不带身份（按车主处理），免唤醒语音才带')
+  assert.ok(hands.includes("voice_identity: 'unrecognized'") && hands.includes('voice_attestation'))
+  assert.ok(hands.includes('auth_token: memoryAuthToken()'), 'S2S 会话只为 token 的主体办事')
+})

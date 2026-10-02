@@ -188,3 +188,20 @@ test('Float32 → Int16 转换范围正确', async () => {
   await tick()
   assert.equal(got[0], 0x7fff, '+1.0 应映射到 int16 上限')
 })
+
+test('CA2-15 S2：accept 才保存网关签发的证明，没认出与重置都清空', async () => {
+  const { id } = mk({
+    identify: async () => ({ occupant_id: 'occ-2', display_name: '小雨', decision: 'accept',
+                             voice_attestation: 'voice.v1.p.s' }),
+  })
+  id.arm(true, true); id.pushFrame(frame(2000)); await tick()
+  assert.equal(id.attestation, 'voice.v1.p.s')
+  id.reset()
+  assert.equal(id.attestation, '')
+  const { id: other } = mk({
+    identify: async () => ({ occupant_id: 'primary', decision: 'below_threshold',
+                             voice_attestation: 'voice.v1.p.s' }),
+  })
+  other.arm(true, true); other.pushFrame(frame(2000)); await tick()
+  assert.equal(other.attestation, '', '没认出就没有证明，哪怕响应里带了')
+})

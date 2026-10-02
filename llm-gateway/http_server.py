@@ -19,6 +19,7 @@ from aiohttp import web
 
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
+from runtime import voice_attestation
 from runtime.grpcio import aio_channel
 from runtime.privacy_delete_bus import (
     CLOUD_SUBJECT,
@@ -114,6 +115,13 @@ def _authenticated_owner(request: web.Request) -> str:
     scheme, separator, candidate = raw_header.partition(" ")
     if separator != " " or scheme.lower() != "bearer" or not candidate:
         return ""
+    return _owner_of_bearer(candidate)
+
+
+def _owner_of_bearer(candidate: str) -> str:
+    """One bearer rule for HTTP headers and the S2S start frame (CA2-15 S2)."""
+    if not isinstance(candidate, str) or not candidate:
+        return ""
     if candidate != candidate.strip() or " " in candidate:
         return ""
     if candidate.startswith("e2e.v1."):
@@ -154,6 +162,19 @@ def _owner_query(request: web.Request, fallback: dict | None = None):
         return "", web.json_response({**(fallback or {}), "ok": False, "error": "owner_mismatch"},
                                      status=403)
     return owner, None
+
+
+def _voice_key() -> bytes | None:
+    """CA2-15 S2：声音证明的签名密钥（网格私钥派生）。材料不可读时不签发——没有证明就是 primary。"""
+    return voice_attestation.runtime_key()
+
+
+def _attested_occupant(data: dict, owner: str) -> tuple[str, bool]:
+    """S2S 帧里的乘员只认声音证明；否则 primary。第二项 = HMI 声明这一轮没认出说话人。"""
+    proof = voice_attestation.verify(data.get(voice_attestation.META), _voice_key(), user_id=owner)
+    if proof is not None:
+        return proof.occupant_id, False
+    return "primary", data.get(voice_attestation.IDENTITY) == voice_attestation.UNRECOGNIZED
 
 
 def _memory_stub():
@@ -905,6 +926,11 @@ def create_http_app() -> web.Application:
         out = {"occupant_id": resp.occupant_id, "display_name": resp.display_name,
                "decision": resp.decision, "score": round(resp.score, 4),
                "runner_up": round(resp.runner_up, 4), "duration_ms": dur}
+        key = _voice_key()
+        if resp.decision == "accept" and resp.occupant_id and key is not None:
+            # CA2-15 S2：乘员身份只认这枚短期证明（客户端原样转交，云端 / 车端验签）。
+            out[voice_attestation.META] = voice_attestation.issue(
+                key, user_id=uid, occupant_id=resp.occupant_id, display_name=resp.display_name)
         # **判定必须留下痕迹**：「认不出→回 primary」是静默降级，用户侧只表现为「换了个人
         # 还是同一个人」，服务端此前一行日志都没有。obs 那条 metric 也指望不上——collector
         # 的 apply_metric 是固定键白名单，vp_* 全被丢掉（2026-07-26 排查时发现）。
@@ -1170,7 +1196,8 @@ def create_http_app() -> web.Application:
                         continue  # 幂等：一条 WS 一个会话
                     resolved_user = str(data.get("user_id") or "")
                     resolved_vehicle = str(data.get("vehicle_id") or "")
-                    if os.getenv("E2E_IDENTITY_ENABLED", "").lower() == "true":
+                    if (os.getenv("E2E_IDENTITY_ENABLED", "").lower() == "true"
+                            and data.get("identity_token")):
                         from e2e_identity import (
                             IdentityTokenError,
                             resolve_s2s_identity,
@@ -1188,6 +1215,17 @@ def create_http_app() -> web.Application:
                                 message=b"unauthorized test identity",
                             )
                             break
+                    else:
+                        # CA2-15 S2：会话只为 token 的主体办事（浏览器的 WebSocket 不能设请求头，
+                        # token 放在 session.start 帧里；能设头的客户端也可以走 Authorization）。
+                        owner = (_authenticated_owner(request)
+                                 or _owner_of_bearer(str(data.get("auth_token") or "")))
+                        if not owner or (resolved_user and not hmac.compare_digest(
+                                resolved_user.encode("utf-8"), owner.encode("utf-8"))):
+                            await ws.close(code=1008, message=b"unauthorized")
+                            break
+                        resolved_user = owner
+                    occupant, unverified = _attested_occupant(data, resolved_user)
                     sid = str(data.get("session_id") or "")
                     if _set_obs_session and sid:
                         _set_obs_session(sid)
@@ -1209,7 +1247,7 @@ def create_http_app() -> web.Application:
                         gate_content=_gate_content, session_id=sid,
                         user_id=resolved_user,
                         vehicle_id=resolved_vehicle,
-                        occupant_id=str(data.get("occupant_id") or ""),
+                        occupant_id=occupant, speaker_unverified=unverified,
                         provider_name=prov_name or os.getenv("S2S_PROVIDER", "dashscope"),
                         model=model or os.getenv("S2S_MODEL", "qwen3.5-omni-flash-realtime"))
                     session = S2SSession(
@@ -1246,7 +1284,9 @@ def create_http_app() -> web.Application:
                 elif mtype == UP_OCCUPANT:
                     # M4 P4 补口（验收抓到）：会话级静态快照会把 S2S 自答轮全记进
                     # primary——说话人是唤醒粒度的，声纹识别落地即更新回灌归属。
-                    reflux.occupant_id = str(data.get("occupant_id") or "primary")
+                    # CA2-15 S2：乘员只认声音证明；没有证明 ⇒ primary（HMI 声明没认出时回流不进抽取）。
+                    reflux.occupant_id, reflux.speaker_unverified = _attested_occupant(
+                        data, reflux.user_id)
                 elif mtype == UP_SESSION_END:
                     break
                 elif mtype == UP_AUDIO:

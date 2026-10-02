@@ -166,7 +166,7 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     },
   })
   const hf = useHandsFree({
-    audioUrl: cfg.audioUrl, sessionId: wired.session.sessionId, scope,
+    audioUrl: cfg.audioUrl, authToken: cfg.token, sessionId: wired.session.sessionId, scope,
     enabled: settings.handsFree, needConfirm: pendingOps.length > 0,
     onPartial: (t) => core.draftUser(t),
     onSend: (text, meta) => onSend(text, meta, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined }),

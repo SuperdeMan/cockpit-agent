@@ -516,3 +516,16 @@ test('AR02 S2S 事实来自真实发送：常驻连接不算上行；结束后�
     expect(getAudioCaptureSnapshot().s2sUploading).toBe(false)
   }
 })
+
+test('CA2-15 S2：S2S 会话的 session.start 带上这台手机配置的 token（网关只为 token 的主体办事）', async () => {
+  ;(globalThis as { WebSocket: unknown }).WebSocket = CaptureWs
+  CaptureWs.all = []
+  const { ctl } = makeCtl({ getVoicePipeline: () => 's2s', getAuthToken: () => 'tok-phone' })
+  await ctl.enable()
+  const ws = CaptureWs.all.at(-1)!
+  ws.open()
+  const start = ws.sent.map((d) => (typeof d === 'string' ? JSON.parse(d) : null))
+    .find((m) => m && m.type === 'session.start')
+  expect(start.auth_token).toBe('tok-phone')
+  await ctl.disable()
+})

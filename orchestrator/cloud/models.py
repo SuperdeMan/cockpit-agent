@@ -410,6 +410,11 @@ class PlanContext:
     # CA2-15 S1b：本回合读记忆之前取的 owner 代际。本回合的轮次与 Agent 写记忆都带它，
     # 回合进行中记忆被删过 ⇒ Memory 拒收（删除之前观测到的内容写不回来）。服务端自有，不进 prefs。
     memory_epoch: str = ""
+    # CA2-15 S2：本轮记忆读取投影（runtime/memory_projection）。车机免唤醒语音没认出说话人 ⇒ "normal_only"
+    # （只读普通偏好）；服务端按声音证明算出，不进 prefs、客户端给不了。
+    memory_projection: str = ""
+    # 同一判据下这一轮的话不进长期记忆抽取（照常进会话历史）。
+    speaker_unverified: bool = False
     granted_permissions: list[str] = field(default_factory=list)
     is_confirmation: bool = False
     # 本轮确认/取消指向哪一条挂起（QA 卡 Q1-B）。空 = 语音兜底/旧客户端，

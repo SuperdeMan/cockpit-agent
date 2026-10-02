@@ -980,7 +980,8 @@ DO NOTHING`；竞争输了回读对方账目按 `Duplicate` 处理，**不能当
 | 坏模板拒收 | 注册三段两两余弦 < `VOICEPRINT_MIN_CONSISTENCY` → 409 拒绝建模板（混了别人/噪声的模板此后谁都认不准） |
 | stale 模板 | `model` 与当前提取模型不符即跳过并提示重录——**绝不拿旧模型的向量跟新模型的比余弦**，那个数字没有意义 |
 | **红线：不作鉴权因子** | `occupant_id` 只进记忆域（recall/remember/AppendTurn/relation）。**不得进** granted_scopes/权限判定/VAL/require_confirm 合成/payment。源码级断言 `orchestrator/cloud/tests/test_voiceprint_not_auth.py`。理由不止「声纹可被录音重放」——身份识别与授权是两件事，识别错了只该损失个性化 |
-| **端点按 token 主体办事**（CA2-15 S1，2026-10-02） | `/api/voiceprint/*` 与 `/api/memory/{session,context,profile,items}` 只按 `Authorization: Bearer` 解析主体（`AUTH_TOKENS`；E2E 签名身份与 S2S / 车端网关同一开关与密钥），查询串里的 `user_id` 只能等于该主体：缺 token → 401、不一致 → 403，**拒绝发生在读音频与调 Memory 之前**（`http_server.py::_owner_query`）。修前任何能连上 50059 的人都能凭 `user_id` 读别人的记忆、改名或删乘员（删除默认连同记忆一起清）。HMI 统一经 `audio.ts::memoryAuth()` 带 token；手机与 Dashboard 不调这些端点。S2S `session.start` 仍信客户端 `user_id`，归 CA2-15 S2 |
+| **乘员只认声音证明**（CA2-15 S2，2026-10-03） | identify 只在 `accept` 时签发 `voice.v1.*` 短期证明（10 分钟，签给 token 主体，HMAC 密钥由网格私钥派生，`runtime/voice_attestation.py`）；云端、车端本地轮次与 S2S 只认它换乘员与称呼，meta / 帧里的裸 `occupant_id` / `occupant_name` 一律按 `primary`、不叫名字。HMI 免唤醒语音没拿到证明时声明 `voice_identity=unrecognized` ⇒ 本轮记忆读取投影为只读普通偏好（§9.51）、这一轮的话不进长期抽取；打字、按键说话与手机按车主处理。S2S `session.start` 只为 token 主体开会话（请求头 Bearer 或帧字段 `auth_token`），`user_id` 给了必须相等。**仍不是鉴权因子**：证明只决定读谁的记忆、读到哪一级，不进权限、确认、VAL 与支付 |
+| **端点按 token 主体办事**（CA2-15 S1，2026-10-02） | `/api/voiceprint/*` 与 `/api/memory/{session,context,profile,items}` 只按 `Authorization: Bearer` 解析主体（`AUTH_TOKENS`；E2E 签名身份与 S2S / 车端网关同一开关与密钥），查询串里的 `user_id` 只能等于该主体：缺 token → 401、不一致 → 403，**拒绝发生在读音频与调 Memory 之前**（`http_server.py::_owner_query`）。修前任何能连上 50059 的人都能凭 `user_id` 读别人的记忆、改名或删乘员（删除默认连同记忆一起清）。HMI 统一经 `audio.ts::memoryAuth()` 带 token；手机与 Dashboard 不调这些端点。S2S `session.start` 同一口径（CA2-15 S2，见下一行） |
 | GDPR | `ForgetUser` 同事务级联删 `voiceprint`（同 `memory_relation` 先例）。删单个乘员默认连带删其记忆（「忘掉这个人」），**但 primary 永不 purge**——删单个乘员不该有清空全车的爆炸半径 |
 | 透传管道 | HMI `buildMeta.occupant_id` → edge-gateway（原样透传）→ `build_context` → `PlanContext.occupant_id` → `prefs` → `ExecuteRequest.meta` → `_sdk.Context.occupant_id`。**memory 侧零改动**——recall 本来就是 occupant 精确过滤，缺的只是这个参数 |
 | **身份问句确定性直答**（2026-07-27 真机 P0） | 「我是谁 / 你知道我是谁吗 / 我叫什么」由 `chitchat._identity_answer` 按 `occupant_name` **直答，零 LLM**（同 `_clock_answer` 一族：**系统自己持有的事实不交给 LLM**）。原因：车里只有一个会话而说话人会换，**上文的称呼比 system 提示更近、更像既成事实**——上一轮管别人叫过「阿灵」，这一轮 system 明写泓舟，模型照样答「你是阿灵呀，刚才不是说了嘛」。**加强提示词实测无效**（两个方向各两次全错），靠改 prompt 是在跟采样赌。未识别出人（`occupant_name` 空）时不直答，回落 LLM 诚实处理；正则须占据整句，不劫持「我是谁的乘客」 |
@@ -2984,3 +2985,14 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 轮次盖代际，抽取只用当前代际的轮次（修前无代际的轮次只在代数 0 有效）⇒ 删除前的原话不再进抽取窗口；会话历史不受影响。
 - 串行前提：Memory 是记忆数据唯一写入口且单副本，按用户的进程内锁让「复核 + 写」与「推进 + 删」互斥；扩多副本前必须换跨进程锁。
 - 不扩删除总线：单乘员 / 单条删除不取消云端在途请求，只挡写回。取舍见 [CA2-15 §6](design/2026-10-02-v2-memory-identity-governance.md)。
+
+### 9.51 记忆读取投影：没认出的声音只读普通偏好（CA2-15 S2，2026-10-03）
+
+- 判据只有一份：`runtime/memory_projection.py`。`normal_only` 下可见的条目须 `kind=semantic`、`privacy_level=normal`、谓词不在
+  `identity.` / `person.` / `place.` / `health.` / `habit.` / `routine.`、scope 不在身份 / 人物 / 地点 / 健康 / 习惯与 `episodic*`、
+  `subject` 为空；未知取值按最严。
+- 执行在 Memory：`GetContext`（scope）、`Recall`（定向与非定向同一判据）、`ResolvePersonPlace` 与 `QueryRelations`（投影下为空）。
+  会话历史（`GetSession`）不投影——座舱里当面说出来的对话。
+- 投影由云端按声音证明算出（只有 HMI 声明免唤醒语音没认出时才投影），经服务端自有 meta `memory_projection` 下发；SDK 读记忆一律带上，
+  `recall_read` 不允许调用方改写；客户端 prefs 与 step meta 的同名键剔除。
+- 同一判据下的轮次带 `speaker_unverified`：照常进会话历史（归 `primary`），不触发抽取，也不进抽取窗口。

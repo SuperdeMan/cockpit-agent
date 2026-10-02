@@ -28,7 +28,7 @@ import uuid
 from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext, step_fingerprint
-from runtime import memory_read
+from runtime import memory_projection, memory_read, voice_attestation
 from runtime.clock import hhmm as clock_hhmm
 from runtime.positions import distinct_positions, scan_positions
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
@@ -74,6 +74,7 @@ def _adapt_append_turn_call(
     actions=None,
     sources=None,
     memory_epoch: str = "",
+    speaker_unverified: bool = False,
 ) -> tuple[list, dict]:
     """Build one compatible call without probing by execution.
 
@@ -96,6 +97,8 @@ def _adapt_append_turn_call(
         "sources": [s for s in (sources or []) if isinstance(s, dict)],
         # CA2-15 S1b：本回合读记忆之前取的代际。同一条签名探测。
         "memory_epoch": memory_epoch or "",
+        # CA2-15 S2：车机免唤醒语音没认出说话人——照常进会话，不进长期记忆抽取。
+        "speaker_unverified": bool(speaker_unverified),
     }
     try:
         parameters = inspect.signature(fn).parameters
@@ -2251,7 +2254,8 @@ class ContextManager:
                           occupant_id: str = "",
                           e2e_memory_capability: str = "",
                           turn_id: str = "", exchange_id: str = "",
-                          actions=None, sources=None, memory_epoch: str = ""):
+                          actions=None, sources=None, memory_epoch: str = "",
+                          speaker_unverified: bool = False):
         """写入一轮对话到 memory（指代/抽取的数据来源）。memory 不可用或 clients 未提供
         该能力时静默跳过（不阻塞主链路）。user_id 透传给 memory 触发异步偏好抽取。
 
@@ -2275,6 +2279,7 @@ class ContextManager:
                 actions=actions,
                 sources=sources,
                 memory_epoch=memory_epoch,
+                speaker_unverified=speaker_unverified,
             )
             await fn(*args, **kwargs)
         except Exception as e:
@@ -2401,6 +2406,9 @@ class ContextManager:
         # 传进去隔离即自动成立（缺的从来不是记忆能力，是这个参数）。
         kwargs = dict(kinds=kinds, occupant_id=getattr(ctx, "occupant_id", "") or "primary",
                       top_k=3, min_confidence=0.5)
+        if getattr(ctx, "memory_projection", ""):
+            # CA2-15 S2：没认出的声音只读普通偏好（Memory 执行，定向读与召回同一判据）。
+            kwargs["projection"] = ctx.memory_projection
         try:
             if read_fn:
                 mems, state = await read_fn(ctx.user_id, text, **kwargs)
@@ -2469,9 +2477,15 @@ def build_context(request) -> PlanContext:
             "(only no-permission agents reachable).")
 
     # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
-    # M4 P4：本轮说话人（声纹识别结果，HMI 在唤醒窗内锁定后随每轮 meta 上来）。
-    # 缺省/空 → "primary" = 逐字回落到 P4 之前。**刻意不参与 granted 的任何分支**（§6.1）。
-    occupant = (meta.get("occupant_id") or "").strip() or "primary"
+    # M4 P4：本轮说话人。CA2-15 S2：**只认 llm-gateway 签发的声音证明**——meta 里的 occupant_id /
+    # occupant_name 谁都能写，不再被信任；没有有效证明 ⇒ "primary"、不叫名字（存量语义）。
+    # HMI 声明这一轮免唤醒语音没认出说话人 ⇒ 记忆读取只给普通偏好，这一轮的话也不进长期抽取。
+    # **刻意不参与 granted 的任何分支**（§6.1）：声纹只决定读谁的记忆、读到哪一级，不授予任何动作权限。
+    owner = getattr(request.context, "user_id", "") if hasattr(request, "context") and request.context else ""
+    proof = voice_attestation.verify(meta.get(voice_attestation.META), voice_attestation.runtime_key(),
+                                     user_id=owner)
+    occupant = proof.occupant_id if proof else "primary"
+    unverified = proof is None and meta.get(voice_attestation.IDENTITY) == voice_attestation.UNRECOGNIZED
 
     prefs = {k: meta[k] for k in
              ("model_pref", "answer_length", "assistant_name", "memory_enabled",
@@ -2480,8 +2494,6 @@ def build_context(request) -> PlanContext:
               "input_source",      # 本轮来源：voice_* 免唤醒/S2S；ptt 为 Android 手动录音
               "voice_utterance_ms",  # R4.4：本轮 speech 累计时长（数字字符串）
               "clarify_resume",    # R4.4：澄清续接标记（"1"）——engine 据此深度=1 抑制再澄清
-              "occupant_name",     # M4 P4：说话人称呼（声纹识别出的显示名）——「你知道我是谁」
-                                   # 靠它确定性答出；与 occupant_id 同样**不参与权限判定**
               "vision_frame_id",   # M4 P4：车外单帧的**引用**（图像本体只在网关内存里）。
                                    # 按 _SENSITIVE_SCOPE 最小化下发——只有声明了 vision
                                    # context_scope 的 Agent 收得到，其余 Agent 连引用都看不见。
@@ -2497,6 +2509,9 @@ def build_context(request) -> PlanContext:
     # 声纹结果随 prefs 下发给全部 Agent（同 thinking/llm pin 的既有惯例：改一处全 Agent 覆盖），
     # SDK 侧据此构造 Context.occupant_id，Agent 的 recall/remember 自动按乘员隔离。
     prefs["occupant_id"] = occupant
+    if proof is not None and proof.display_name:
+        # M4 P4：说话人称呼（「你知道我是谁」靠它确定性答出）——只来自证明，没认出就不叫名字。
+        prefs["occupant_name"] = proof.display_name
 
     return PlanContext(
         request_id=getattr(request, "request_id", ""),
@@ -2504,6 +2519,8 @@ def build_context(request) -> PlanContext:
         user_id=getattr(request.context, "user_id", "") if hasattr(request, "context") and request.context else "",
         vehicle_id=getattr(request.context, "vehicle_id", "") if hasattr(request, "context") and request.context else "",
         occupant_id=occupant,
+        memory_projection=memory_projection.NORMAL_ONLY if unverified else memory_projection.NONE,
+        speaker_unverified=unverified,
         e2e_memory_capability=getattr(request, "e2e_memory_capability", ""),
         is_confirmation=getattr(request, "is_confirmation", False),
         operation_id=str(getattr(request, "operation_id", "") or "").strip(),

@@ -17,11 +17,25 @@ class _RecordingMemory:
     def __init__(self):
         self.calls: list[tuple] = []
         self.epochs: list[tuple] = []
+        self.projections: list[tuple] = []
 
     async def get_context(self, session_id, user_id, vehicle_id, scopes,
-                          occupant_id=""):
+                          occupant_id="", projection=""):
         self.calls.append(("get_context", occupant_id))
+        self.projections.append(("get_context", projection))
         return {}
+
+    async def recall(self, user_id, query="", **kw):
+        self.projections.append(("recall", kw.get("projection")))
+        return []
+
+    async def recall_read(self, user_id, query="", **kw):
+        self.projections.append(("recall_read", kw.get("projection")))
+        return [], "none"
+
+    async def resolve_person_place(self, user_id, person_word, *, occupant_id="", projection=""):
+        self.projections.append(("resolve_person_place", projection))
+        return None
 
     async def get_session(self, session_id, last_n=6, *, user_id="", occupant_id=""):
         self.calls.append(("get_session", occupant_id))
@@ -91,3 +105,20 @@ def test_memory_writes_carry_the_epoch_the_cloud_read_before_this_turn():
 
     asyncio.run(go())
     assert mem.epochs == [("upsert_profile", "3.ab"), ("remember", "3.ab"), ("remember", "")]
+
+
+def test_every_memory_read_carries_the_server_projection():
+    # CA2-15 S2: an unrecognized hands-free voice reads only ordinary preferences; Memory enforces it.
+    mem = _RecordingMemory()
+    ctx = Context("s1", "u1", "v1", mem, "primary",
+                  meta={"granted_scopes": "profile.read", "memory_projection": "normal_only"})
+
+    async def go():
+        await ctx.fetch("profile.places")
+        await ctx.recall("家")
+        await ctx.recall_read("家", projection="")          # an agent cannot lift it
+        await ctx.resolve_person_place("孩子")
+
+    asyncio.run(go())
+    assert mem.projections == [("get_context", "normal_only"), ("recall", "normal_only"),
+                               ("recall_read", "normal_only"), ("resolve_person_place", "normal_only")]

@@ -18,6 +18,7 @@ from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
+from runtime import voice_attestation
 from runtime.grpcio import aio_channel
 from runtime.deferred_condition import is_deferred_instruction
 from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, is_negated_write_directive, is_sequence_connector, split_and_classify, split_and_classify_any, structured_to_legacy
@@ -201,7 +202,7 @@ class _MemoryClient:
     async def append(self, session_id: str, role: str, text: str, *,
                      user_id: str = "", occupant_id: str = "", vehicle_id: str = "",
                      turn_id: str = "", exchange_id: str = "", actions=None,
-                     memory_epoch: str = ""):
+                     memory_epoch: str = "", speaker_unverified: bool = False):
         """M-B：端侧轮次也带 OwnerKey。
 
         此前这里只传 session/role/text——于是端侧处理的每一轮都是**无主**的，
@@ -219,7 +220,8 @@ class _MemoryClient:
                     session_id=session_id, role=role, text=text,
                     user_id=user_id, occupant_id=occupant_id or "primary",
                     vehicle_id=vehicle_id, turn_id=turn_id, exchange_id=exchange_id,
-                    actions=list(actions or []), memory_epoch=memory_epoch),
+                    actions=list(actions or []), memory_epoch=memory_epoch,
+                    speaker_unverified=speaker_unverified),
                 timeout=5)
         except Exception as e:  # 离线/记忆不可用 → 静默跳过
             logger.debug("edge memory append failed: %s", e)
@@ -594,7 +596,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         ctxp = getattr(request, "context", None)
         uid = getattr(ctxp, "user_id", "") or ""
         vid = getattr(ctxp, "vehicle_id", "") or ""
-        occ = (meta.get("occupant_id") or "").strip() or "primary"
+        # CA2-15 S2：乘员只认 llm-gateway 签发的声音证明（与云端同一判据）；裸的 occupant_id 按 primary。
+        # HMI 声明免唤醒语音没认出说话人 ⇒ 这一轮照常进会话，不进长期记忆抽取。
+        proof = voice_attestation.verify(meta.get(voice_attestation.META), voice_attestation.runtime_key(),
+                                         user_id=uid)
+        occ = proof.occupant_id if proof else "primary"
+        unverified = proof is None and meta.get(voice_attestation.IDENTITY) == voice_attestation.UNRECOGNIZED
         # 一次本地请求 = 一个完整 exchange（user + 本地最终话术）。请求 id 就是 exchange 键。
         exch = getattr(request, "request_id", "") or f"edge-{uuid.uuid4().hex[:16]}"
         executed_names = self._executed_names(actions)
@@ -613,12 +620,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             await self.memory.append(request.session_id, "user", user_text,
                                      user_id=uid, occupant_id=occ, vehicle_id=vid,
                                      turn_id=f"{exch}:user", exchange_id=exch,
-                                     memory_epoch=epoch)
+                                     memory_epoch=epoch, speaker_unverified=unverified)
             if assistant_speech:
                 await self.memory.append(request.session_id, "assistant", assistant_speech,
                                          user_id=uid, occupant_id=occ, vehicle_id=vid,
                                          turn_id=f"{exch}:assistant:0", exchange_id=exch,
-                                         actions=executed_names, memory_epoch=epoch)
+                                         actions=executed_names, memory_epoch=epoch,
+                                         speaker_unverified=unverified)
 
         task = asyncio.create_task(_write())
         self._bg.add(task)

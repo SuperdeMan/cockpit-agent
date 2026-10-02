@@ -47,6 +47,7 @@ export class VoiceprintIdentifier {
     this._occupantId = 'primary'
     this._displayName = ''
     this._decision = ''
+    this._attestation = ''
   }
 
   /**
@@ -66,6 +67,8 @@ export class VoiceprintIdentifier {
   get occupantId() { return this._occupantId }
   get displayName() { return this._displayName }
   get decision() { return this._decision }
+  /** CA2-15 S2：网关对 accept 签发的声音证明（云端 / 车端只认它换乘员）；没认出为空串。 */
+  get attestation() { return this._attestation }
 
   /**
    * 唤醒进入 LISTENING 时调用。
@@ -136,6 +139,7 @@ export class VoiceprintIdentifier {
         // 但**称呼是一句断言**，没认出来就不该断言。
         this._displayName = r.decision === 'accept' ? (r.display_name || '') : ''
         this._decision = r.decision || ''
+        this._attestation = r.decision === 'accept' ? (r.voice_attestation || '') : ''
         this.deps.onResult?.(r)
       }
     } catch {

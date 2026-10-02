@@ -158,7 +158,7 @@ class MemoryClient:
         return memory_pb2_grpc.MemoryStub(self._channel())
 
     async def get_context(self, session_id: str, user_id: str, vehicle_id: str,
-                          scopes: list[str], occupant_id: str = "") -> dict:
+                          scopes: list[str], occupant_id: str = "", projection: str = "") -> dict:
         # occupant 决定 profile.* 读哪个乘员（M-B）：不传时服务端规范化为 primary。
         for attempt in (1, 2):
             try:
@@ -166,7 +166,7 @@ class MemoryClient:
                     memory_pb2.GetContextRequest(
                         session_id=session_id, user_id=user_id,
                         vehicle_id=vehicle_id, scopes=scopes,
-                        occupant_id=occupant_id or "primary"),
+                        occupant_id=occupant_id or "primary", projection=projection),
                     timeout=DEFAULT_TIMEOUT)
                 return dict(resp.values)
             except grpc.aio.AioRpcError as e:
@@ -228,7 +228,7 @@ class MemoryClient:
                      top_k: int = 5, include_superseded: bool = False,
                      predicate_prefix: str = "", min_score: float = 0.0,
                      min_confidence: float = 0.0, max_age_days: int = 0,
-                     subject: str = "") -> list[dict]:
+                     subject: str = "", projection: str = "") -> list[dict]:
         """语义召回。返回 dict 列表（含 score）。memory 重启 UNAVAILABLE 自动重连重试一次。
         subject 非空=只取「关于该人」的记忆（G6，如 subject="老婆" 取老婆的口味）。
         失败照旧抛 RuntimeError；要「读到了 / 空 / 读不到」三态用 `recall_read`。"""
@@ -236,7 +236,7 @@ class MemoryClient:
             user_id, query, occupant_id=occupant_id, scopes=scopes, kinds=kinds, top_k=top_k,
             include_superseded=include_superseded, predicate_prefix=predicate_prefix,
             min_score=min_score, min_confidence=min_confidence, max_age_days=max_age_days,
-            subject=subject)
+            subject=subject, projection=projection)
         return items
 
     async def recall_read(self, user_id: str, query: str = "", **kw) -> tuple[list[dict], str]:
@@ -254,13 +254,13 @@ class MemoryClient:
                            top_k: int = 5, include_superseded: bool = False,
                            predicate_prefix: str = "", min_score: float = 0.0,
                            min_confidence: float = 0.0, max_age_days: int = 0,
-                           subject: str = "") -> tuple[list[dict], str]:
+                           subject: str = "", projection: str = "") -> tuple[list[dict], str]:
         req = memory_pb2.RecallRequest(
             user_id=user_id, occupant_id=occupant_id, query=query,
             scopes=scopes or [], kinds=kinds or [], top_k=top_k,
             include_superseded=include_superseded, predicate_prefix=predicate_prefix,
             min_score=min_score, min_confidence=min_confidence, max_age_days=max_age_days,
-            subject=subject or "")
+            subject=subject or "", projection=projection)
         for attempt in (1, 2):
             try:
                 resp = await self._stub().Recall(req, timeout=DEFAULT_TIMEOUT)
@@ -277,7 +277,7 @@ class MemoryClient:
                 raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
     async def resolve_person_place(self, user_id: str, person_word: str, *,
-                                   occupant_id: str = "") -> dict | None:
+                                   occupant_id: str = "", projection: str = "") -> dict | None:
         """人称词 → 常去地点一跳解析（M2 记忆图谱 P1，「去接孩子放学」）。
 
         查不到 / 有歧义 → None（调用方须**诚实追问**，不猜——导航到错地方比查不到更糟）。
@@ -286,7 +286,8 @@ class MemoryClient:
         if not user_id or not person_word:
             return None
         req = memory_pb2.ResolvePersonPlaceRequest(
-            user_id=user_id, occupant_id=occupant_id, person_word=person_word)
+            user_id=user_id, occupant_id=occupant_id, person_word=person_word,
+            projection=projection)
         try:
             resp = await self._stub().ResolvePersonPlace(req, timeout=DEFAULT_TIMEOUT)
         except Exception:

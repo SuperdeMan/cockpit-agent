@@ -204,7 +204,8 @@ class MemoryStore:
                           user_id: str = "", occupant_id: str = "",
                           vehicle_id: str = "", turn_id: str = "",
                           exchange_id: str = "", actions=None,
-                          sources=None, memory_epoch: str = "") -> bool:
+                          sources=None, memory_epoch: str = "",
+                          speaker_unverified: bool = False) -> bool:
         """会话轮次原文。**有 TTL、有 user 索引、有 OwnerKey**。
 
         TTL 与 user 索引是 GDPR 侧的硬要求（无 TTL＝永久留存；无索引则 ForgetUser
@@ -239,7 +240,9 @@ class MemoryStore:
                 "sources": _clean_sources(sources),
                 # CA2-15 S1b：落库时的 owner 代际（Memory 持锁盖章）。抽取只用当前代际的轮次——
                 # 删过记忆之后，删之前的原话不再进抽取窗口，被删的条目就不会从它们里面再长回来。
-                "memory_epoch": memory_epoch or ""}
+                "memory_epoch": memory_epoch or "",
+                # CA2-15 S2：车机免唤醒语音、声纹没认出说话人。留在会话历史里，但不进长期记忆抽取。
+                "speaker_unverified": bool(speaker_unverified)}
         r = await self._redis()
         key = f"sess:{session_id}"
         if r:
@@ -734,6 +737,7 @@ class MemoryStore:
                                        occupant_id=occupant_id)
         if memory_epoch:
             turns = [t for t in turns if eligible(t.get("memory_epoch") or "", memory_epoch)]
+        turns = [t for t in turns if not t.get("speaker_unverified")]
         cands = await extract(turns, user_id=user_id, occupant_id=occupant_id,
                               vehicle_id=vehicle_id, session_id=session_id,
                               complete_fn=complete_fn)

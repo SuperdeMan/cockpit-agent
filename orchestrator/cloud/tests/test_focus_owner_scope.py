@@ -104,17 +104,23 @@ def test_an_active_task_frame_is_private_to_its_occupant():
 
 # ── 端到端：A 说过的约束不会被 B 的回问念成「您这次说过」 ────────────────────
 
-def test_the_constraint_recall_exit_answers_per_occupant():
-    """engine 的确定性读出口（W18-b）读的是**说话人自己的**投影。"""
-    from orchestrator.cloud.tests.test_engine_confirm import _make_engine, _run
+def test_the_constraint_recall_exit_answers_per_occupant(monkeypatch):
+    """engine 的确定性读出口（W18-b）读的是**说话人自己的**投影。
 
+    CA2-15 S2：说话人只来自声音证明（裸的 meta occupant_id 一律按 primary），所以这里给每位乘员签一枚证明。
+    """
+    from orchestrator.cloud.tests.test_engine_confirm import _make_engine, _run
+    from runtime import voice_attestation as va
+
+    key = va.derive_key(b"f" * 64)
+    monkeypatch.setattr(va, "runtime_key", lambda: key)
     engine, spy, _session = _make_engine()
 
     def _req(text, occupant):
         return SimpleNamespace(
             text=text, session_id="sess-1", request_id=f"r-{occupant}",
             is_confirmation=False, operation_id="",
-            meta={"occupant_id": occupant},
+            meta={va.META: va.issue(key, user_id="u1", occupant_id=occupant)},
             context=SimpleNamespace(user_id="u1", vehicle_id="v1"))
 
     _run(engine, _req("我不吃辣", "alice"))

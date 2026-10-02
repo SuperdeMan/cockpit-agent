@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
+from runtime import memory_projection
 from runtime.proactive import P_ADVISORY, publish_proactive
 
 import voiceprint
@@ -86,9 +87,11 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 logger.error("memory E2E capability gate is misconfigured")
 
     async def GetContext(self, request, context):
+        # CA2-15 S2：没认出的声音只读普通偏好——地点 / 人物 / 身份等 scope 在投影下不出现。
+        scopes = [s for s in request.scopes if memory_projection.scope_visible(s, request.projection)]
         values = await self.store.get_context(
             request.session_id, request.user_id, request.vehicle_id,
-            list(request.scopes), occupant_id=request.occupant_id)
+            scopes, occupant_id=request.occupant_id)
         return memory_pb2.GetContextResponse(values=values)
 
     async def AppendTurn(self, request, context):
@@ -106,7 +109,7 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                     # C4-A 数据源事实：与 actions 同一格、同一条判据。
                     sources=[{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
                              for s in request.sources],
-                    memory_epoch=epoch)
+                    memory_epoch=epoch, speaker_unverified=request.speaker_unverified)
         except StaleEpoch:
             # 这一轮是在一次删除之前观测到的：写回来就是复活被删的内容。
             logger.info("append_turn refused: memory deleted since this turn was observed")
@@ -114,7 +117,9 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         except TurnConflict:
             # 重放可以，改写不行：保留原 Turn 并如实报错，不静默覆盖已发生的对话。
             return memory_pb2.AppendTurnResponse(ok=False, error="turn_conflict")
-        self._maybe_consolidate(request)
+        if not request.speaker_unverified:
+            # CA2-15 S2：没认出的人说的话只进会话历史，不触发、也不进长期记忆抽取。
+            self._maybe_consolidate(request)
         return memory_pb2.AppendTurnResponse(ok=True)
 
     def _maybe_consolidate(self, request):
@@ -407,6 +412,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             subject=request.subject)
         resp = memory_pb2.RecallResponse(degraded=self.store.memory_degraded)
         for d, score in pairs:
+            if not memory_projection.visible(d, request.projection):
+                continue        # CA2-15 S2：定向读与非定向召回同一判据
             resp.items.append(_dict_to_item(d))
             resp.scores.append(float(score))
         return resp
@@ -432,7 +439,7 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
 
     # ── M2 记忆图谱 P1：关系边 ────────────────────────────────────────
     async def QueryRelations(self, request, context):
-        if not request.user_id:
+        if not request.user_id or memory_projection.normalize(request.projection):
             return memory_pb2.QueryRelationsResponse()
         edges = await self.store.relations(
             request.user_id, occupant_id=request.occupant_id or "primary",
@@ -444,7 +451,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
     async def ResolvePersonPlace(self, request, context):
         """「去接孩子放学」的一跳解析。**查不到/有歧义一律 found=false**——
         调用方据此诚实追问，绝不猜（导航到错地方比查不到更糟）。"""
-        if not request.user_id or not request.person_word:
+        if (not request.user_id or not request.person_word
+                or memory_projection.normalize(request.projection)):
             return memory_pb2.ResolvePersonPlaceResponse(found=False)
         hit = await self.store.resolve_person_place(
             request.user_id, request.person_word,

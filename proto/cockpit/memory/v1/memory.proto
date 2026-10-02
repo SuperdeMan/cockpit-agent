@@ -51,6 +51,8 @@ message GetContextRequest {
   string vehicle_id = 3;
   repeated string scopes = 4;       // e.g. "vehicle.location","profile.taste"
   string occupant_id = 5;           // M-B：profile.* 按 OwnerKey 取；空=primary
+  // CA2-15 S2：读取投影（runtime/memory_projection）。"normal_only" = 这一轮的声音没认出，只给普通偏好；空 = 不投影。
+  string projection = 6;
 }
 message GetContextResponse {
   map<string, string> values = 1;   // scope -> JSON 字符串
@@ -94,6 +96,9 @@ message AppendTurnRequest {
   repeated TurnSource sources = 11;
   // CA2-15 S1b：写入方观测这一轮时的 owner 代际（GetMemoryEpoch）。空 = 旧调用方。
   string memory_epoch = 12;
+  // CA2-15 S2：这一轮是车机免唤醒语音、且声纹没认出说话人。照常进会话历史（归 primary），
+  // 但不进长期记忆抽取——否则乘客说的偏好会被记成车主的。
+  bool speaker_unverified = 13;
 }
 // 一次外部数据使用事实。字段与 `ui_card._prov`（契约 §9.3）逐字同名——**账本记的
 // 就是用户看到的那张卡上盖的那个章**，两边不许各自演化出一套叫法。
@@ -238,6 +243,8 @@ message RecallRequest {
   float min_confidence = 10;       // 置信度下限（0=不限）
   uint32 max_age_days = 11;        // 最大年龄天数（0=不限）
   string subject = 12;             // G6：只取关于某人的记忆（如 "老婆"）；空=不过滤
+  // CA2-15 S2：读取投影（runtime/memory_projection）。"normal_only" = 这一轮的声音没认出，只给普通偏好；空 = 不投影。
+  string projection = 13;
 }
 message RecallResponse {
   repeated MemoryItem items = 1;
@@ -290,6 +297,8 @@ message QueryRelationsRequest {
   string rel = 4;
   string object = 5;
   int32 limit = 6;
+  // CA2-15 S2：读取投影（runtime/memory_projection）。"normal_only" = 这一轮的声音没认出，只给普通偏好；空 = 不投影。
+  string projection = 7;
 }
 message QueryRelationsResponse { repeated RelationEdge edges = 1; }
 
@@ -299,6 +308,8 @@ message ResolvePersonPlaceRequest {
   string user_id = 1;
   string occupant_id = 2;
   string person_word = 3;    // 话术里的人称词（"孩子"/"女儿"/"老婆"）
+  // CA2-15 S2：读取投影（runtime/memory_projection）。"normal_only" = 这一轮的声音没认出，只给普通偏好；空 = 不投影。
+  string projection = 4;
 }
 message ResolvePersonPlaceResponse {
   bool found = 1;

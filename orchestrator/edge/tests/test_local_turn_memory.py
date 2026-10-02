@@ -51,6 +51,10 @@ def test_local_turn_carries_owner_and_one_exchange(monkeypatch):
     此前只传 session/role/text——端侧每一轮都是无主的，云端切 OWNER_ONLY 后会全部
     落进 primary 桶，乘员 B 的本地轮次被记成主驾说的。
     """
+    from runtime import voice_attestation as va
+
+    key = va.derive_key(b"e" * 64)
+    monkeypatch.setattr(va, "runtime_key", lambda: key)
     service = _service(monkeypatch)
     calls = []
 
@@ -60,14 +64,17 @@ def test_local_turn_carries_owner_and_one_exchange(monkeypatch):
     service.memory.append = fake_append
 
     async def run():
+        # CA2-15 S2：乘员只认声音证明；裸的 occupant_id 不再换人。
+        proof = va.issue(key, user_id="u1", occupant_id="occ-2")
         service._record_local_turn(
-            _request(meta={"occupant_id": "occ-2"}, request_id="req-9"),
+            _request(meta={va.META: proof, "occupant_id": "occ-9"}, request_id="req-9"),
             "空调调到24度", "已设为24度")
         await asyncio.gather(*service._bg)
 
     asyncio.run(run())
 
     assert [k["occupant_id"] for _, k in calls] == ["occ-2", "occ-2"]
+    assert [k["speaker_unverified"] for _, k in calls] == [False, False]
     assert [k["user_id"] for _, k in calls] == ["u1", "u1"]
     assert [k["vehicle_id"] for _, k in calls] == ["v1", "v1"]
     assert {k["exchange_id"] for _, k in calls} == {"req-9"}
@@ -287,3 +294,27 @@ def test_handle_hands_the_arrival_epoch_to_the_local_turn(monkeypatch):
 
     events = asyncio.run(run())
     assert events and written == [("user", "4.cd"), ("assistant", "4.cd")]
+
+
+def test_a_bare_occupant_claim_is_primary_and_an_unrecognized_voice_is_marked(monkeypatch):
+    """CA2-15 S2：没有证明就不换人；HMI 声明没认出 ⇒ 照常落会话，但不进长期记忆抽取。"""
+    from runtime import voice_attestation as va
+
+    monkeypatch.setattr(va, "runtime_key", lambda: va.derive_key(b"e" * 64))
+    service = _service(monkeypatch)
+    calls = []
+
+    async def fake_append(session_id, role, text, **kw):
+        calls.append((kw["occupant_id"], kw["speaker_unverified"]))
+
+    service.memory.append = fake_append
+
+    async def run():
+        service._record_local_turn(_request(meta={"occupant_id": "occ-2"}, request_id="req-10"),
+                                   "空调调到24度", "已设为24度")
+        service._record_local_turn(_request(meta={va.IDENTITY: va.UNRECOGNIZED}, request_id="req-11"),
+                                   "空调调到24度", "已设为24度")
+        await asyncio.gather(*service._bg)
+
+    asyncio.run(run())
+    assert calls == [("primary", False), ("primary", False), ("primary", True), ("primary", True)]

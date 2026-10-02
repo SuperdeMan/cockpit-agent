@@ -569,7 +569,8 @@ class PlannerEngine:
                                            ctx.user_id, ctx.vehicle_id, occ,
                                            ctx.e2e_memory_capability,
                                            turn_id=f"{exch}:user", exchange_id=exch,
-                                           memory_epoch=ctx.memory_epoch)
+                                           memory_epoch=ctx.memory_epoch,
+                                           speaker_unverified=ctx.speaker_unverified)
             if assistant_speech:
                 await self.context.append_turn(ctx.session_id, "assistant", assistant_speech,
                                                ctx.user_id, ctx.vehicle_id, occ,
@@ -578,7 +579,8 @@ class PlannerEngine:
                                                exchange_id=exch,
                                                actions=executed_actions,
                                                sources=turn_sources,
-                                               memory_epoch=ctx.memory_epoch)
+                                               memory_epoch=ctx.memory_epoch,
+                                               speaker_unverified=ctx.speaker_unverified)
 
     #: W14：谈话步的声称句全部剥空之后的诚实话术（零领域词）。
     _CLAIM_STRIPPED_SPEECH = CLAIM_STRIPPED_SPEECH     # 一句话只留一份（runtime.execution_claim，流式出口共用）

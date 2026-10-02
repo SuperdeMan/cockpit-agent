@@ -46,6 +46,9 @@ class Context:
         # CA2-15 S1b：云端在本回合读记忆之前取的 owner 代际（服务端自有 meta）。写记忆原样带回，
         # 回合进行中记忆被删过 ⇒ Memory 拒收。
         self.memory_epoch = str(authority.get("memory_epoch") or "")
+        # CA2-15 S2：云端按声音证明算出的读取投影（服务端自有 meta）。车机免唤醒语音没认出说话人时为
+        # "normal_only"——这一轮只读得到普通偏好；读记忆一律原样带给 Memory，由 Memory 执行。
+        self.memory_projection = str(authority.get("memory_projection") or "")
         self.read_states = {}
         self._projection_meta = {}
         self._read_disabled = set()
@@ -77,7 +80,7 @@ class Context:
             return values
         profile = await self._memory.get_context(
             self.session_id, self.user_id, self.vehicle_id, requested,
-            occupant_id=self.occupant_id)
+            occupant_id=self.occupant_id, projection=self.memory_projection)
         if not self._can_read():
             return {}
         self.read_states["profile"] = memory_read.read_state(profile)
@@ -138,7 +141,8 @@ class Context:
             self.user_id, query, occupant_id=self.occupant_id, scopes=scopes,
             kinds=kinds, top_k=top_k,
             predicate_prefix=predicate_prefix, min_score=min_score,
-            min_confidence=min_confidence, max_age_days=max_age_days, subject=subject)
+            min_confidence=min_confidence, max_age_days=max_age_days, subject=subject,
+            projection=self.memory_projection)
         return values if self._can_read() else []
 
     async def recall_read(self, query: str = "", **kw) -> tuple[list[dict], str]:
@@ -148,6 +152,7 @@ class Context:
         if not self._can_read():
             return [], memory_read.OFF
         kw.setdefault("occupant_id", self.occupant_id)
+        kw["projection"] = self.memory_projection        # 不由调用方决定
         values, state = await self._memory.recall_read(self.user_id, query, **kw)
         if not self._can_read():
             return [], memory_read.OFF
@@ -164,7 +169,8 @@ class Context:
             return None
         try:
             value = await self._memory.resolve_person_place(
-                self.user_id, person_word, occupant_id=self.occupant_id)
+                self.user_id, person_word, occupant_id=self.occupant_id,
+                projection=self.memory_projection)
             return value if self._can_read() else None
         except Exception as e:
             import logging

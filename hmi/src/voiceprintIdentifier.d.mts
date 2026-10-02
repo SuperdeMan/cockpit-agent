@@ -5,6 +5,7 @@ export interface VoiceprintResult {
   display_name?: string
   decision?: string
   score?: number
+  voice_attestation?: string
 }
 
 export class VoiceprintIdentifier {
@@ -14,6 +15,8 @@ export class VoiceprintIdentifier {
     sampleRate?: number
     onResult?: (r: VoiceprintResult) => void
   })
+  /** CA2-15 S2：网关对 accept 签发的声音证明；没认出为空串。 */
+  readonly attestation: string
   readonly occupantId: string
   readonly displayName: string
   readonly decision: string

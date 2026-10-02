@@ -117,6 +117,8 @@ export interface HandsFreeDeps {
   getVoicePipeline?(): 'classic' | 's2s'
   getS2sConfig?(): { voice?: string; provider?: string; model?: string }
   getSessionMeta?(): { sessionId: string; userId?: string }
+  /** CA2-15 S2：S2S 会话只为 token 的主体办事——session.start 带上这台手机配置的 token。 */
+  getAuthToken?(): string
   /** S2S 自答轮的用户气泡（已过 FSM 本地治理的那句） */
   onS2sUserUtterance?(text: string): void
   /** S2S 自答的回答增量 */
@@ -475,7 +477,9 @@ export class HandsFreeController {
       },
     })
     this.s2s = client
+    const authToken = this.deps.getAuthToken?.() ?? ''
     client.start(s2sUrl(this.deps.audioUrl), {
+      ...(authToken ? { auth_token: authToken } : {}),
       session_id: meta.sessionId,
       ...(meta.userId ? { user_id: meta.userId } : {}),
       ...(s2sCfg.voice ? { voice: s2sCfg.voice } : {}),

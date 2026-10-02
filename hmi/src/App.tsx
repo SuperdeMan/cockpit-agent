@@ -724,6 +724,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         // 说话人的**称呼**（声纹注册时用户自己填的）。有它「你知道我是谁」才答得上来。
         // 与 occupant_id 同性质：只做个性化，**不参与任何权限判定**。
         occupant_name: handsFreeRef.current?.occupantName || '',
+        // CA2-15 S2：上面两项云端已不再信任；乘员只认声音证明。只有免唤醒语音带身份——
+        // 打字与按键说话按车主处理（不带），免唤醒语音没认出 ⇒ 这一轮只读普通偏好、不进长期抽取。
+        ...(String(metaExtra?.input_source || '').startsWith('voice_')
+          ? (handsFreeRef.current?.voiceIdentity || {}) : {}),
         trace_id: traceId,
       },
     })

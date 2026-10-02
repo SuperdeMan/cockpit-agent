@@ -71,6 +71,9 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
   > **主体只认 Bearer**（CA2-15 S1）：声纹与记忆端点按 `Authorization: Bearer` 解析主体（`AUTH_TOKENS`，
   > E2E 签名身份同 S2S 口径），查询串 `user_id` 只能等于它（缺 token 401、不一致 403，拒绝在读音频 / 调
   > Memory 之前）。新增读写用户数据的端点一律先过 `_owner_query`，`tests/test_memory_endpoint_auth.py` 对账。
+  > **声音证明**（CA2-15 S2）：identify 在 `accept` 时多回一枚 `voice_attestation`（`runtime/voice_attestation.py`，10 分钟，签给 token 主体）；
+  > 云端 / 车端 / S2S 只认它换乘员。S2S `session.start` 只为 token 主体开会话（请求头 Bearer 或帧字段 `auth_token`，E2E 签名身份照旧），
+  > `user_id` 给了必须相等否则 1008；`occupant` 帧只认证明，`voice_identity=unrecognized` 让回流不进长期抽取（`tests/test_s2s_owner_binding.py`）。
   > **跨域方法白名单**：HMI 永远跨域调本面，新增非 GET/POST 端点必须同步 `CORS_METHODS`——
   > 漏了浏览器 preflight 会直接挡下，服务端零日志（2026-07-26 声纹删除真机 P0）。
   > 契约测试 `tests/test_http_cors.py` 按「注册了什么方法就必须允许什么方法」自动比对。

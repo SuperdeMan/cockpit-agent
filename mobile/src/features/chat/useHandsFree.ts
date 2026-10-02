@@ -28,6 +28,8 @@ import type { InteractionScope } from '@/core/session/interactionScope'
 export interface UseHandsFreeOpts {
   scope?: InteractionScope
   audioUrl: string
+  /** CA2-15 S2：网关只为 token 的主体开 S2S 会话（与车端网关同一个 token）。 */
+  authToken?: string
   sessionId: string
   /** 设置里开没开（用户显式打开才常开麦——那是采集面） */
   enabled: boolean
@@ -207,6 +209,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       // 与 HMI 同（HMI 给的 voice 是它自己的 `s2sVoice` 设置项，App 没有这一项）。
       getS2sConfig: () => ({}),
       getSessionMeta: () => ({ sessionId: cbRef.current.sessionId }),
+      getAuthToken: () => cbRef.current.authToken ?? '',
       onS2sUserUtterance: (t) => { if (allowed()) cbRef.current.onS2sUserUtterance?.(t) },
       onS2sAnswerDelta: (t) => { if (allowed()) cbRef.current.onS2sAnswerDelta?.(t) },
       onS2sEscalated: (utterance) => {
