@@ -395,8 +395,27 @@ agent 写画布（`use_figma`）**必须是 Full 座席**，且对目标文件�
 | A-1 设计系统页 | 页 `0:1`：单个长帧 `6:5314`「【新】座舱Agent-HMI」（1422×6243，7 个 Section） |
 | A-8 图标库页 | 页 `32:190`：主帧 `32:191`；39 个 `Icon / <name>` 组件母版在 `32:198`；回推的 16 个补充图标（`vehicle`…`school`）在同页下方 |
 | Make 文件（代码 + `Guidelines.md` + `theme.css`） | `IYsuxZHzG7t2PXtvHOT41N`（`get_metadata` / `get_variable_defs` 不支持 Make 文件） |
+| Android Visual v3（mobile 重构，方向 B） | `1jdZ6Cwp8pEtQJJUwg6NHS`：01 Audit `1:2`、02 Foundations `1:3`、03 Components `1:4`（组件板 `7:2`）、M1 样张 `1:5`；进度见 [brief](../design/2026-10-02-android-visual-redesign-brief.md) |
 
 未出帧：A-8 行车态、B-1…B-4 Dashboard。HMI P5 行车态与 P6 Dashboard 等帧再做。
+
+### 8.5 写画布（`use_figma`）的坑
+
+2026-10-02/03 建 Android Visual v3 时实测：
+
+- **调用是原子的**：脚本抛错时整次回滚，不留半成品，修好后可以原样重跑。`setPluginData` 不可用，要跨步骤记节点就放 JS 数组。
+- **绑定变量的 paint，其 `opacity` 提交后会被重置成变量自身的 alpha**。半透明效果（按下态叠层、思考三点）改用图层 `opacity`，
+  或者建一个带 alpha 的变量（如 `material/sheet-blur`）。
+- **克隆节点或实例后，再绑定到同一个变量，颜色会停在黑色**（`color` 不再解析）。已经绑定到目标变量就跳过；
+  确实要重绑，就先绑到别的变量，再绑回来。
+- **克隆一个文字带 TEXT 属性的组件、改了字，再 `combineAsVariants`，文字会被重置成属性默认值**。
+  改字前先清掉该文字节点的 `componentPropertyReferences`。
+- **`isExposedInstance`** 只能用于两类实例：变体集的实例，或主组件带属性的实例。而且实例必须已经放进组件里，才能设置。
+- **在自动布局帧上调 `resize()`，两个方向的尺寸模式都会变成 FIXED**。需要「随内容」的方向，事后改回 `AUTO`。
+- **渐隐**（滚动区上下沿、超高提示）用 alpha 蒙版矩形（`isMask` + `maskType = "ALPHA"`），不要用颜色渐变。
+  颜色渐变绑不了变量，切主题会露底。
+- **变量值可能是 `VARIABLE_ALIAS`**。读 RGBA 之前，先沿着别名解析到 Primitives 集合的默认模式。
+- **`upload_assets`**：位图帧落地后是 4:3，要按真实比例改尺寸。SVG 会导入为可编辑矢量帧，帧名取自文件名，可直接 `createComponentFromNode`。
 
 ## 9. 验收清单
 
