@@ -19,6 +19,7 @@ from cockpit.common.v1 import common_pb2
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
 from runtime.grpcio import aio_channel
+from runtime.deferred_condition import is_deferred_instruction
 from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, is_negated_write_directive, is_sequence_connector, split_and_classify, split_and_classify_any, structured_to_legacy
 import nlu as edge_nlu          # M5 P3 端侧语义 NLU（默认 shadow：只算不用）
 from val import VAL
@@ -809,8 +810,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         turn_issues: list[dict] = []
         turn["issues"] = turn_issues
 
-        # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径
-        if request.is_confirmation:
+        # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径。
+        # 延后条件句同理（「如果…就…」「温度低于20度时…」）：后半句做不做取决于前半句，
+        # 端侧拆开就地执行等于丢掉条件（CA2-10 真栈探针实测空调被无条件打开）。判据与云端规划器同一份。
+        deferred = not request.is_confirmation and is_deferred_instruction(request.text)
+        if request.is_confirmation or deferred:
             intent = None
             multi = None
             mixed_intents = None
@@ -831,6 +835,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # 猜成反向动作。复合句由下面 `_negated_directive` 分段标记处理。
         negated_only = bool(
             not request.is_confirmation
+            and not deferred
             and not mixed_intents
             and is_negated_write_directive(request.text)
         )

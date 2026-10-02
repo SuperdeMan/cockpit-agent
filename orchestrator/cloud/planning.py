@@ -5,6 +5,7 @@ WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 from __future__ import annotations
 
 from .context_view import ContextChanged
+from runtime import deferred_condition
 from runtime import context_access
 import asyncio
 import contextvars
@@ -323,19 +324,9 @@ _EXPLICIT_CLOSE_ACTION_RE = re.compile(
     r"(?:^|[\s，,。；;！？!?]|先|再|然后|接着|随后|顺便)"
     r"(?:请|帮我|给我)?(?:关闭|关掉|关上|合上|收起|关)"
 )
-_DEFERRED_CONDITION_RE = re.compile(
-    r"(?:如果|要是|假如|若|只要|除非|"
-    r"(?:不够|不足|超过|低于|高于|达到|满足).{0,40}?(?:就|则|时|后|才)|"
-    r"(?:根据|依据).{0,40}(?:结果|情况).{0,20}(?:决定|选择|判断)|"
-    r"\bif\b|\bwhen\b|\bunless\b)",
-    re.IGNORECASE,
-)
-_COMPLETE_DEFERRED_CONDITION_RE = re.compile(
-    r"(?:如果|要是|假如|若|只要|除非).{1,80}?(?:就|则|才|便|的话)"
-    r"[^，,。；;！？!?\n]{1,80}"
-    r"|\bif\b.{1,120}?\bthen\b.{1,120}",
-    re.IGNORECASE,
-)
+# 延后条件判据端云共用一份（端侧据此不就地执行，见 runtime/deferred_condition.py）。
+_DEFERRED_CONDITION_RE = deferred_condition.DEFERRED_CONDITION_RE
+_COMPLETE_DEFERRED_CONDITION_RE = deferred_condition.COMPLETE_DEFERRED_CONDITION_RE
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
 _UTTERANCE_PASSTHROUGH_SLOT_KEYS = frozenset({
