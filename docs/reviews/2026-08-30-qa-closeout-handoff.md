@@ -7,7 +7,7 @@
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。当前 release 为 `e7766e98c79de30c57d31bce733b431c6fe8e850`：CA2-15 S1a 记忆 / 声纹 HTTP 端点只按 Bearer 主体办事，叠加在 CA2-11 车端操作日志与接收端幂等、超时后的恢复查询，叠加车端条件句整句上云的修复，叠加在 CA2-10 执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）之上，
+**QA 验收仍非全绿**。当前 release 为 `910fd572eeaa1f0ecde8a5ed1a5b840470ea7c6a`：CA2-15 S1b 删除与在途写入同代际失效（Memory owner 代际），叠加在 S1a 记忆 / 声纹 HTTP 端点只按 Bearer 主体办事之上，再叠加在 CA2-11 车端操作日志与接收端幂等、超时后的恢复查询，叠加车端条件句整句上云的修复，叠加在 CA2-10 执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）之上，
 叠加在 CA2-09 挂起一次消费与确认绑定（含车端挡位复核）和 CA2-08 之上。CA2-08 执行方持久准入已启用——
 task_ledger 新增 `operation` 列（经用户授权与发布闸一次性 schema 摘要上线），演示商户 `shop.order` / `shop.order_cancel`
 先落准入记录再执行；见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)。其下仍包含 CA2-07 的 Cloud/Agent 权限化上下文视图；主体权限、接收需求与在途读取失效机制已落地。
@@ -67,7 +67,8 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | CA2-10 结果证据 | `a772e783` 全量 10507 / 35 / 11（302.55 s），四门禁、smoke 13/13；注入缺陷 24 处全部判红；固定语料 20×3：60/60 完成、100 轮，业务红 5（4 轮未走手册、V207 两轮缺「露营」，均为既有签名），证据错误 0、open operations 0，216 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；语料全是只读问句、不含 state_match 步，ResultBundle 未出现 evidence；p50/p95/p99 6860/19781/27782 ms；模拟车上的真栈车控证据探针属于 remote_mutating，未运行（需另取授权）。[本包 §5](../design/2026-10-02-v2-effect-evidence.md#5-实现与证据2026-10-02) |
 | CA2-11 车端操作日志 | `b38e5afc` 全量 10584 / 35 / 11，四门禁、smoke 13/13；22 个 CA2-08 准入场景在 SQLite 上全过，内存 / SQLite / 嵌入式 PostgreSQL 三份账本同场景一致；注入缺陷 18 处全部判红；线上卷与库已建立；固定语料 20×3：60/60 完成、99 轮，业务红 3（既有签名），证据错误 0、open operations 0，211 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；其中 15 轮后备箱确认问句经车端准入，线上日志随之出现 15 条记录、0 条 orphaned，云端 step.edge 10–14 ms（含契约探测，一次 292 ms 离群）；p50/p95/p99 7328/18500/28468 ms；授权后的后备箱探针：确认开 / 关各落一条 done、0 orphaned、车态复原。[本包 §4](../design/2026-10-02-v2-vehicle-operation-log.md#4-验证) |
 | CA2-15 S1a 端点鉴权 | `e7766e98` 全量 10614 / 35 / 11，四门禁、smoke 13/13；变异 6 条全部判红；status 5/5，verify `20261002T125956Z-e7766e9.json`；真栈只读核对：无 token / 伪造 token → 401、HMI token → 200、冒充他人 `user_id` → 403，线上 HMI 模块带 bearer 且 token 已注入；三个 e2e 本地栈用例未在云端运行，固定语料未重跑（对话链路未改）。[本包 §5](../design/2026-10-02-v2-memory-identity-governance.md#5-s1a端点按-token-解析主体已部署-e7766e98) |
-| v2 / Jev | CA2-02–11/12 首版已落地，CA2-15 S1a 已部署；CA2-08 首批只覆盖演示商户两项通用写工具。CA2-07 只关闭 Cloud/Agent 模型上下文路径，本包不替 S2S、调试 HTTP、正式全局身份或设备签收。Decide、T1e、OEM、车端日志的后台同步与补偿仍未实现（CA2-11 首版只做按需恢复查询） |
+| CA2-15 S1b 删除代际 | `910fd572` 全量 10637 / 35 / 11，四门禁、smoke 13/13；注入缺陷 14 处全部判红；status 5/5，verify `20261002T153258Z-910fd57.json`；固定语料 20×3：60/60、105 轮，证据错误 0、open operations 0，196 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 7375/15781/19438 ms；业务红 9 条全是既有签名类别（「未走手册」5、V207 缺「露营」2、V201 第 3 轮手册没检索到「刚才你说…」2）；只读核对：本次 210 条轮次全部带代际戳，Memory 拒收 0、报错 0；删除栅栏真栈探针未运行（remote_mutating，需授权）。[本包 §6](../design/2026-10-02-v2-memory-identity-governance.md#6-s1b删除与在途写入同代际失效已部署-910fd572) |
+| v2 / Jev | CA2-02–11/12 首版已落地，CA2-15 S1（S1a 端点鉴权、S1b 删除代际）已部署；CA2-08 首批只覆盖演示商户两项通用写工具。CA2-07 只关闭 Cloud/Agent 模型上下文路径，本包不替 S2S、调试 HTTP、正式全局身份或设备签收。Decide、T1e、OEM、车端日志的后台同步与补偿仍未实现（CA2-11 首版只做按需恢复查询） |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。
