@@ -55,6 +55,10 @@ class OperationError(ValueError):
     """A controlled reason code; never carries argument values."""
 
 
+class OperationStoreError(RuntimeError):
+    """操作准入的存储不可用或读写失败。调用方必须当作「不得执行」。"""
+
+
 def new_operation_id() -> str:
     return uuid.uuid4().hex
 

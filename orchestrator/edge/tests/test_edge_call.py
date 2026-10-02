@@ -1,6 +1,7 @@
 """Cloud-scheduled edge calls must execute only through VAL."""
 from __future__ import annotations
 
+import functools
 import os
 import sys
 
@@ -27,8 +28,21 @@ def _call(intent: str, slots=None, meta=None):
     return channel_pb2.EdgeCall(
         step_id="s1",
         intent=common_pb2.Intent(name=intent, slots=slots or {}),
-        meta=meta or {},
+        meta={**dict(_contract(intent)), **(meta or {})},
     )
+
+
+@functools.lru_cache(maxsize=None)
+def _contract(intent: str) -> tuple:
+    """The contract header the cloud sends for this capability (CA2-05). Writes are durable
+    since CA2-11, so a header-less call is no longer legacy-compatible."""
+    from capabilities import build_edge_manifests
+    from runtime.capability_contract import HEADER, capability_digest
+    for manifest in build_edge_manifests():
+        for cap in manifest.capabilities:
+            if cap.intent == intent:
+                return ((HEADER, capability_digest(manifest, cap)),)
+    return ()
 
 
 def test_hvac_edge_call_executes_through_val():

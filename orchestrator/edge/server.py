@@ -37,6 +37,7 @@ from security.session_scopes import resolve_granted_scopes
 from observability.events import EventEmitter, change_source
 from runtime.vehicle_state import StateSigner
 from orchestrator.edge.vehicle_driver import SimulatedVehicleDriver
+from orchestrator.edge.operation_log import EdgeOperationLog
 from observability.tracing import (get_trace_id, new_trace_id, set_session_id,
                                    set_trace_id)
 
@@ -237,7 +238,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         driver = SimulatedVehicleDriver(vehicle_id, signer=StateSigner.from_env(vehicle_id))
         self.val = VAL(on_change=_on_change, driver=driver)
         self._audit = AuditLogger()     # 权限拒绝/fail-open 兜底留痕（与云侧同一事件族）
-        self.cloud = CloudClient(edge_call_executor=EdgeCallExecutor(self.val))
+        # CA2-11: cloud-dispatched commands are admitted against the vehicle's operation log.
+        self.cloud = CloudClient(edge_call_executor=EdgeCallExecutor(
+            self.val, operation_log=EdgeOperationLog.from_env()))
         self.cloud_connected = False  # 连接状态追踪
         self.memory = _MemoryClient()
         self._last_local_exchange: OrderedDict[

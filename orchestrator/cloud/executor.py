@@ -15,6 +15,7 @@ from google.protobuf.json_format import MessageToDict
 
 from . import verify as _verify
 from runtime import effect_evidence as _ev
+from runtime import operation as _operation
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan,
                      step_call_context, step_fingerprint, step_raw_text)
 from observability import events as obs_events
@@ -36,6 +37,11 @@ _EXEC_UNCERTAIN = "uncertain_confirmed"
 # ——两者的补救动作相同，成因不同。
 _EXEC_STREAM_LOST_FINAL = "stream_lost_final"
 _RESPONSE_ONLY_CONTRACT_ERROR = "response_only_contract_violation"
+# CA2-11：车端步超时后问一次车端操作日志（只读、有上限）。车端从没收到才用**同一** operation 重发一次，
+# 晚到的第一份由车端日志去重；不宣称恰好一次，补偿是另一个受控动作。话术零领域词。
+_EDGE_QUERY_TIMEOUT_S = 1.5
+_EDGE_RECOVERED_SPEECH = "刚才没收到执行回执，车端记录显示这个操作已经完成。"
+_EDGE_ABSENT = "absent"
 
 # 流式丢 final 后按 readback 结果分档的话术（B5 §4.2）。三句**零领域字面量**：
 # 不提任何具体对象或动作，只说「发出了 / 生效了 / 不确定」。
@@ -45,6 +51,11 @@ _STREAM_LOST_FINAL_SAT_SPEECH = (
     "刚才没收到执行回执，不过我查了车辆状态，这个操作已经生效了。")
 _STREAM_LOST_FINAL_UNSAT_SPEECH = "操作指令已发出。"
 _STREAM_LOST_FINAL_SPEECH = "操作指令已发出，结果暂时无法确认，请留意车辆状态。"
+
+
+def _recovered(result: StepResult) -> bool:
+    record = (result.data or {}).get("_operation") if isinstance(result.data, dict) else None
+    return isinstance(record, dict) and record.get("decision") == "recovered"
 
 
 def _evidence_attrs(evidence: dict | None, details: dict | None) -> dict:
@@ -224,15 +235,40 @@ class DagExecutor:
         result = self._enforce_response_only(
             step, await self._dispatch_once(step, ctx))
         result = self._enforce_capability_confirm(step, result)
+        result = await self._recover_edge(step, ctx, result)
         result = await self._verify_outcome(step, result, ctx)
-        # 只给「真产生了副作用」的成功结果打指纹：纯查询步重复执行无害（还可能要刷新数据）
-        if result.status == StepStatus.OK and result.actions:
+        # 只给「真产生了副作用」的成功结果打指纹：纯查询步重复执行无害（还可能要刷新数据）。
+        # CA2-11：从车端日志恢复的成功同样是已发生的副作用（回包丢了，动作卡也就没了）。
+        if result.status == StepStatus.OK and (result.actions or _recovered(result)):
             result.fingerprint = fingerprint
         # 超时也打指纹：超时 ≠ 失败——Agent 可能已经执行完、只是响应没回来（副作用已
         # 发生）。不打指纹的话 T2 replan 重出同一动作会被原样重发（「明早提醒我」变两条
         # 提醒）。真失败（Agent 明确报错）仍不打——那要允许重跑，见 _find_duplicate。
         elif result.status == StepStatus.FAILED and result.error == "step_timeout":
             result.fingerprint = fingerprint
+        return result
+
+    async def _recover_edge(self, step: Step, ctx: PlanContext, result: StepResult) -> StepResult:
+        """CA2-11：车端步超时 = 车端可能已执行。先问车端日志，再决定怎么说、要不要重发。"""
+        if (result.status != StepStatus.FAILED or (result.error or "") not in _UNCERTAIN_ERRORS
+                or step.deployment != "edge" or not getattr(step, "operation_id", "")):
+            return result
+        query = getattr(self._dispatcher, "query_edge_operation", None)
+        if not callable(query):
+            return result
+        status = await query(step, ctx, _EDGE_QUERY_TIMEOUT_S)
+        logger.info("Step %s(%s): edge operation after timeout reads %s",
+                    step.id, step.intent, status or "unanswered")
+        if status == _EDGE_ABSENT:
+            redo = self._enforce_response_only(step, await self._dispatch_once(step, ctx))
+            return self._enforce_capability_confirm(step, redo)
+        if status == _operation.DONE:
+            return StepResult(step_id=step.id, status=StepStatus.OK, speech=_EDGE_RECOVERED_SPEECH,
+                              data={"_operation": {"operation_id": step.operation_id,
+                                                   "decision": "recovered", "status": status},
+                                    "_speech_verbatim": True})
+        if status == _operation.FAILED:
+            return StepResult(step_id=step.id, status=StepStatus.FAILED, error="edge_reported_failure")
         return result
 
     @staticmethod

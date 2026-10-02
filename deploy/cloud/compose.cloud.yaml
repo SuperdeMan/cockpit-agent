@@ -197,3 +197,6 @@ volumes:
     name: car-agent-redis-data
   obs-data:
     name: car-agent-obs-data
+  # CA2-11: stable name, so the vehicle operation log survives release activation and rollback.
+  edge-operations:
+    name: car-agent-edge-operations

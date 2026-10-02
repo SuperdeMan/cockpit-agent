@@ -4381,6 +4381,11 @@ class _ProactiveCallGraph:
         self.constructor_sites: dict[str, list[_CallSite]] = {}
         self.summaries: dict[str, set[int]] = {}
         self.constructor_attr_params: dict[tuple[str, str], str] = {}
+        # Reaching-definition lookups are pure in (module, function, name, line) over
+        # immutable trees; the whole-repository solve repeats them hundreds of thousands
+        # of times, so they are memoized. The verdicts are unchanged.
+        self._import_cache: dict[tuple[int, str, str, int], tuple[str, ...]] = {}
+        self._assignment_cache: dict[tuple[int, str, str, int], tuple[ast.AST, ...]] = {}
         self._load()
         self._index_callsites()
         self._index_constructor_attrs()
@@ -4435,6 +4440,22 @@ class _ProactiveCallGraph:
         return None
 
     def _import_targets(
+        self,
+        module: _GraphModule,
+        function_symbol: str,
+        name: str,
+        *,
+        before_line: int,
+    ) -> tuple[str, ...]:
+        key = (id(module), function_symbol, name, before_line)
+        cached = self._import_cache.get(key)
+        if cached is None:
+            cached = self._import_targets_uncached(
+                module, function_symbol, name, before_line=before_line)
+            self._import_cache[key] = cached
+        return cached
+
+    def _import_targets_uncached(
         self,
         module: _GraphModule,
         function_symbol: str,
@@ -4766,6 +4787,22 @@ class _ProactiveCallGraph:
         return tuple(unique.values())
 
     def _local_assignments(
+        self,
+        module: _GraphModule,
+        function_symbol: str,
+        name: str,
+        *,
+        before_line: int,
+    ) -> tuple[ast.AST, ...]:
+        key = (id(module), function_symbol, name, before_line)
+        cached = self._assignment_cache.get(key)
+        if cached is None:
+            cached = self._local_assignments_uncached(
+                module, function_symbol, name, before_line=before_line)
+            self._assignment_cache[key] = cached
+        return cached
+
+    def _local_assignments_uncached(
         self,
         module: _GraphModule,
         function_symbol: str,

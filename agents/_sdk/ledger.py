@@ -45,8 +45,8 @@ OPERATION_KIND = "operation"               # runtime.operation.KIND；研究/订
 DEFAULT_INIT_RETRY_S = 30.0
 
 
-class OperationStoreError(RuntimeError):
-    """操作准入的存储不可用或读写失败。调用方必须当作「不得执行」。"""
+# CA2-11: one error type for every admission store (cloud PostgreSQL, vehicle SQLite).
+from runtime.operation import OperationStoreError  # noqa: E402,F401
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "ledger_schema.sql")
 

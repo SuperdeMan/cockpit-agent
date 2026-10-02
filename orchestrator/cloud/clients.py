@@ -448,6 +448,17 @@ class Clients:
             elif which == "final":
                 yield ("final", ev.final)
 
+    async def query_edge_operation(self, vehicle_id: str, operation_id: str, *, step_id: str,
+                                   timeout: float):
+        """CA2-11: read-only lookup in the vehicle's operation log; never reaches VAL."""
+        envelope = channel_pb2.EdgeCallEnvelope(
+            vehicle_id=vehicle_id,
+            call=channel_pb2.EdgeCall(step_id=step_id, operation_query=operation_id))
+        result = await self._edge_stub().DispatchToEdge(envelope, timeout=timeout)
+        if not result.HasField("result"):
+            raise RuntimeError("edge result missing execute response")
+        return result.result
+
     async def dispatch_to_edge(self, vehicle_id: str, step, ctx):
         """Call the requesting vehicle's edge executor through Cloud Gateway."""
         logger.info("DispatchToEdge: vehicle=%s step=%s intent=%s",

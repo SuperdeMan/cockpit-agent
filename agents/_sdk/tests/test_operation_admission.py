@@ -217,6 +217,10 @@ async def store_writes_respect_record_state(h):
     assert not await h.ledger.operation_claim(oid, observed_binding=claim.binding_sha256,
                                               envelope=executing, session_id="s", trace_id="")
     ref = op.outcome_ref(op.STATUS_OK, outcome=op.OUTCOME_SUCCEEDED)
+    # Another binding (other parameters or subject) cannot settle this record.
+    assert not await h.ledger.operation_settle(oid, binding="0" * 64, status=op.DONE,
+                                               phase=op.PHASE_EXECUTING, result_ref=ref)
+    assert (await h.row(oid))["status"] == op.ACCEPTED
     assert await h.ledger.operation_settle(oid, binding=claim.binding_sha256, status=op.DONE,
                                            phase=op.PHASE_EXECUTING, result_ref=ref)
     for status in (op.FAILED, op.ORPHANED, op.ACCEPTED):

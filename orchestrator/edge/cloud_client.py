@@ -214,10 +214,11 @@ class CloudClient:
             result = channel_pb2.EdgeResult(step_id=call.step_id)
             result.result.status = 3  # FAILED
         else:
-            result = channel_pb2.EdgeResult(
-                step_id=call.step_id,
-                result=self._edge_calls.execute(call),
-            )
+            # CA2-11: the admitted entry (operation query, contract checks, vehicle-side
+            # admission, VAL, settlement). A bare executor without it keeps the old call.
+            dispatch = getattr(self._edge_calls, "dispatch", None)
+            response = await dispatch(call) if dispatch else self._edge_calls.execute(call)
+            result = channel_pb2.EdgeResult(step_id=call.step_id, result=response)
         async with self._send_lock:
             await self._stream.write(channel_pb2.UpFrame(
                 correlation_id=down.correlation_id,

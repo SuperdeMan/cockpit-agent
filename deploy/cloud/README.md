@@ -46,6 +46,7 @@
 ## 数据与备份
 
 - PostgreSQL、Redis 和 Collector 使用稳定命名卷。
+- 车端操作日志（edge-orchestrator 的 SQLite，CA2-11）使用稳定命名卷 `car-agent-edge-operations`，只存摘要与状态，24 h 轮转；重新部署与回滚后仍可读。
 - 禁止执行 `docker compose down -v`。
 - 自动备份不得包含或复制 `.env`。
 - 发布产物与备份只按已批准的保留策略自动轮转：策略唯一来源是 `retention-policy.json`（安装为

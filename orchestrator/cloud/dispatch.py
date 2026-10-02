@@ -1,9 +1,12 @@
 """Unified step dispatcher for cloud agents, vehicle edge executors, and tools."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
+
+from google.protobuf import json_format
 
 from cockpit.agent.v1 import agent_pb2
 from cockpit.common.v1 import common_pb2
@@ -22,6 +25,14 @@ logger = logging.getLogger("planner.dispatch")
 _audit = AuditLogger()
 
 
+def _deadline_exceeded(exc: BaseException) -> bool:
+    code = getattr(exc, "code", None)
+    try:
+        return callable(code) and getattr(code(), "name", "") == "DEADLINE_EXCEEDED"
+    except Exception:
+        return False
+
+
 def _failure(status: int, code: str, message: str) -> agent_pb2.ExecuteResponse:
     return agent_pb2.ExecuteResponse(
         status=status,
@@ -33,9 +44,11 @@ def _failure(status: int, code: str, message: str) -> agent_pb2.ExecuteResponse:
 class UnifiedDispatcher:
     """Route one plan step without exposing transport details to the executor."""
 
-    def __init__(self, cloud_call, edge_call, tools=None, breakers=None):
+    def __init__(self, cloud_call, edge_call, tools=None, breakers=None, edge_query=None):
         self._cloud_call = cloud_call
         self._edge_call = edge_call
+        # CA2-11: read-only lookup in the vehicle's operation log (None = not wired).
+        self._edge_query = edge_query
         self._tools = tools
         # 熔断：按 endpoint 隔离故障 Agent。连续失败 N 次 → 打开，后续调用快速失败，
         # 不再每次吃满 latency_budget 超时（"服务超时"放大器）；冷却后半开探测自愈。
@@ -106,6 +119,28 @@ class UnifiedDispatcher:
             raw_text_from=("origin" if step_call_context(step, ctx) is not ctx else ""),
         )
         return response
+
+    async def query_edge_operation(self, step: Step, ctx: PlanContext, timeout: float) -> str:
+        """CA2-11: what the vehicle's operation log says about this step's operation.
+
+        Returns the recorded status (done / failed / accepted / orphaned / cancelled), "absent"
+        when the vehicle never received it, or "" when the vehicle could not be asked.
+        Read-only on the vehicle: the query never reaches VAL.
+        """
+        if self._edge_query is None or step.deployment != "edge" or not ctx.vehicle_id                 or not getattr(step, "operation_id", ""):
+            return ""
+        try:
+            resp = await asyncio.wait_for(
+                self._edge_query(ctx.vehicle_id, step.operation_id, step_id=f"{step.id}-recover",
+                                 timeout=timeout), timeout=timeout)
+        except Exception as exc:
+            logger.warning("Edge operation query for step %s failed: %s", step.id, type(exc).__name__)
+            return ""
+        if resp.status != agent_pb2.ExecuteResponse.OK:
+            return ""
+        record = json_format.MessageToDict(resp.data).get("_operation") if resp.HasField("data") else None
+        status = record.get("status") if isinstance(record, dict) else ""
+        return status if isinstance(status, str) else ""
 
     async def dispatch(self, step: Step, ctx: PlanContext):
         reason = argument_error(step.capability_contract, step.slots)
@@ -203,6 +238,13 @@ class UnifiedDispatcher:
                 elapsed = (time.monotonic() - start) * 1000
                 breaker.record_failure()
                 metrics.record_agent_call(step.agent_id, elapsed, False)
+                if _deadline_exceeded(exc):
+                    # CA2-11: the vehicle got the command and did not answer in time. Whether it ran
+                    # is unknown, which is the executor's timeout, not "unreachable" (never ran).
+                    logger.warning("Edge step %s: no answer before the deadline", step.id)
+                    await self._finish(step, ctx, _failure(agent_pb2.ExecuteResponse.FAILED,
+                                                           "edge_timeout", "deadline exceeded"), elapsed)
+                    raise asyncio.TimeoutError() from exc
                 logger.warning("Edge step %s failed: %s", step.id, exc)
                 return await self._finish(
                     step,

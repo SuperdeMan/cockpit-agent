@@ -221,11 +221,15 @@ def _capabilities(intents: set[str], fallback: str, agent_id=""):
         params["value"]["unit"] = str(units[0]) if len(units) == 1 else ""
         params["value"]["region"] = "vehicle_positions" if obj.get("positions") else "vehicle_global"
         ver = _verification_for(intent)
+        writes = _effect_for(intent, objects) == "write"
+        # CA2-11: every vehicle write the cloud dispatches is admitted by the vehicle's operation
+        # log (receiver idempotency). The ABI is unchanged; only the contract revision moves.
         result = declaration(
-            [], "state_change" if _effect_for(intent, objects) == "write" else "read",
+            [], "state_change" if writes else "read",
             parameters=params, verification=bool(ver and ver.mode),
             preconditions=("permission", "val"), vehicle_specific=True,
-            legacy=f"{agent_id}/{intent}" in migration_inventory())
+            legacy=f"{agent_id}/{intent}" in migration_inventory(),
+            admission="durable" if writes else None)
         # Policy changes must invalidate old callers even when the intent name stays.
         policy = {k: v for k, v in obj.items() if k not in {"display_name", "edge_intents"}}
         result["revision"] = "knowledge-" + hashlib.sha256(

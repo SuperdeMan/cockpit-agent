@@ -8,8 +8,12 @@ from google.protobuf import struct_pb2
 from cockpit.agent.v1 import agent_pb2
 from cockpit.common.v1 import common_pb2
 
+from types import SimpleNamespace
+
 from orchestrator.edge.vehicle_driver import COMMAND_REF
 from runtime import effect_evidence
+from runtime import operation as operation_contract
+from runtime import operation_gate
 from val import VAL
 
 
@@ -206,11 +210,73 @@ def decode_intent(intent_name: str,
 
 
 class EdgeCallExecutor:
-    """Translate an EdgeCall to a VAL command and return Agent response semantics."""
+    """Translate an EdgeCall to a VAL command and return Agent response semantics.
 
-    def __init__(self, val: VAL):
+    ``dispatch`` is what the cloud reaches (CA2-11): a read-only operation query, the
+    capability-contract checks, vehicle-side admission against the operation log, then
+    VAL, then the record is settled. ``execute`` is the bare translation without
+    admission (VAL-level semantics); production wiring never calls it directly.
+    """
+
+    def __init__(self, val: VAL, operation_log=None):
         self.val = val
+        self.operation_log = operation_log
         self._contract_manifests = None
+
+    async def dispatch(self, call) -> agent_pb2.ExecuteResponse:
+        if getattr(call, "operation_query", ""):
+            return self._operation_query(call)
+        early = self._preflight(call)
+        if early is not None:
+            return early
+        gate = await self._admit(call)
+        if gate.response is not None:
+            return gate.response
+        try:
+            response = self._run(call)
+        except BaseException:
+            await gate.settle_uncertain("edge_executor_error")
+            raise
+        await gate.settle(response)
+        return response
+
+    async def _admit(self, call):
+        """The cloud's admission loop, against the vehicle's log. The subject is the vehicle:
+        the log never stores who spoke, and operation IDs are server-minted UUIDs."""
+        manifest = next((m for m in self._manifests() for c in m.capabilities
+                         if c.intent == call.intent.name), None)
+        vehicle_id = self.val.driver.vehicle_id
+        agent = SimpleNamespace(manifest=manifest, ledger=self.operation_log)
+        request = SimpleNamespace(intent=call.intent, meta=call.meta, session_id="",
+                                  context=SimpleNamespace(user_id=f"vehicle:{vehicle_id}",
+                                                          vehicle_id=vehicle_id))
+        return await operation_gate.admit(agent, request)
+
+    def _operation_query(self, call) -> agent_pb2.ExecuteResponse:
+        """What the vehicle's log says about one operation. Read-only: VAL is never touched."""
+        from runtime.capability_contract import rejected
+        operation_id = call.operation_query
+        if call.intent.name or call.intent.slots or not operation_contract.valid_operation_id(operation_id):
+            return rejected("ambiguous_operation_query")
+        if self.operation_log is None:
+            return operation_gate.reject(operation_contract.UNAVAILABLE, operation_id)
+        try:
+            found = self.operation_log.lookup(operation_id)
+        except operation_contract.OperationStoreError:
+            return operation_gate.reject(operation_contract.UNAVAILABLE, operation_id)
+        record = {"operation_id": operation_id, "decision": "query",
+                  "status": found["status"] if found else "absent"}
+        if found:
+            record["phase"] = found["phase"]
+            record["outcome"] = str((found.get("result_ref") or {}).get("outcome") or "")
+        return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK,
+                                         data=_struct({"_operation": record}))
+
+    def _manifests(self):
+        if self._contract_manifests is None:
+            from capabilities import build_edge_manifests
+            self._contract_manifests = build_edge_manifests()
+        return self._contract_manifests
 
     def _known_objects(self) -> set[str] | None:
         """VAL 知识库声明的对象集（单一真相源）；无知识库时返回 None 走兜底集。"""
@@ -264,13 +330,14 @@ class EdgeCallExecutor:
         return ""
 
     def execute(self, call) -> agent_pb2.ExecuteResponse:
-        from observability.events import change_source
-        from capabilities import build_edge_manifests
+        early = self._preflight(call)
+        return early if early is not None else self._run(call)
+
+    def _preflight(self, call) -> agent_pb2.ExecuteResponse | None:
+        """The capability-version probe and contract checks; None means the call may proceed."""
         from runtime.capability_contract import call_error, capability_digest, HEADER, rejected
 
-        if self._contract_manifests is None:
-            self._contract_manifests = build_edge_manifests()
-        manifests = self._contract_manifests
+        manifests = self._manifests()
         query = getattr(call, "contract_query", "")
         if query:
             if call.intent.name or call.intent.slots:
@@ -288,6 +355,10 @@ class EdgeCallExecutor:
                 if reason:
                     return rejected(reason)
                 break
+        return None
+
+    def _run(self, call) -> agent_pb2.ExecuteResponse:
+        from observability.events import change_source
 
         change_source.set("edge_call")
         intent_name = call.intent.name

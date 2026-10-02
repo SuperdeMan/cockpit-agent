@@ -182,14 +182,26 @@ def test_bad_admission_declarations_are_rejected(over, reason):
         cc.normalize(_contract(**over))
 
 
-@pytest.mark.parametrize("deployment,kind", [("edge", "agent"), ("cloud", "tool")])
-def test_durable_admission_needs_an_sdk_executor(deployment, kind):
+def _durable_manifest(deployment, kind):
     from cockpit.agent.v1 import agent_pb2
     contract = cc.declaration(["item"], "external_write", legacy=False, admission="durable",
                               preconditions=("permission", "handler"))
     cap = agent_pb2.Capability(intent="x.write", effect="write", slots=["item"],
                                contract=cc.to_proto(contract))
-    manifest = agent_pb2.AgentManifest(agent_id="x", kind=kind, deployment=deployment,
-                                       requires_permissions=["x.write"], capabilities=[cap])
+    return agent_pb2.AgentManifest(agent_id="x", kind=kind, deployment=deployment,
+                                   requires_permissions=["x.write"], capabilities=[cap])
+
+
+@pytest.mark.parametrize("deployment,kind", [("edge", "agent"), ("cloud", "tool"), ("edge", "tool"),
+                                             ("cloud", "edge_fast")])
+def test_durable_admission_needs_an_executor_with_a_store(deployment, kind):
+    manifest = _durable_manifest(deployment, kind)
     with pytest.raises(cc.ContractError, match="durable_admission_unsupported_executor"):
         cc.validate_capability(manifest, manifest.capabilities[0])
+
+
+@pytest.mark.parametrize("deployment,kind", [("cloud", "agent"), ("edge", "edge_fast")])
+def test_sdk_agents_and_the_vehicle_executor_admit_durably(deployment, kind):
+    """CA2-11: the vehicle's operation log is the edge receiver's store."""
+    manifest = _durable_manifest(deployment, kind)
+    cc.validate_capability(manifest, manifest.capabilities[0])

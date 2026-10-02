@@ -898,9 +898,13 @@ services:
       # COPY**——它是训练产物、gitignore、每次重训都会变，烤进镜像等于每次重训都要重建。
       # 挂载缺席（或没训过）时 EdgeNLU 决议 disabled、整链回落规则，与声纹 CAM++ 同款姿态。
       - ../models:/app/models:ro
+      # CA2-11：车端操作日志（云端派发的车控先落 executing 再执行，重启后据此不盲重放）。
+      # 只存摘要/编号/状态，不存用户身份；24 h 轮转。卷保证重启与重新部署后仍可读。
+      - edge-operations:/data
     environment:
       # B3 部署形态闸（本服务未用 <<: *python-env，单列）。
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
+      EDGE_OPERATION_LOG: /data/edge-operations.sqlite3
       VEHICLE_STATE_TRUST: ${VEHICLE_STATE_TRUST:-}
       VEHICLE_STATE_KEY_ID: ${VEHICLE_STATE_KEY_ID:-}
       VEHICLE_STATE_PRIVATE_KEY: ${VEHICLE_STATE_PRIVATE_KEY:-}
@@ -953,3 +957,4 @@ services:
 # 观测持久层（collector SQLite）：badcase 轮次/链路/日志跨重启保留
 volumes:
   obs-data:
+  edge-operations:

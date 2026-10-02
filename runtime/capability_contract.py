@@ -224,10 +224,10 @@ def validate_capability(manifest, cap) -> None:
     mode = getattr(getattr(cap, "verification", None), "mode", "")
     if (contract["verification"] == "declared") != bool(mode and mode != "none"):
         raise ContractError("verification_contract_conflict")
-    # Durable admission runs in the SDK receiver; edge VAL and tools have no ledger yet.
-    if durable_admission(contract) and (
-            getattr(manifest, "deployment", "") == "edge"
-            or (getattr(manifest, "kind", "") or "agent") != "agent"):
+    # Durable admission needs a receiver with a store: the SDK servicer for cloud agents,
+    # the vehicle operation log for edge VAL (CA2-11). Tools have neither.
+    receiver = ((getattr(manifest, "kind", "") or "agent"), getattr(manifest, "deployment", "") or "cloud")
+    if durable_admission(contract) and receiver not in {("agent", "cloud"), ("edge_fast", "edge")}:
         raise ContractError("durable_admission_unsupported_executor")
 
 

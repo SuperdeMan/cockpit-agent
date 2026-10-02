@@ -94,6 +94,7 @@ async def serve():
         cloud_call=clients.call_agent,
         edge_call=clients.dispatch_to_edge,
         tools=tools,
+        edge_query=clients.query_edge_operation,
     )
     # M2 Verifier：车况镜像供 state_match 求值（只读订阅 vehicle.state.changed）。
     # 连不上 NATS → 镜像恒空 → 对账判 UNKNOWN 不定罪，主链不受影响。

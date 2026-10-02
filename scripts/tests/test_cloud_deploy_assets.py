@@ -2181,7 +2181,13 @@ def test_cloud_compose_uses_stable_data_volumes_and_redis_aof():
         "postgres-data": {"name": "car-agent-postgres-data"},
         "redis-data": {"name": "car-agent-redis-data"},
         "obs-data": {"name": "car-agent-obs-data"},
+        "edge-operations": {"name": "car-agent-edge-operations"},
     }
+    base = yaml.safe_load((ROOT / "deploy" / "docker-compose.yaml").read_text(encoding="utf-8"))
+    edge = base["services"]["edge-orchestrator"]
+    assert "edge-operations:/data" in edge["volumes"]
+    assert edge["environment"]["EDGE_OPERATION_LOG"] == "/data/edge-operations.sqlite3"
+    assert "edge-operations" in base["volumes"]
 
 
 def test_cloud_planner_consumes_the_fail_closed_permission_setting():

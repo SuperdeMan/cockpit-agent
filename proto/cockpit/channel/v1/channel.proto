@@ -71,6 +71,9 @@ message EdgeCall {
   // Read-only capability-version probe. Intent must be absent for this variant.
   // Old receivers see an empty intent and reject without invoking VAL.
   string contract_query = 4;
+  // CA2-11 read-only recovery lookup: what the vehicle's operation log says about one
+  // operation_id. Intent must be absent; old receivers reject an empty intent without VAL.
+  string operation_query = 5;
 }
 message EdgeCallEnvelope {
   string vehicle_id = 1;
