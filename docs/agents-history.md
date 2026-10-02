@@ -10360,4 +10360,4 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   一次并行跑十几分钟没结束，两处纯查找记忆化后 16.9 s 且结果逐项相等；CA2-08 场景从没测过「错误绑定不能结算」，补进共享场景。
 - 验证：全量 10584 / 35 / 11；22 个准入场景在 SQLite 上全过，三份账本同场景一致；18 处注入缺陷全部判红。
   发布：infra-approval approved，dry-run 零阻断，status 5/5 零 warning，verify `20261002T112108Z-b38e5af.json`；线上卷与库已建立。固定语料 固定语料 20×3：60/60 完成、99 轮，业务红 3（既有签名），证据错误 0、open operations 0，211 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；其中 15 轮后备箱确认问句经车端准入，线上日志随之出现 15 条记录、0 条 orphaned，云端 step.edge 10–14 ms（含契约探测，一次 292 ms 离群）；p50/p95/p99 7328/18500/28468 ms。
-  车控探针（remote_mutating）未运行。下一包 CA2-15。
+  授权后的后备箱探针（runner `21b6e4b3`）：确认开 / 关各落一条 done、0 orphaned，问句时的 awaiting 记录被同一 operation 认领后结算。下一包 CA2-15。

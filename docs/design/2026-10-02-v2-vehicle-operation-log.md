@@ -2,7 +2,7 @@
 
 > 状态：2026-10-02 已部署 `b38e5afc`（status 5/5、verify verified）。用户选 A 并逐项批准：车端 SQLite 表摘要
 > `4103bc98…0ab1fae`、基础设施锚 `3a24c39a…701d7f`。云端数据库 schema 不变；proto 只增字段。
-> 模拟车上的车控探针（remote_mutating）未在本次发布时运行，见 §4。
+> 发布后经本轮授权在模拟车上跑了车控探针：确认后执行各落一条 done，见 §4。
 > 依赖：[CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)（operation 身份与判定表）、
 > [CA2-09 确认绑定](2026-10-02-v2-confirmation-binding.md)、[CA2-10 结果证据](2026-10-02-v2-effect-evidence.md)、
 > [CA2-12 故障注入](2026-09-27-v2-vehicle-state-and-simulation.md)。排序见[路线图](../roadmap.md)。
@@ -76,8 +76,7 @@ v1 不做后台全量同步：云端只在超时时按需查询。日志在车�
 | 发布 | `infra-approval` 只读预检：聚合 `3a24c39a…701d7f`，安装项只有共享 `compose.cloud.yaml`，锚校验三项通过；`--apply` approved。deploy dry-run 带 schema 摘要零阻断，apply submitted；status ok、release/running 均为 `b38e5afc`、5/5、零 warning；verify `20261002T112108Z-b38e5af.json` verified |
 | 线上只读核对 | edge-orchestrator 挂载 `car-agent-edge-operations` → `/data`（rw），`EDGE_OPERATION_LOG=/data/edge-operations.sqlite3`，库与 `edge_operation` 表已建立，发布时 0 行 |
 | 固定语料 | 固定语料 20×3：60/60 完成、99 轮，业务红 3（既有签名），证据错误 0、open operations 0，211 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；其中 15 轮后备箱确认问句经车端准入，线上日志随之出现 15 条记录、0 条 orphaned，云端 step.edge 10–14 ms（含契约探测，一次 292 ms 离群）；p50/p95/p99 7328/18500/28468 ms |
-
-真栈车控探针（后备箱经云端确认后由车端执行、日志落 done、同一操作重投被去重）属于 `remote_mutating`，未在本次发布时运行，需另取授权。
+| 真栈车控探针 | `scripts/probe_vehicle_operation_log.py`（runner `21b6e4b3`，本轮授权，共享模拟车）：经云端确认开、关后备箱各一次，车端日志各恰好一条 done、0 条 orphaned；问句时写下的 awaiting 记录在确认时被同一 operation 认领后结算，未出现第二条；确认到完成 844 / 860 ms；后备箱复原。`.artifacts/ca2-11/b38e5afc-vehicle-log-probe.json` |
 
 ## 5. 已知边界
 
