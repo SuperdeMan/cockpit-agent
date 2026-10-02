@@ -68,12 +68,15 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - `POST /api/voiceprint/identify|enroll` / `GET /api/voiceprint/info` /
   `PATCH /api/voiceprint/{occ}`（改称呼，不重录） / `DELETE /api/voiceprint/{occ}`
   声纹面（M4 P4，见下节）。
+  > **主体只认 Bearer**（CA2-15 S1）：声纹与记忆端点按 `Authorization: Bearer` 解析主体（`AUTH_TOKENS`，
+  > E2E 签名身份同 S2S 口径），查询串 `user_id` 只能等于它（缺 token 401、不一致 403，拒绝在读音频 / 调
+  > Memory 之前）。新增读写用户数据的端点一律先过 `_owner_query`，`tests/test_memory_endpoint_auth.py` 对账。
   > **跨域方法白名单**：HMI 永远跨域调本面，新增非 GET/POST 端点必须同步 `CORS_METHODS`——
   > 漏了浏览器 preflight 会直接挡下，服务端零日志（2026-07-26 声纹删除真机 P0）。
   > 契约测试 `tests/test_http_cors.py` 按「注册了什么方法就必须允许什么方法」自动比对。
 - `POST /api/vision/frame` / `GET /api/vision/info` 视觉单帧面（M4 P4，见下节）。
 - `GET /api/llm/providers` 列出已装配的 LLM 厂商+模型+可用性+当前 active+**health 被动健康块**（供 HMI 设置页两级选择与健康点）；`POST /api/llm/provider` `{provider,model?}` 全局切换 active（**持久化 Redis**）；`POST /api/llm/probe` `{provider?}` 按需体检指定厂商（1 条小请求回 ok/latency 并记入 health）。
-- `GET /api/memory/session` / `GET /api/memory/context` 只读记忆（转发 memory gRPC，供 HMI 记忆视图）。
+- `GET /api/memory/session` / `GET /api/memory/context` / `GET /api/memory/profile` 只读记忆、`DELETE /api/memory/items/{id}` 删单条、`POST /api/memory/forget` 按 scope 删（转发 memory gRPC，供 HMI 记忆视图；主体只认 Bearer，同上）。
 - ASR/TTS Provider 同样在无 `LLM_API_KEY` 时走 mock。
 
 ## 流式 ASR（实时识别上屏）

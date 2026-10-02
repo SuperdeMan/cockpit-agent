@@ -116,6 +116,17 @@ def _authenticated_owner(request: web.Request) -> str:
         return ""
     if candidate != candidate.strip() or " " in candidate:
         return ""
+    if candidate.startswith("e2e.v1."):
+        # Signed test identities (same switch and secret as S2S and the edge gateway). The
+        # owner is the signed user_id; a bad or expired signature resolves to nobody.
+        if os.getenv("E2E_IDENTITY_ENABLED", "").lower() != "true":
+            return ""
+        try:
+            from e2e_identity import decode_secret, verify_identity
+            raw_secret = os.getenv("E2E_IDENTITY_SECRET", "")
+            return verify_identity(candidate, decode_secret(raw_secret)).user_id if raw_secret else ""
+        except Exception:
+            return ""
     table = _auth_token_owners(
         os.getenv("AUTH_TOKENS", ""),
         default_user_id=os.getenv("AUTH_DEFAULT_USER_ID", "u1").strip() or "u1",
@@ -125,6 +136,24 @@ def _authenticated_owner(request: web.Request) -> str:
         if hmac.compare_digest(candidate_bytes, configured.encode("utf-8")):
             return owner
     return ""
+
+
+def _owner_query(request: web.Request, fallback: dict | None = None):
+    """CA2-15 S1: the memory and voiceprint endpoints act for the Bearer token's owner only.
+
+    Returns ``(owner, None)`` or ``("", refusal)``. A ``user_id`` in the query is optional and
+    must equal the owner; it is never trusted on its own. ``fallback`` keeps an endpoint's
+    answer contract on refusal (identify always names the occupant it falls back to).
+    """
+    owner = _authenticated_owner(request)
+    if not owner:
+        return "", web.json_response({**(fallback or {}), "ok": False, "error": "unauthorized"},
+                                     status=401)
+    claimed = (request.query.get("user_id") or "").strip()
+    if claimed and not hmac.compare_digest(claimed.encode("utf-8"), owner.encode("utf-8")):
+        return "", web.json_response({**(fallback or {}), "ok": False, "error": "owner_mismatch"},
+                                     status=403)
+    return owner, None
 
 
 def _memory_stub():
@@ -590,9 +619,11 @@ def create_http_app() -> web.Application:
     @routes.get("/api/memory/session")
     async def handle_mem_session(request: web.Request):
         """读会话对话记忆（HMI 记忆视图）。?session_id=&last_n=20"""
+        uid, refused = _owner_query(request, {"turns": []})
+        if refused is not None:
+            return refused
         sid = request.query.get("session_id", "")
         last_n = int(request.query.get("last_n", "20") or 20)
-        uid = (request.query.get("user_id") or "").strip()
         occ = (request.query.get("occupant_id") or "").strip()
         # scope=all 是**显式**管理视图（设置页「全部乘员会话」），缺省一律 OWNER_ONLY。
         all_occ = (request.query.get("scope") or "").strip().lower() == "all"
@@ -615,8 +646,10 @@ def create_http_app() -> web.Application:
     @routes.get("/api/memory/context")
     async def handle_mem_context(request: web.Request):
         """读上下文/画像（偏好、车辆状态等）。?session_id=&user_id=&vehicle_id=&scopes=a,b"""
+        uid, refused = _owner_query(request, {"values": {}})
+        if refused is not None:
+            return refused
         sid = request.query.get("session_id", "")
-        uid = request.query.get("user_id", "")
         vid = request.query.get("vehicle_id", "")
         scopes = [s for s in request.query.get("scopes", "").split(",") if s] or \
             ["profile.taste", "vehicle.state", "vehicle.location"]
@@ -634,7 +667,9 @@ def create_http_app() -> web.Application:
     async def handle_mem_profile(request: web.Request):
         """读用户**真实学到的**记忆（HMI 记忆视图）：偏好/常去地点/情景。
         走分层记忆 ExportUser（非 mock context），只取现行（未被取代）。?user_id="""
-        uid = request.query.get("user_id", "")
+        uid, refused = _owner_query(request, {"preferences": [], "places": [], "episodes": []})
+        if refused is not None:
+            return refused
         # 缺省只看当前乘员（M-B）：面板此前把全部乘员的记忆混在一起列，
         # 而「删除」按钮又是按 scope 删的——看到的是别人的，删掉的是所有人的。
         occ = (request.query.get("occupant_id") or "").strip() or "primary"
@@ -689,7 +724,9 @@ def create_http_app() -> web.Application:
         会连带清掉该 scope 下所有乘员的条目（删自己的名字＝删光全车的名字）。
         occupant 必填：owner 级动作绝不从空值推断范围。
         """
-        uid = (request.query.get("user_id") or "").strip()
+        uid, refused = _owner_query(request)
+        if refused is not None:
+            return refused
         occ = (request.query.get("occupant_id") or "").strip()
         item_id = request.match_info.get("item_id", "").strip()
         if not uid or not occ or not item_id:
@@ -808,7 +845,9 @@ def create_http_app() -> web.Application:
             return web.json_response({"enabled": False, "provider": "disabled",
                                       "reason": vp_mod.disabled_reason(),
                                       "occupants": []})
-        uid = (request.query.get("user_id") or "").strip()
+        uid, refused = _owner_query(request, {"enabled": True, "occupants": []})
+        if refused is not None:
+            return refused
         occupants, threshold, margin_ = [], 0.0, 0.0
         if uid:
             try:
@@ -838,7 +877,9 @@ def create_http_app() -> web.Application:
         vp_mod, prov = _vp_provider()
         if prov is None:
             return web.json_response({"occupant_id": "primary", "decision": "disabled"})
-        uid = (request.query.get("user_id") or "").strip()
+        uid, refused = _owner_query(request, {"occupant_id": "primary", "decision": "unauthorized"})
+        if refused is not None:
+            return refused
         pcm = await request.read()
         # 主链路（HMI 语音回路）直传 16k PCM 帧，不转码——它在唤醒窗内要短平快。
         # 设置页「试一试」用 MediaRecorder 录的是 webm，经既有 ffmpeg 转一次（低频操作）。
@@ -898,9 +939,9 @@ def create_http_app() -> web.Application:
         vp_mod, prov = _vp_provider()
         if prov is None:
             return web.json_response({"ok": False, "error": "disabled"}, status=503)
-        uid = (request.query.get("user_id") or "").strip()
-        if not uid:
-            return web.json_response({"ok": False, "error": "missing user_id"}, status=400)
+        uid, refused = _owner_query(request)
+        if refused is not None:
+            return refused
         # 注册走 multipart（每段一个 sample 字段）。format=webm 时经既有 ffmpeg 转码——
         # 注册是低频操作，让 HMI 复用已验证的 MediaRecorder 路径比新写一套 PCM 采集稳。
         # 识别路径**不转码**（它在唤醒窗内、要短平快，HMI 那边本来就有 16k PCM 帧）。
@@ -948,7 +989,9 @@ def create_http_app() -> web.Application:
     @routes.patch("/api/voiceprint/{occupant_id}")
     async def handle_vp_rename(request: web.Request):
         """改称呼。query: user_id, display_name。**不重录三段**——名字是元数据。"""
-        uid = (request.query.get("user_id") or "").strip()
+        uid, refused = _owner_query(request)
+        if refused is not None:
+            return refused
         occ = request.match_info.get("occupant_id", "").strip()
         name = (request.query.get("display_name") or "").strip()
         if not uid or not occ or not name:
@@ -969,7 +1012,9 @@ def create_http_app() -> web.Application:
     @routes.delete("/api/voiceprint/{occupant_id}")
     async def handle_vp_delete(request: web.Request):
         """删除一个乘员。query: user_id, purge_memory=1|0（默认 1=连同其记忆一起忘掉）。"""
-        uid = (request.query.get("user_id") or "").strip()
+        uid, refused = _owner_query(request)
+        if refused is not None:
+            return refused
         occ = request.match_info.get("occupant_id", "").strip()
         if not uid or not occ:
             return web.json_response({"ok": False}, status=400)

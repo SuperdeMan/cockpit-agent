@@ -4,9 +4,13 @@ import { float32ToInt16, int16ToWav } from './pcmRing.mjs'
 import { PcmPlayer } from './pcmPlayer.mjs'
 import { ASR_PROVIDER_FALLBACK, normalizeAsrProviders, type AsrProviderInfo } from './types'
 
-// Destructive memory APIs reuse the HMI session credential.  The backend
-// resolves the owner from this Bearer value and refuses body-only identity.
+// Memory and voiceprint APIs reuse the HMI session credential (CA2-15 S1): the backend
+// acts for this Bearer value's owner only and refuses query- or body-only identity.
 const MEMORY_AUTH_TOKEN = (import.meta.env.VITE_WS_TOKEN as string) || ''
+const memoryAuth = (): Record<string, string> =>
+  MEMORY_AUTH_TOKEN ? { Authorization: `Bearer ${MEMORY_AUTH_TOKEN}` } : {}
+/** 声纹识别（handsFreeController → voiceprintIdentifier）也要带同一个 token。 */
+export const memoryAuthToken = (): string => MEMORY_AUTH_TOKEN
 //
 // 旧实现的收音失败根因（task 3 前端侧）：
 //  1. startRecording 是 async，快按快松时 MediaRecorder 还没 start()，
@@ -1168,7 +1172,8 @@ export async function fetchMemory(
     ...(opts.allOccupants ? { scope: 'all' } : {}),
   }).toString()
   try {
-    const s = await fetch(`${apiBase}/api/memory/session?${q}`).then((r) => r.json())
+    const s = await fetch(`${apiBase}/api/memory/session?${q}`, { headers: memoryAuth() })
+      .then((r) => r.json())
     return { turns: Array.isArray(s.turns) ? s.turns : [] }
   } catch {
     return { turns: [] }
@@ -1186,7 +1191,8 @@ export async function fetchMemoryProfile(
     ...(opts.allOccupants ? { scope: 'all' } : {}),
   }).toString()
   try {
-    const j = await fetch(`${apiBase}/api/memory/profile?${q}`).then((r) => r.json())
+    const j = await fetch(`${apiBase}/api/memory/profile?${q}`, { headers: memoryAuth() })
+      .then((r) => r.json())
     return {
       preferences: Array.isArray(j.preferences) ? j.preferences : [],
       places: Array.isArray(j.places) ? j.places : [],
@@ -1212,7 +1218,7 @@ export async function deleteMemoryItem(
   }).toString()
   try {
     const r = await fetch(`${apiBase}/api/memory/items/${encodeURIComponent(itemId)}?${q}`,
-      { method: 'DELETE' })
+      { method: 'DELETE', headers: memoryAuth() })
     const j = await r.json().catch(() => ({}))
     return { ok: !!j.ok, error: String(j.error || (r.ok ? '' : 'request_failed')) }
   } catch {
@@ -1225,12 +1231,7 @@ export async function forgetMemory(apiBase: string, userId: string, scope = ''):
   try {
     const r = await fetch(`${apiBase}/api/memory/forget`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(MEMORY_AUTH_TOKEN
-          ? { Authorization: `Bearer ${MEMORY_AUTH_TOKEN}` }
-          : {}),
-      },
+      headers: { 'Content-Type': 'application/json', ...memoryAuth() },
       body: JSON.stringify({ user_id: userId, scope }),
     }).then((x) => x.json())
     return !!r.ok
@@ -1254,7 +1255,7 @@ export type VoiceprintInfo = {
 export async function fetchVoiceprints(apiBase: string, userId: string): Promise<VoiceprintInfo> {
   try {
     const r = await fetch(
-      `${apiBase}/api/voiceprint/info?user_id=${encodeURIComponent(userId)}`)
+      `${apiBase}/api/voiceprint/info?user_id=${encodeURIComponent(userId)}`, { headers: memoryAuth() })
     return await r.json()
   } catch {
     // 声纹面不可达 = 该能力不存在，不是错误：整链逐字回落到 P4 之前。
@@ -1283,7 +1284,7 @@ export async function enrollVoiceprint(
       // 带 occupant_id = **重录已有乘员**（更新模板保留身份与记忆）；不带 = 新增一位。
       // 少了它，已录的人想重录只能新建一个 occ-N，记忆当场分家。
       + (occupantId ? `&occupant_id=${encodeURIComponent(occupantId)}` : ''),
-      { method: 'POST', body: fd })
+      { method: 'POST', body: fd, headers: memoryAuth() })
     return await r.json()
   } catch (e) {
     return { ok: false, error: String(e) }
@@ -1304,7 +1305,7 @@ export async function identifySpeaker(
   try {
     const r = await fetch(
       `${apiBase}/api/voiceprint/identify?user_id=${encodeURIComponent(userId)}&format=${mime}`,
-      { method: 'POST', body: clip instanceof Blob ? clip : new Blob([clip]) })
+      { method: 'POST', body: clip instanceof Blob ? clip : new Blob([clip]), headers: memoryAuth() })
     return await r.json()
   } catch {
     return { occupant_id: 'primary', decision: 'error' }
@@ -1323,7 +1324,7 @@ export async function deleteVoiceprint(
     const r = await fetch(
       `${apiBase}/api/voiceprint/${encodeURIComponent(occupantId)}`
       + `?user_id=${encodeURIComponent(userId)}&purge_memory=${purgeMemory ? 1 : 0}`,
-      { method: 'DELETE' })
+      { method: 'DELETE', headers: memoryAuth() })
     return await r.json()
   } catch {
     return { ok: false }
@@ -1339,7 +1340,7 @@ export async function renameVoiceprint(
       `${apiBase}/api/voiceprint/${encodeURIComponent(occupantId)}`
       + `?user_id=${encodeURIComponent(userId)}`
       + `&display_name=${encodeURIComponent(displayName)}`,
-      { method: 'PATCH' })
+      { method: 'PATCH', headers: memoryAuth() })
     return await r.json()
   } catch (e) {
     return { ok: false, error: String(e) }
@@ -1361,7 +1362,7 @@ export async function fetchPlaces(
     user_id: userId, scopes: 'profile.places', occupant_id: occupantId || 'primary',
   }).toString()
   try {
-    const r = await fetch(`${apiBase}/api/memory/context?${q}`)
+    const r = await fetch(`${apiBase}/api/memory/context?${q}`, { headers: memoryAuth() })
     const j = await r.json()
     return parsePlacesValue(j?.values?.['profile.places'])
   } catch {

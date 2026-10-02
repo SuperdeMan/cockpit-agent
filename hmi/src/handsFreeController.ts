@@ -4,7 +4,7 @@
 import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
-import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues, makeS2sPlayer } from './audio'
+import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues, makeS2sPlayer, memoryAuthToken } from './audio'
 import { PcmRing } from './pcmRing.mjs'
 import { VoiceprintIdentifier, postIdentify } from './voiceprintIdentifier.mjs'
 import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
@@ -463,7 +463,7 @@ export class HandsFreeController {
     if (!this.deps.getVoiceprintConfig?.()?.enabled) return
     const uid = this.deps.getSessionMeta?.().userId || ''
     this.vp = new VoiceprintIdentifier({
-      identify: postIdentify(this.deps.audioApi, uid),
+      identify: postIdentify(this.deps.audioApi, uid, memoryAuthToken()),
       onResult: (r: { occupant_id?: string; decision?: string; display_name?: string }) => {
         // S2S 挡位：识别一落地就告诉网关本窗说话人——自答轮的记忆回灌按它隔离
         // （classic/逃逸轮由 send() meta 带，不经此路）。认不出也发（=primary），

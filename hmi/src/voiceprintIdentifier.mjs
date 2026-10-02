@@ -146,13 +146,14 @@ export class VoiceprintIdentifier {
   }
 }
 
-/** 默认 identify 实现：POST 裸 PCM 到网关声纹面。 */
-export function postIdentify(audioApi, userId) {
+/** 默认 identify 实现：POST 裸 PCM 到网关声纹面（CA2-15 S1：带 token，端点只按 token 主体办事）。 */
+export function postIdentify(audioApi, userId, token = '') {
   return async (pcm) => {
     const r = await fetch(
       `${audioApi}/api/voiceprint/identify?user_id=${encodeURIComponent(userId || '')}`,
       { method: 'POST', body: pcm,
-        headers: { 'Content-Type': 'application/octet-stream' } })
+        headers: { 'Content-Type': 'application/octet-stream',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}) } })
     if (!r.ok) throw new Error(`voiceprint ${r.status}`)
     return await r.json()
   }

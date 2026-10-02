@@ -473,7 +473,8 @@ async def run(recorder: CaseRecorder) -> None:
         return
 
     await remember_baseline(uid)
-    async with httpx.AsyncClient() as client:
+    # CA2-15 S1：声纹端点只按 Bearer 的主体办事——用运行器签发的测试身份。
+    async with httpx.AsyncClient(headers={"Authorization": f"Bearer {recorder.identity_token()}"}) as client:
         try:
             info = (await client.get(f"{AUDIO_API}/api/voiceprint/info",
                                      params={"user_id": uid}, timeout=10)).json()
@@ -688,7 +689,8 @@ async def run(recorder: CaseRecorder) -> None:
         "删除前 A/B 的 memory/relation/voiceprint 均已真实落地",
         f"A={before_a} B={before_b}",
     )
-    async with httpx.AsyncClient() as client:
+    # CA2-15 S1：声纹端点只按 Bearer 的主体办事——用运行器签发的测试身份。
+    async with httpx.AsyncClient(headers={"Authorization": f"Bearer {recorder.identity_token()}"}) as client:
         deleted = (
             await client.delete(
                 f"{AUDIO_API}/api/voiceprint/{OCC_B}",

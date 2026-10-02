@@ -111,8 +111,10 @@ def cleanup_namespace(user: str, sessions: tuple[str, ...]) -> None:
         raise RuntimeError(f"S2S memory cleanup left {remaining} owner records")
 
 
-def _get(url: str, timeout: float = 10.0):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+def _get(url: str, timeout: float = 10.0, *, token: str = ""):
+    # CA2-15 S1：记忆端点只按 Bearer 的主体办事——测试身份用运行器签发的同一个 token。
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"} if token else {})
+    with urllib.request.urlopen(request, timeout=timeout) as r:
         return json.loads(r.read())
 
 
@@ -409,7 +411,8 @@ async def run(recorder: CaseRecorder) -> None:
     print("\n[10] 回灌防黑洞（§7 强制项）")
 
     async def _mem_turns():
-        return _get(f"{LLM_HTTP}/api/memory/session?session_id={session}&last_n=20").get("turns", [])
+        return _get(f"{LLM_HTTP}/api/memory/session?session_id={session}&last_n=20",
+                    token=identity_token).get("turns", [])
 
     turns = []
     for _ in range(12):  # 回灌是收束后异步的，给几秒

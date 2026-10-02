@@ -27,5 +27,5 @@ export class VoiceprintIdentifier {
 }
 
 export function postIdentify(
-  audioApi: string, userId: string,
+  audioApi: string, userId: string, token?: string,
 ): (pcm: Int16Array) => Promise<VoiceprintResult>

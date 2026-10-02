@@ -738,7 +738,8 @@ async def run(recorder: CaseRecorder) -> None:
     before = sql(
         f"SELECT count(*) FROM memory_relation WHERE user_id={owner}",
     )
-    async with httpx.AsyncClient(base_url=AUDIO_API, timeout=20) as api:
+    async with httpx.AsyncClient(base_url=AUDIO_API, timeout=20, headers={
+            "Authorization": f"Bearer {recorder.identity_token()}"}) as api:
         resp = await api.post("/api/memory/forget", json={"user_id": user})
         print(f"   forget → HTTP {resp.status_code}")
         try:
