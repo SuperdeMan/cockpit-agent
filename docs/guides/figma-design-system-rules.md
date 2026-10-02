@@ -395,7 +395,7 @@ agent 写画布（`use_figma`）**必须是 Full 座席**，且对目标文件�
 | A-1 设计系统页 | 页 `0:1`：单个长帧 `6:5314`「【新】座舱Agent-HMI」（1422×6243，7 个 Section） |
 | A-8 图标库页 | 页 `32:190`：主帧 `32:191`；39 个 `Icon / <name>` 组件母版在 `32:198`；回推的 16 个补充图标（`vehicle`…`school`）在同页下方 |
 | Make 文件（代码 + `Guidelines.md` + `theme.css`） | `IYsuxZHzG7t2PXtvHOT41N`（`get_metadata` / `get_variable_defs` 不支持 Make 文件） |
-| Android Visual v3（mobile 重构，方向 B） | `1jdZ6Cwp8pEtQJJUwg6NHS`：01 Audit `1:2`、02 Foundations `1:3`、03 Components `1:4`（组件板 `7:2`）、M1 样张 `1:5`；进度见 [brief](../design/2026-10-02-android-visual-redesign-brief.md) |
+| Android Visual v3（mobile 重构，方向 B） | `1jdZ6Cwp8pEtQJJUwg6NHS`：01 Audit `1:2`、02 Foundations `1:3`、03 Components `1:4`（组件板 `7:2`）、M1 样张 `1:5`、04 Phone `1:6`、05 Voice & Presence `1:7`、06 Cards `1:8`、07 Adaptive `1:9`、08 Driving `1:10`、09 Motion `1:11`、10 Handoff `1:12`；落地按[实施计划](../design/2026-10-03-android-visual-v3-implementation-plan.md) |
 
 未出帧：A-8 行车态、B-1…B-4 Dashboard。HMI P5 行车态与 P6 Dashboard 等帧再做。
 
