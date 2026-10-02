@@ -54,7 +54,9 @@
 - 候选集问答：`orchestrator/cloud/candidate_query.py`；
 - 时间、极性、问句、安全信号等跨服务判据：`runtime/`；
 - Planner 软知识：`skills/`；
-- 商户能力/工具：`agents/mcp_bridge/servers.yaml`。
+- 商户能力/工具：`agents/mcp_bridge/servers.yaml`；
+- 前端视觉 token 与图标：HMI `hmi/src/aurora.css`，mobile `mobile/src/ui/theme.ts` + `tokens.ts`，
+  图标 `hmi/src/components/icons.*.ts`；Figma 落稿规则见 `docs/guides/figma-design-system-rules.md`。
 
 不要在第二个模块复制判据、词表或声明；跨进程消费用测试对账声明源。
 

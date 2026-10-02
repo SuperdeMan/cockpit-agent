@@ -34,6 +34,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 测试分层与 E2E | `test/README.md` |
 | 意图对抗测试 | `docs/guides/intent-adversarial-testing.md` |
 | 真实 Provider 接入 | `docs/guides/provider-integration.md` |
+| Figma 设计稿落地 / 前端设计系统 | `docs/guides/figma-design-system-rules.md` |
 | MiniMax 原始 QA 问题 | `docs/reviews/2026-08-26-minimax-cloud-qa-findings.md` |
 | MiniMax 根因与修复批 | `docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md` |
 | 安全确认写闸 | `docs/design/2026-08-30-qa-safety-confirmed-write-guard.md` |
