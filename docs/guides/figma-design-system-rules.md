@@ -416,6 +416,10 @@ agent 写画布（`use_figma`）**必须是 Full 座席**，且对目标文件�
   颜色渐变绑不了变量，切主题会露底。
 - **变量值可能是 `VARIABLE_ALIAS`**。读 RGBA 之前，先沿着别名解析到 Primitives 集合的默认模式。
 - **`upload_assets`**：位图帧落地后是 4:3，要按真实比例改尺寸。SVG 会导入为可编辑矢量帧，帧名取自文件名，可直接 `createComponentFromNode`。
+- **实例里的嵌套实例不能单独改尺寸**（报 `cannot be overridden in an instance: size`）。随模式变化的尺寸（如语音层光球
+  88 / 120、档位层高）要在主组件里绑定 Size 变量，画板切模式即可。被缩放的组件，其内部层的约束要设成 SCALE。
+- **`findOne` / `findAll` 会深入实例内部**：按名字找自己的帧时，可能先命中实例里的同名层，而实例内部层删不掉、也不能随意改。
+  找自己的节点用 `children.find`，只在直接子节点里找。
 
 ## 9. 验收清单
 
