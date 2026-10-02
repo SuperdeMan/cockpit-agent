@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import types
 import inspect
 import json
 import os
@@ -1068,3 +1069,46 @@ async def test_reflux_occupant_is_mutable_and_reaches_append_turn():
     await r(_turn(turn_id="t3", transcript="今天冷吗", answer="有点",
                   end_reason="complete"))
     assert mem.occupants[-2:] == ["primary", "primary"]
+
+
+class _EpochMemStub:
+    """CA2-15 S1b: records call order and the epoch each write carries."""
+
+    def __init__(self, *, refuse=False):
+        self.calls: list[str] = []
+        self.epochs: list[tuple[str, str]] = []
+        self.refuse = refuse
+
+    async def GetMemoryEpoch(self, req, timeout=None):
+        self.calls.append("epoch")
+        return types.SimpleNamespace(memory_epoch="1.ab")
+
+    async def GetSession(self, req, timeout=None):
+        self.calls.append("session")
+        return types.SimpleNamespace(turns=[], degraded=False)
+
+    async def AppendTurn(self, req, timeout=None):
+        self.epochs.append((req.role, req.memory_epoch))
+        return types.SimpleNamespace(ok=not self.refuse,
+                                     error="stale_memory_epoch" if self.refuse else "")
+
+
+@pytest.mark.asyncio
+async def test_reflux_reads_the_epoch_before_the_summary_and_writes_with_it():
+    mem = _EpochMemStub()
+    r = Reflux(memory_stub_getter=lambda: mem, obs=FakeObs(), gate_content=lambda s, n: s[:n],
+               session_id="s1", user_id="u1")
+    await r.context_summary()
+    await r(_turn(transcript="我家在哪", answer="在云岚小区", end_reason="complete"))
+    assert mem.calls == ["epoch", "session"]
+    assert mem.epochs == [("user", "1.ab"), ("assistant", "1.ab")]
+
+
+@pytest.mark.asyncio
+async def test_reflux_drops_the_exchange_once_memory_was_deleted_after_the_summary():
+    mem = _EpochMemStub(refuse=True)
+    r = Reflux(memory_stub_getter=lambda: mem, obs=FakeObs(), gate_content=lambda s, n: s[:n],
+               session_id="s1", user_id="u1")
+    await r.context_summary()
+    await r(_turn(transcript="我家在哪", answer="在云岚小区", end_reason="complete"))
+    assert mem.epochs == [("user", "1.ab")]          # 助手那条不再写

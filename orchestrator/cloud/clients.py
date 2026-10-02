@@ -99,7 +99,7 @@ class Clients:
                           occupant_id: str = "primary",
                           e2e_memory_capability: str = "",
                           turn_id: str = "", exchange_id: str = "",
-                          actions=None, sources=None):
+                          actions=None, sources=None, memory_epoch: str = ""):
         """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。
         occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。
         turn_id/exchange_id 让重试是重放而不是追加一轮新对话（M-B）。
@@ -113,8 +113,17 @@ class Clients:
                                          actions=list(actions or []),
                                          sources=[_turn_source_pb(s)
                                                   for s in (sources or [])
-                                                  if isinstance(s, dict)]),
+                                                  if isinstance(s, dict)],
+                                         memory_epoch=memory_epoch),
             timeout=_DEFAULT_TIMEOUT)
+
+    async def get_memory_epoch(self, user_id: str) -> str:
+        """CA2-15 S1b：本回合读记忆之前取一次 owner 代际。取不到回空串（写入按旧调用方处理）。"""
+        if not user_id:
+            return ""
+        resp = await self._memory_stub().GetMemoryEpoch(
+            memory_pb2.GetMemoryEpochRequest(user_id=user_id), timeout=_DEFAULT_TIMEOUT)
+        return resp.memory_epoch
 
     async def get_session(self, session_id: str, last_n: int = 6, *,
                           user_id: str = "", occupant_id: str = "") -> list[dict]:
@@ -335,7 +344,12 @@ class Clients:
         prefs.pop("confirm_state", None)
         # CA2-10: the observation reference is minted per dispatch by the Step.
         prefs.pop(effect_evidence.META, None)
+        # CA2-15 S1b: the memory epoch is read by the server before this turn's memory reads.
+        prefs.pop("memory_epoch", None)
         merged = {**prefs, **dict(meta or {})}
+        merged.pop("memory_epoch", None)
+        if getattr(ctx, "memory_epoch", ""):
+            merged["memory_epoch"] = ctx.memory_epoch
         if operation.HEADER in merged:
             merged[operation.HEADER] = operation.with_plan(
                 merged[operation.HEADER], getattr(ctx, "task_identity", None))

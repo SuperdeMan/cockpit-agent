@@ -204,7 +204,7 @@ class MemoryStore:
                           user_id: str = "", occupant_id: str = "",
                           vehicle_id: str = "", turn_id: str = "",
                           exchange_id: str = "", actions=None,
-                          sources=None) -> bool:
+                          sources=None, memory_epoch: str = "") -> bool:
         """会话轮次原文。**有 TTL、有 user 索引、有 OwnerKey**。
 
         TTL 与 user 索引是 GDPR 侧的硬要求（无 TTL＝永久留存；无索引则 ForgetUser
@@ -236,7 +236,10 @@ class MemoryStore:
                 "user_id": uid, "occupant_id": occ, "vehicle_id": vehicle_id or "",
                 "turn_id": turn_id or "", "exchange_id": exchange_id or turn_id or "",
                 "actions": _clean_actions(actions),
-                "sources": _clean_sources(sources)}
+                "sources": _clean_sources(sources),
+                # CA2-15 S1b：落库时的 owner 代际（Memory 持锁盖章）。抽取只用当前代际的轮次——
+                # 删过记忆之后，删之前的原话不再进抽取窗口，被删的条目就不会从它们里面再长回来。
+                "memory_epoch": memory_epoch or ""}
         r = await self._redis()
         key = f"sess:{session_id}"
         if r:
@@ -712,22 +715,35 @@ class MemoryStore:
                 "object_ref": places[0].get("object_ref") or ""}
 
     async def consolidate(self, session_id: str, user_id: str, occupant_id: str = "primary",
-                          vehicle_id: str = "", complete_fn=None) -> list[str]:
+                          vehicle_id: str = "", complete_fn=None, *,
+                          memory_epoch: str = "", guard=None) -> list[str]:
         """抽取并巩固：对话→候选→去重/等价跳过/冲突 supersede（时序-lite）。
-        返回新写入的记忆 id。LLM 不可用时静默返回 []（不阻塞）。"""
+        返回新写入的记忆 id。LLM 不可用时静默返回 []（不阻塞）。
+
+        CA2-15 S1b：``memory_epoch`` 是调用方在读轮次**之前**取的代际，只有同代际的轮次进窗口；
+        ``guard`` 是持锁复核代际的写入守卫（``OwnerFence.writing``），代际变了就整批不写。"""
         if not user_id:
             return []
+        from contextlib import nullcontext
         from extract import extract, predicate_class
+        from fence import eligible
         # **owner 窗口在进 extractor 之前就切好**（M-B）：此前这里取整段混合历史、
         # 再用触发本次巩固的那个 occupant 给全部候选盖章——同一 session 换人说话时，
         # 上一位的偏好会被记在当前说话人名下，而且会在记忆里留下持久脏数据。
         turns = await self.get_session(session_id, 12, user_id=user_id,
                                        occupant_id=occupant_id)
+        if memory_epoch:
+            turns = [t for t in turns if eligible(t.get("memory_epoch") or "", memory_epoch)]
         cands = await extract(turns, user_id=user_id, occupant_id=occupant_id,
                               vehicle_id=vehicle_id, session_id=session_id,
                               complete_fn=complete_fn)
         if not cands:
             return []
+        async with (guard() if guard else nullcontext()):
+            return await self._write_candidates(user_id, occupant_id, cands, predicate_class)
+
+    async def _write_candidates(self, user_id: str, occupant_id: str, cands: list[dict],
+                                predicate_class) -> list[str]:
         vs = await self._vec()
         written: list[str] = []
         # M2 P1：关系边与记忆条目分流——前者进 memory_relation，不进 memory_item

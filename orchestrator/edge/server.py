@@ -186,9 +186,22 @@ class _MemoryClient:
             self._ch = aio_channel(self.addr)
         return memory_pb2_grpc.MemoryStub(self._ch)
 
+    async def epoch(self, user_id: str) -> str:
+        """CA2-15 S1b：请求到达时的 owner 代际。取不到回空串（写入按旧调用方处理），从不抛。"""
+        if not user_id:
+            return ""
+        try:
+            resp = await self._stub().GetMemoryEpoch(
+                memory_pb2.GetMemoryEpochRequest(user_id=user_id), timeout=2)
+            return resp.memory_epoch
+        except Exception as e:  # 离线/记忆不可用 → 不带代际
+            logger.debug("edge memory epoch unavailable: %s", e)
+            return ""
+
     async def append(self, session_id: str, role: str, text: str, *,
                      user_id: str = "", occupant_id: str = "", vehicle_id: str = "",
-                     turn_id: str = "", exchange_id: str = "", actions=None):
+                     turn_id: str = "", exchange_id: str = "", actions=None,
+                     memory_epoch: str = ""):
         """M-B：端侧轮次也带 OwnerKey。
 
         此前这里只传 session/role/text——于是端侧处理的每一轮都是**无主**的，
@@ -206,7 +219,7 @@ class _MemoryClient:
                     session_id=session_id, role=role, text=text,
                     user_id=user_id, occupant_id=occupant_id or "primary",
                     vehicle_id=vehicle_id, turn_id=turn_id, exchange_id=exchange_id,
-                    actions=list(actions or [])),
+                    actions=list(actions or []), memory_epoch=memory_epoch),
                 timeout=5)
         except Exception as e:  # 离线/记忆不可用 → 静默跳过
             logger.debug("edge memory append failed: %s", e)
@@ -552,8 +565,21 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             return ""
         return json.dumps(targets, ensure_ascii=False, separators=(",", ":"))
 
+    def _observe_memory_epoch(self, request):
+        """CA2-15 S1b：请求一到就取代际（不阻塞处理）；本地轮次写入时等它的结果。
+
+        端侧本地路径不读记忆，「观测」就是这句话到达的那一刻：之后记忆被删过，这一轮就不写回。"""
+        meta = dict(request.meta) if request.meta else {}
+        uid = getattr(getattr(request, "context", None), "user_id", "") or ""
+        if meta.get("memory_enabled", "true") == "false" or not uid:
+            return None
+        task = asyncio.ensure_future(self.memory.epoch(uid))
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+        return task
+
     def _record_local_turn(self, request, user_text: str, assistant_speech: str,
-                           actions=None):
+                           actions=None, memory_epoch=None):
         """把纯本地处理的一轮 best-effort 异步写入共享记忆（gated on memory_enabled）。
 
         **Q6（2026-08-16）：动作一并写。** 端侧快路径那 313 个动作**根本不上云**，
@@ -583,14 +609,16 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 self._last_local_exchange.popitem(last=False)
 
         async def _write():
+            epoch = (await memory_epoch) if memory_epoch is not None else ""
             await self.memory.append(request.session_id, "user", user_text,
                                      user_id=uid, occupant_id=occ, vehicle_id=vid,
-                                     turn_id=f"{exch}:user", exchange_id=exch)
+                                     turn_id=f"{exch}:user", exchange_id=exch,
+                                     memory_epoch=epoch)
             if assistant_speech:
                 await self.memory.append(request.session_id, "assistant", assistant_speech,
                                          user_id=uid, occupant_id=occ, vehicle_id=vid,
                                          turn_id=f"{exch}:assistant:0", exchange_id=exch,
-                                         actions=executed_names)
+                                         actions=executed_names, memory_epoch=epoch)
 
         task = asyncio.create_task(_write())
         self._bg.add(task)
@@ -698,7 +726,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         set_session_id(request.session_id)
         started = time.perf_counter()
         ts_ms = int(time.time() * 1000)
-        turn = {"path": ""}
+        turn = {"path": "", "memory_epoch": self._observe_memory_epoch(request)}
         speeches: list[str] = []
         deltas: list[str] = []
         card_type = ""
@@ -898,7 +926,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     rule_objects=[o for o in
                                   ((m.get("data") or {}).get("object", "") for m in multi) if o])
                 self._record_local_turn(request, request.text, combined,
-                                        actions=actions)
+                                        actions=actions, memory_epoch=turn.get("memory_epoch"))
                 return
 
         # 快路径 A2：混合意图（部分本地 + 部分非本地）。
@@ -1056,7 +1084,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                                       ((m.get("data") or {}).get("object", "")
                                        for m in mixed_intents) if o])
                     self._record_local_turn(
-                        request, request.text, combined, actions=local_actions)
+                        request, request.text, combined, actions=local_actions, memory_epoch=turn.get("memory_epoch"))
                 return
 
         if negated_only:
@@ -1070,7 +1098,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             yield orchestrator_pb2.HandleEvent(
                 final=orchestrator_pb2.FinalResult(speech=speech))
             self._nlu_shadow_bg(trace_id, request.text, "local")
-            self._record_local_turn(request, request.text, speech, actions=[])
+            self._record_local_turn(request, request.text, speech, actions=[], memory_epoch=turn.get("memory_epoch"))
             return
 
         # 快路径 B：高置信本地意图，端侧秒回（离线可用，不依赖网络）
@@ -1148,7 +1176,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 # 意味着「模型认为你说的是另一个对象，而车已经动了」，是最该被人看的一档。
                 self._nlu_shadow_bg(trace_id, request.text, "local")
                 self._record_local_turn(request, request.text, speech,
-                                        actions=[action] if action else [])
+                                        actions=[action] if action else [], memory_epoch=turn.get("memory_epoch"))
                 return
             logger.info("LOCAL confirm-required %s -> route to cloud", intent["name"])
             # 评审四轮 §5.5 b：把这条确定性解析盖章带上云——云侧计划里同一对象的写步方向与它不同时以它为准

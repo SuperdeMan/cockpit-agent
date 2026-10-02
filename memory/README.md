@@ -8,6 +8,7 @@
 ## v2 / Jev 后续边界（未实现）
 
 CA2-15 优先修订消费语义：偏好更新、任务约束失效、多 owner/跨端绑定、未知声纹的隐私投影。
+其中 S1（删除与代际）已做：见下文「owner 代际」。
 下面记录的未知声音回 `primary` 是存量行为，不能将“未知声音不读个人敏感记忆”的 v2 目标误报为已完成。
 JV08 仅对通过原抽取/OwnerKey/隐私过滤的候选做异步 review，不能自动 merge/supersede/delete；
 用户显式记住/忘记与撤权失效优先。View/Snapshot 不建立第二记忆数据库。
@@ -36,6 +37,7 @@ JV08 仅对通过原抽取/OwnerKey/隐私过滤的候选做异步 review，不�
 | `Recall` | 语义召回（向量 + scope/occupant + 时序融合；`predicate_prefix` 精确优先，`min_score/min_confidence/max_age_days` 阈值）。**`degraded=true`**（批 5 W17）= 配置了 `POSTGRES_DSN` 却在用进程内存兜底——读侧据此把「兜底的空」与「用户的空」分开（`runtime/memory_read`）；`GetSessionResponse.degraded` 同义（`REDIS_URL`） |
 | `ResolvePersonPlace` | 人称 → 常去地一跳解析（`family` 边找实体 → `place_of ∪ works_at ∪ lives_at` 找地点）。**查不到或有歧义一律返回 not found，调用方须诚实追问**——导航到错地方比查不到更糟。⚠ **匿名占位与具名是同一个人**（2026-08-20）：`女儿--family-->女儿` 是「无名的人」的表示法，用户后来说「我女儿叫小雨」再存 `小雨--family-->女儿` ⇒ 两个 subject 指向同一个人，旧判据数成两个人判歧义、**一跳解析对该称谓永久失效**。现按「占位不算独立的人、**具名主体 ≥2 才是真歧义**」分组，地点在合并后的实体上取并集；**「地点必须唯一否则返回 not found」那道闸没动**——放宽识别不等于放宽授权 |
 | `ForgetUser` / `ExportUser` | 合规：被遗忘权（硬删）/ 数据导出 |
+| `GetMemoryEpoch` | owner 代际（CA2-15 S1b）：写入方在读记忆之前取一次，`AppendTurn` / `Remember` / `UpsertProfile` 原样带回 `memory_epoch` |
 
 ## 存储与 embedding
 - **PostgreSQL + pgvector**：单表 `memory_item`（`schema.sql`，`kind` 区分 semantic/episodic/procedural）。无 `POSTGRES_DSN` 降级纯内存（lexical 召回）——那是设计的后端，不自报 `degraded`；**配了 DSN 却连不上**才是退化：读侧自报 `degraded`，并按 `REINIT_BACKOFF_S`（30 s）在后台重连（批 5 W17 之前 `init()` 只跑一次，PG 起晚一步就永远空库直到重启）。
@@ -45,6 +47,17 @@ JV08 仅对通过原抽取/OwnerKey/隐私过滤的候选做异步 review，不�
 ## 隐私
 - 三档 `privacy_level`：`normal` / `sensitive`（用户主动告知的个人实体，可泛化召回）/ `highly_sensitive`（家/公司精确地址，泛化召回排除、仅 scope/predicate 定向可读）。
 - 抽取黑名单：精确坐标、电话/证件号（PII）、第三方隐私、Agent 推断的敏感画像 → 丢弃。
+
+## owner 代际：删除与在途写入同代际失效（`fence.py`，CA2-15 S1b）
+- 每个用户一个代际 `<代数>.<随机 128 位>`（Redis `mem_epoch:{user}`，无 TTL；无 Redis 时进程内存），首次读取惰性创建。
+  `ForgetUser`（全量 / 乘员 / scope）、`DeleteVoiceprint`、`DeleteMemoryItem` **在删之前**推进它。
+- 写入带的 `memory_epoch` 不等于当前值 ⇒ `stale_memory_epoch`、不写；不带 = 旧调用方照旧写。生产写入方（SDK、云端、车端、
+  S2S 回流）全部带，`tests/test_memory_fence.py` 源码对账。
+- 轮次落库盖上当时的代际；抽取只用当前代际的轮次（修前无代际字段的轮次只在代数 0 有效）——删过记忆之后，删之前的原话
+  不再进抽取窗口，被删的条目不会从它们里面再长回来；会话历史本身不受影响。抽取与 routine 派生在读轮次前取代际、写入前持锁复核，
+  主动建议发送前再核一次。
+- ⚠ **单副本前提**：同一用户的「复核代际 + 写入」与「推进代际 + 删除」靠本进程内按用户的锁互斥；Memory 扩多副本前必须换成跨进程锁。
+- 设计与取舍见 [CA2-15 §6](../docs/design/2026-10-02-v2-memory-identity-governance.md)。
 
 ## 测试
 - 单点单测：`tests/test_pg_store.py`、`test_store.py`、`test_extract.py`、`test_server_rpc.py`、`test_routine.py`（内存兜底，不连 PG/Redis）。

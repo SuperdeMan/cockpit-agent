@@ -35,7 +35,15 @@ service Memory {
   // 改名单独成 RPC（2026-07-26 真机反馈）：名字是随时会改的元数据，把它和「重录三段声纹」
   // 绑在一起，用户为了改个称呼就得重走注册流程——真机上正是这一步把已存的名字丢了。
   rpc RenameVoiceprint (RenameVoiceprintRequest) returns (RenameVoiceprintResponse);
+
+  // CA2-15 S1b：owner 代际。删除（ForgetUser / DeleteVoiceprint / DeleteMemoryItem）在删之前推进它；
+  // 写入方在**读记忆之前**取一次，写入时原样带回——不等于当前值的写入被拒（stale_memory_epoch），
+  // 删除之前观测到的内容因此写不回来。
+  rpc GetMemoryEpoch (GetMemoryEpochRequest) returns (GetMemoryEpochResponse);
 }
+
+message GetMemoryEpochRequest { string user_id = 1; }
+message GetMemoryEpochResponse { string memory_epoch = 1; }
 
 message GetContextRequest {
   string session_id = 1;
@@ -84,6 +92,8 @@ message AppendTurnRequest {
   // 「动作名」这个值域变得不闭合，而 `_executed_action_names` 的三处同口径消费方
   // （端侧/obs/探针）都会跟着脏。加一维就加一维。
   repeated TurnSource sources = 11;
+  // CA2-15 S1b：写入方观测这一轮时的 owner 代际（GetMemoryEpoch）。空 = 旧调用方。
+  string memory_epoch = 12;
 }
 // 一次外部数据使用事实。字段与 `ui_card._prov`（契约 §9.3）逐字同名——**账本记的
 // 就是用户看到的那张卡上盖的那个章**，两边不许各自演化出一套叫法。
@@ -100,7 +110,7 @@ message TurnSource {
 }
 message AppendTurnResponse {
   bool ok = 1;
-  string error = 2;   // "missing_owner" / "turn_conflict"；ok=true 时为空
+  string error = 2;   // "missing_owner" / "turn_conflict" / "stale_memory_epoch"；ok=true 时为空
 }
 
 // 历史读取范围。**默认（UNSPECIFIED）按 OWNER_ONLY**——共享绝不能是缺省行为，
@@ -154,8 +164,12 @@ message UpsertProfileRequest {
   // `key="places"` 只对**出现的 key** 做 supersede-or-insert，未出现的 key 保持不变
   // ——整块 user 级 map 覆盖正是「乘员 B 设了家把主驾的家冲掉」的成因。
   string occupant_id = 4;  // 空=primary
+  string memory_epoch = 5; // CA2-15 S1b：同 AppendTurnRequest.memory_epoch
 }
-message UpsertProfileResponse { bool ok = 1; }
+message UpsertProfileResponse {
+  bool ok = 1;
+  string error = 2;        // "stale_memory_epoch"；ok=true 时为空
+}
 
 // ── 分层记忆（语义画像 / 情景记忆）──────────────────────────────
 // 一条可独立失效的记忆。语义=偏好/事实（带 predicate），情景=事件（summary 进 text）。
@@ -200,8 +214,15 @@ message MemoryItem {
   string polarity = 29;
 }
 
-message RememberRequest { repeated MemoryItem items = 1; }
-message RememberResponse { repeated string ids = 1; bool ok = 2; }
+message RememberRequest {
+  repeated MemoryItem items = 1;
+  string memory_epoch = 2;  // CA2-15 S1b：同 AppendTurnRequest.memory_epoch（批内各 owner 都按它复核）
+}
+message RememberResponse {
+  repeated string ids = 1;
+  bool ok = 2;
+  string error = 3;         // "stale_memory_epoch"；ok=true 时为空
+}
 
 message RecallRequest {
   string user_id = 1;

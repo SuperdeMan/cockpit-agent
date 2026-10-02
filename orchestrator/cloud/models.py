@@ -407,6 +407,9 @@ class PlanContext:
     # Runner-issued capability for synthetic E2E memory extraction. It stays
     # outside prefs so it cannot reach Agents as metadata.
     e2e_memory_capability: str = ""
+    # CA2-15 S1b：本回合读记忆之前取的 owner 代际。本回合的轮次与 Agent 写记忆都带它，
+    # 回合进行中记忆被删过 ⇒ Memory 拒收（删除之前观测到的内容写不回来）。服务端自有，不进 prefs。
+    memory_epoch: str = ""
     granted_permissions: list[str] = field(default_factory=list)
     is_confirmation: bool = False
     # 本轮确认/取消指向哪一条挂起（QA 卡 Q1-B）。空 = 语音兜底/旧客户端，

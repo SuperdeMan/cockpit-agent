@@ -1125,7 +1125,7 @@ def create_http_app() -> web.Application:
         代价与补偿：edge-gateway 看不见 S2S 轮次 → 文本副产品回灌为**强制项**（§7）。
         """
         from s2s import (
-            S2SSession, Reflux, build_context_summary, build_s2s_provider,
+            S2SSession, Reflux, build_s2s_provider,
             UP_AUDIO, UP_AUDIO_DONE, UP_BARGE_IN, UP_CANCEL_TURN, UP_ESCALATED_RESULT,
             UP_OCCUPANT, UP_SESSION_END, UP_SESSION_START, DOWN_UNSUPPORTED,
         )
@@ -1219,9 +1219,8 @@ def create_http_app() -> web.Application:
                         # owner 在调用时现取（M-B）：说话人是**唤醒粒度**的，
                         # `occupant` 上行帧会热更 reflux——重注入必须跟着同一个 owner 走，
                         # 否则换人后回灌归属对了、重注入材料还是上一位的对话。
-                        context_provider=lambda: build_context_summary(
-                            _memory_stub(), sid, user_id=reflux.user_id,
-                            occupant_id=reflux.occupant_id),
+                        # CA2-15 S1b：先取代际再读记忆，回流写入带同一个代际。
+                        context_provider=reflux.context_summary,
                         reflux=reflux, session_id=sid,
                         user_id=resolved_user,
                         voice=(data.get("voice") or "").strip())

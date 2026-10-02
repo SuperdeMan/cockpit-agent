@@ -16,6 +16,7 @@ from _sdk.base import Context  # noqa: E402
 class _RecordingMemory:
     def __init__(self):
         self.calls: list[tuple] = []
+        self.epochs: list[tuple] = []
 
     async def get_context(self, session_id, user_id, vehicle_id, scopes,
                           occupant_id=""):
@@ -26,9 +27,14 @@ class _RecordingMemory:
         self.calls.append(("get_session", occupant_id))
         return []
 
-    async def upsert_profile(self, user_id, key, value_json, occupant_id=""):
+    async def upsert_profile(self, user_id, key, value_json, occupant_id="", memory_epoch=""):
         self.calls.append(("upsert_profile", occupant_id))
+        self.epochs.append(("upsert_profile", memory_epoch))
         return True
+
+    async def remember(self, items, memory_epoch=""):
+        self.epochs.append(("remember", memory_epoch))
+        return ["m1"]
 
 
 def _ctx(occ="occ-2", mem=None):
@@ -69,3 +75,19 @@ def test_save_profile_without_user_id_writes_nothing():
     ctx = Context("s1", "", "v1", mem, "occ-2")
     assert asyncio.run(ctx.save_profile("places", {})) is False
     assert mem.calls == []
+
+
+def test_memory_writes_carry_the_epoch_the_cloud_read_before_this_turn():
+    # CA2-15 S1b: a deletion during the turn makes Memory refuse these writes.
+    mem = _RecordingMemory()
+    ctx = Context("s1", "u1", "v1", mem, "primary",
+                  meta={"granted_scopes": "profile.read", "memory_epoch": "3.ab"})
+    legacy = Context("s1", "u1", "v1", mem, "primary", meta={"granted_scopes": "profile.read"})
+
+    async def go():
+        await ctx.save_profile("places", {"home": {"name": "翠竹苑"}})
+        await ctx.remember("用户喜欢空调26度", predicate="climate.temperature")
+        await legacy.remember("用户喜欢空调26度", predicate="climate.temperature")
+
+    asyncio.run(go())
+    assert mem.epochs == [("upsert_profile", "3.ab"), ("remember", "3.ab"), ("remember", "")]

@@ -73,6 +73,7 @@ def _adapt_append_turn_call(
     exchange_id: str = "",
     actions=None,
     sources=None,
+    memory_epoch: str = "",
 ) -> tuple[list, dict]:
     """Build one compatible call without probing by execution.
 
@@ -93,6 +94,8 @@ def _adapt_append_turn_call(
         "actions": list(actions or []),
         # C4-A 数据源事实。走同一条签名探测，理由逐字同上。
         "sources": [s for s in (sources or []) if isinstance(s, dict)],
+        # CA2-15 S1b：本回合读记忆之前取的代际。同一条签名探测。
+        "memory_epoch": memory_epoch or "",
     }
     try:
         parameters = inspect.signature(fn).parameters
@@ -2248,7 +2251,7 @@ class ContextManager:
                           occupant_id: str = "",
                           e2e_memory_capability: str = "",
                           turn_id: str = "", exchange_id: str = "",
-                          actions=None, sources=None):
+                          actions=None, sources=None, memory_epoch: str = ""):
         """写入一轮对话到 memory（指代/抽取的数据来源）。memory 不可用或 clients 未提供
         该能力时静默跳过（不阻塞主链路）。user_id 透传给 memory 触发异步偏好抽取。
 
@@ -2271,10 +2274,22 @@ class ContextManager:
                 exchange_id=exchange_id,
                 actions=actions,
                 sources=sources,
+                memory_epoch=memory_epoch,
             )
             await fn(*args, **kwargs)
         except Exception as e:
             logger.debug("append_turn failed: %s", e)
+
+    async def memory_epoch(self, user_id: str) -> str:
+        """CA2-15 S1b：本回合读记忆之前取 owner 代际；Memory 不可达时回空串（写入按旧调用方处理）。"""
+        fn = getattr(self.clients, "get_memory_epoch", None)
+        if not fn or not user_id:
+            return ""
+        try:
+            return str(await fn(user_id) or "")
+        except Exception as e:
+            logger.debug("memory epoch unavailable: %s", e)
+            return ""
 
     async def _catalog(self, text: str) -> list:
         """catalog 语义预筛（见 `_catalog_with_registry`；既有调用方只要预筛后的那份）。"""

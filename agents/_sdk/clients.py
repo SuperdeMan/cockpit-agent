@@ -196,7 +196,7 @@ class MemoryClient:
             raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
     async def upsert_profile(self, user_id: str, key: str, value_json: str,
-                             occupant_id: str = "") -> bool:
+                             occupant_id: str = "", memory_epoch: str = "") -> bool:
         """写用户画像字段（如常用地点 places）。失败抛 RuntimeError，调用方决定容错。
 
         places 按 OwnerKey 落 memory_item（M-B）——不带 occupant 就是让乘员 B
@@ -205,15 +205,18 @@ class MemoryClient:
             resp = await self._stub().UpsertProfile(
                 memory_pb2.UpsertProfileRequest(
                     user_id=user_id, key=key, value_json=value_json,
-                    occupant_id=occupant_id or "primary"),
+                    occupant_id=occupant_id or "primary", memory_epoch=memory_epoch),
                 timeout=DEFAULT_TIMEOUT)
             return resp.ok
         except grpc.aio.AioRpcError as e:
             raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
-    async def remember(self, items: list[dict]) -> list[str]:
-        """写语义/情景记忆。items 为 dict 列表（字段见 MemoryItem）。失败抛 RuntimeError。"""
-        req = memory_pb2.RememberRequest(items=[_to_memory_item(it) for it in items])
+    async def remember(self, items: list[dict], memory_epoch: str = "") -> list[str]:
+        """写语义/情景记忆。items 为 dict 列表（字段见 MemoryItem）。失败抛 RuntimeError。
+
+        ``memory_epoch``：观测这些内容时的 owner 代际（CA2-15 S1b）；之后记忆被删过 ⇒ Memory 拒收、回空 ids。"""
+        req = memory_pb2.RememberRequest(items=[_to_memory_item(it) for it in items],
+                                         memory_epoch=memory_epoch)
         try:
             resp = await self._stub().Remember(req, timeout=DEFAULT_TIMEOUT)
             return list(resp.ids)

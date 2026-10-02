@@ -43,6 +43,9 @@ class Context:
         authority = dict(meta if meta is not None else get_current_meta() or {})
         self.granted_permissions = [s.strip() for s in authority.get("granted_scopes", "").split(",") if s.strip()]
         self.prefs = {"memory_enabled": authority.get("memory_enabled", "true")}
+        # CA2-15 S1b：云端在本回合读记忆之前取的 owner 代际（服务端自有 meta）。写记忆原样带回，
+        # 回合进行中记忆被删过 ⇒ Memory 拒收。
+        self.memory_epoch = str(authority.get("memory_epoch") or "")
         self.read_states = {}
         self._projection_meta = {}
         self._read_disabled = set()
@@ -99,7 +102,7 @@ class Context:
         import json
         return await self._memory.upsert_profile(
             self.user_id, key, json.dumps(value, ensure_ascii=False),
-            occupant_id=self.occupant_id)
+            occupant_id=self.occupant_id, memory_epoch=self.memory_epoch)
 
     async def save_shared_state(self, key: str, value) -> bool:
         """写跨 Agent 会话状态（Agent 无状态化，临时会话态落 profile KV）。
@@ -187,7 +190,7 @@ class Context:
                 "expires_at": expires_at, "review_status": review_status,
                 "source_turn_ids": source_turn_ids,
                 "value_json": json.dumps(value, ensure_ascii=False) if value is not None else ""}
-        ids = await self._memory.remember([item])
+        ids = await self._memory.remember([item], memory_epoch=self.memory_epoch)
         return bool(ids)
 
 

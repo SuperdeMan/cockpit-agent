@@ -2971,3 +2971,16 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 接收方不匹配时返回 `REJECTED / capability_contract_rejected`，在业务 handle/首个流事件前停止。
 `EdgeCall.contract_query` 必须没有执行 intent；摘要不授予权限、确认或重试权。
 完整 schema、迁移和剩余边界见 [CA2-05](design/2026-09-27-v2-capability-contract.md)，可用接入样例见 [SDK](../agents/_sdk/README.md)。
+
+### 9.50 记忆 owner 代际：删除与在途写入同代际失效（CA2-15 S1b，2026-10-02）
+
+- 代际 `memory_epoch` = `<代数>.<随机 128 位>`，每用户一个（`memory/fence.py`，Redis `mem_epoch:{user}`，无 TTL）。
+  `ForgetUser`（全量 / 乘员 / scope）、`DeleteVoiceprint`、`DeleteMemoryItem` 持锁**先推进再删**。
+- 写入方在读记忆之前调 `GetMemoryEpoch`，`AppendTurn` / `Remember` / `UpsertProfile` 原样带回；不等于当前值 ⇒ `stale_memory_epoch`、不写。
+  不带 = 旧调用方照旧写；生产写入方全部带（`memory/tests/test_memory_fence.py` 源码对账）。被拒是正常结局，写入方只留 info 日志、不重试。
+- 取代际的时点：云端 `_run_bound` 开头（早于本回合任何一次读记忆）；车端 `Handle` 入口（不阻塞，写轮次时取结果）；
+  S2S 每次构建记忆摘要（开场与断线重建）；Agent 用云端下发的 `meta["memory_epoch"]`——**服务端自有**，客户端 prefs 与 step meta
+  里的同名键一律剔除，Agent 调 Agent 原样转发。
+- 轮次盖代际，抽取只用当前代际的轮次（修前无代际的轮次只在代数 0 有效）⇒ 删除前的原话不再进抽取窗口；会话历史不受影响。
+- 串行前提：Memory 是记忆数据唯一写入口且单副本，按用户的进程内锁让「复核 + 写」与「推进 + 删」互斥；扩多副本前必须换跨进程锁。
+- 不扩删除总线：单乘员 / 单条删除不取消云端在途请求，只挡写回。取舍见 [CA2-15 §6](design/2026-10-02-v2-memory-identity-governance.md)。

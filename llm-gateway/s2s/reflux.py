@@ -75,6 +75,20 @@ async def build_context_summary(memory_stub, session_id: str, *,
     return "\n".join(render_exchanges(turns, exchanges=exchanges))
 
 
+async def memory_epoch(memory_stub, user_id: str) -> str:
+    """CA2-15 S1b：读记忆之前取 owner 代际；取不到回空串（回流按旧调用方写）。"""
+    if memory_stub is None or not user_id:
+        return ""
+    try:
+        from cockpit.memory.v1 import memory_pb2
+        resp = await memory_stub.GetMemoryEpoch(
+            memory_pb2.GetMemoryEpochRequest(user_id=user_id), timeout=3.0)
+        return resp.memory_epoch
+    except Exception as e:
+        logger.debug("s2s 取记忆代际失败（回流不带代际）: %s", e)
+        return ""
+
+
 class Reflux:
     """每 turn 收束后的回灌器（注入 memory stub 取用器 + obs emitter）。"""
 
@@ -91,6 +105,16 @@ class Reflux:
         self.provider_name = provider_name
         self.model = model
         self.false_promises = 0
+        # CA2-15 S1b：模型手里那份记忆摘要是在哪个代际读的。回流写入都带它——
+        # 会话中途记忆被删过，模型拿着的就是删除前的内容，此后的回流一律被拒，直到下次重建摘要。
+        self.memory_epoch = ""
+
+    async def context_summary(self) -> str:
+        """重注入材料（会话开场与断线重建时取）：先取代际、再读记忆，owner 按调用时的值。"""
+        stub = self._stub_getter() if self._stub_getter is not None else None
+        self.memory_epoch = await memory_epoch(stub, self.user_id)
+        return await build_context_summary(stub, self.session_id, user_id=self.user_id,
+                                           occupant_id=self.occupant_id)
 
     async def __call__(self, turn) -> None:
         """turn 收束回调（S2SSession 的 reflux 注入点）。"""
@@ -128,11 +152,16 @@ class Reflux:
             ):
                 if not text:
                     continue
-                await stub.AppendTurn(memory_pb2.AppendTurnRequest(
+                resp = await stub.AppendTurn(memory_pb2.AppendTurnRequest(
                     session_id=self.session_id, role=role, text=text,
                     user_id=self.user_id, vehicle_id=self.vehicle_id,
                     occupant_id=self.occupant_id or "primary",
-                    turn_id=tid, exchange_id=turn_key), timeout=5.0)
+                    turn_id=tid, exchange_id=turn_key,
+                    memory_epoch=self.memory_epoch), timeout=5.0)
+                if getattr(resp, "error", "") == "stale_memory_epoch":
+                    # 不是故障：摘要读于一次删除之前，这一轮不该写回（两条一起丢）。
+                    logger.info("s2s 回流被拒：会话的记忆摘要读于一次删除之前")
+                    return
         except Exception as e:
             # 记忆断代是真损失 → warning 级留痕（obs 里能看到缺口），但不拖死会话
             logger.warning("s2s AppendTurn 回灌失败: %s", e)

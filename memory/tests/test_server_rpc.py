@@ -93,7 +93,8 @@ def test_appendturn_triggers_consolidate_every_n():
     svc = _servicer()
     calls = []
 
-    async def fake_consolidate(session_id, user_id, occupant_id="primary", vehicle_id=""):
+    async def fake_consolidate(session_id, user_id, occupant_id="primary", vehicle_id="",
+                               **_fence):
         calls.append((session_id, user_id))
         return []
 
@@ -115,7 +116,8 @@ def test_appendturn_explicit_remember_triggers_immediately():
     svc = _servicer()
     calls = []
 
-    async def fake_consolidate(session_id, user_id, occupant_id="primary", vehicle_id=""):
+    async def fake_consolidate(session_id, user_id, occupant_id="primary", vehicle_id="",
+                               **_fence):
         calls.append(session_id)
         return []
 

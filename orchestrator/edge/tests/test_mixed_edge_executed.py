@@ -170,7 +170,7 @@ def test_negation_idiom_without_a_control_object_still_goes_to_cloud(monkeypatch
 def test_all_local_mixed_path_records_the_executed_action_ledger(monkeypatch):
     recorded = []
 
-    def capture(_self, _request, user_text, speech, actions=None):
+    def capture(_self, _request, user_text, speech, actions=None, memory_epoch=None):
         recorded.append((user_text, speech, list(actions or [])))
 
     monkeypatch.setattr(EdgeOrchestratorServicer, "_record_local_turn", capture)

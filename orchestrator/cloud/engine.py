@@ -517,6 +517,9 @@ class PlannerEngine:
         text = (getattr(request, "text", "") or "").strip()
         ctx.raw_text = text  # 透传给 Agent（供 navigate_to 等 fallback 槽位提取）
         mem_on = ctx.prefs.get("memory_enabled", "true") != "false"
+        if mem_on:
+            # CA2-15 S1b：在本回合任何一次读记忆之前取代际；回合结束写轮次、Agent 写记忆都带它。
+            ctx.memory_epoch = await self.context.memory_epoch(ctx.user_id)
 
         assistant_speech = ""
         executed_actions: list[str] = []
@@ -565,7 +568,8 @@ class PlannerEngine:
             await self.context.append_turn(ctx.session_id, "user", text,
                                            ctx.user_id, ctx.vehicle_id, occ,
                                            ctx.e2e_memory_capability,
-                                           turn_id=f"{exch}:user", exchange_id=exch)
+                                           turn_id=f"{exch}:user", exchange_id=exch,
+                                           memory_epoch=ctx.memory_epoch)
             if assistant_speech:
                 await self.context.append_turn(ctx.session_id, "assistant", assistant_speech,
                                                ctx.user_id, ctx.vehicle_id, occ,
@@ -573,7 +577,8 @@ class PlannerEngine:
                                                turn_id=f"{exch}:assistant:0",
                                                exchange_id=exch,
                                                actions=executed_actions,
-                                               sources=turn_sources)
+                                               sources=turn_sources,
+                                               memory_epoch=ctx.memory_epoch)
 
     #: W14：谈话步的声称句全部剥空之后的诚实话术（零领域词）。
     _CLAIM_STRIPPED_SPEECH = CLAIM_STRIPPED_SPEECH     # 一句话只留一份（runtime.execution_claim，流式出口共用）

@@ -212,3 +212,78 @@ def test_memory_client_append_swallows_backend_errors():
         await client.append("s1", "user", "hi")  # 不抛即通过
 
     asyncio.run(run())
+
+
+def test_local_turn_carries_the_epoch_observed_when_the_request_arrived(monkeypatch):
+    """CA2-15 S1b：之后记忆被删过，Memory 就拒收这一轮（删除之前说的话写不回来）。"""
+    service = _service(monkeypatch)
+    calls = []
+
+    async def fake_epoch(user_id):
+        return "2.ab"
+
+    async def fake_append(session_id, role, text, **kw):
+        calls.append((role, kw.get("memory_epoch")))
+
+    service.memory.epoch = fake_epoch
+    service.memory.append = fake_append
+
+    async def run():
+        req = _request()
+        observed = service._observe_memory_epoch(req)
+        service._record_local_turn(req, "空调调到24度", "已设为24度", memory_epoch=observed)
+        await asyncio.gather(*service._bg)
+
+    asyncio.run(run())
+    assert calls == [("user", "2.ab"), ("assistant", "2.ab")]
+
+
+def test_no_epoch_is_observed_without_memory_or_an_owner(monkeypatch):
+    service = _service(monkeypatch)
+    asked = []
+
+    async def fake_epoch(user_id):
+        asked.append(user_id)
+        return "x"
+
+    service.memory.epoch = fake_epoch
+
+    async def run():
+        off = service._observe_memory_epoch(_request(meta={"memory_enabled": "false"}))
+        anonymous = service._observe_memory_epoch(_request(user_id=""))
+        return off, anonymous
+
+    assert asyncio.run(run()) == (None, None) and asked == []
+
+
+def test_handle_hands_the_arrival_epoch_to_the_local_turn(monkeypatch):
+    from cockpit.common.v1 import common_pb2
+    from cockpit.orchestrator.v1 import orchestrator_pb2
+
+    service = _service(monkeypatch)
+    written = []
+
+    async def fake_epoch(user_id):
+        return "4.cd"
+
+    async def fake_append(session_id, role, text, **kw):
+        written.append((role, kw.get("memory_epoch")))
+
+    async def noop(*args, **kwargs):
+        return None
+
+    service.memory.epoch = fake_epoch
+    service.memory.append = fake_append
+    service.obs.emit_span = noop
+    service.obs.emit_turn = noop
+    request = orchestrator_pb2.HandleRequest(
+        text="打开空调", session_id="s-epoch", request_id="req-epoch",
+        context=common_pb2.ContextRef(user_id="u1", vehicle_id="v1"), meta={"trace_id": "t-epoch"})
+
+    async def run():
+        events = [ev async for ev in service.Handle(request, None)]
+        await asyncio.gather(*service._bg)
+        return events
+
+    events = asyncio.run(run())
+    assert events and written == [("user", "4.cd"), ("assistant", "4.cd")]

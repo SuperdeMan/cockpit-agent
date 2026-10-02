@@ -22,6 +22,7 @@ from e2e_capability import (
     decode_capability_secret,
     verify_memory_capability,
 )
+from fence import STALE, OwnerFence, StaleEpoch
 from store import ALL_OCCUPANTS, MemoryStore, OWNER_ONLY, TurnConflict, owner_of
 from runtime.clock import BUSINESS_TZ
 
@@ -64,6 +65,8 @@ _EXTRACT_SKIP_PREFIXES = tuple(
 class MemoryServicer(memory_pb2_grpc.MemoryServicer):
     def __init__(self):
         self.store = MemoryStore()
+        # CA2-15 S1b：按用户的代际栅栏。删除先推进代际，写入方带回观测时的代际，不等就拒。
+        self.fence = OwnerFence(self.store._redis)
         self._turn_counts: dict[str, int] = {}  # session_id -> 累计轮数（抽取节流）
         self._bg: set = set()                    # 持有后台 consolidate task 引用
         self._nc = None                          # NATS 连接（主动建议投递，懒连）
@@ -93,15 +96,21 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         # occupant/turn/exchange 一并入库（M-B）：识别得出「谁在说话」而数据面存不下来，
         # 等于没识别——巩固会按触发者给整段混合历史归属。
         try:
-            await self.store.append_turn(
-                request.session_id, request.role, request.text,
-                user_id=request.user_id, occupant_id=request.occupant_id,
-                vehicle_id=request.vehicle_id, turn_id=request.turn_id,
-                exchange_id=request.exchange_id,
-                actions=list(request.actions),   # Q6 执行事实
-                # C4-A 数据源事实：与 actions 同一格、同一条判据。
-                sources=[{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
-                         for s in request.sources])
+            async with self.fence.writing(request.user_id, request.memory_epoch) as epoch:
+                await self.store.append_turn(
+                    request.session_id, request.role, request.text,
+                    user_id=request.user_id, occupant_id=request.occupant_id,
+                    vehicle_id=request.vehicle_id, turn_id=request.turn_id,
+                    exchange_id=request.exchange_id,
+                    actions=list(request.actions),   # Q6 执行事实
+                    # C4-A 数据源事实：与 actions 同一格、同一条判据。
+                    sources=[{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
+                             for s in request.sources],
+                    memory_epoch=epoch)
+        except StaleEpoch:
+            # 这一轮是在一次删除之前观测到的：写回来就是复活被删的内容。
+            logger.info("append_turn refused: memory deleted since this turn was observed")
+            return memory_pb2.AppendTurnResponse(ok=False, error=STALE)
         except TurnConflict:
             # 重放可以，改写不行：保留原 Turn 并如实报错，不静默覆盖已发生的对话。
             return memory_pb2.AppendTurnResponse(ok=False, error="turn_conflict")
@@ -164,17 +173,32 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
 
     async def _consolidate_bg(self, session_id, user_id, occupant_id, vehicle_id):
         try:
-            ids = await self.store.consolidate(session_id, user_id, occupant_id, vehicle_id)
+            # CA2-15 S1b：代际在读轮次之前取；只抽同代际的轮次，写入前持锁复核。
+            # 删除落在「读 → LLM → 写」之间时整批丢弃，不把删掉的内容写回来。
+            epoch = await self.fence.current(user_id)
+            ids = await self.store.consolidate(
+                session_id, user_id, occupant_id, vehicle_id, memory_epoch=epoch,
+                guard=lambda: self.fence.writing(user_id, epoch))
             if ids:
                 logger.info("consolidate: +%d memories", len(ids))
-            await self._derive_and_emit(user_id, occupant_id, new_ids=ids)
+            await self._derive_and_emit(user_id, occupant_id, new_ids=ids, epoch=epoch)
+        except StaleEpoch:
+            logger.info("consolidate dropped: memory deleted while extracting")
         except Exception as e:
             logger.debug("consolidate failed: %s", e)
 
-    async def _derive_and_emit(self, user_id, occupant_id, new_ids=None):
+    async def _derive_and_emit(self, user_id, occupant_id, new_ids=None, epoch=""):
         """从情景记忆派生 routine，对新沉淀的 routine 发 agent.proactive 主动建议；
-        G7：本轮新抽到的**未来事件**发询问式提醒建议（只在抽取当轮发一次）。"""
-        routines = await self.store.derive_routines(user_id, occupant_id)
+        G7：本轮新抽到的**未来事件**发询问式提醒建议（只在抽取当轮发一次）。
+
+        CA2-15 S1b：routine 的写入与抽取同一代际复核；建议在锁外发（NATS 慢不能堵住这个用户的写入），
+        发之前再看一次代际——删过就什么都不说。"""
+        async with self.fence.writing(user_id, epoch):
+            routines = await self.store.derive_routines(user_id, occupant_id)
+        events = (await self.store.future_events(user_id, occupant_id, only_ids=list(new_ids))
+                  if new_ids else [])
+        if epoch and await self.fence.current(user_id) != epoch:
+            return
         for r in routines:
             await self._emit_proactive(
                 r.get("suggestion", ""),
@@ -182,10 +206,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 user_id,
                 occupant_id,
             )
-        if new_ids:
-            for ev in await self.store.future_events(user_id, occupant_id,
-                                                     only_ids=list(new_ids)):
-                await self._emit_event_offer(ev, user_id, occupant_id)
+        for ev in events:
+            await self._emit_event_offer(ev, user_id, occupant_id)
 
     # 事件文本里的时间词（周六/下午三点…）在拼 send_text 时要剥掉——否则
     # 「8月22日15:00提醒我女儿周六下午三点钢琴比赛」里有两个时间，reminder 的
@@ -320,8 +342,13 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         `occupant_id` 必填（primary 也要显式传）——owner 级动作绝不从空值推断范围，
         否则「漏传 occupant」会静默升级成「删全部乘员」，那正是这条 RPC 要终结的行为。
         """
-        res = await self.store.delete_memory_item(
-            request.user_id, request.occupant_id, request.item_id)
+        if not request.user_id or not request.occupant_id or not request.item_id:
+            res = await self.store.delete_memory_item(
+                request.user_id, request.occupant_id, request.item_id)
+        else:
+            async with self.fence.deleting(request.user_id):
+                res = await self.store.delete_memory_item(
+                    request.user_id, request.occupant_id, request.item_id)
         return memory_pb2.DeleteMemoryItemResponse(
             ok=bool(res.get("ok")), error=res.get("error", ""),
             deleted=int(res.get("deleted") or 0),
@@ -337,8 +364,13 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             logger.warning("UpsertProfile bad json (%s/%s): %s",
                            request.user_id, request.key, e)
             return memory_pb2.UpsertProfileResponse(ok=False)
-        await self.store.upsert_profile(request.user_id, request.key, value,
-                                        occupant_id=request.occupant_id)
+        try:
+            async with self.fence.writing(request.user_id, request.memory_epoch):
+                await self.store.upsert_profile(request.user_id, request.key, value,
+                                                occupant_id=request.occupant_id)
+        except StaleEpoch:
+            logger.info("upsert_profile refused: memory deleted since it was observed")
+            return memory_pb2.UpsertProfileResponse(ok=False, error=STALE)
         return memory_pb2.UpsertProfileResponse(ok=True)
 
     # ── 分层记忆（语义画像 / 情景）──────────────────────────
@@ -347,7 +379,19 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         items = [_item_to_dict(m) for m in request.items if m.user_id]
         if not items:
             return memory_pb2.RememberResponse(ok=False)
-        ids = await self.store.remember(items)
+        owners = {it["user_id"] for it in items}
+        if len(owners) > 1:
+            # 一个代际只说明一个用户；跨用户的批次没有可复核的观测点。
+            if request.memory_epoch:
+                return memory_pb2.RememberResponse(ok=False, error=STALE)
+            ids = await self.store.remember(items)
+            return memory_pb2.RememberResponse(ids=ids, ok=True)
+        try:
+            async with self.fence.writing(owners.pop(), request.memory_epoch):
+                ids = await self.store.remember(items)
+        except StaleEpoch:
+            logger.info("remember refused: memory deleted since it was observed")
+            return memory_pb2.RememberResponse(ok=False, error=STALE)
         return memory_pb2.RememberResponse(ids=ids, ok=True)
 
     async def Recall(self, request, context):
@@ -371,9 +415,15 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         """合规：删除用户全量记忆。"""
         if not request.user_id:
             return memory_pb2.ForgetUserResponse(ok=False)
-        n = await self.store.forget_user(
-            request.user_id, request.occupant_id, list(request.scopes))
+        async with self.fence.deleting(request.user_id):
+            n = await self.store.forget_user(
+                request.user_id, request.occupant_id, list(request.scopes))
         return memory_pb2.ForgetUserResponse(ok=True, deleted=n)
+
+    async def GetMemoryEpoch(self, request, context):
+        """CA2-15 S1b：写入方在读记忆之前取一次，写入时原样带回。"""
+        return memory_pb2.GetMemoryEpochResponse(
+            memory_epoch=await self.fence.current(request.user_id))
 
     async def ExportUser(self, request, context):
         """合规：导出用户全量记忆 + 画像 + 关系边。"""
@@ -409,10 +459,11 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
     async def EnrollVoiceprint(self, request, context):
         if not request.user_id or not request.samples:
             return memory_pb2.EnrollVoiceprintResponse(ok=False, error="no_samples")
-        res = await self.store.enroll_voiceprint(
-            request.user_id, [list(s.values) for s in request.samples],
-            occupant_id=request.occupant_id, display_name=request.display_name,
-            model=request.model, tenant_id=request.tenant_id or "default")
+        async with self.fence.writing(request.user_id):    # 用户自己的动作：不复核，只与删除串行
+            res = await self.store.enroll_voiceprint(
+                request.user_id, [list(s.values) for s in request.samples],
+                occupant_id=request.occupant_id, display_name=request.display_name,
+                model=request.model, tenant_id=request.tenant_id or "default")
         if not res.get("ok"):
             return memory_pb2.EnrollVoiceprintResponse(
                 ok=False, error=res.get("error", ""),
@@ -454,9 +505,10 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
     async def DeleteVoiceprint(self, request, context):
         if not request.user_id or not request.occupant_id:
             return memory_pb2.DeleteVoiceprintResponse(ok=False)
-        res = await self.store.delete_voiceprint(
-            request.user_id, request.occupant_id, purge_memory=request.purge_memory,
-            tenant_id=request.tenant_id or "default")
+        async with self.fence.deleting(request.user_id):
+            res = await self.store.delete_voiceprint(
+                request.user_id, request.occupant_id, purge_memory=request.purge_memory,
+                tenant_id=request.tenant_id or "default")
         logger.info("voiceprint deleted: user=%s occupant=%s templates=%d memories=%d",
                     request.user_id, request.occupant_id,
                     res["deleted_templates"], res["deleted_memories"])
@@ -468,9 +520,10 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         """只改称呼不动模板：名字是元数据，不该和「重录三段声纹」绑一起。"""
         if not request.user_id or not request.occupant_id:
             return memory_pb2.RenameVoiceprintResponse(ok=False, error="empty_name")
-        res = await self.store.rename_voiceprint(
-            request.user_id, request.occupant_id, request.display_name,
-            tenant_id=request.tenant_id or "default")
+        async with self.fence.writing(request.user_id):    # 用户自己的动作：不复核，只与删除串行
+            res = await self.store.rename_voiceprint(
+                request.user_id, request.occupant_id, request.display_name,
+                tenant_id=request.tenant_id or "default")
         if res.get("ok"):
             logger.info("voiceprint renamed: user=%s occupant=%s name=%s",
                         request.user_id, request.occupant_id, res["display_name"])
