@@ -10361,3 +10361,19 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 验证：全量 10584 / 35 / 11；22 个准入场景在 SQLite 上全过，三份账本同场景一致；18 处注入缺陷全部判红。
   发布：infra-approval approved，dry-run 零阻断，status 5/5 零 warning，verify `20261002T112108Z-b38e5af.json`；线上卷与库已建立。固定语料 固定语料 20×3：60/60 完成、99 轮，业务红 3（既有签名），证据错误 0、open operations 0，211 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；其中 15 轮后备箱确认问句经车端准入，线上日志随之出现 15 条记录、0 条 orphaned，云端 step.edge 10–14 ms（含契约探测，一次 292 ms 离群）；p50/p95/p99 7328/18500/28468 ms。
   授权后的后备箱探针（runner `21b6e4b3`）：确认开 / 关各落一条 done、0 orphaned，问句时的 awaiting 记录被同一 operation 认领后结算。下一包 CA2-15。
+
+## 2026-10-02：CA2-15 S1a 记忆 / 声纹端点按 token 主体（`e7766e98`）
+
+- 起因：CA2-15 复核发现 llm-gateway 的记忆 / 声纹 HTTP 端点里只有 forget 按 Bearer 解析主体，其余 9 个信查询串 `user_id`——
+  能连上 50059 就能读别人的会话 / 画像、改名或删乘员（删除默认连带清记忆）、删单条记忆。
+- 用户决定：未知声音口径选 A（只读普通偏好，账户未录声纹仍按车主）；本轮只做 S1；端点直接收紧。S1 拆两步：
+  S1a 端点鉴权先上，S1b 删除总线与代际另批（含 schema）。见 [CA2-15](design/2026-10-02-v2-memory-identity-governance.md)。
+- 实现：`http_server.py::_owner_query` 统一判据——主体只来自 Bearer（`AUTH_TOKENS` 四段条目；签名测试身份与 S2S / 车端网关同一开关与密钥），
+  `user_id` 可省、给了必须相等（403），缺 token 401，拒绝在读音频 / 调 Memory 之前，识别的拒绝仍回 primary。
+  HMI 全部记忆 / 声纹请求带 `VITE_WS_TOKEN`，免唤醒识别传入 token；手机与 Dashboard 不调这些端点（方案稿写成「手机需重新出包」，复核更正）。
+- 坑：Bash heredoc 又把 JS 测试里的反斜杠吃掉（改用 Write 落盘）；主工作树有别的会话未提交的文档改动，部署闸 `safety_rejected`，
+  按开发指南从隔离 worktree 发布；记录文档里与别人共改的两份用「HEAD + 本次改动」直写索引，别人的行留在工作树。
+- 发现未修：S2S `session.start` 同样信客户端 `user_id`（读该会话近几轮做上下文、把对话回流写进该用户记忆），Android 也走这条路，并入 S2。
+- 验证：全量 10614 / 35 / 11，四门禁、smoke 13/13；变异 6 条全部判红。发布：dry-run 零阻断，status 5/5 零 warning，
+  verify `20261002T125956Z-e7766e9.json`；真栈只读核对 401 / 200 / 403 符合预期，线上 HMI 模块带 bearer 且 token 已注入。
+  三个 e2e 脚本是本地栈用例，未在云端运行；固定语料未重跑（对话链路未改）。下一步 S1b。

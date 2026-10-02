@@ -1,7 +1,7 @@
 # CA2-15：偏好修订、任务约束、多人隔离与未知声音的隐私投影
 
 > 状态：2026-10-02 **已决策**（§4）：本轮只做 S1；S1 拆成 S1a（端点按 token 解析主体，§5）与 S1b（删除总线与代际，§6）。
-> S1a 已实现、待发布；S1b 待设计定稿（含 schema 变更，单独批准）。S2 / S3 未批准。
+> **S1a 已部署 `e7766e98`**（§5.5）；S1b 待设计定稿（含 schema 变更，单独批准）。S2 / S3 未批准。
 > 完成判据（实施方案 CA2-15）：显式修改胜过旧偏好；任务结束不复活旧约束；
 > 未认证声音不读敏感个体记忆；forget 与在途治理同代际失效。依赖 [CA2-03 任务身份](2026-09-26-v2-task-identity.md)、
 > [CA2-07 权限视图](2026-09-28-v2-permissioned-context-view.md)。排序见[路线图](../roadmap.md)。
@@ -48,7 +48,7 @@
 2. **本轮做哪几片**：**只做 S1**（删除与代际）。S2 / S3 不在本轮。
 3. **端点鉴权怎么过渡**：**直接收紧**——端点立即要求 token，同一批修好客户端源码。
 
-## 5. S1a：端点按 token 解析主体（已实现）
+## 5. S1a：端点按 token 解析主体（已部署 `e7766e98`）
 
 ### 5.1 判据
 
@@ -83,6 +83,18 @@ S2S 的 `session.start` 在生产里同样直接信客户端帧里的 `user_id`�
 - HMI `memoryAuth.test.mjs`：每个记忆 / 声纹请求都带 bearer、识别带传入的 token；
 - 变异 6 条全部变红：跳过不一致检查、声纹删除改回信查询串、签名身份不看开关、缺 token 回落到查询串、
   HMI 一个请求漏 bearer、识别丢 bearer。
+
+### 5.5 发布与真栈核对（`e7766e98`）
+
+- 本地：全量 10614 / 35 / 11（371.83 s），四门禁与 smoke 13/13；llm-gateway 377、HMI 361 全过，`vite build` 通过，
+  HMI 类型检查维持修前的 25 条（全是 `.mjs` 缺声明与 `Blob` 参数类型，与本批无关）。
+- 发布：主工作树有别的会话未提交的文档改动，部署闸 `safety_rejected`；按开发指南从隔离 worktree 发布，不碰别人的改动。
+  dry-run 零阻断、无 schema / CI 变更、基础设施摘要不变；status 5/5 零 warning，verify `20261002T125956Z-e7766e9.json`。
+- 真栈只读核对（主机回环，只记状态码与条数，不取内容）：无 token 或伪造 token 读画像、地点、声纹列表 → 401；
+  HMI 的 token → 200；同一 token 冒充别的 `user_id` → 403 `owner_mismatch`。线上 HMI 下发的 `audio.ts` 有 10 处请求带
+  `memoryAuth()` 且 token 已注入，识别模块带 bearer，免唤醒控制器传入 token。证据 `.artifacts/ca2-15/e7766e98-endpoint-auth-probe.json`（本地，不入库）。
+- 未运行：`e2e_voiceprint` / `e2e_memory_graph` / `e2e_s2s` 是 `remote_safe: false` 的本地栈用例，`target=cloud` 下不跑；
+  固定语料走对话链路、本批未改，未重跑；浏览器里的记忆面板与真麦识别未人工点验。
 
 ## 6. S1b：删除总线与代际（下一步）
 
