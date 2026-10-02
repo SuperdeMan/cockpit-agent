@@ -1,7 +1,7 @@
 # CA2-10：执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）
 
 > 状态：2026-10-02 已部署 `a772e783`（status 5/5、verify verified）。proto 只增字段（`ResultEntry.evidence`），不改数据库 schema、`.env` 或 CI/CD。
-> 模拟车上的真栈车控证据探针属于 `remote_mutating`，本包发布时未运行，见 §5。
+> 模拟车上的真栈车控证据探针经两次授权运行，均未走到云端 Verifier（被三类既有业务问题挡住），见 §5；证据仍只有离线这一层。
 > 依赖：[CA2-06 车辆观测](2026-09-27-v2-vehicle-state-and-simulation.md)（逐信号质量/时效、可选 `operation_id`）、
 > [CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)、[CA2-09 确认绑定](2026-10-02-v2-confirmation-binding.md)。排序见[路线图](../roadmap.md)。
 
@@ -91,9 +91,15 @@
 | 发布 | dry-run 零阻断（无 schema 摘要）；status ok、release/running 均为 `a772e783`、5/5、零 warning；verify `20261001T184602Z-a772e78.json`（e2e_remote_safe / MiniMax-M3）verified |
 | 固定语料 | 固定语料 20×3：60/60 完成、100 轮，业务红 5（4 轮未走手册、V207 两轮缺「露营」，均为既有签名），证据错误 0、open operations 0，216 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；语料全是只读问句、不含 state_match 步，ResultBundle 未出现 evidence；p50/p95/p99 6860/19781/27782 ms |
 
-真栈车控证据：`scripts/probe_effect_evidence.py`（条件句确定性升成 T2，后件经执行器在车端执行）会在共享模拟车上开、关空调，
-属于 `remote_mutating`，需要另取本轮授权后运行；期望读数是「开」verified/attributed、「再开」unchanged/already_satisfied、「关」verified，
-且每条证据 `source_kind=simulated`、结束时车态与开始一致。
+真栈车控证据（`scripts/probe_effect_evidence.py`，共享模拟车，`remote_mutating`，经两次本轮授权）：
+
+| 运行 | 结果 | 结论 |
+|---|---|---|
+| `a772e783`，`.artifacts/ca2-10/a772e783-effect-evidence-probe.json` | 三轮都没有 state_match 核验；「如果深圳今天不下雪，就把空调打开」被车端拆开，后件作为本地车控当场执行，空调被无条件打开，前件作为残句上云换来澄清 | 暴露车端条件句缺陷，已修（`9d6b0509`，见 `runtime/deferred_condition.py`）；探针结束时车态已还原 |
+| `9d6b0509`，`.artifacts/deferred-condition/9d6b0509-effect-evidence-probe.json` | 整句上云、车端不再执行；但云端 T2 只查条件不派后件（规划 goal「条件式指示不产生本轮动作步」，trace `ac80349a236c4747b074dc1cd8c8b162`）；「关」轮规划为空步，谈话步说「好，关空调这步执行完了」（trace `70b966cf482846969e001e1b320d93d2`） | 车端修复成立；两项云端业务残余登记在 QA 交接 §5，未修 |
+
+其它路由也到不了：显式空调指令都在车端 T0 本地执行；隐式车控（「我有点冷」）规划在 hvac.inc/dec/set/on 之间不确定，而 inc/dec 没有声明核验；给需确认的后备箱补核验会改它在冻结迁移清单里的 ABI，需按 CA2-05 迁移流程走，未做。
+所以 CA2-10 的证据面目前只有离线这一层（真 VAL + 真车态缓存 + T1/D0/T2 执行路径）。
 
 ## 6. 已知边界
 

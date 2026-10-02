@@ -1,6 +1,7 @@
 # CA2-11：车端操作日志、接收端幂等与恢复查询
 
-> 状态：2026-10-02 方案稿，**待决策**（§3：车端持久存储属基础设施变更）。云端数据库 schema 不变；proto 只增字段。
+> 状态：2026-10-02 方案稿。§3 已决策：用户选 **A**（edge-orchestrator 新增命名卷，SQLite 落在卷上）；实现中，
+> 基础设施摘要在发布时按实际内容批准。云端数据库 schema 不变；proto 只增字段。
 > 依赖：[CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)（operation 身份与判定表）、
 > [CA2-09 确认绑定](2026-10-02-v2-confirmation-binding.md)、[CA2-10 结果证据](2026-10-02-v2-effect-evidence.md)、
 > [CA2-12 故障注入](2026-09-27-v2-vehicle-state-and-simulation.md)。排序见[路线图](../roadmap.md)。

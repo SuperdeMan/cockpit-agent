@@ -18,6 +18,7 @@ v2 接续顺序统一看 [路线图](../roadmap.md)。能力接入与兼容规�
 执行方持久准入见 [CA2-08](2026-10-01-v2-durable-operation-admission.md)：已部署启用，首批为演示商户两项写工具。
 挂起一次消费与确认绑定见 [CA2-09](2026-10-02-v2-confirmation-binding.md)：已部署。
 执行结果证据（回执 / 状态满足 / 观测归属 / 已核实分开）见 [CA2-10](2026-10-02-v2-effect-evidence.md)：已部署。
+车端操作日志、接收端幂等与恢复查询见 [CA2-11 方案](2026-10-02-v2-vehicle-operation-log.md)：已决策（车端命名卷 + SQLite），实现中。
 本包真栈发现的数值角色被聚合改写，已按 [结果原文保护](2026-09-28-result-speech-fidelity.md)修复并发布；
 已登记胎压的条件与原图由 [来源条件护栏](2026-09-28-manual-source-evidence-guard.md)保留；重试漏答、回忆等残余继续按 QA 主表处理。
 
