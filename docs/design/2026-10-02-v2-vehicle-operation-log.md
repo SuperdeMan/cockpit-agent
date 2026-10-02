@@ -1,7 +1,8 @@
 # CA2-11：车端操作日志、接收端幂等与恢复查询
 
-> 状态：2026-10-02 实现完成，待发布。§3 已决策：用户选 **A**（edge-orchestrator 新增命名卷，SQLite 落在卷上）；
-> 基础设施摘要在发布时按实际内容批准。云端数据库 schema 不变；proto 只增字段。
+> 状态：2026-10-02 已部署 `b38e5afc`（status 5/5、verify verified）。用户选 A 并逐项批准：车端 SQLite 表摘要
+> `4103bc98…0ab1fae`、基础设施锚 `3a24c39a…701d7f`。云端数据库 schema 不变；proto 只增字段。
+> 模拟车上的车控探针（remote_mutating）未在本次发布时运行，见 §4。
 > 依赖：[CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)（operation 身份与判定表）、
 > [CA2-09 确认绑定](2026-10-02-v2-confirmation-binding.md)、[CA2-10 结果证据](2026-10-02-v2-effect-evidence.md)、
 > [CA2-12 故障注入](2026-09-27-v2-vehicle-state-and-simulation.md)。排序见[路线图](../roadmap.md)。
@@ -58,7 +59,7 @@ v1 不做后台全量同步：云端只在超时时按需查询。日志在车�
 |---|---|---|
 | 车端日志存储 | **A**：edge-orchestrator 挂命名卷 `edge-operations:/data`，云端 overlay 钉名 `car-agent-edge-operations`，`EDGE_OPERATION_LOG=/data/edge-operations.sqlite3` | 属基础设施变更，发布需批准摘要；没配路径时退回进程内内存（只防同进程重复，启动时告警） |
 | 能力版本 | edge 写能力的契约摘要变了 | 发布那一刻在途的确认挂起会被 CA2-09 绑定判「不一致」而拒绝（窗口不超过挂起 TTL 300 s）；不带契约头的旧调用方不再被当作兼容的旧契约 |
-| 契约探测 | 新摘要不在冻结清单里，`dispatch_to_edge` 每次派发前先做一次只读契约探测 | 每条云端车控多一次车端往返；上线后实测，必要时按车辆缓存探测结果 |
+| 契约探测 | 新摘要不在冻结清单里，`dispatch_to_edge` 每次派发前先做一次只读契约探测 | 每条云端车控多一次车端往返；上线实测整步 10–14 ms，暂不缓存 |
 | 隐私 | 日志不存说话人、原话与位置，保留 24 h，不登记为用户数据存储 | trace_id 只是关联键；对应的观测数据仍按 collector 的删除流程处理 |
 
 ## 4. 验证
@@ -71,9 +72,15 @@ v1 不做后台全量同步：云端只在超时时按需查询。日志在车�
 | 云端 | 截止超时 → 超时而非不可达；done / failed / absent 重发同一身份 / 其余保持未知；没有 operation 的步不查；客户端只发只读查询 |
 | 反向验证 | 18 处注入缺陷全部判红；首轮漏了「结算不核对绑定」，补共享场景后转红 |
 | 架构守卫 | 全仓调用图分析的两处纯查找加了记忆化：词表与违规结果和不缓存时逐项相等，单条用例 62.7 s → 16.9 s（改动前基线 36.6 s） |
+| 本地全量 | `b38e5afc`：10584 passed / 35 skipped / 11 warnings（501.41 s）；四门禁、smoke 13/13、`capability_inventory --check` |
+| 发布 | `infra-approval` 只读预检：聚合 `3a24c39a…701d7f`，安装项只有共享 `compose.cloud.yaml`，锚校验三项通过；`--apply` approved。deploy dry-run 带 schema 摘要零阻断，apply submitted；status ok、release/running 均为 `b38e5afc`、5/5、零 warning；verify `20261002T112108Z-b38e5af.json` verified |
+| 线上只读核对 | edge-orchestrator 挂载 `car-agent-edge-operations` → `/data`（rw），`EDGE_OPERATION_LOG=/data/edge-operations.sqlite3`，库与 `edge_operation` 表已建立，发布时 0 行 |
+| 固定语料 | 固定语料 20×3：60/60 完成、99 轮，业务红 3（既有签名），证据错误 0、open operations 0，211 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化；其中 15 轮后备箱确认问句经车端准入，线上日志随之出现 15 条记录、0 条 orphaned，云端 step.edge 10–14 ms（含契约探测，一次 292 ms 离群）；p50/p95/p99 7328/18500/28468 ms |
+
+真栈车控探针（后备箱经云端确认后由车端执行、日志落 done、同一操作重投被去重）属于 `remote_mutating`，未在本次发布时运行，需另取授权。
 
 ## 5. 已知边界
 
 - 只覆盖云端派发的车控；车端 T0 本地快路径不经云端，不写这本日志。
 - 云端只在超时时查；用户追问「刚才执行了吗」暂不读车端日志。
-- 契约探测的额外往返未优化。
+- 契约探测的额外往返实测很小：固定语料 15 轮车端调用的 `step.edge` 为 10–14 ms（含探测），暂不缓存。

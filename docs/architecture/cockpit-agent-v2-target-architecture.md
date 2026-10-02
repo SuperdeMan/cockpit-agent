@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 更新：2026-10-02。状态：**目标态分期实施；CA2-02–07/12 已有首版；CA2-08 准入、CA2-09 确认绑定与 CA2-10 结果证据首版已部署；其他身份与运行时边界按实施方案推进**。
+> 更新：2026-10-02。状态：**目标态分期实施；CA2-02–07/12 已有首版；CA2-08–11 首版已部署；其他身份与运行时边界按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
@@ -128,7 +128,7 @@ Context View 只组合授权后的事实。`found/none/unavailable/off` 分开�
 CA2-08 首版：云侧在 SDK receiver 落记录，状态复用 task_ledger 状态机（accepted 分 executing/awaiting，orphaned=结局未知）；
 上表的 submitted 与车端日志尚未实现，见 [持久准入](../design/2026-10-01-v2-durable-operation-admission.md)；observed / verified 由 CA2-10 作为证据输出（回执、状态满足、观测归属分开，动作前已满足不算 verified），见 [结果证据](../design/2026-10-02-v2-effect-evidence.md)。
 CA2-09 首版：挂起一次消费，确认绑定车辆/步骤/operation/能力版本/最终参数并在执行器复核，车端比对确认时的挡位，见 [确认绑定](../design/2026-10-02-v2-confirmation-binding.md)。
-车端离线日志实现同一操作契约，云端只做有协调的同步/索引。
+车端离线日志实现同一操作契约，云端只做有协调的同步/索引。CA2-11 首版：车端写能力 durable、SQLite 日志执行前落库、重启不重放，云端只在超时后按需查询，后台同步与补偿未做，见 [车端日志](../design/2026-10-02-v2-vehicle-operation-log.md)。
 
 采用至少一次投递、接收端幂等与恢复对账。有 ACK 不等于生效，目标状态满足不等于本次动作导致它；
 不支持幂等/查单的接口在超时后进入 unknown，不能盲目重试。补偿属于新的受控动作，仍需相应权限/确认。

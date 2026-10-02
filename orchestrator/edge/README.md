@@ -47,7 +47,7 @@ T0 与 VAL 继续确定性执行；CA2-13/14 的 T1e 是可选实验，NLU 当�
 
 端侧契约从 commands.yaml 和既有 decode_intent 派生；单位/位置来自同一声明，策略字段进入知识修订摘要。
 EdgeCall.contract_query 是只读探测变体，必须没有执行 intent；旧节点只会看到空意图并拒绝。
-Cloud 调度的已注册能力在 VAL 之前检查契约和参数，旧冻结接口兼容；T0 的本地确定性路径继续由 VAL 校验。
+Cloud 调度的已注册能力在 VAL 之前检查契约和参数；写能力自 CA2-11 起声明 durable，不带契约头的调用不再按冻结接口兼容。T0 的本地确定性路径继续由 VAL 校验。
 这不证明真实车型、软件版本或信号时效，后者仍属 CA2-06/10。
 
 ## 车辆观测与离线故障实验（CA2-06/12）
@@ -57,3 +57,12 @@ Cloud 调度的已注册能力在 VAL 之前检查契约和参数，旧冻结接
 运行 `python scripts/probe_vehicle_state_simulation.py --seed 12 --output .artifacts/vehicle-state-v2/lab.json`
 可重放两车隔离、局部静默、坏质量、乱序、重启与 ACK 丢失，零网络。
 [契约/配置与证据](../../docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)区分代码、签名启用和实车验收。
+
+## 车端操作日志（CA2-11）
+
+云端派发的写能力只走 `EdgeCallExecutor.dispatch`：只读查询 → 契约预检 → 准入（`runtime/operation_gate.py`，与 SDK 同一份）
+→ VAL → 结算。日志是 `operation_log.py`（SQLite，`EDGE_OPERATION_LOG`；云端部署挂在命名卷 `car-agent-edge-operations`），
+VAL 执行前先写 executing；启动时把遗留的 executing 转为 orphaned，同一操作再来只答 unknown、不重放。
+`EdgeCall.operation_query` 只读日志、不碰 VAL。日志只存摘要与状态，主体是车辆，保留 24 h。
+CA2-10：本次命令改动的观测样本带云端下发的 `cockpit_observation_ref`，响应 `_receipt` 说明改了哪些键。
+[设计与证据](../../docs/design/2026-10-02-v2-vehicle-operation-log.md)。
