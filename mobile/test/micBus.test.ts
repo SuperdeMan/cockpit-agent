@@ -134,7 +134,7 @@ test('响度：帧经过总线就更新读数；最后一路停麦时归零并�
     const b = micLease()
     await a.start(() => {})
     await b.start(() => {})
-    rec.emit(new Int16Array(160).fill(8000)) // 约 -12 dBFS：说话
+    rec.emit(new Int16Array(160).fill(8000)) // 约 -12 dBFS：大声，高于上限 -30，读数顶格
     expect(micLevel()).toBeGreaterThan(0.9)
     expect(micBusStats().active).toBe(2) // 量响度没有多领一路
     await a.stop()
@@ -147,7 +147,7 @@ test('响度：帧经过总线就更新读数；最后一路停麦时归零并�
   }
 })
 
-test('响度：静音帧读 0，-60 dBFS 以下不抬光', () => {
+test('响度：静音帧读 0，-55 dBFS 以下不抬光', () => {
   expect(levelOf(new Int16Array(160))).toBe(0)
   expect(levelOf(new Int16Array(160).fill(30))).toBe(0) // ≈ -61 dBFS
   expect(levelOf(new Int16Array(0))).toBe(0)
