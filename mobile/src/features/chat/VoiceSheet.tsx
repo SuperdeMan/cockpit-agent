@@ -16,6 +16,7 @@
 //   · 内容区 `voice-sheet-scroll` = 转写 → 思考三点 → 回答 → 已打断 → chips → 卡片，**跟底**（判据复用记录列表那份
 //     `history.ts::followOnContentChange`）：层升起 / 新一轮 / 回答开始无条件贴底，之后离底不超过阈值就跟、上滚不拽；
 //   · 层高下限随之改按「chrome + 头区 + 该档该看见的内容」（`ui/layout/sheetHeight.ts`）。
+import MaskedView from '@react-native-masked-view/masked-view'
 import { BlurView } from 'expo-blur'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native'
@@ -100,28 +101,9 @@ export interface VoiceSheetProps {
   onSend(text: string): void
 }
 
-/** 同一颜色换不透明度（`#RRGGBB` 或 `rgba(r,g,b,a)`）：底缘 / 顶缘渐隐的起点要与壳同一 rgb、alpha 0——
- *  用 `transparent`（黑色 alpha 0）在浅色壳上会先经过一段灰。 */
-function withAlpha(color: string, alpha: number): string {
-  const [r, g, b] = rgbaOf(color)
-  return `rgba(${r},${g},${b},${alpha})`
-}
-
-/** `#RRGGBB` / `rgb()` / `rgba()` → [r, g, b, a] */
-function rgbaOf(color: string): [number, number, number, number] {
-  const m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)/)
-  if (m) return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])]
-  const n = parseInt(color.replace('#', ''), 16)
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1]
-}
-
-/** 把（可能半透明的）top 叠到 bottom 上，得到眼睛里看到的那个不透明色（`rgb()`） */
-function composite(top: string, bottom: string): string {
-  const [tr, tg, tb, ta] = rgbaOf(top)
-  const [br, bg, bb] = rgbaOf(bottom)
-  const mix = (t: number, u: number) => Math.round(t * ta + u * (1 - ta))
-  return `rgb(${mix(tr, br)},${mix(tg, bg)},${mix(tb, bb)})`
-}
+/** 内容区上 / 下缘渐隐的遮罩段（Figma `scroll · fade-mask`）：alpha 0 → 1 / 1 → 0，颜色无关——遮罩只取 alpha */
+const MASK_IN = 'linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,1))'
+const MASK_OUT = 'linear-gradient(to bottom, rgba(0,0,0,1), rgba(0,0,0,0))'
 
 /** 收起动画时长（ms） */
 const COLLAPSE_MS = 180
@@ -286,16 +268,11 @@ export function VoiceSheet(props: VoiceSheetProps) {
         : snapshot.capsule?.tone === 'accent'
           ? p.accent
           : p.fg2
-  // 壳底色只算一次：壳本身与底缘渐隐遮罩同源。v3（D7，Figma VoiceSheet Material）：
+  // 壳底色只算一次。v3（D7，Figma VoiceSheet Material）：
   // Blur = BlurView + sheetTint（未行车、未开减少透明度、非省电、BlurTargetView 就绪）；其余一律 Solid = surfaceHigh 实色。
   // 行车档由 ChatScreen 传 `solid`（打磨批 A / P08 / V3）：G0 实色，记录不再透过层与层内文字叠字。
   const blurred = !!props.blurTarget && !props.solid
   const shellColor = blurred ? p.sheetTint : p.surfaceHigh
-  // 渐隐要接上壳**在眼睛里**的颜色。真模糊壳 = sheetTint 叠在「scrim 压过的页面底」上（背后记录被模糊、又被暗区压过，
-  // 近似均匀）；直接拿半透明的 sheetTint 当渐隐色，在模糊壳上等于再叠一层，内容区顶缘出现一条色带、把头区光晕切出一道硬边
-  // （v3 P3 真机 `b6288305` 深浅两色都有）。实色壳本来就不透明，原样用
-  const fadeTo = blurred ? composite(p.sheetTint, composite(p.scrim, p.bg)) : shellColor
-  const fadeFrom = withAlpha(fadeTo, 0)
   // 回答字阶 voiceAnswer：泊车 17 / 26，行车 20 / 30（层高下限 sheetHeight.ts 读同一份 token）
   const answerStyle = textStyle('voiceAnswer', fontScale, driving)
 
@@ -419,64 +396,54 @@ export function VoiceSheet(props: VoiceSheetProps) {
     </>
   )
 
-  // 滚动区 + 底缘渐隐（P06）：内容底部多留 24dp，遮罩压在滚动区最下 24dp、不拦触摸。
+  // 滚动区 + 上下缘渐隐（P06；Figma `scroll · fade-mask`）：内容底部多留 24dp，底缘常驻、顶缘离开顶部才有。
+  // 渐隐是**alpha 遮罩**（MaskedView）：内容在缘上变透明，露出的就是壳本身——实色壳、真模糊壳都对。
+  // 修前是在内容上盖一层「壳的合成色」渐变：实色壳对得上；真模糊壳的颜色随背后画面变（背后有卡片时更亮），
+  // 固定色对不齐，头区与内容区交界还是一道硬边（v3 P3 修正后，P4c 真机 `b1c66715` 复核仍在）。
   // 滚动区包在 Native 手势里与整层 Pan simultaneous；`onScroll` 记偏移与离底距离。
   // `overScrollMode="never"`：顶部下拉时层在跟手，Android 的边缘辉光叠上去像两个东西在动。
   const scrollRegion = (
     <View ref={contentRef} testID="voice-sheet-content" style={{ flex: 1 }} onLayout={onContentLayout}>
-      <GestureDetector gesture={scrollGesture}>
-        <ScrollView
-          ref={scrollRef}
-          testID="voice-sheet-scroll"
-          contentContainerStyle={
-            props.split
-              ? { paddingBottom: PAD + SHEET_BOTTOM_FADE_DP, gap: GAP, alignItems: 'stretch' }
-              : { paddingTop: GAP, paddingHorizontal: 20, paddingBottom: PAD + SHEET_BOTTOM_FADE_DP, gap: GAP, alignItems: 'stretch' }
-          }
-          keyboardShouldPersistTaps="handled"
-          onScroll={(e) => {
-            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
-            scrollY.set(contentOffset.y)
-            offsetRef.current = Math.max(0, Math.round(contentSize.height - layoutMeasurement.height - contentOffset.y))
-            const away = contentOffset.y > 1
-            if (away !== scrolledAwayRef.current) {
-              scrolledAwayRef.current = away
-              setScrolledAway(away)
+      <MaskedView
+        style={{ flex: 1 }}
+        maskElement={
+          <View style={{ flex: 1 }}>
+            {scrolledAway ? (
+              <View testID="voice-sheet-fade-top" style={{ height: SHEET_BOTTOM_FADE_DP, experimental_backgroundImage: MASK_IN }} />
+            ) : null}
+            <View style={{ flex: 1, backgroundColor: '#000' }} />
+            <View testID="voice-sheet-fade" style={{ height: SHEET_BOTTOM_FADE_DP, experimental_backgroundImage: MASK_OUT }} />
+          </View>
+        }
+      >
+        <GestureDetector gesture={scrollGesture}>
+          <ScrollView
+            ref={scrollRef}
+            testID="voice-sheet-scroll"
+            contentContainerStyle={
+              props.split
+                ? { paddingBottom: PAD + SHEET_BOTTOM_FADE_DP, gap: GAP, alignItems: 'stretch' }
+                : { paddingTop: GAP, paddingHorizontal: 20, paddingBottom: PAD + SHEET_BOTTOM_FADE_DP, gap: GAP, alignItems: 'stretch' }
             }
-          }}
-          onContentSizeChange={onContentSizeChange}
-          scrollEventThrottle={16}
-          overScrollMode="never"
-        >
-          {content}
-        </ScrollView>
-      </GestureDetector>
-      <View
-        pointerEvents="none"
-        testID="voice-sheet-fade"
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: SHEET_BOTTOM_FADE_DP,
-          experimental_backgroundImage: `linear-gradient(to bottom, ${fadeFrom}, ${fadeTo})`,
-        }}
-      />
-      {scrolledAway ? (
-        <View
-          pointerEvents="none"
-          testID="voice-sheet-fade-top"
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            top: 0,
-            height: SHEET_BOTTOM_FADE_DP,
-            experimental_backgroundImage: `linear-gradient(to bottom, ${fadeTo}, ${fadeFrom})`,
-          }}
-        />
-      ) : null}
+            keyboardShouldPersistTaps="handled"
+            onScroll={(e) => {
+              const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
+              scrollY.set(contentOffset.y)
+              offsetRef.current = Math.max(0, Math.round(contentSize.height - layoutMeasurement.height - contentOffset.y))
+              const away = contentOffset.y > 1
+              if (away !== scrolledAwayRef.current) {
+                scrolledAwayRef.current = away
+                setScrolledAway(away)
+              }
+            }}
+            onContentSizeChange={onContentSizeChange}
+            scrollEventThrottle={16}
+            overScrollMode="never"
+          >
+            {content}
+          </ScrollView>
+        </GestureDetector>
+      </MaskedView>
     </View>
   )
 
