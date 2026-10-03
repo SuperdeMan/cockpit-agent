@@ -131,6 +131,8 @@ APK `xiaozhou-companion-prod-release-b62883052-20261003-1352.apk`，SHA-256 `01f
 
 ## 5. P5–P7 支持页、自适应与系统面
 
+证据目录 `%LOCALAPPDATA%\car-agent\artifacts\V3-P{5a,6,7,7b}-*`，设备截图在各自的 `device` 子目录（引导页那张含 tailnet 域名与 token 尾号，未保留）。
+
 ### 5.1 P5a（`92b46ae5`，包 `88221d46`）
 
 16:08–16:19 构建。设置页对上 04 页 S 组：分区标题 + 圆角组、≤3 项且短的单选用分段按钮、开关 M3 配色、音色格、次级顶栏 title/m。
