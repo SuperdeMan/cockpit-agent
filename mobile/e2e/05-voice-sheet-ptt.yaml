@@ -1,5 +1,5 @@
 # mobile/e2e/05-voice-sheet-ptt.yaml
-# 流 ⑤：语音层 PTT（UX v2.1 §11.3）——按住光球 → voice-sheet 可见 → 松手 → 收起。
+# 流 ⑤：语音层 PTT（UX v2.1 §11.3）——按住光球（欢迎态大球或 Composer 光球）→ voice-sheet 可见 → 松手 → 收起。
 # tag=manual：Maestro 的 longPressOn 只按不说话，ASR 会以「没听清」收尾（层在识别中仍可见，
 # 收尾后收起）；要真验转写得有人在旁说话，或用 M4 的直灌探针灌音频。
 # CI 的 offline / online 两档都不带 manual；`maestro test mobile/e2e/` 不带 tag 会跑到它——README 写明。
@@ -18,8 +18,21 @@ tags:
   - manual
 ---
 - runFlow: subflows/open-app.yaml
-- longPressOn:
-    id: "composer-orb"
+# v3 一屏一球（P2c）：空对话时麦克风是欢迎态大球 `welcome-orb`、Composer 不画光球；有记录时才是 `composer-orb`
+- runFlow:
+    when:
+      visible:
+        id: "welcome-orb"
+    commands:
+      - longPressOn:
+          id: "welcome-orb"
+- runFlow:
+    when:
+      notVisible:
+        id: "welcome-orb"
+    commands:
+      - longPressOn:
+          id: "composer-orb"
 - assertVisible:
     id: "voice-sheet"
 - extendedWaitUntil:

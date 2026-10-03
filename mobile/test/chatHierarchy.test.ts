@@ -271,11 +271,12 @@ test('P08：行车档语音层是实色壳；泊车仍走玻璃', async () => {
 test('P03：键盘弹起时欢迎态大球缩小、三条推荐仍在、外层可滚动', async () => {
   const view = await mount()
   try {
-    const welcomeOrb = () => view.root.findAllByType(AuroraOrb).map((n) => n.props.size).filter((s) => s === 88 || s === 56)
-    expect(welcomeOrb()).toEqual([88])
+    // v3（Figma W-1 / W-3）：欢迎态大球 104，键盘下 64
+    const welcomeOrb = () => view.root.findAllByType(AuroraOrb).map((n) => n.props.size).filter((s) => s === 104 || s === 64)
+    expect(welcomeOrb()).toEqual([104])
     expect(has(view, 'welcome-secondary')).toBe(true)
     await act(async () => { runtime!.scope.update({ keyboardVisible: true }) })
-    expect(welcomeOrb()).toEqual([56])
+    expect(welcomeOrb()).toEqual([64])
     // 真机 7525784b6 复核后补的紧凑档：键盘下次要说明让位，三条推荐整行可见
     expect(has(view, 'welcome-secondary')).toBe(false)
     // 推荐 chips 是 `ui/Pill`：testID 落在 Pill 组件与外框 Pressable 两个实例上，按「不是 Pill 本身」取外框
@@ -283,6 +284,38 @@ test('P03：键盘弹起时欢迎态大球缩小、三条推荐仍在、外层�
     const scroll = view.root.findAllByType(ScrollView).find((n) => n.props.testID === 'welcome-scroll')
     expect(scroll?.props.keyboardShouldPersistTaps).toBe('handled')
     await act(async () => { runtime!.scope.update({ keyboardVisible: false }) })
-    expect(welcomeOrb()).toEqual([88])
+    expect(welcomeOrb()).toEqual([104])
+  } finally { await unmount(view) }
+})
+
+// ── ⑤ 一屏一球（v3 P2c）──────────────────────────────────────
+
+test('P2c：欢迎态大球就是麦克风、Composer 不画光球；层内大球接替轻点；进入对话后光球回到 Composer', async () => {
+  const view = await mount()
+  try {
+    const orb = view.root.findAllByProps({ testID: 'welcome-orb' }).find((n) => typeof n.type === 'string')!
+    expect(orb.props.accessibilityRole).toBe('button')
+    expect(orb.props.accessibilityLabel).toMatch(/开始说话$/)
+    expect(composerOf(view).props.orb).toBe(false)
+    expect(has(view, 'composer-orb')).toBe(false)
+    // 欢迎页大球在层的暗区下面够不到 ⇒ 层内大球给轻点入口
+    expect(typeof view.root.findByType(VoiceSheet).props.onOrbTap).toBe('function')
+    await answered()
+    expect(has(view, 'welcome-orb')).toBe(false)
+    expect(has(view, 'composer-orb')).toBe(true)
+    // 竖屏有了 Composer 光球，层内大球不再重复给入口（读屏不念两个同名按钮）
+    expect(view.root.findByType(VoiceSheet).props.onOrbTap).toBeUndefined()
+  } finally { await unmount(view) }
+})
+
+test('P2c：按住欢迎态大球说话时，ASR 草稿不把欢迎页卸掉（大球在手指下）；草稿转正后才进入对话', async () => {
+  const view = await mount()
+  try {
+    await act(async () => { mockCore.draftUser('明天会') })
+    expect(has(view, 'welcome-orb')).toBe(true)
+    expect(composerOf(view).props.orb).toBe(false)
+    await act(async () => { mockCore.commitDraftUser() })
+    expect(has(view, 'welcome-orb')).toBe(false)
+    expect(composerOf(view).props.orb).toBe(true)
   } finally { await unmount(view) }
 })

@@ -4,7 +4,8 @@
 //  · 长按识别前允许移动 12dp（列表纵向滚动与 chips 横滑不得误触）
 //  · 输入框有字时长按走原生选择，**只有光球仍可 PTT**
 //  · TalkBack：轻点切换开始 / 停止，label 随状态；热区 56dp（≥48）
-// 手势用 react-native-gesture-handler（PackageList.java:73 已注册，零新依赖）。
+// 手势用 react-native-gesture-handler（PackageList.java:73 已注册，零新依赖）；按住说话的实现在 useHoldToTalk.ts
+// （欢迎态大球同一份）。v3 一屏一球（D4）：欢迎态由页面上的大球当麦克风，本组件按 `orb={false}` 退成无球形态。
 // 「轻点到底做什么」的判据不在这里——Composer 只报告手势，ChatScreen 的 onTap 决定走免唤醒的
 // 手动唤醒还是 PTT 的 tap 会话（哪个引擎持有麦是 ChatScreen 知道的事实）。
 import { useRef, useState } from 'react'
@@ -19,14 +20,8 @@ import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
 import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET, scale } from '../../ui/tokens'
 import { composerHolding, composerPlaceholder } from './composerHint'
+import { HOLD_MS, orbTap, useHoldToTalk } from './useHoldToTalk'
 import type { PttHandle } from './usePtt'
-
-/** 长按判定（ms）：方案 §5.1.1 的 ≥300；usePtt 的 MIN_DURATION_MS=320 是「录了多久」，是另一件事 */
-export const HOLD_MS = 300
-/** 长按识别前允许的移动（dp）：超过就交给滚动 */
-export const HOLD_MAX_DISTANCE = 12
-/** 按住时上滑多少算取消（dp） */
-export const CANCEL_DY = 60
 
 export interface ComposerProps {
   p: Palette
@@ -37,6 +32,9 @@ export interface ComposerProps {
   stoppable?: boolean
   /** 语音输入把手；null=服务器未配置（没有 audioUrl 就没有语音） */
   ptt: PttHandle | null
+  /** 画不画光球（v3 D4 一屏一球，Figma Composer Layout=NoOrb）：欢迎态由页面上的大球当麦克风 ⇒ false。
+   *  缺省 true。无光球时空输入框的「按住说话」背板照旧在 */
+  orb?: boolean
   /** 光球主态由调用方给（v2=snapshot.primary，v1=ChatScreen 里的旧推导）——
    *  Composer 自己不再推导：同一个「此刻是什么态」的判据抄两份就会给出两个答案 */
   orbState: OrbState
@@ -67,7 +65,7 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', covered = false, draft, onDraftChange, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
+export function Composer({ p, busy, stoppable = false, ptt, orb = true, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', covered = false, draft, onDraftChange, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
   const [localInput, setLocalInput] = useState('')
   const input = draft ?? localInput
   const setInput = onDraftChange ?? setLocalInput
@@ -81,8 +79,6 @@ export function Composer({ p, busy, stoppable = false, ptt, orbState, orbDim, or
     setInputModeSeen(inputMode)
     setInputOpen(false)
   }
-  const heldRef = useRef(false)
-  const cancelledRef = useRef(false)
   const submit = () => {
     const text = input.trim()
     if (!text) return
@@ -99,39 +95,9 @@ export function Composer({ p, busy, stoppable = false, ptt, orbState, orbDim, or
   // B4-11 §6「目标 ≥56dp」：行车 56 / 泊车 48。光球热区本来就是 TARGET.driving，不受影响
   const target = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
 
-  // 按住 = Pan.activateAfterLongPress：激活即按下；onUpdate 看上滑；结束即松手（取消过就不发）
-  const makeHold = (enabled: boolean) =>
-    Gesture.Pan()
-      .runOnJS(true)
-      .enabled(enabled)
-      .maxPointers(1)
-      .minDistance(HOLD_MAX_DISTANCE)
-      .activateAfterLongPress(HOLD_MS)
-      .onStart(() => {
-        heldRef.current = true
-        cancelledRef.current = false
-        ptt?.pressDown()
-      })
-      .onUpdate((e) => {
-        // §5.1.1 行车条款：行车档**只保留**「按住—松开发送」，上滑取消禁用
-        // （开车时的空间手势不可靠；取消这条路留给泊车态）
-        if (!driving && heldRef.current && !cancelledRef.current && e.translationY < -CANCEL_DY) {
-          cancelledRef.current = true
-          ptt?.cancel()
-        }
-      })
-      .onFinalize(() => {
-        if (heldRef.current && !cancelledRef.current) ptt?.pressUp()
-        heldRef.current = false
-      })
-  const tap = Gesture.Tap()
-    .runOnJS(true)
-    .maxDuration(HOLD_MS - 20)
-    .onEnd(() => onTap())
-  // makeHold 造的是 RNGH 手势，回调只在触摸时触发；规则无法证明「传进去的闭包不会在渲染期被
-  // 调用」所以保守判红。下面 plateTap / plateGesture 同理。
-  // eslint-disable-next-line react-hooks/refs -- 见上
-  const orbGesture = Gesture.Exclusive(makeHold(!!ptt && !finalizing), tap)
+  // 按住说话 / 轻点：实现在 useHoldToTalk.ts（欢迎态大球同一份契约）
+  const makeHold = useHoldToTalk(ptt, driving)
+  const orbGesture = Gesture.Exclusive(makeHold(), orbTap(onTap))
   // 空输入框的「背板即录音键」（B3-3 / B2 出账 plateGesture）：不再把手势挂在包 TextInput 的
   // 父 View 上——Android 的 TextInput 自己消费触摸（长按=光标/选择），RNGH 抢不到（B2 真机
   // 实录 + 本轮自证：长按 4s 出的是光标水滴柄，层不升）。A-spike 三个竞争配置全败：
@@ -145,10 +111,10 @@ export function Composer({ p, busy, stoppable = false, ptt, orbState, orbDim, or
   const plateTap = Gesture.Tap()
     .runOnJS(true)
     .maxDuration(HOLD_MS - 20)
-    // eslint-disable-next-line react-hooks/refs -- 同上：onEnd 是触摸回调，不在渲染期跑
+    // RNGH 手势的回调只在触摸时触发；react-hooks/refs 规则无法证明「传进去的闭包不会在渲染期被调用」所以保守判红
+    // eslint-disable-next-line react-hooks/refs -- 见上：onEnd 是触摸回调，不在渲染期跑
     .onEnd(() => inputRef.current?.focus())
-  // eslint-disable-next-line react-hooks/refs -- 同上
-  const plateGesture = Gesture.Exclusive(makeHold(!!ptt && !finalizing), plateTap)
+  const plateGesture = Gesture.Exclusive(makeHold(), plateTap)
   const plateOverlayOn = !!ptt && !finalizing && input.length === 0
 
   const a11yLabel = recording ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`
@@ -173,8 +139,9 @@ export function Composer({ p, busy, stoppable = false, ptt, orbState, orbDim, or
       }}
     >
       {/* 追问 chips 行已挪进回答末尾（v3 P2b，Figma AnswerBlock；MessageBubble → FollowUpChips） */}
-      <View style={{ flexDirection: 'row', gap: 10, padding: 10, alignItems: 'flex-end' }}>
-        {ptt ? (
+      {/* Figma Composer：左右 12、上下 8、间距 8（TextFirst 高 72 = 8 + 光球位 56 + 8） */}
+      <View style={{ flexDirection: 'row', gap: 8, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'flex-end' }}>
+        {ptt && orb ? (
           <GestureDetector gesture={orbGesture}>
             <View
               testID="composer-orb"

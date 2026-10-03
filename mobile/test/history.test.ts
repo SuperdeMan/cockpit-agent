@@ -25,6 +25,7 @@ import {
   stickToBottom,
   STICK_TO_BOTTOM_THRESHOLD,
   timeDividers,
+  welcomeShown,
 } from '@/core/session/history'
 import { SessionCore } from '@/core/session/store'
 
@@ -275,4 +276,16 @@ test('followOnContentChange：用户刚发过 ⇒ 离底再远也贴；否则退
   expect(followOnContentChange(5000, 1000, false)).toBe(false)
   expect(followOnContentChange(100, 1000, false)).toBe(true)
   expect(followOnContentChange(0, 0, false)).toBe(false)
+})
+
+test('welcomeShown：除了转写草稿没有别的消息 ⇒ 欢迎态还在（按住欢迎态大球说话时草稿不许把它卸掉）', () => {
+  const m = (id: string, role: 'user' | 'assistant') => ({ id, role, text: id } as Msg)
+  expect(welcomeShown([], null)).toBe(true)
+  // 按住大球、partial 刚到：只有一条草稿 ⇒ 欢迎页（连同手指下的大球）留着
+  expect(welcomeShown([m('d1', 'user')], 'd1')).toBe(true)
+  // 草稿转正（commitDraftUser 把 draftUserId 清空，那时手已松开）⇒ 进入对话
+  expect(welcomeShown([m('d1', 'user')], null)).toBe(false)
+  // 已有对话时再说一句：草稿之外还有消息 ⇒ 不是欢迎态
+  expect(welcomeShown([m('u1', 'user'), m('a1', 'assistant'), m('d2', 'user')], 'd2')).toBe(false)
+  expect(welcomeShown([m('a1', 'assistant')], null)).toBe(false)
 })

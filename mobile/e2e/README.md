@@ -291,6 +291,7 @@ python mobile/e2e/tools/target_probe.py ui.xml --density 480 --min 56 `
 ```
 
 退出码 0 全过 / 1 有不达标 / 2 找不到某个 id（**演员没上场**）。
+v3 一屏一球（P2c）起，空对话（欢迎态）没有 `composer-orb`——麦克风是 `welcome-orb`；要量 `composer-orb` 先发一句进入对话。
 **阴性对照是必须的**：行车档关了再跑同一条，`composer-send` 应该 44.0dp FAIL（rc 0→1）——
 探针量得出差别才算探针活着。`presence-capsule` 视觉 26dp 靠 hitSlop，在这里必然 FAIL，那是
 **读法的限制**不是缺陷（Scanner 才量无障碍树上的可点区域，装它要授权）。

@@ -8,7 +8,7 @@
 //  · **不持久化** pendingOps / pendingLocationText / queued / uncertainIds / proactiveDeliveries / issues / drivingEdge
 //    ——各有 TTL 或服务端台账，重启后再显示就是在承诺一件系统已经不记得的事；
 //  · 恢复只在 `messages` 为空时生效；不触发播报、不发 ACK、不重发（restore 只写 store，不经任何发送路径）；
-//  · 时间分隔 `timeDividers` 与「回到最新」`showJumpToLatest` 两个纯判据也住在这里。
+//  · 时间分隔 `timeDividers`、「回到最新」`showJumpToLatest` 与欢迎态 `welcomeShown` 几个纯判据也住在这里。
 // 零 RN import（AsyncStorage 是 JS 模块，jest 用官方内存 mock）。
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
@@ -202,6 +202,18 @@ export function stickToBottom(offsetFromBottom: number, viewportH: number): bool
 export function lastUserMessageId(messages: Msg[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].role === 'user') return messages[i].id
   return ''
+}
+
+/**
+ * 欢迎态（空对话）还在不在（v3 P2c，一屏一球）：除了转写草稿以外一条消息都没有。
+ *
+ * 欢迎态的大球就是麦克风。按住它说话时，ASR 的 partial 会先往记录里插一条用户草稿（`store.draftUser`）——
+ * 若只看 `messages.length`，欢迎页连同按在手指下的大球当场卸载，RNGH 随之 `onFinalize` ⇒ `pressUp`，
+ * 录音在用户还按着的时候就被提交了。草稿转正（`commitDraftUser`，那时手已经松开）或作废之前，欢迎页留着；
+ * 这段时间里转写由语音层显示。
+ */
+export function welcomeShown(messages: readonly { id: string }[], draftUserId: string | null): boolean {
+  return messages.every((m) => m.id === draftUserId)
 }
 
 /** `onContentSizeChange` 上要不要贴底：用户自己刚发过 ⇒ 无条件；否则按 stickToBottom */

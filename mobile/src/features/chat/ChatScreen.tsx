@@ -10,6 +10,7 @@ import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from 'react-native'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 import type { Msg } from '@shared/types.ts'
@@ -17,7 +18,7 @@ import type { Msg } from '@shared/types.ts'
 import { precedingUserText } from '../../core/session/actionSummary'
 import { emptyCandidates } from '../../core/session/candidates'
 import { followUpChips, MAX_CHIPS } from '../../core/session/followUps'
-import { followOnContentChange, lastUserMessageId, showJumpToLatest, STICK_TO_BOTTOM_THRESHOLD, timeDividers } from '../../core/session/history'
+import { followOnContentChange, lastUserMessageId, showJumpToLatest, STICK_TO_BOTTOM_THRESHOLD, timeDividers, welcomeShown } from '../../core/session/history'
 import { buildReceipt } from '../../core/session/receipt'
 import { settingsStore, type FontScalePref } from '../../core/settings/store'
 import { composerOrbAnimated, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
@@ -25,7 +26,8 @@ import { composerInputMode } from '../../core/presence/drivingMode'
 import { captureSummary, capsuleVisible } from '../../core/presence/presence'
 import { lowPower } from '../../core/power/lowPower'
 import { usePowerFacts } from '../../core/power/usePowerFacts'
-import { AuroraOrb } from '../../ui/aurora'
+import { AuroraOrb, type OrbState } from '../../ui/aurora'
+import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
 import { Pill } from '../../ui/Pill'
@@ -34,6 +36,8 @@ import { RADIUS, TARGET, scale, textStyle } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { Composer } from './Composer'
+import { orbTap, useHoldToTalk } from './useHoldToTalk'
+import type { PttHandle } from './usePtt'
 import { visibleQuickCommands } from '@/core/session/quickCommands'
 
 import { FocusDock, focusDockVisible } from './FocusDock'
@@ -104,49 +108,86 @@ function TopIconLink({
 }
 
 /** 欢迎态（hmi ChatView Welcome 同款）：大光球 + 问候 + 快捷指令，替代此前的空白列表。
- *  打磨批 A（评审 P03 / V1）：外层可滚动、键盘弹起时大球 88→56、推荐块保留——原来第三条推荐被 Composer 遮半截。
- *  文案（P29）：主手势是轻点即说（B2 起），长按作次要说明。 */
+ *  打磨批 A（评审 P03 / V1）：外层可滚动、键盘弹起时大球缩小、推荐块保留——原来第三条推荐被 Composer 遮半截。
+ *  文案（P29）：主手势是轻点即说（B2 起），长按作次要说明。
+ *  v3（D4 一屏一球，Figma W-1 / W-2 / W-3）：**大球就是麦克风**——轻点 / 按住说话与 Composer 光球同一份契约
+ *  （useHoldToTalk + onOrbTap），这一屏 Composer 不画光球。球 104（位 140），键盘下 64（位 96）。
+ *  按住它说话时草稿不卸这一页：何时算欢迎态见 history.ts::welcomeShown。 */
 function Welcome({
   p,
   name,
-  hasVoice,
+  ptt,
   quickCommands,
-  animated = true,
+  orbState,
+  orbDim,
+  orbAnimated,
+  orbDriving,
+  driving,
   keyboardVisible = false,
   fontScale,
   onSend,
+  onOrbTap,
 }: {
   p: ReturnType<typeof usePalette>
   name: string
-  hasVoice: boolean
+  /** 语音输入把手；null = 语音没配置 ⇒ 大球只是装饰、文案改指去设置 */
+  ptt: PttHandle | null
   quickCommands: string[]
-  /** reduce-motion（B4-3）：欢迎球也是循环动画的一份 */
-  animated?: boolean
+  /** 与 Composer 光球同一组事实（snapshot.primary / dim；动不动走 orbPolicy） */
+  orbState: OrbState
+  orbDim: boolean
+  orbAnimated: boolean
+  orbDriving: boolean
+  driving: boolean
   /** 事实来自 InteractionScope.keyboardVisible（已有），不加新监听 */
   keyboardVisible?: boolean
   fontScale: FontScalePref
   onSend: (text: string) => void
+  /** 轻点大球（判据在 AssistantProvider.onOrbTap，与 Composer 光球同一个） */
+  onOrbTap: () => void
 }) {
+  const hasVoice = !!ptt
+  const makeHold = useHoldToTalk(ptt, driving)
+  const orbGesture = Gesture.Exclusive(makeHold(), orbTap(onOrbTap))
+  const slot = keyboardVisible ? 96 : 140
+  const orb = <AuroraOrb size={keyboardVisible ? 64 : 104} state={orbState} dim={orbDim} animated={orbAnimated} driving={orbDriving} />
   return (
     // 键盘下的紧凑档（真机 7525784b6 复核：只缩球不够，第三条推荐仍被 Composer 切半——
-    // 键盘上方只剩约 276dp，球 56 + 两行说明 + 两行推荐要 320dp）：去掉次要说明、收窄留白，三条推荐整行可见
+    // 键盘上方只剩约 276dp）：去掉次要说明、收窄留白，三条推荐整行可见（W-3：位 96 + 问候 + 一行说明 + 两行推荐 ≈ 268）
     <ScrollView
       testID="welcome-scroll"
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: keyboardVisible ? 6 : 10, padding: keyboardVisible ? 12 : 24 }}
+      contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, paddingVertical: keyboardVisible ? 4 : 24 }}
     >
-      <AuroraOrb size={keyboardVisible ? 56 : 88} state="idle" animated={animated} />
-      <Text style={[textStyle(keyboardVisible ? 'headline' : 'display', fontScale), { color: p.fg1, marginTop: keyboardVisible ? 6 : 14 }]}>
-        我是{name}
-      </Text>
-      <Text style={[textStyle('bodyM', fontScale), { color: p.fg2 }]}>
-        {hasVoice ? '点一下光球说话，或点指令试试' : '点下方指令试试，或直接输入'}
-      </Text>
-      {hasVoice && !keyboardVisible ? (
-        <Text testID="welcome-secondary" style={[textStyle('caption', fontScale), { color: p.fg3 }]}>也可以按住光球边说边放</Text>
-      ) : null}
-      {/* 2026-09-11 两档制：推荐 chips 与 Composer / 层内 chips 同一个 Pill（外框 48、视觉 36）；原来 ~38dp 是第三种高 */}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: keyboardVisible ? 4 : 8, justifyContent: 'center', marginTop: keyboardVisible ? 0 : 8 }}>
+      <View style={{ alignItems: 'center', gap: 8 }}>
+        {hasVoice ? (
+          <GestureDetector gesture={orbGesture}>
+            <View
+              testID="welcome-orb"
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={ptt.state === 'recording' ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`}
+              accessibilityHint="轻点开始说话，说完自动发送；长按可按住说话，上滑取消"
+              style={{ width: slot, height: slot, alignItems: 'center', justifyContent: 'center' }}
+            >
+              {orb}
+            </View>
+          </GestureDetector>
+        ) : (
+          <View style={{ width: slot, height: slot, alignItems: 'center', justifyContent: 'center' }}>{orb}</View>
+        )}
+        <Text style={[textStyle('display', fontScale), { color: p.fg1 }]}>我是{name}</Text>
+        <Text style={[textStyle('bodyM', fontScale), { color: p.fg2, textAlign: 'center' }]}>
+          {hasVoice ? '点一下光球说话，或试试下面的指令' : '试试下面的指令，或直接输入'}
+        </Text>
+        {keyboardVisible ? null : (
+          <Text testID="welcome-secondary" style={[textStyle('caption', fontScale), { color: p.fg3, textAlign: 'center' }]}>
+            {hasVoice ? '也可以按住光球，边说边放' : '语音还没配置：设置 › 账号与连接'}
+          </Text>
+        )}
+      </View>
+      {/* 2026-09-11 两档制：推荐与层内 chips 同一个 Pill（外框 48、视觉 36）；v3 用 Plain 档（surfaceHighest） */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', paddingTop: 16 }}>
         {quickCommands.slice(0, 3).map((q) => (
           <Pill
             key={q}
@@ -284,6 +325,14 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // B5-15：层覆盖整列时 Composer 整个被盖住 ⇒ 从无障碍树拿掉（真机抓到它与层内大球说明重复）。
   // 触摸侧本来就被层的暗区拦住了，这里补的是读屏那一半。
   const sheetCoversColumn = splitLandscape && snapshot.input === 'voice-sheet'
+  // 欢迎态（v3 P2c 一屏一球）：大球当麦克风、Composer 无球。草稿不算消息——按住大球说话时 partial 插的
+  // 用户草稿若把欢迎页卸掉，手指下的大球随之卸载、录音被提前提交（判据 history.ts::welcomeShown）
+  const welcome = welcomeShown(messages, draftUserId)
+  const voicePtt = cfg.audioUrl ? ptt : null
+  // 这一屏那「1 个」光球的动效（Composer 光球或欢迎态大球）：层开着时让给层内大球；
+  // tabletop 下舞台已有一颗 120dp 大球在跑循环 ⇒ 让位（§11.4「同屏常态 1 个」）。
+  // 判据仍是 orbPolicy，tabletop 这一条例外太小不值得进纯函数（B4 §6.2 记一句）
+  const screenOrbAnimated = composerOrbAnimated(snapshot, motionEnv) && layout.mode !== 'tabletop'
   const voiceSheetEl = runtime.facts.route === '/' && runtime.scope.canPresent() ? (
     <VoiceSheet
       p={p}
@@ -306,7 +355,9 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       stoppable={stoppable}
       onStopPlayback={onStopPlayback}
       onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
-      onOrbTap={splitLandscape ? onOrbTap : undefined}
+      // 层内大球接替「轻点即说」：横屏 split 时 Composer 被层盖住（B5-15）；欢迎态 Composer 本来就无球、
+      // 而欢迎页大球在层的暗区下面够不到（v3 P2c）。其余时候 Composer 光球在外面，层内大球不重复给入口
+      onOrbTap={splitLandscape || welcome ? onOrbTap : undefined}
       onSend={(t) => onSend(t)}
     />
   ) : null
@@ -359,17 +410,22 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}
       >
       <BlurTargetView ref={blurTargetRef} onLayout={onBlurTargetLayout} style={{ flex: 1 }}>
-      {messages.length === 0 ? (
+      {welcome ? (
         <Welcome
           p={p}
           name={settings.assistantName}
-          hasVoice={!!cfg.audioUrl}
+          ptt={voicePtt}
           quickCommands={visibleCommands}
-          // 欢迎态大球也是空闲光球：跟 orbTempo（空闲静置 / reduce-motion 都在里面），不只看 loops
-          animated={orbTempo(snapshot, motionEnv) !== 'static'}
+          orbState={snapshot.primary}
+          orbDim={snapshot.dim}
+          // 这一屏的那「1 个」光球：动不动与 Composer 光球同一判据（层开时让给层内大球；空闲静置 / reduce-motion 在内）
+          orbAnimated={screenOrbAnimated}
+          orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
+          driving={snapshot.driving}
           keyboardVisible={!!runtime.facts.keyboardVisible}
           fontScale={settings.fontScale}
           onSend={onSend}
+          onOrbTap={onOrbTap}
         />
       ) : (
         <FlashList
@@ -476,16 +532,15 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         onDraftChange={setDraft}
         busy={busy}
         stoppable={stoppable}
-        ptt={cfg.audioUrl ? ptt : null}
+        ptt={voicePtt}
+        orb={!welcome}
         orbState={snapshot.primary}
         orbDim={snapshot.dim}
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
         onStopPlayback={onStopPlayback}
-        // tabletop 下舞台已有一颗 120dp 大球在跑循环 ⇒ Composer 球让位（§11.4「同屏常态 1 个」）。
-        // 判据仍是 orbPolicy，这一条例外太小不值得进纯函数（B4 §6.2 记一句）
-        orbAnimated={composerOrbAnimated(snapshot, motionEnv) && layout.mode !== 'tabletop'}
+        orbAnimated={screenOrbAnimated}
         orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
         driving={snapshot.driving}
         inputMode={composerInputMode(snapshot.identity, snapshot.driving)}

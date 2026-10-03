@@ -87,8 +87,9 @@ export interface VoiceSheetProps {
   /** 只停播（AR03 / 评审 R06）：停当前出声，不取消在飞请求、不开麦 */
   onStopPlayback?(): void
   onCollapse(): void
-  /** 轻点层内大球 = 开始说话（B5-15，只在 split 时给）：driving-landscape 下层覆盖整列，
-   *  Composer 的光球被盖住 ⇒ 层内大球接替它，否则「轻点始终能说」（§5.1.1）在横屏断掉 */
+  /** 轻点层内大球 = 开始说话（§5.1.1「轻点始终能说」）——宿主只在 Composer 光球够不到时给：
+   *  driving-landscape 下层覆盖整列、Composer 的光球被盖住（B5-15）；欢迎态 Composer 本来就无球、
+   *  欢迎页大球又在层的暗区下面（v3 P2c）。给了就画成按钮，不给就是纯展示 */
   onOrbTap?: () => void
   onSend(text: string): void
 }
@@ -279,7 +280,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
       testID="voice-sheet-header"
       style={props.split ? { width: '40%', gap: GAP, alignItems: 'center' } : { paddingTop: PAD, paddingHorizontal: PAD, gap: GAP, alignItems: 'center' }}
     >
-      {props.split && props.onOrbTap ? (
+      {props.onOrbTap ? (
         <Pressable
           testID="voice-sheet-orb"
           accessibilityRole="button"
