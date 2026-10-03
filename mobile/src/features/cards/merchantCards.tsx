@@ -199,7 +199,7 @@ export function PaymentQr({ p, card, onSend }: { p: Palette; card: any; onSend: 
   }
 
   return (
-    <CardShell p={p} title={presentation.title} right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="square" title={presentation.title} right={<ProvBadge p={p} prov={card._prov} />}>
       <Text style={{ color: p.fg1, fontSize: p.font(20), fontWeight: '800' }}>{card.amount}</Text>
 
       {svg ? (
@@ -297,7 +297,7 @@ export function PaymentQr({ p, card, onSend }: { p: Palette; card: any; onSend: 
 
 export function PaymentReceipt({ p, card }: { p: Palette; card: any; onSend: SendFn }) {
   return (
-    <CardShell p={p} title="支付成功" right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="check-circle" title="支付成功" right={<ProvBadge p={p} prov={card._prov} />}>
       {card.amount ? (
         <Text style={{ color: p.green, fontSize: p.font(22), fontWeight: '800' }}>✓ {card.amount}</Text>
       ) : (
@@ -314,7 +314,7 @@ export function PaymentReceipt({ p, card }: { p: Palette; card: any; onSend: Sen
 /** 停车费查询卡（只读，一分钱不动） */
 export function ParkingFee({ p, card }: { p: Palette; card: any; onSend: SendFn }) {
   return (
-    <CardShell p={p} title="当前停车费">
+    <CardShell p={p} icon="parking" title="当前停车费">
       <Text style={{ color: p.fg1, fontSize: p.font(22), fontWeight: '800' }}>{card.amount}</Text>
       <KV p={p} k="车牌" v={card.plate} />
       <KV p={p} k="订单" v={card.order_id} />
@@ -495,7 +495,7 @@ export function MerchantCheckout({ p, card, onSend }: { p: Palette; card: any; o
       : centsLabel(card.discount_cents)
 
   return (
-    <CardShell p={p} title={title} right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="dining" title={title} right={<ProvBadge p={p} prov={card._prov} />}>
       {isChoices ? (
         <View style={{ gap: 8 }}>
           {typeof card.total === 'number' && card.total > optionButtons.length ? (

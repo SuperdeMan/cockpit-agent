@@ -121,7 +121,7 @@ export function PoiList({ p, card, onSend }: { p: Palette; card: PoiListCard; on
         ? `导航去${card.destination || ''}途经${name}`
         : `导航去${name}`
   return (
-    <CardShell p={p} title={title}>
+    <CardShell p={p} icon={purpose === 'dest_choice' ? 'flag' : 'location'} title={title}>
       {(card.items || []).map((it, i) => (
         <ItemRow
           key={it.id || i}
@@ -143,7 +143,7 @@ export function PoiList({ p, card, onSend }: { p: Palette; card: PoiListCard; on
 
 export function PoiDetail({ p, card, onSend }: { p: Palette; card: PoiDetailCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title="地点详情">
+    <CardShell p={p} icon="pin" title="地点详情">
       <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '700' }}>{card.name}</Text>
       <KV p={p} k="地址" v={card.address} />
       <KV p={p} k="类型" v={card.category} />
@@ -158,6 +158,7 @@ export function PlaceList({ p, card, onSend }: { p: Palette; card: PlaceListCard
   return (
     <CardShell
       p={p}
+      icon="location"
       title={`周边 · ${card.category || card.keyword || '发现'}`}
       right={<ProvBadge p={p} prov={card._prov} />}
     >
@@ -194,7 +195,7 @@ export function PlaceList({ p, card, onSend }: { p: Palette; card: PlaceListCard
 
 export function PlaceDetail({ p, card, onSend }: { p: Palette; card: PlaceDetailCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title="周边详情" right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="location" title="周边详情" right={<ProvBadge p={p} prov={card._prov} />}>
       <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '700' }}>{card.name}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
         {card.rating ? <Chip p={p} text={`★${card.rating}`} /> : null}
@@ -221,7 +222,7 @@ export function RoutePlan({ p, card, onSend }: { p: Palette; card: RoutePlanCard
   // 卡片标题必须与本轮真实动作一致（I-016/I-022）：只算不导≠已在导航；已取消要说清作废
   const title = card.cancelled ? '导航已结束' : card.estimate ? '路线测算（未开始导航）' : '路线已规划'
   return (
-    <CardShell p={p} title={title}>
+    <CardShell p={p} icon="route-map" title={title}>
       <Text style={{ color: card.cancelled ? p.fg3 : p.fg1, fontSize: p.font(15), fontWeight: '600' }}>
         {card.origin ? `${card.origin} → ` : ''}
         {card.destination}
@@ -264,6 +265,7 @@ export function ChargingRoute({ p, card }: { p: Palette; card: ChargingRouteCard
   return (
     <CardShell
       p={p}
+      icon="charging-station"
       title="充电路线规划"
       right={
         card.distance_km ? <Chip p={p} text={`${card.distance_km}km${dur ? ` · ${dur}` : ''}`} /> : undefined
@@ -357,6 +359,7 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
   return (
     <CardShell
       p={p}
+      icon="itinerary"
       title={`${card.destination} · ${card.days}日行程`}
       right={
         <Chip

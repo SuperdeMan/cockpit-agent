@@ -20,13 +20,23 @@ import type {
   WeatherCard,
 } from '@shared/types.ts'
 
+import type { IconName } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
-import { CardIcon, CardShell, Chip, FreshChip, ProvBadge, relativeTime, type SendFn } from './parts'
+import { CardIcon, CardShell, Chip, ConfBadge, FreshChip, ProvBadge, relativeTime, type SendFn } from './parts'
+
+/** 天气卡头图标按天况（Figma 06：有预警用 thunder-alert）；图标库只有晴 / 云 / 雨 / 雷暴四种 */
+function weatherIcon(card: WeatherCard): IconName {
+  if (card.alerts?.length) return 'weather-thunder-alert'
+  const t = card.focus?.text_day || card.text || ''
+  if (/雨|雪|雷/.test(t)) return 'weather-rain'
+  if (/晴/.test(t)) return 'weather-sunny'
+  return 'weather-cloudy'
+}
 
 export function Weather({ p, card }: { p: Palette; card: WeatherCard; onSend: SendFn }) {
   const focus = card.focus
   return (
-    <CardShell p={p} title={`天气 · ${card.city}`} right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon={weatherIcon(card)} title={`天气 · ${card.city}`} right={<ProvBadge p={p} prov={card._prov} />}>
       {focus ? (
         <View style={{ gap: 4 }}>
           <Text style={{ color: p.fg1, fontSize: p.font(20), fontWeight: '700' }}>
@@ -78,7 +88,7 @@ export function Weather({ p, card }: { p: Palette; card: WeatherCard; onSend: Se
 
 export function Forecast({ p, card }: { p: Palette; card: ForecastCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={`未来预报 · ${card.city}`}>
+    <CardShell p={p} icon="weather-cloudy" title={`未来预报 · ${card.city}`}>
       {(card.days || []).slice(0, 7).map((d) => (
         <View key={d.date} style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
           <Text style={{ color: p.fg3, fontSize: p.font(12), width: 52 }}>{d.date.slice(5)}</Text>
@@ -98,7 +108,7 @@ export function StockQuote({ p, card }: { p: Palette; card: StockCard; onSend: S
   const up = !card.change.startsWith('-')
   const color = up ? p.red : p.green // A股惯例：红涨绿跌
   return (
-    <CardShell p={p} title={`${card.name} · ${card.symbol}`} right={card.market ? <Chip p={p} text={card.market} /> : undefined}>
+    <CardShell p={p} icon="building" title={`${card.name} · ${card.symbol}`} right={card.market ? <Chip p={p} text={card.market} /> : undefined}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 10 }}>
         <Text style={{ color, fontSize: p.font(26), fontWeight: '700' }}>{card.price}</Text>
         <Text style={{ color, fontSize: p.font(14), paddingBottom: 3 }}>
@@ -135,7 +145,7 @@ function NewsRows({ p, items }: { p: Palette; items: { title: string; source: st
 
 export function NewsList({ p, card }: { p: Palette; card: NewsCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={`新闻 · ${card.topic}`}>
+    <CardShell p={p} icon="newspaper" title={`新闻 · ${card.topic}`}>
       {card.summary ? <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{card.summary}</Text> : null}
       <NewsRows p={p} items={card.items || []} />
     </CardShell>
@@ -144,7 +154,7 @@ export function NewsList({ p, card }: { p: Palette; card: NewsCard; onSend: Send
 
 export function NewsDigest({ p, card }: { p: Palette; card: NewsDigestCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={`新闻摘要 · ${card.topic}`}>
+    <CardShell p={p} icon="newspaper" title={`新闻摘要 · ${card.topic}`}>
       <Text style={{ color: p.fg2, fontSize: p.font(13) }}>{card.summary}</Text>
       <View style={{ gap: 4 }}>
         {(card.headlines || []).slice(0, 6).map((h, i) => (
@@ -161,6 +171,7 @@ export function NewsBrief({ p, card }: { p: Palette; card: NewsBriefCard; onSend
   return (
     <CardShell
       p={p}
+      icon="newspaper"
       title={`要闻 · ${card.topic}`}
       right={<FreshChip p={p} iso={card.freshness} />}
     >
@@ -171,7 +182,7 @@ export function NewsBrief({ p, card }: { p: Palette; card: NewsBriefCard; onSend
 
 export function SearchAnswer({ p, card }: { p: Palette; card: SearchAnswerCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={`搜索 · ${card.query}`}>
+    <CardShell p={p} icon="search" title={`搜索 · ${card.query}`}>
       <Text style={{ color: p.fg1, fontSize: p.font(13), lineHeight: p.font(20) }}>{card.answer}</Text>
       <View style={{ gap: 2 }}>
         {(card.sources || []).slice(0, 4).map((s, i) => (
@@ -186,7 +197,7 @@ export function SearchAnswer({ p, card }: { p: Palette; card: SearchAnswerCard; 
 
 export function SearchResult({ p, card }: { p: Palette; card: SearchResultCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={`检索证据 · ${card.query}`} right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="search" title={`检索证据 · ${card.query}`} right={<ProvBadge p={p} prov={card._prov} />}>
       <View style={{ gap: 6 }}>
         {(card.sources || []).slice(0, 5).map((s, i) => (
           <View key={i}>
@@ -202,7 +213,7 @@ export function SearchResult({ p, card }: { p: Palette; card: SearchResultCard; 
       </View>
       <View style={{ flexDirection: 'row', gap: 6 }}>
         <FreshChip p={p} iso={card.freshness} />
-        {card.confidence ? <Chip p={p} text={`置信 ${card.confidence}`} /> : null}
+        <ConfBadge p={p} level={card.confidence} />
       </View>
     </CardShell>
   )
@@ -210,7 +221,7 @@ export function SearchResult({ p, card }: { p: Palette; card: SearchResultCard; 
 
 export function SearchList({ p, card }: { p: Palette; card: SearchCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={`搜索结果 · ${card.query}`}>
+    <CardShell p={p} icon="search" title={`搜索结果 · ${card.query}`}>
       {card.summary ? <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{card.summary}</Text> : null}
       <View style={{ gap: 6 }}>
         {(card.items || []).slice(0, 5).map((it, i) => (
@@ -239,8 +250,9 @@ export function ResearchReport({ p, card }: { p: Palette; card: ResearchReportCa
   return (
     <CardShell
       p={p}
+      icon="research"
       title={`调研 · ${card.question}`}
-      right={card.overall_confidence ? <Chip p={p} text={`置信 ${card.overall_confidence}`} /> : undefined}
+      right={<ConfBadge p={p} level={card.overall_confidence} />}
     >
       {card.summary ? (
         <Text style={{ color: p.fg2, fontSize: p.font(13), lineHeight: p.font(20) }}>{card.summary}</Text>
@@ -258,7 +270,7 @@ export function ResearchReport({ p, card }: { p: Palette; card: ResearchReportCa
                 <Text style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '600', flex: 1 }} numberOfLines={2}>
                   {s.heading}
                 </Text>
-                {s.confidence ? <Chip p={p} text={s.confidence} /> : null}
+                <ConfBadge p={p} level={s.confidence} />
               </Pressable>
               {expanded ? (
                 <View style={{ paddingLeft: 20, gap: 4, marginTop: 4 }}>
@@ -410,7 +422,7 @@ function FixtureBoard({ p, f }: { p: Palette; f: SportsFixture }) {
 export function SportsScores({ p, card }: { p: Palette; card: SportsScoresCard; onSend: SendFn }) {
   const fixtures = card.fixtures || []
   return (
-    <CardShell p={p} title={card.title} right={<FreshChip p={p} iso={card.freshness} />}>
+    <CardShell p={p} icon="football" title={card.title} right={<FreshChip p={p} iso={card.freshness} />}>
       {!fixtures.length ? (
         <Text style={{ color: p.fg3, fontSize: p.font(12) }}>暂无比赛安排</Text>
       ) : (
@@ -428,7 +440,7 @@ export function SportsScores({ p, card }: { p: Palette; card: SportsScoresCard; 
 export function SportsScorers({ p, card }: { p: Palette; card: SportsScorersCard; onSend: SendFn }) {
   const scorers = card.scorers || []
   return (
-    <CardShell p={p} title={card.title} right={card.season ? <Chip p={p} text={card.season} /> : undefined}>
+    <CardShell p={p} icon="trophy" title={card.title} right={card.season ? <Chip p={p} text={card.season} /> : undefined}>
       {!scorers.length ? (
         <Text style={{ color: p.fg3, fontSize: p.font(12) }}>暂无射手榜数据</Text>
       ) : (

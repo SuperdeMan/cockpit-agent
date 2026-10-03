@@ -48,7 +48,7 @@ import {
   TripItinerary,
 } from './navCards'
 import { CardGroup } from './CardGroup'
-import { CardButtons, CardShell, ProvBadge, type SendFn } from './parts'
+import { CardButtons, CardShell, KV, ProvBadge, cardText, type SendFn } from './parts'
 
  
 
@@ -115,23 +115,22 @@ export function FallbackCard({ p, card, onSend }: CardProps) {
   const fields = cardPrimaryFields(card)
   const rows = cardListRows(card)
   return (
-    <CardShell p={p} title={`卡片 · ${card?.type || '未知'}`} right={<ProvBadge p={p} prov={card?._prov} />}>
+    // v3（Figma 06「其他结果」）：标题不再露卡型 id（原来是「卡片 · charging_list」）；主字段改键值行
+    <CardShell p={p} icon="info" title="其他结果" right={<ProvBadge p={p} prov={card?._prov} />}>
       {fields.map(([k, v]) => (
-        <Text key={k} style={{ color: p.fg2, fontSize: p.font(12) }} numberOfLines={2}>
-          {k}: {v}
-        </Text>
+        <KV key={k} p={p} k={k} v={v} />
       ))}
       {rows.map((r, i) => (
         <View key={i} testID="fallback-row" style={{ flexDirection: 'row', gap: 8, alignItems: 'baseline' }}>
-          <Text style={{ color: p.fg3, fontSize: p.font(12), width: 20 }}>{i + 1}</Text>
+          <Text style={[cardText(p, 'caption'), { color: p.fg3, width: 20 }]}>{i + 1}</Text>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: p.fg1, fontSize: p.font(13) }} numberOfLines={1}>{r.title}</Text>
-            {r.sub ? <Text style={{ color: p.fg3, fontSize: p.font(11) }} numberOfLines={1}>{r.sub}</Text> : null}
+            <Text style={[cardText(p, 'labelL'), { color: p.fg1 }]} numberOfLines={1}>{r.title}</Text>
+            {r.sub ? <Text style={[cardText(p, 'caption'), { color: p.fg3 }]} numberOfLines={1}>{r.sub}</Text> : null}
           </View>
         </View>
       ))}
       {!fields.length && !rows.length ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>该卡型暂未适配，内容已收到</Text>
+        <Text style={[cardText(p, 'bodyM'), { color: p.fg3 }]}>这类内容暂时不能完整显示，已收到</Text>
       ) : null}
       <CardButtons p={p} onSend={onSend} buttons={card?.buttons} />
     </CardShell>

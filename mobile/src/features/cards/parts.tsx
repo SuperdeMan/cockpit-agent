@@ -1,87 +1,110 @@
-// 卡片公共件（实施计划 M1-4）：外框 / 键值行 / chip / 按钮排 / _prov 徽章。
+// 卡片公共件（实施计划 M1-4；Android Visual v3 P4a 重做，Figma Card/Shell · Header · KVRow · Actions · ProvBadge ·
+// FreshChip · ConfBadge）：外框 / 卡头 / 键值行 / chip / 动作区 / _prov 角标 / 时效 / 置信。
 // 按钮语义（types.ts:52-58）：卡内动作只合成一句自然语言经普通 send 上行，不是业务写接口。
+// 人话判据（厂商中文名、本地时刻、置信档位）在 core/cards/cardMeta.ts，这里只消费。
 import type { ReactNode } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View, type TextStyle } from 'react-native'
 
 import type { CardButton, Provenance } from '@shared/types.ts'
 
+import { CONF_LABEL, clockLabel, confLevel, vendorName } from '../../core/cards/cardMeta'
+import { Button } from '../../ui/Button'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
-import { RADIUS, TARGET } from '../../ui/tokens'
+import { RADIUS, textStyle, type TextRole } from '../../ui/tokens'
 
 export type SendFn = (text: string, metaExtra?: Record<string, string>) => void
 
+/** 卡片里的字阶：卡片渲染器只拿得到 Palette，字号档位从 `p.fontScale` 读（与页面同一份 TEXT 表） */
+export function cardText(p: Palette, role: TextRole): TextStyle {
+  return textStyle(role, p.fontScale)
+}
+
+/** 卡片外壳 + 卡头（Figma Card/Shell：surface + 一级投影、圆角 16、内边距 16、件间 12；
+ *  Card/Header：图标 20 + 「类别 · 实体」titleM + 右槽——来源·时效 / _prov 角标 / 置信 / 无）。每种卡都有图标 */
 export function CardShell({
   p,
+  icon,
   title,
   right,
   children,
+  testID,
 }: {
   p: Palette
+  icon?: IconName
   title?: string
   right?: ReactNode
   children: ReactNode
+  testID?: string
 }) {
   return (
     <View
+      testID={testID}
       style={{
-        // 玻璃气泡内的二级面（Aurora 复刻轮）：fill 底 + 顶缘高光边，不再叠整套玻璃投影
-        backgroundColor: p.card,
-        borderColor: p.line,
-        borderTopColor: p.hi,
+        backgroundColor: p.surface,
         borderWidth: 1,
-        borderRadius: 16,
-        padding: 12,
-        gap: 8,
+        borderColor: p.line,
+        borderRadius: RADIUS.lg,
+        padding: 16,
+        gap: 12,
+        boxShadow: p.elev1,
       }}
     >
-      {(title || right) && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          {title ? (
-            <Text style={{ color: p.fg2, fontSize: p.font(12), fontWeight: '600' }} numberOfLines={1}>
-              {title}
-            </Text>
-          ) : (
-            <View />
-          )}
+      {title || right ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {icon ? <CardIcon p={p} name={icon} size={20} color={p.fg2} /> : null}
+          <Text style={[cardText(p, 'titleM'), { color: p.fg1, flex: 1 }]} numberOfLines={1}>
+            {title ?? ''}
+          </Text>
           {right}
         </View>
-      )}
+      ) : null}
       {children}
     </View>
   )
 }
 
-export function KV({ p, k, v }: { p: Palette; k: string; v?: string | number | null }) {
+/** 键值行（Figma Card/KVRow：最小高 32，键 bodyM 次级色、值 bodyM 主色右对齐）。
+ *  `dense`：回执那类紧凑清单（caption 键值、左对齐，R-3 回执行 16 高） */
+export function KV({ p, k, v, dense = false }: { p: Palette; k: string; v?: string | number | null; dense?: boolean }) {
   if (v === undefined || v === null || v === '') return null
+  if (dense) {
+    return (
+      <View style={{ flexDirection: 'row', gap: 12 }}>
+        <Text style={[cardText(p, 'caption'), { color: p.fg3, minWidth: 56 }]}>{k}</Text>
+        <Text style={[cardText(p, 'caption'), { color: p.fg2, flex: 1 }]}>{String(v)}</Text>
+      </View>
+    )
+  }
   return (
-    <View style={{ flexDirection: 'row', gap: 8 }}>
-      <Text style={{ color: p.fg3, fontSize: p.font(12), minWidth: 56 }}>{k}</Text>
-      <Text style={{ color: p.fg2, fontSize: p.font(12), flex: 1 }}>{String(v)}</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 32 }}>
+      <Text style={[cardText(p, 'bodyM'), { color: p.fg2 }]}>{k}</Text>
+      <Text style={[cardText(p, 'bodyM'), { color: p.fg1, flex: 1, textAlign: 'right' }]}>{String(v)}</Text>
     </View>
   )
 }
 
 export function Chip({ p, text, tone = 'plain' }: { p: Palette; text: string; tone?: 'plain' | 'accent' | 'amber' }) {
   const bg = tone === 'accent' ? p.accentSoft : tone === 'amber' ? p.amberSoft : 'transparent'
-  const fg = tone === 'accent' ? p.accent : tone === 'amber' ? p.amber : p.fg3
+  const fg = tone === 'accent' ? p.accent : tone === 'amber' ? p.amber : p.fg2
   return (
     <View
       style={{
         backgroundColor: bg,
         borderColor: tone === 'plain' ? p.line : 'transparent',
         borderWidth: tone === 'plain' ? 1 : 0,
-        borderRadius: 999,
+        borderRadius: RADIUS.full,
         paddingHorizontal: 8,
         paddingVertical: 2,
       }}
     >
-      <Text style={{ color: fg, fontSize: p.font(11) }}>{text}</Text>
+      <Text style={[cardText(p, 'caption'), { color: fg }]}>{text}</Text>
     </View>
   )
 }
 
-/** 卡内按钮排：一律 send_text 经普通 send 上行（危险动作仍由全局确认条二次确认） */
+/** 卡尾动作（Figma Card/Actions）：一律 send_text 经普通 send 上行（危险动作仍由全局确认条二次确认，卡内不放确认键）。
+ *  主动作 Tonal、其余 Outlined；一个 = 整宽，两个 = 各半，更多两列折行。高 = 目标高（Button 原语） */
 export function CardButtons({
   p,
   buttons,
@@ -94,25 +117,19 @@ export function CardButtons({
   const usable = (buttons || []).filter((b) => b?.label && b?.send_text)
   if (!usable.length) return null
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {usable.map((b, i) => (
-        <Pressable
+        <Button
           key={i}
-          // B4-9：TalkBack 读「按钮 + 标签」（§8「卡片按钮补 role/label」）。
-          // 2026-09-11 两档制：按钮类视觉 = 外框 = 目标高 48（原 44 + hitSlop 2 是第三种高）
-          accessibilityRole="button"
+          p={p}
+          // B4-9：TalkBack 读「按钮 + 标签」（§8「卡片按钮补 role/label」）——Button 原语自带 role 与说明
+          label={b.label!}
           accessibilityLabel={b.label}
+          variant={i === 0 ? 'tonal' : 'outlined'}
+          fontScale={p.fontScale}
           onPress={() => onSend(b.send_text!)}
-          style={{
-            backgroundColor: p.accentSoft,
-            borderRadius: RADIUS.md,
-            paddingHorizontal: 12,
-            minHeight: p.target(TARGET.parked),
-            justifyContent: 'center',
-          }}
-        >
-          <Text style={{ color: p.accent, fontSize: p.font(13) }}>{b.label}</Text>
-        </Pressable>
+          style={{ flexGrow: 1, flexBasis: usable.length === 1 ? '100%' : '45%' }}
+        />
       ))}
     </View>
   )
@@ -128,6 +145,7 @@ export function CardButtons({
  * **判据逐行照抄那份**（阈值 60s/60min/24h/30d、mock 判空、NaN 判空），
  * 保持两端对同一张卡说同一句话。要收敛就得先把它提成共享模块 + node:test + 台账，
  * 那是一次独立的共享面改动，已挂账给泓舟裁。
+ * v3 起它只给「缓存 · N分钟前」与调研卡的时效用；来源角标与时效标签走 cardMeta.clockLabel（本地时刻）。
  */
 export function relativeTime(iso?: string): string {
   if (!iso || iso === 'mock') return ''
@@ -152,24 +170,63 @@ export function CardIcon({ p, name, size = 16, color }: { p: Palette; name: Icon
   return <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}><View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c }} /></View>
 }
 
-/** 时效角标：相对化后为空（缺失/无法解析/mock）就整个不渲染，不留一个空 chip */
+/** 时效（Figma Card/FreshChip）：时钟 + 「12:51 更新」，跨天「昨天 23:40 更新 / 9月21日 更新」。
+ *  解析不出时刻（缺失 / mock / 坏串）就整个不渲染，不留一个空标签 */
 export function FreshChip({ p, iso }: { p: Palette; iso?: string }) {
-  const label = relativeTime(iso)
-  return label ? <Chip p={p} text={label} /> : null
+  const label = clockLabel(iso)
+  if (!label) return null
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      {iconRuntimeAvailable() ? <Icon name="clock" size={12} color={p.fg3} /> : null}
+      <Text style={[cardText(p, 'caption'), { color: p.fg3 }]}>{label} 更新</Text>
+    </View>
+  )
 }
 
-/** 数据真实性徽章（契约 §9.3 四态）：mock 必须醒目（坑账 #6），real 只角标来源·时间 */
+function Badge({ p, text, tone }: { p: Palette; text: string; tone: 'amber' | 'neutral' }) {
+  return (
+    <View
+      style={{
+        backgroundColor: tone === 'amber' ? p.amberSoft : p.surfaceHighest,
+        borderRadius: RADIUS.full,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+      }}
+    >
+      <Text style={[cardText(p, 'caption'), { color: tone === 'amber' ? p.amber : p.fg2 }]} numberOfLines={1}>
+        {text}
+      </Text>
+    </View>
+  )
+}
+
+/** 数据真实性（契约 §9.3 四态；Figma Card/ProvBadge）：mock = 「模拟数据」、degraded = 「部分数据」（琥珀胶囊，必须醒目，坑账 #6）；
+ *  cached = 「缓存 · N分钟前」；real 不出胶囊，只在右槽给一行「来源 · 本地时刻」（厂商中文名，例「和风 · 12:51」） */
 export function ProvBadge({ p, prov }: { p: Palette; prov?: Provenance }) {
   if (!prov?.mode) return null
-  if (prov.mode === 'mock') {
-    return <Chip p={p} tone="amber" text="模拟数据" />
-  }
-  if (prov.mode === 'degraded') {
-    return <Chip p={p} tone="amber" text={`降级${prov.note ? ` · ${prov.note}` : ''}`} />
-  }
+  if (prov.mode === 'mock') return <Badge p={p} tone="amber" text="模拟数据" />
+  if (prov.mode === 'degraded') return <Badge p={p} tone="amber" text="部分数据" />
   if (prov.mode === 'cached') {
-    return <Chip p={p} text={`缓存${prov.note ? ` · ${prov.note}` : ''}`} />
+    const age = relativeTime(prov.fetched_at) || prov.note || ''
+    return <Badge p={p} tone="neutral" text={age ? `缓存 · ${age}` : '缓存'} />
   }
-  const label = [prov.vendor, prov.fetched_at?.slice(11, 16)].filter(Boolean).join(' · ')
-  return label ? <Chip p={p} text={label} /> : null
+  const label = [vendorName(prov.vendor), clockLabel(prov.fetched_at)].filter(Boolean).join(' · ')
+  return label ? (
+    <Text style={[cardText(p, 'caption'), { color: p.fg3 }]} numberOfLines={1}>
+      {label}
+    </Text>
+  ) : null
+}
+
+/** 置信（Figma Card/ConfBadge）：圆点 + 人话（可信度高 / 可信度中 / 未充分核实）；契约外的值不画 */
+export function ConfBadge({ p, level }: { p: Palette; level?: string }) {
+  const lv = confLevel(level)
+  if (!lv) return null
+  const color = lv === 'high' ? p.green : lv === 'low' ? p.amber : p.fg2
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
+      <Text style={[cardText(p, 'caption'), { color }]}>{CONF_LABEL[lv]}</Text>
+    </View>
+  )
 }

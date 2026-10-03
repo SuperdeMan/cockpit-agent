@@ -26,7 +26,7 @@ export function ManualEvidence({ p, card }: { p: Palette; card: ManualCardType }
   const chunks = (card.chunks || []).slice(0, 2)
   const title = card.document?.title || '车型用户手册'
   return (
-    <CardShell p={p} title={title} right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="manual" title={title} right={<ProvBadge p={p} prov={card._prov} />}>
       {images.map((image) => (
         <View key={String(image.asset_id)} style={{ gap: 5 }}>
           <View style={{ height: image.role === 'warning_icon' ? 148 : 180, borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
@@ -71,7 +71,7 @@ export function ManualEvidence({ p, card }: { p: Palette; card: ManualCardType }
 
 export function IntentChoice({ p, card, onSend }: { p: Palette; card: IntentChoiceCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title="你是想…">
+    <CardShell p={p} icon="info" title="你是想…">
       <Text style={{ color: p.fg1, fontSize: p.font(14) }}>{card.question}</Text>
       <View style={{ gap: 8 }}>
         {(card.options || []).map((o, i) => (
@@ -135,7 +135,7 @@ function ReminderRow({ p, item }: { p: Palette; item: ReminderItem }) {
 
 export function ReminderList({ p, card }: { p: Palette; card: ReminderListCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={`提醒 · ${card.date_label || (card.view === 'multi' ? '近期' : '今天')}`}>
+    <CardShell p={p} icon="clock" title={`提醒 · ${card.date_label || (card.view === 'multi' ? '近期' : '今天')}`}>
       {(card.items || []).map((it) => (
         <ReminderRow key={it.id} p={p} item={it} />
       ))}
@@ -163,7 +163,7 @@ const CONTEXT_TITLE: Record<ReminderCard['context'], string> = {
 
 export function ReminderSingle({ p, card, onSend }: { p: Palette; card: ReminderCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} title={CONTEXT_TITLE[card.context] || '提醒'}>
+    <CardShell p={p} icon="clock" title={CONTEXT_TITLE[card.context] || '提醒'}>
       <ReminderRow p={p} item={card.item} />
       <CardButtons p={p} onSend={onSend} buttons={card.actions} />
     </CardShell>
@@ -186,7 +186,7 @@ export function SceneSingle({ p, card, onSend }: { p: Palette; card: SceneCard; 
   const meta = SCENE_CONTEXT[card.context] || SCENE_CONTEXT.created
   const steps = card.actions_preview || []
   return (
-    <CardShell p={p} title={card.name} right={<Chip p={p} tone={meta.tone} text={meta.label} />}>
+    <CardShell p={p} icon="layers" title={card.name} right={<Chip p={p} tone={meta.tone} text={meta.label} />}>
       {card.description ? (
         <Text style={{ color: p.fg3, fontSize: p.font(12), lineHeight: p.font(19) }}>{card.description}</Text>
       ) : null}
@@ -259,7 +259,7 @@ export function SceneList({ p, card, onSend }: { p: Palette; card: SceneListCard
     ) : null
 
   return (
-    <CardShell p={p} title="场景">
+    <CardShell p={p} icon="layers" title="场景">
       {group('我建的', card.mine || [])}
       {group('内置', card.builtin || [])}
       <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
@@ -276,6 +276,7 @@ export function VisionAnswer({ p, card }: { p: Palette; card: VisionAnswerCard; 
   return (
     <CardShell
       p={p}
+      icon="camera"
       title={card.question || '看一看'}
       right={card.simulated ? <Chip p={p} text="模拟车外摄像头" /> : undefined}
     >

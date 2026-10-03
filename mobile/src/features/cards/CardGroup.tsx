@@ -5,10 +5,11 @@ import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { splitCardGroup } from '../../core/cards/cardGroup'
+import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
 import { TARGET } from '../../ui/tokens'
 import { CardRenderer } from './CardRenderer'
-import type { SendFn } from './parts'
+import { cardText, type SendFn } from './parts'
 
 export function CardGroup({ p, items, onSend }: { p: Palette; items: unknown[]; onSend: SendFn }) {
   const [open, setOpen] = useState(false)
@@ -21,10 +22,15 @@ export function CardGroup({ p, items, onSend }: { p: Palette; items: unknown[]; 
         <Pressable
           testID="card-group-more"
           accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
           onPress={() => setOpen((o) => !o)}
-          style={{ minHeight: TARGET.parked, justifyContent: 'center' }}
+          style={{ minHeight: p.target(TARGET.parked), flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' }}
         >
-          <Text style={{ color: p.accent, fontSize: p.font(12) }}>{open ? '收起其余卡片 ⌃' : `还有 ${rest.length} 张 ›`}</Text>
+          <Text style={[cardText(p, 'labelM'), { color: p.accent }]}>
+            {open ? '收起其余卡片' : `还有 ${rest.length} 张`}
+            {iconRuntimeAvailable() ? '' : open ? ' ⌃' : ' ›'}
+          </Text>
+          {iconRuntimeAvailable() ? <Icon name={open ? 'chevron-up' : 'chevron-down'} size={16} color={p.accent} /> : null}
         </Pressable>
       ) : null}
       {open ? rest.map((sub, i) => <CardRenderer key={i} p={p} card={sub} onSend={onSend} />) : null}

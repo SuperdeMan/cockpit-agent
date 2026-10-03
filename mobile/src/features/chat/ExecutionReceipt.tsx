@@ -38,8 +38,8 @@ export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt 
       {open ? (
         receipt.kind === 'action' ? (
           <View style={{ gap: 2, backgroundColor: p.surfaceLow, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-            <KV p={p} k="已理解" v={receipt.understood || receipt.executed.types.join('、')} />
-            <KV p={p} k="目标" v={receipt.target} />
+            <KV p={p} dense k="已理解" v={receipt.understood || receipt.executed.types.join('、')} />
+            <KV p={p} dense k="目标" v={receipt.target} />
             <KV
               p={p}
               k="确认"
@@ -53,10 +53,10 @@ export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt 
           </View>
         ) : (
           <View style={{ gap: 2, backgroundColor: p.surfaceLow, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-            <KV p={p} k="数据源" v={receipt.vendor || '未知'} />
-            <KV p={p} k="更新" v={receipt.fetchedAt ? receipt.fetchedAt.slice(11, 16) : ''} />
-            <KV p={p} k="定位" v={receipt.located ? '当前位置' : '未使用定位'} />
-            <KV p={p} k="状态" v={`${MODE_LABEL[receipt.mode]}${receipt.note ? ' · ' + receipt.note : ''}`} />
+            <KV p={p} dense k="数据源" v={receipt.vendor || '未知'} />
+            <KV p={p} dense k="更新" v={receipt.fetchedAt ? receipt.fetchedAt.slice(11, 16) : ''} />
+            <KV p={p} dense k="定位" v={receipt.located ? '当前位置' : '未使用定位'} />
+            <KV p={p} dense k="状态" v={`${MODE_LABEL[receipt.mode]}${receipt.note ? ' · ' + receipt.note : ''}`} />
           </View>
         )
       ) : null}

@@ -78,6 +78,8 @@ export interface Palette {
   dataDown: string
   aqi: readonly string[]
   series: readonly string[]
+  /** 字号档位（设置「标准 / 大字」）：卡片渲染器只拿得到 Palette，按角色取字阶（`textStyle(role, p.fontScale)`）时从这里读 */
+  fontScale: AppSettings['fontScale']
   /** 字号缩放（设置「大字」档 ×1.15） */
   font(size: number): number
   /** 触控目标 / 控件高的缩放（「大字」档 ×1.1）：与 `tokens.scale(_, 'target')` 同一判据，
@@ -193,6 +195,7 @@ export function paletteOf(theme: AppSettings['theme'], systemDark: boolean, font
     red: dark ? '#F87171' : '#C62828',
     green: dark ? '#34D399' : '#166534',
     teal: dark ? '#2DD4BF' : '#0F766E',
+    fontScale,
     font: (size: number) => Math.round(size * scale),
     target: (size: number) => scaleToken(size, 'target', fontScale),
   }
