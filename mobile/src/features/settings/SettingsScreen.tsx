@@ -1,10 +1,11 @@
-// 设置页（实施计划 M1-5 + M2 语音两分区；打磨批 B 分级重排）。
+// 设置页（实施计划 M1-5 + M2 语音两分区；打磨批 B 分级重排；v3 P5a 换 Figma 04 页 S 组的视觉：
+// 分区 = accent 标题 + surface 圆角 16 的组、行间分隔线；单选一律分段按钮；开关 M3 配色；音色是图标格子）。
 // 五组用户设置：通用 / 助手 / 语音 / 隐私 / 账号与连接；工程入口一个不少，全部搬进「开发者选项」
 // ——prod 默认隐藏，构建行连点 7 次解锁（判据只在 core/diagnostics.ts::developerOptionsVisible）。
 // 持久化 AsyncStorage（settings store）；buildMeta 键集由 settingsMeta.test.ts 钉住。
 import { Link } from 'expo-router'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native'
+import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native'
 import { useStore } from 'zustand'
 
 import {
@@ -29,40 +30,59 @@ import { MOBILE_QUICK_COMMAND_ORDER } from '../../core/session/quickCommands'
 import { subscribeWiredSession, wiredSessionSnapshot } from '../../core/session/wiredStore'
 import { getWired } from '../../core/session/wiring'
 import { DEFAULT_APP_SETTINGS, needsS2sConsent, settingsStore, type AppSettings } from '../../core/settings/store'
+import { voiceIcon } from '../../core/settings/voiceIcon'
 import { fetchAsrProviders, fetchTtsProviders } from '../../core/voice/catalog'
 import { handsFreeAvailability } from '../../core/voice/handsFree'
 import { speechController } from '../../core/voice/speech'
+import { Button } from '../../ui/Button'
+import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
+import { ListGroup, ListItem, ListSectionHeader, switchColors } from '../../ui/ListItem'
 import { Pill } from '../../ui/Pill'
+import { Segmented } from '../../ui/Segmented'
+import { TextField } from '../../ui/TextField'
 import { usePalette, type Palette } from '../../ui/theme'
-import { TARGET } from '../../ui/tokens'
+import { RADIUS, SPACE, TARGET, textStyle } from '../../ui/tokens'
 import { useAssistant } from '../assistant/AssistantProvider'
 import { S2sConsentSheet } from './S2sConsentSheet'
 
+/** 分区（Figma ListSection/Header + 分组卡）：accent 标题 + surface 圆角 16 的组，行间 line 分隔。
+ *  组里每个子项都是一「行」（ChoiceRow / SwitchRow / NoteRow / Block / LinkRow / ListItem），各自带内边距 */
 function Section({ p, title, children }: { p: Palette; title: string; children: ReactNode }) {
   return (
-    <View style={{ gap: 8 }}>
-      <Text style={{ color: p.fg3, fontSize: p.font(12), fontWeight: '600' }}>{title}</Text>
-      <View
-        style={{
-          backgroundColor: p.card,
-          borderColor: p.line,
-          borderWidth: 1,
-          borderRadius: 14,
-          padding: 12,
-          gap: 10,
-        }}
-      >
-        {children}
-      </View>
+    <View>
+      <ListSectionHeader p={p} title={title} fontScale={p.fontScale} />
+      <ListGroup p={p}>{children}</ListGroup>
     </View>
   )
 }
 
-/** 组内小标题（打磨批 B 分级：一组里再分几段，不再是十二个平级分区） */
-function SubHead({ p, title }: { p: Palette; title: string }) {
+/** 组内一段自由内容（输入框、能力摘要、隐私记录）：与 ListItem 同样的左右 16、上下 12 */
+function Block({ children, testID }: { children: ReactNode; testID?: string }) {
   return (
-    <Text style={{ color: p.fg2, fontSize: p.font(13), fontWeight: '600', marginTop: 4 }}>{title}</Text>
+    <View testID={testID} style={{ paddingHorizontal: SPACE[3], paddingVertical: SPACE[2], gap: 8 }}>
+      {children}
+    </View>
+  )
+}
+
+/** 组内单独一行说明（caption 次级色）：代价、隐私口径这类必须在屏上说清的话 */
+function NoteRow({ p, text, tone, testID }: { p: Palette; text: string; tone?: string; testID?: string }) {
+  return (
+    <Block testID={testID}>
+      <Text style={[textStyle('caption', p.fontScale), { color: tone ?? p.fg3 }]}>{text}</Text>
+    </Block>
+  )
+}
+
+type DevHref = '/state-gallery' | '/card-gallery' | '/presence-trail' | '/turn-timeline' | '/native-spike' | '/blur-spike' | '/capture-status' | '/debug' | '/voice-spike'
+
+/** 入口行（Figma ListItem/Kind=Link）：accent 标题，整行可点；路由仍是 expo-router 的 Link（href 留在树上） */
+function LinkRow({ p, href, title, subtitle }: { p: Palette; href: DevHref | '/onboarding'; title: string; subtitle?: string }) {
+  return (
+    <Link href={href} asChild>
+      <ListItem p={p} kind="link" title={title} subtitle={subtitle} fontScale={p.fontScale} />
+    </Link>
   )
 }
 
@@ -93,11 +113,11 @@ function SessionSummarySection({
   onRefresh(): void
 }) {
   const line = (text: string, testID?: string) => (
-    <Text testID={testID} style={{ color: p.fg2, fontSize: p.font(13) }}>{text}</Text>
+    <Text testID={testID} style={[textStyle('caption', p.fontScale), { color: p.fg2 }]}>{text}</Text>
   )
   const refresh = (
-    <Pressable accessibilityRole="button" onPress={onRefresh} testID="settings-session-refresh" style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}>
-      <Text style={{ color: p.accent, fontSize: p.font(13) }}>{loading ? '刷新中…' : '刷新'}</Text>
+    <Pressable accessibilityRole="button" onPress={onRefresh} testID="settings-session-refresh" style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', alignSelf: 'flex-start' }}>
+      <Text style={[textStyle('labelL', p.fontScale), { color: p.accent }]}>{loading ? '刷新中…' : '刷新'}</Text>
     </Pressable>
   )
   if (!result) {
@@ -108,7 +128,7 @@ function SessionSummarySection({
     return (
       <>
         {line('服务端拒绝了当前访问令牌，重新配置后才能继续。', 'settings-session-unauthorized')}
-        <Link href="/onboarding" style={{ color: p.accent, fontSize: p.font(14) }}>重新配置</Link>
+        <Link href="/onboarding" style={[textStyle('labelL', p.fontScale), { color: p.accent }]}>重新配置</Link>
       </>
     )
   }
@@ -134,12 +154,12 @@ function SessionSummarySection({
       )}
       {line(AUTHORIZATION_SOURCE_LABEL[s.authorizationSource] ?? `授权来源 ${s.authorizationSource || '未知'}`)}
       {s.summaryStatus === 'partial' ? (
-        <Text testID="settings-session-partial" style={{ color: p.fg3, fontSize: p.font(12) }}>
+        <Text testID="settings-session-partial" style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>
           这份摘要只取到一部分（{s.summaryReason || '原因未知'}），没列出的能力状态未知。
         </Text>
       ) : null}
       {stale ? (
-        <Text testID="settings-session-stale" style={{ color: p.fg3, fontSize: p.font(12) }}>
+        <Text testID="settings-session-stale" style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>
           摘要已过期，点刷新重新读取。
         </Text>
       ) : null}
@@ -148,8 +168,9 @@ function SessionSummarySection({
           ? line('服务端没有返回任何能力。', 'settings-session-empty')
           : s.capabilities.map((c) => (
             <View key={c.id} testID={`settings-capability-${c.id}`} style={{ flexDirection: 'row', gap: 8 }}>
-              <Text style={{ color: p.fg1, fontSize: p.font(13), flex: 1 }}>{c.displayName}</Text>
-              <Text style={{ color: c.status === 'available' ? p.fg2 : p.fg3, fontSize: p.font(12) }}>
+              <Text style={[textStyle('caption', p.fontScale), { color: p.fg2, flex: 1 }]}>{c.displayName}</Text>
+              {/* 可用 = 绿、未授权 = 琥珀、其余（不在线 / 未知）次级色——Figma S-3 能力摘要 */}
+              <Text style={[textStyle('caption', p.fontScale), { color: c.status === 'available' ? p.green : c.status === 'unauthorized' ? p.amber : p.fg3 }]}>
                 {CAPABILITY_STATUS_LABEL[c.status] ?? `未知状态（${c.status}）`}
               </Text>
             </View>
@@ -160,39 +181,64 @@ function SessionSummarySection({
   )
 }
 
+/** 单选行（Figma ListItem/Kind=Segmented）：标题 + 分段按钮（语义仍是单选，`choice-<值>` 句柄逐项沿用），
+ *  可选一行说明。选项多或标签长（引擎列表）分段放不下，退回一排可换行的单选胶囊 */
 function ChoiceRow<T extends string>({
   p,
   label,
   value,
   options,
   onPick,
+  note,
 }: {
   p: Palette
   label: string
   value: T
   options: { v: T; label: string }[]
   onPick(v: T): void
+  note?: string
 }) {
+  const segmented = options.length <= 3 && options.every((o) => o.label.length <= 6)
   return (
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: p.fg2, fontSize: p.font(13) }}>{label}</Text>
-      {/* 2026-09-11 两档制：单选项走 Pill（外框 48、视觉 36），选中态进无障碍 selected——此前 ChoiceRow 不暴露 selected，
-          角色回读只能截图（打磨批坑账） */}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {options.map((o) => (
-          <Pill
-            key={o.v}
-            p={p}
-            testID={`choice-${String(o.v)}`}
-            selected={value === o.v}
-            accessibilityLabel={`${label}：${o.label}`}
-            paddingHorizontal={12}
-            label={o.label}
-            onPress={() => onPick(o.v)}
-          />
-        ))}
-      </View>
-    </View>
+    <ListItem
+      p={p}
+      title={label}
+      fontScale={p.fontScale}
+      below={
+        <View style={{ gap: 8 }}>
+          {segmented ? (
+            <Segmented
+              p={p}
+              fontScale={p.fontScale}
+              value={value}
+              onChange={onPick}
+              options={options.map((o) => ({
+                value: o.v,
+                label: o.label,
+                testID: `choice-${String(o.v)}`,
+                accessibilityLabel: `${label}：${o.label}`,
+              }))}
+            />
+          ) : (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {options.map((o) => (
+                <Pill
+                  key={o.v}
+                  p={p}
+                  testID={`choice-${String(o.v)}`}
+                  selected={value === o.v}
+                  accessibilityLabel={`${label}：${o.label}`}
+                  paddingHorizontal={12}
+                  label={o.label}
+                  onPress={() => onPick(o.v)}
+                />
+              ))}
+            </View>
+          )}
+          {note ? <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>{note}</Text> : null}
+        </View>
+      }
+    />
   )
 }
 
@@ -213,22 +259,25 @@ function SwitchRow({
   onChange(v: boolean): void
 }) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: p.fg1, fontSize: p.font(14) }}>{label}</Text>
-        {desc ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>{desc}</Text> : null}
-      </View>
-      {/* testID 必填的理由（AR06 / A06-2，坑账 AR03 那条）：自动化此前按「标签之后第一枚开关」
-          配对，而多行 desc 会把开关挤出文字带 ⇒ 点中的是**下一行**那枚；更糟的是回读时读到的
-          也是那枚错开关的新值，看起来完全像「设置生效了」。把开关和它改的那个键绑死，
-          「建立前提 → 回读」才是同一个对象。accessibilityLabel 让 TalkBack 与截图取证也认得出它。 */}
-      <Switch
-        testID={'settings-switch-' + settingKey}
-        accessibilityLabel={label}
-        value={value}
-        onValueChange={onChange}
-      />
-    </View>
+    <ListItem
+      p={p}
+      title={label}
+      subtitle={desc}
+      fontScale={p.fontScale}
+      right={
+        // testID 必填的理由（AR06 / A06-2，坑账 AR03 那条）：自动化此前按「标签之后第一枚开关」
+        // 配对，而多行 desc 会把开关挤出文字带 ⇒ 点中的是**下一行**那枚；更糟的是回读时读到的
+        // 也是那枚错开关的新值，看起来完全像「设置生效了」。把开关和它改的那个键绑死，
+        // 「建立前提 → 回读」才是同一个对象。accessibilityLabel 让 TalkBack 与截图取证也认得出它。
+        <Switch
+          testID={'settings-switch-' + settingKey}
+          accessibilityLabel={label}
+          value={value}
+          onValueChange={onChange}
+          {...switchColors(p, value)}
+        />
+      }
+    />
   )
 }
 
@@ -257,22 +306,66 @@ function QuickCommandsEditor({ p, commands, onChange }: { p: Palette; commands: 
           />
         ))}
       </View>
-      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          onSubmitEditing={add}
-          placeholder="添加一条示例"
-          placeholderTextColor={p.fg3}
-          style={{ flex: 1, borderWidth: 1, borderColor: p.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, color: p.fg1, fontSize: p.font(14) }}
-        />
-        <Pressable accessibilityRole="button" onPress={add} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', paddingHorizontal: 12 }}>
-          <Text style={{ color: p.accent, fontSize: p.font(13) }}>添加</Text>
-        </Pressable>
+      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-end' }}>
+        <View style={{ flex: 1 }}>
+          <TextField p={p} fontScale={p.fontScale} label="添加一条示例" value={draft} onChangeText={setDraft} onSubmitEditing={add} placeholder="例如：附近的充电站" />
+        </View>
+        <Button p={p} variant="tonal" label="添加" fontScale={p.fontScale} onPress={add} />
       </View>
       <Pressable accessibilityRole="button" onPress={() => onChange([...MOBILE_QUICK_COMMAND_ORDER])} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', alignSelf: 'flex-start' }}>
-        <Text style={{ color: p.accent, fontSize: p.font(13) }}>恢复默认示例</Text>
+        <Text style={[textStyle('labelL', p.fontScale), { color: p.accent }]}>恢复默认示例</Text>
       </Pressable>
+    </View>
+  )
+}
+
+/** 音色格子（Figma S-2）：三列，图标 + 名字（· 男 / · 女 取自引擎元数据）；选中 = accent 描边 + accent 浅底。
+ *  语义仍是单选：`choice-<voice_id>` 句柄沿用、选中进无障碍 selected */
+function VoiceGrid({
+  p,
+  voices,
+  value,
+  onPick,
+}: {
+  p: Palette
+  voices: { voice_id: string; name: string; gender?: string }[]
+  value: string
+  onPick(id: string): void
+}) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+      {voices.map((v) => {
+        const on = v.voice_id === value
+        const name = v.name + (v.gender === 'male' ? ' · 男' : v.gender === 'female' ? ' · 女' : '')
+        return (
+          <Pressable
+            key={v.voice_id}
+            testID={`choice-${v.voice_id}`}
+            accessibilityRole="button"
+            accessibilityLabel={`音色：${name}`}
+            accessibilityState={{ selected: on }}
+            onPress={() => onPick(v.voice_id)}
+            style={{
+              flexBasis: '30%',
+              flexGrow: 1,
+              minHeight: p.target(TARGET.parked),
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              paddingHorizontal: 12,
+              borderRadius: RADIUS.md,
+              borderWidth: 1,
+              borderColor: on ? p.accent : 'transparent',
+              backgroundColor: on ? p.accentSoft : p.surfaceHigh,
+            }}
+          >
+            {iconRuntimeAvailable() ? <Icon name={voiceIcon(v)} size={18} color={on ? p.accent : p.fg2} /> : null}
+            <Text numberOfLines={1} style={[textStyle('labelM', p.fontScale), { color: on ? p.accent : p.fg1, flexShrink: 1 }]}>
+              {name}
+            </Text>
+          </Pressable>
+        )
+      })}
     </View>
   )
 }
@@ -292,10 +385,11 @@ function PrivacyRecord({ p }: { p: Palette }) {
   useEffect(() => activityLog.subscribe(() => force((n) => n + 1)), [])
   const privacy = runtime?.snapshot.privacy
   const entries = activityLog.list().slice(0, 8)
+  const caption = textStyle('caption', p.fontScale)
   const row = (k: string, v: string, tone: string = p.fg1) => (
     <View key={k + v} style={{ flexDirection: 'row', gap: 12, paddingVertical: 4 }}>
-      <Text style={{ color: p.fg3, fontSize: p.font(12), width: 72 }}>{k}</Text>
-      <Text style={{ color: tone, fontSize: p.font(12), flex: 1 }}>{v}</Text>
+      <Text style={[caption, { color: p.fg3, width: 72 }]}>{k}</Text>
+      <Text style={[caption, { color: tone, flex: 1 }]}>{v}</Text>
     </View>
   )
   return (
@@ -308,17 +402,17 @@ function PrivacyRecord({ p }: { p: Palette }) {
           {row('画面上传', privacy.visionUploading ? '单帧上传中' : '无')}
         </>
       ) : (
-        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>连上座舱后这里会显示麦克风与摄像头此刻的状态</Text>
+        <Text style={[caption, { color: p.fg3 }]}>连上座舱后这里会显示麦克风与摄像头此刻的状态</Text>
       )}
-      <Text style={{ color: p.fg2, fontSize: p.font(12), marginTop: 6 }}>最近激活（本次启动后，只在本机、不上传）</Text>
+      <Text style={[caption, { color: p.fg2, marginTop: 6 }]}>最近激活（本次启动后，只在本机、不上传）</Text>
       {entries.length ? (
         entries.map((e) => (
-          <Text key={`${e.at}-${e.source}`} style={{ color: p.fg3, fontSize: p.font(12) }}>
+          <Text key={`${e.at}-${e.source}`} style={[caption, { color: p.fg3 }]}>
             {hhmm(e.at)} · {ACTIVITY_SOURCE_LABEL[e.source]} · {e.note}
           </Text>
         ))
       ) : (
-        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>还没有采集</Text>
+        <Text style={[caption, { color: p.fg3 }]}>还没有采集</Text>
       )}
     </View>
   )
@@ -454,19 +548,13 @@ export function SettingsScreen() {
   }
   const connLabel =
     wiredSession?.connStatus === 'open' ? '已连接' : wiredSession?.connStatus === 'connecting' ? '正在连接' : '未连接'
-  const note = (text: string, tone: string = p.fg3) => (
-    <Text style={{ color: tone, fontSize: p.font(11), lineHeight: p.font(17) }}>{text}</Text>
-  )
-  const link = (href: '/state-gallery' | '/card-gallery' | '/presence-trail' | '/turn-timeline' | '/native-spike' | '/blur-spike' | '/capture-status' | '/debug' | '/voice-spike', label: string) => (
-    <Link href={href} style={{ color: p.accent, fontSize: p.font(14), paddingVertical: 6 }}>
-      {label}
-    </Link>
-  )
+  const caption = textStyle('caption', p.fontScale)
+  const dev = developmentDiagnosticsEnabled()
 
   return (
     // Modal 与 ScrollView 并列：同意页要盖住整屏，塞进 ScrollView 里会跟着滚
     <View style={{ flex: 1, backgroundColor: p.bg }}>
-    <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ padding: 14, paddingBottom: 14 + PRESENCE_LANE_DP, gap: 16 }}>
+    <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ paddingHorizontal: SPACE[3], paddingBottom: SPACE[3] + PRESENCE_LANE_DP, gap: SPACE[1] }}>
       {/* ── 通用 ── */}
       <Section p={p} title="通用">
         <ChoiceRow
@@ -498,7 +586,6 @@ export function SettingsScreen() {
           value={settings.keepAwake}
           onChange={(keepAwake) => set({ keepAwake })}
         />
-        <SubHead p={p} title="无障碍" />
         <SwitchRow
           p={p}
           settingKey="reduceMotionForce"
@@ -519,26 +606,20 @@ export function SettingsScreen() {
 
       {/* ── 助手 ── */}
       <Section p={p} title="助手">
-        <View style={{ gap: 6 }}>
-          <Text style={{ color: p.fg2, fontSize: p.font(13) }}>昵称（下一轮起生效）</Text>
-          <TextInput
+        <Block>
+          <TextField
+            p={p}
+            fontScale={p.fontScale}
+            label="昵称（下一轮起生效）"
+            helper="唤醒词不变，仍是「小舟小舟」"
             value={nameDraft}
             onChangeText={setNameDraft}
             onEndEditing={() => {
               const v = nameDraft.trim()
               if (v) set({ assistantName: v })
             }}
-            style={{
-              borderWidth: 1,
-              borderColor: p.line,
-              borderRadius: 10,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              color: p.fg1,
-              fontSize: p.font(14),
-            }}
           />
-        </View>
+        </Block>
         <ChoiceRow
           p={p}
           label="回答长度"
@@ -561,20 +642,24 @@ export function SettingsScreen() {
           ]}
           onPick={(model) => set({ model })}
         />
-        <SubHead p={p} title="首页示例" />
-        {note('首页与欢迎态显示的示例指令；没有对应能力的会自动隐藏')}
-        <QuickCommandsEditor p={p} commands={settings.quickCommands} onChange={(quickCommands) => set({ quickCommands })} />
+      </Section>
+
+      <Section p={p} title="首页示例">
+        <NoteRow p={p} text="首页与欢迎态显示的示例指令；没有对应能力的会自动隐藏" />
+        <Block>
+          <QuickCommandsEditor p={p} commands={settings.quickCommands} onChange={(quickCommands) => set({ quickCommands })} />
+        </Block>
       </Section>
 
       {/* ── 语音 ── */}
       <Section p={p} title="语音">
-        <SubHead p={p} title="语音输入" />
-        {note('实时=边说边上屏；整句=松手后整段上传再出字（MiniMax / MiMo 这类转写接口）。以前的「不用流式」并进整句')}
+        {/* 拍板（计划 §5）：长选项缩成「实时 / 整句」，原来括号里的话搬到说明行（说明取共享表的 hint，不另写一份） */}
         <ChoiceRow
           p={p}
           label="识别方式"
           value={asrMode}
-          options={ASR_MODES.map((m) => ({ v: m.id, label: `${m.label}（${m.hint}）` }))}
+          options={ASR_MODES.map((m) => ({ v: m.id, label: m.label }))}
+          note={ASR_MODES.map((m) => `${m.label}：${m.hint}`).join('；')}
           onPick={(mode) => {
             if (mode === asrMode) return
             // 换方式：优先本端默认那一对（fun-asr 主），其次该方式下首个可用；(provider, model) 永远成对写入
@@ -607,8 +692,6 @@ export function SettingsScreen() {
           ]}
           onPick={(asrLanguage) => set({ asrLanguage })}
         />
-
-        <SubHead p={p} title="播报" />
         <ChoiceRow
           p={p}
           label="播报"
@@ -618,12 +701,12 @@ export function SettingsScreen() {
             { v: 'always' as const, label: '总是' },
             { v: 'silent' as const, label: '静音' },
           ]}
+          note="自动：用语音问才播报，打字只显示文字（默认）。总是：打字也播报。静音：完全不出声（试听仍可用）。"
           onPick={(speakPolicy) => {
             set({ speakPolicy })
             if (speakPolicy === 'silent') speechController().stop() // 关掉要立刻停当前这段
           }}
         />
-        {note('自动：用语音问才播报，打字只显示文字（默认）。总是：打字也播报。静音：完全不出声（试听仍可用）。')}
         <SwitchRow
           p={p}
           settingKey="hapticsEnabled"
@@ -643,7 +726,7 @@ export function SettingsScreen() {
         {ttsCatalog.length ? (
           <ChoiceRow
             p={p}
-            label="引擎"
+            label="播报引擎"
             value={settings.ttsProvider}
             options={ttsCatalog.map((e) => ({
               v: e.id,
@@ -657,103 +740,101 @@ export function SettingsScreen() {
           />
         ) : null}
         {ttsEngine?.voices?.length ? (
-          <ChoiceRow
+          <ListItem
             p={p}
-            label="音色"
-            value={settings.voiceId}
-            options={ttsEngine.voices.map((v) => ({
-              v: v.voice_id,
-              label: v.name + (v.gender === 'male' ? '·男' : v.gender === 'female' ? '·女' : ''),
-            }))}
-            onPick={(voiceId) => set({ voiceId })}
+            title="音色"
+            fontScale={p.fontScale}
+            below={<VoiceGrid p={p} voices={ttsEngine.voices} value={settings.voiceId} onPick={(voiceId) => set({ voiceId })} />}
           />
         ) : null}
-        <Pill
-          p={p}
-          tone="accent"
-          testID="voice-preview"
-          disabled={previewing || !server?.audioUrl}
-          label={previewing ? '播放中…' : '试听'}
-          onPress={() => {
-            setPreviewing(true)
-            setPreviewMsg('')
-            void speechController(server?.audioUrl)
-              .preview('你好，我是' + settings.assistantName + '，这是当前音色的效果。')
-              .then((sounded) => {
-                // 打磨批 B（评审 P17 / D5）：用户话术；引擎 key 是不是配了属于服务端排障，不在这里说
-                if (!sounded) setPreviewMsg('这个音色暂时不可用，换一个试试。')
-              })
-              .finally(() => setPreviewing(false))
-          }}
-        />
-        {previewMsg ? (
-          <Text style={{ color: p.amber, fontSize: p.font(12), lineHeight: p.font(18) }}>
-            {previewMsg}
-          </Text>
-        ) : null}
-
-        {/* 免唤醒与端到端：开关**默认全关/最保守**，且每条都在屏上说清代价——
-            视觉与 S2S 是架构红线里点名要「文案说清差异」的两条
-            （CLAUDE.md §5「唯一的受控例外」条件③、「视觉单帧同款三条件」第三条）。 */}
-        <SubHead p={p} title="免唤醒与端到端" />
-        {!hfAvail.usable ? (
-          <>
-            {note('这个安装包里没有端侧语音引擎，免唤醒不可用；装上带语音引擎的版本后这里会自动出现。')}
-            {developerVisible ? note(`VAD=${String(hfAvail.vad)} / 唤醒词=${String(hfAvail.kws)}`) : null}
-          </>
-        ) : (
-          <>
-            <SwitchRow
+        <Block>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Button
               p={p}
-              settingKey="handsFree"
-              label="免唤醒对话"
-              desc="开启后麦克风常开：说唤醒词即可开始，答完 8 秒内可直接接着说。耗电，默认关"
-              value={settings.handsFree}
-              onChange={(handsFree) => set({ handsFree })}
-            />
-            {/* G-06：开关是意图、这一行是事实——回路没起来时开关照亮，但原因就在它下面，不让「亮着的开关」替死回路说话 */}
-            {settings.handsFree && runtime?.hf.error ? (
-              <Text testID="handsfree-error" style={{ color: p.amber, fontSize: p.font(11), lineHeight: p.font(17) }}>
-                {`免唤醒没有启动：${runtime.hf.error}。${runtime.hf.errorKind === 'permission' ? '请在系统设置里允许小舟随行使用麦克风' : '关掉再打开可以重试'}`}
-              </Text>
-            ) : null}
-            {settings.handsFree ? (
-              <SwitchRow
-                p={p}
-                settingKey="wakeWordEnabled"
-                label="唤醒词「小舟小舟」"
-                desc={
-                  hfAvail.kws
-                    ? '关掉后不常驻监听唤醒词，只保留「答完 8 秒内可接着说」'
-                    : '本安装包没有唤醒词引擎，只能用「答完接着说」'
-                }
-                value={settings.wakeWord && hfAvail.kws}
-                onChange={(wakeWord) => set({ wakeWord })}
-              />
-            ) : null}
-            <ChoiceRow
-              p={p}
-              label="语音链路"
-              value={settings.voicePipeline}
-              options={[
-                { v: 'classic' as const, label: '三段式（默认）' },
-                { v: 's2s' as const, label: '端到端' },
-              ]}
-              onPick={(voicePipeline) => {
-                // 首次切端到端弹一次性显式同意（方案 §5.2.2）；同意过的直接切；切回三段式永远不问
-                if (voicePipeline === 's2s' && needsS2sConsent(settings)) setConsentOpen(true)
-                else set({ voicePipeline })
+              testID="voice-preview"
+              variant="tonal"
+              fontScale={p.fontScale}
+              disabled={previewing || !server?.audioUrl}
+              label={previewing ? '播放中…' : '试听'}
+              onPress={() => {
+                setPreviewing(true)
+                setPreviewMsg('')
+                void speechController(server?.audioUrl)
+                  .preview('你好，我是' + settings.assistantName + '，这是当前音色的效果。')
+                  .then((sounded) => {
+                    // 打磨批 B（评审 P17 / D5）：用户话术；引擎 key 是不是配了属于服务端排障，不在这里说
+                    if (!sounded) setPreviewMsg('这个音色暂时不可用，换一个试试。')
+                  })
+                  .finally(() => setPreviewing(false))
               }}
             />
-            {note('三段式：收音时上传音频到语音识别服务，识别完成后将文字交给助手。端到端：仅在唤醒后的对话窗内上传原始音频；免唤醒待机时麦克风仍在本机监听，不上传音频。默认三段式。')}
-            {settings.voicePipeline === 's2s'
-              ? note('已选端到端：本机麦克风的原始音频会在每次唤醒后的对话窗内上传。', p.amber)
-              : null}
-            {settings.s2sConsentAt > 0
-              ? note(`已于 ${new Date(settings.s2sConsentAt).toLocaleString('zh-CN', { hour12: false })} 同意端到端上传原始音频`)
-              : null}
-          </>
-        )}
+            {previewMsg ? <Text style={[caption, { color: p.amber, flex: 1 }]}>{previewMsg}</Text> : null}
+          </View>
+        </Block>
+      </Section>
+
+      {/* ── 免唤醒与端到端 ──：开关**默认全关/最保守**，且每条都在屏上说清代价——
+          视觉与 S2S 是架构红线里点名要「文案说清差异」的两条
+          （CLAUDE.md §5「唯一的受控例外」条件③、「视觉单帧同款三条件」第三条）。
+          组里每行单独一项（不用 Fragment 包几行）：分组卡按子项画分隔线 */}
+      <Section p={p} title="免唤醒与端到端">
+        {!hfAvail.usable ? <NoteRow p={p} text="这个安装包里没有端侧语音引擎，免唤醒不可用；装上带语音引擎的版本后这里会自动出现。" /> : null}
+        {!hfAvail.usable && developerVisible ? <NoteRow p={p} text={`VAD=${String(hfAvail.vad)} / 唤醒词=${String(hfAvail.kws)}`} /> : null}
+        {hfAvail.usable ? (
+          <SwitchRow
+            p={p}
+            settingKey="handsFree"
+            label="免唤醒对话"
+            desc="开启后麦克风常开：说唤醒词即可开始，答完 8 秒内可直接接着说。耗电，默认关"
+            value={settings.handsFree}
+            onChange={(handsFree) => set({ handsFree })}
+          />
+        ) : null}
+        {/* G-06：开关是意图、这一行是事实——回路没起来时开关照亮，但原因就在它下面，不让「亮着的开关」替死回路说话 */}
+        {hfAvail.usable && settings.handsFree && runtime?.hf.error ? (
+          <Block>
+            <Text testID="handsfree-error" style={[caption, { color: p.amber }]}>
+              {`免唤醒没有启动：${runtime.hf.error}。${runtime.hf.errorKind === 'permission' ? '请在系统设置里允许小舟随行使用麦克风' : '关掉再打开可以重试'}`}
+            </Text>
+          </Block>
+        ) : null}
+        {hfAvail.usable && settings.handsFree ? (
+          <SwitchRow
+            p={p}
+            settingKey="wakeWordEnabled"
+            label="唤醒词「小舟小舟」"
+            desc={
+              hfAvail.kws
+                ? '关掉后不常驻监听唤醒词，只保留「答完 8 秒内可接着说」'
+                : '本安装包没有唤醒词引擎，只能用「答完接着说」'
+            }
+            value={settings.wakeWord && hfAvail.kws}
+            onChange={(wakeWord) => set({ wakeWord })}
+          />
+        ) : null}
+        {hfAvail.usable ? (
+          <ChoiceRow
+            p={p}
+            label="语音链路"
+            value={settings.voicePipeline}
+            options={[
+              { v: 'classic' as const, label: '三段式' },
+              { v: 's2s' as const, label: '端到端' },
+            ]}
+            note="三段式：收音时上传音频到语音识别服务，识别完成后将文字交给助手。端到端：仅在唤醒后的对话窗内上传原始音频；免唤醒待机时麦克风仍在本机监听，不上传音频。默认三段式。"
+            onPick={(voicePipeline) => {
+              // 首次切端到端弹一次性显式同意（方案 §5.2.2）；同意过的直接切；切回三段式永远不问
+              if (voicePipeline === 's2s' && needsS2sConsent(settings)) setConsentOpen(true)
+              else set({ voicePipeline })
+            }}
+          />
+        ) : null}
+        {hfAvail.usable && settings.voicePipeline === 's2s' ? (
+          <NoteRow p={p} tone={p.amber} text="已选端到端：本机麦克风的原始音频会在每次唤醒后的对话窗内上传。" />
+        ) : null}
+        {hfAvail.usable && settings.s2sConsentAt > 0 ? (
+          <NoteRow p={p} text={`已于 ${new Date(settings.s2sConsentAt).toLocaleString('zh-CN', { hour12: false })} 同意端到端上传原始音频`} />
+        ) : null}
       </Section>
 
       {/* ── 隐私 ── */}
@@ -782,15 +863,16 @@ export function SettingsScreen() {
           value={settings.visionEnabled}
           onChange={(visionEnabled) => set({ visionEnabled })}
         />
-        {settings.visionEnabled
-          ? note('拍到的画面只用于回答当前这一句，服务器上最多保留两分钟，不落盘、不进记忆、不进日志。手机上用的是后置摄像头（代替车外摄像头，卡片上会标「模拟」）。')
-          : null}
-        <SubHead p={p} title="隐私记录" />
-        <PrivacyRecord p={p} />
+        {settings.visionEnabled ? (
+          <NoteRow p={p} text="拍到的画面只用于回答当前这一句，服务器上最多保留两分钟，不落盘、不进记忆、不进日志。手机上用的是后置摄像头（代替车外摄像头，卡片上会标「模拟」）。" />
+        ) : null}
         {/* 打磨批 F（裁决 J3）：记录本机持久化后要有清除口；二次确认，清当前会话与存量。挂起台账是服务端的账，不动 */}
-        <Pressable
+        <ListItem
+          p={p}
+          kind="danger"
+          title="清除对话记录"
+          fontScale={p.fontScale}
           testID="settings-clear-history"
-          accessibilityRole="button"
           onPress={() =>
             Alert.alert('清除对话记录', '会同时清空当前会话与本机保存的记录，不可恢复。', [
               { text: '取消', style: 'cancel' },
@@ -805,43 +887,50 @@ export function SettingsScreen() {
               },
             ])
           }
-          style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', alignSelf: 'flex-start' }}
-        >
-          <Text style={{ color: p.red, fontSize: p.font(13) }}>清除对话记录</Text>
-        </Pressable>
+        />
         {clearResult ? (
-          <Text testID="settings-clear-history-result" style={{ color: clearResult.ok ? p.fg3 : p.amber, fontSize: p.font(11), lineHeight: p.font(17) }}>
-            {clearResult.ok
-              ? `已清除当前会话与本机记录（${new Date(clearResult.at).toLocaleTimeString('zh-CN', { hour12: false })}，删完已回读确认）`
-              : '当前会话已清空，但本机保存的记录没有删掉（存储层未兑现），可稍后再试；报问题时抄上底部构建行'}
-          </Text>
+          <Block>
+            <Text testID="settings-clear-history-result" style={[caption, { color: clearResult.ok ? p.fg3 : p.amber }]}>
+              {clearResult.ok
+                ? `已清除当前会话与本机记录（${new Date(clearResult.at).toLocaleTimeString('zh-CN', { hour12: false })}，删完已回读确认）`
+                : '当前会话已清空，但本机保存的记录没有删掉（存储层未兑现），可稍后再试；报问题时抄上底部构建行'}
+            </Text>
+          </Block>
         ) : null}
+      </Section>
+
+      <Section p={p} title="隐私记录">
+        <Block>
+          <PrivacyRecord p={p} />
+        </Block>
       </Section>
 
       {/* ── 账号与连接 ── */}
       <Section p={p} title="账号与连接">
         {/* 打磨批 B（评审 P17 / D5）：不再直出 URL 与令牌尾巴——完整地址在「重新配置」页 */}
-        <Text testID="settings-server" style={{ color: p.fg1, fontSize: p.font(14) }}>
-          {server ? `${connLabel} · ${serverName(server)}` : '尚未配置服务器'}
-        </Text>
-        {server ? (
-          // 身份取**服务端事实**；查不到就说没确认，不拿凭证尾巴冒充身份（AR05 F06）
-          <Text testID="settings-identity" style={{ color: p.fg3, fontSize: p.font(12) }}>
-            {session?.kind === 'ok' && session.summary.userId
-              ? `账号 ${session.summary.userId}${session.summary.vehicleId ? ` · 关联车辆 ${session.summary.vehicleId}` : ''}`
-              : '账号未确认 · 访问令牌已保存'}
+        <Block>
+          <Text testID="settings-server" style={[textStyle('bodyM', p.fontScale), { color: p.fg1 }]}>
+            {server ? `${connLabel} · ${serverName(server)}` : '尚未配置服务器'}
           </Text>
-        ) : null}
+          {server ? (
+            // 身份取**服务端事实**；查不到就说没确认，不拿凭证尾巴冒充身份（AR05 F06）
+            <Text testID="settings-identity" style={[caption, { color: p.fg3 }]}>
+              {session?.kind === 'ok' && session.summary.userId
+                ? `账号 ${session.summary.userId}${session.summary.vehicleId ? ` · 关联车辆 ${session.summary.vehicleId}` : ''}`
+                : '账号未确认 · 访问令牌已保存'}
+            </Text>
+          ) : null}
+        </Block>
         {/* 账号与能力（AR05 R14）：**服务端摘要**，不是客户端推断。三种「不能用」分开说——
             没授权 / 服务不在线 / 取不到；取不到就说取不到，不冒充「可用」也不冒充「没有」。 */}
-        <SubHead p={p} title="能力（服务端）" />
-        <SessionSummarySection
-          p={p}
-          result={session}
-          loading={sessionLoading}
-          onRefresh={() => void refreshSession(server)}
-        />
-        <SubHead p={p} title="能力开关（关掉的指令会被婉拒）" />
+        <Block>
+          <Text style={[textStyle('bodyM', p.fontScale), { color: p.fg1 }]}>能力摘要</Text>
+          <SessionSummarySection p={p} result={session} loading={sessionLoading} onRefresh={() => void refreshSession(server)} />
+        </Block>
+      </Section>
+
+      <Section p={p} title="能力开关">
+        <NoteRow p={p} text="关掉的指令会被婉拒" />
         {AGENT_CATALOG.map((a) => (
           <SwitchRow
             key={a.id}
@@ -853,27 +942,22 @@ export function SettingsScreen() {
             onChange={() => toggleAgent(a.id)}
           />
         ))}
-        {/* 身份与行车（B4-10 / 方案 §6.0 / AR05 R14）：**设备角色只决定布局**，
-            窗口尺寸不决定权限、横屏不决定你是驾驶员、平板不自动获得车控。
-            能不能控车由上面那份摘要如实说，这里只说布局。 */}
-        <SubHead p={p} title="设备角色与行车档" />
-        <Text testID="settings-device-role-note" style={{ color: p.fg2, fontSize: p.font(13) }}>
-          {settings.deviceRole === 'handheld'
-            ? '手持陪伴端 · 只决定布局'
-            : settings.deviceRole === 'mount'
-              ? '支架 · 副驾协同 · 只决定布局'
-              : '可信车载平板 · 只决定布局'}
-        </Text>
-        {note('选哪个角色都不会多出任何权限；能做什么看上面那份能力列表。')}
+      </Section>
+
+      {/* ── 设备（Figma S-4）── 身份与行车（B4-10 / 方案 §6.0 / AR05 R14）：**设备角色只决定布局**，
+          窗口尺寸不决定权限、横屏不决定你是驾驶员、平板不自动获得车控。能不能控车由「能力摘要」如实说，这里只说布局。
+          拍板（计划 §5）：选项缩成「手持 / 支架 / 车载平板」，原来的长标签搬到说明行 */}
+      <Section p={p} title="设备">
         <ChoiceRow
           p={p}
           label="设备角色"
           value={settings.deviceRole}
           options={[
             { v: 'handheld' as const, label: '手持' },
-            { v: 'mount' as const, label: '支架 / 副驾' },
-            { v: 'trusted-tablet' as const, label: '可信车载平板' },
+            { v: 'mount' as const, label: '支架' },
+            { v: 'trusted-tablet' as const, label: '车载平板' },
           ]}
+          note="只决定布局：支架 = 车载支架或副驾手持（行车时输入框折成键盘按钮）；车载平板 = 可信车载平板（行车时不出输入框）。选哪个都不会多出任何权限，能做什么看「能力摘要」。"
           onPick={(deviceRole) => set({ deviceRole })}
         />
         <SwitchRow
@@ -885,74 +969,53 @@ export function SettingsScreen() {
           onChange={(drivingManual) => set({ drivingManual })}
         />
         {autoDriving ? (
-          <Pressable
+          <ListItem
+            p={p}
             testID="driving-auto-exit"
-            accessibilityRole="button"
+            title="自动行车中 · 座舱判定为行驶"
             accessibilityLabel="自动行车中，退出行车档"
+            fontScale={p.fontScale}
+            right={<Text style={[textStyle('labelL', p.fontScale), { color: p.accent }]}>退出</Text>}
             onPress={() => core?.dismissDriving()}
-            style={{
-              minHeight: p.target(TARGET.parked),
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingHorizontal: 12,
-              borderRadius: 10,
-              backgroundColor: p.accentSoft,
-            }}
-          >
-            <Text style={{ color: p.fg2, fontSize: p.font(13) }}>自动行车中 · 座舱判定为行驶</Text>
-            <Text style={{ color: p.accent, fontSize: p.font(13), fontWeight: '600' }}>退出</Text>
-          </Pressable>
+          />
         ) : null}
-        <Link href="/onboarding" style={{ color: p.accent, fontSize: p.font(14), paddingVertical: 6 }}>
-          重新配置连接（保存后回对话页自动重连）
-        </Link>
+        <LinkRow p={p} href="/onboarding" title="重新配置连接" subtitle="保存后回对话页自动重连" />
       </Section>
 
-      {/* ── 开发者选项（prod 默认隐藏；判据 developerOptionsVisible）── */}
+      {/* ── 开发者（prod 默认隐藏；判据 developerOptionsVisible）── */}
       {developerVisible ? (
-        <Section p={p} title="开发者选项">
-          {note('只读的取证屏与画廊：不采集、不播放、不发送。报问题时把底部的构建行一起抄上。')}
-          {link('/state-gallery', '状态画廊')}
-          {link('/card-gallery', '卡片画廊')}
-          {link('/presence-trail', '在场轨迹')}
-          {link('/turn-timeline', '轮次时间线')}
-          {link('/native-spike', developmentDiagnosticsEnabled() ? '原生状态与触感测试' : '原生状态')}
-          {link('/blur-spike', '材质对照')}
-          {link('/capture-status', '采集状态（JSON）')}
-          {developmentDiagnosticsEnabled() ? (
-            <>
-              <SubHead p={p} title="操作诊断（只在 dev 包；会采集、播放或发送）" />
-              {link('/debug', '主链发送与回放探针')}
-              {link('/voice-spike', '语音采集与播放探针')}
-            </>
-          ) : null}
+        <Section p={p} title="开发者">
+          <NoteRow p={p} text="只读的取证屏与画廊：不采集、不播放、不发送。报问题时把底部的构建行一起抄上。" />
+          <LinkRow p={p} href="/state-gallery" title="状态画廊" />
+          <LinkRow p={p} href="/card-gallery" title="卡片画廊" />
+          <LinkRow p={p} href="/presence-trail" title="在场轨迹" />
+          <LinkRow p={p} href="/turn-timeline" title="轮次时间线" />
+          <LinkRow p={p} href="/native-spike" title={dev ? '原生状态与触感测试' : '原生状态'} />
+          <LinkRow p={p} href="/blur-spike" title="材质对照" />
+          <LinkRow p={p} href="/capture-status" title="采集状态（JSON）" />
+          {dev ? <NoteRow p={p} text="操作诊断（只在 dev 包；会采集、播放或发送）" /> : null}
+          {dev ? <LinkRow p={p} href="/debug" title="主链发送与回放探针" /> : null}
+          {dev ? <LinkRow p={p} href="/voice-spike" title="语音采集与播放探针" /> : null}
           {build.variant === 'prod' ? (
-            <Pressable
+            <ListItem
+              p={p}
+              kind="danger"
+              title="隐藏开发者选项"
+              fontScale={p.fontScale}
               testID="developer-hide"
-              accessibilityRole="button"
               onPress={() => set({ developerUnlocked: false })}
-              style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', alignSelf: 'flex-start' }}
-            >
-              <Text style={{ color: p.fg2, fontSize: p.font(13) }}>隐藏开发者选项</Text>
-            </Pressable>
+            />
           ) : null}
         </Section>
       ) : null}
 
       {/* 构建行：报问题先抄它。连点 DEVELOPER_UNLOCK_TAPS 次解锁开发者选项 */}
-      <Pressable testID="build-label-tap" onPress={onBuildTap} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}>
-        <Text
-          selectable
-          testID="build-label"
-          style={{ color: p.fg3, fontSize: p.font(11), textAlign: 'center' }}
-        >
+      <Pressable testID="build-label-tap" onPress={onBuildTap} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', marginTop: SPACE[2] }}>
+        <Text selectable testID="build-label" style={[caption, { color: p.fg3, textAlign: 'center' }]}>
           {buildLabel}
         </Text>
         {!developerVisible && buildTaps >= 3 ? (
-          <Text style={{ color: p.fg3, fontSize: p.font(11), textAlign: 'center' }}>
-            再点 {DEVELOPER_UNLOCK_TAPS - buildTaps} 次进入开发者选项
-          </Text>
+          <Text style={[caption, { color: p.fg3, textAlign: 'center' }]}>再点 {DEVELOPER_UNLOCK_TAPS - buildTaps} 次进入开发者选项</Text>
         ) : null}
       </Pressable>
     </ScrollView>

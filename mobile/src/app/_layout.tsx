@@ -10,6 +10,7 @@ import { AssistantProvider } from '@/features/assistant/AssistantProvider'
 import { AssistantFrame, AssistantSurface, CrossPageVoiceLayer } from '@/features/assistant/AssistantSurface'
 import { installAudioFocusHandlers } from '@/core/voice/audioFocus'
 import { usePalette } from '@/ui/theme'
+import { textStyle } from '@/ui/tokens'
 
 /** 常亮标签：固定一个，避免「按组件实例发标签」时漏 deactivate 导致锁泄漏 */
 const KEEP_AWAKE_TAG = 'xiaozhou-companion'
@@ -42,8 +43,11 @@ export default function RootLayout() {
       <CrossPageVoiceLayer>
       <Stack
       screenOptions={{
+        // 次级顶栏（v3 D9，Figma TopAppBar/Kind=Secondary）：返回 + 标题 titleM，底色 = 页面底、不画阴影线
         headerStyle: { backgroundColor: p.bg },
         headerTintColor: p.fg1,
+        headerTitleStyle: { fontSize: textStyle('titleM', settings.fontScale).fontSize, fontWeight: '500' },
+        headerShadowVisible: false,
         contentStyle: { backgroundColor: p.bg },
       }}
     >
