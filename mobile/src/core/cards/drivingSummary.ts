@@ -368,12 +368,14 @@ function merchantOrder(c: AnyCard): DrivingSummary {
   if (isChoices) {
     const options: AnyCard[] = Array.isArray(c.options) && c.options.length ? c.options : Array.isArray(c.items) ? c.items : []
     const top = options[0]
+    // 主数值已经是第一个选项的名字，按钮再写一遍名字就重复了（P4d 真机 `ce70e36f`）：按钮叫「选这个」，句子不变
+    const pick = firstButton(merchantActionButtons(c))
     return {
       icon: 'dining',
       title: `选择${o.brand}${c.choice_kind === 'store' ? '门店' : '商品'}`,
       main: str(top?.label) || str(top?.name) || '暂无选项',
-      sub: options.length > 1 ? `共 ${options.length} 个` : '',
-      button: firstButton(merchantActionButtons(c)),
+      sub: join([top?.subtitle, options.length > 1 ? `共 ${options.length} 个` : '']),
+      button: pick ? { label: '选这个', send_text: pick.send_text } : null,
     }
   }
   return {

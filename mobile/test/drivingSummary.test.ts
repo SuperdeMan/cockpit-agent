@@ -126,3 +126,11 @@ describe('对照画板', () => {
       .toMatchObject({ title: '看一看', main: '前方是双向四车道', sub: '右侧有行道树 · 模拟画面' })
   })
 })
+
+test('商户选品：主数值是第一个选项，副行给价格与数量，按钮叫「选这个」——句子仍是那个选项自己的', () => {
+  const s = sum({
+    type: 'merchant_choices', brand: '瑞幸', choice_kind: 'product',
+    options: [{ label: '生椰拿铁', subtitle: '¥16.00 起', send_text: '点一杯生椰拿铁' }, { label: '厚乳拿铁', send_text: '点一杯厚乳拿铁' }],
+  })
+  expect(s).toMatchObject({ title: '选择瑞幸商品', main: '生椰拿铁', sub: '¥16.00 起 · 共 2 个', button: { label: '选这个', send_text: '点一杯生椰拿铁' } })
+})
