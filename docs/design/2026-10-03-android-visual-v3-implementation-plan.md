@@ -4,6 +4,7 @@
   - 设计阶段 M0–M6 已于 2026-10-03 完成。
   - §5 的五项同日按推荐拍板。
   - 同日按泓舟意见，卡片设计从 v1 十二张扩到注册表全部 35 个卡型键，并新增车控结果卡（D17–D20）。
+  - 2026-10-03 起实施：P0–P3 已提交，进度与真机证据见[实施记录](2026-10-03-android-visual-v3-execution.md)。
 - **设计真相源**：Figma「小舟随行 · Android Visual v3」（`1jdZ6Cwp8pEtQJJUwg6NHS`），按页取用：
   - 10 Handoff：token ↔ 代码、组件 ↔ 代码文件、实现差异清单 D1–D16 与补充差异 D17–D20；
   - 02 Foundations：变量与对比度；03 Components：组件板；
