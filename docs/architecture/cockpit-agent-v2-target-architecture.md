@@ -99,7 +99,7 @@ CA2-03 首版已引入服务端稳定 ID 和来源关系，来源片段不是已
 真实 NATS 快照与 HTTP/WS 投影已验签，仍标 `source_kind=simulated`。本包证据见
 [车辆状态 §8.4](../design/2026-09-27-v2-vehicle-state-and-simulation.md#84-签名车道启用与真栈复验2026-09-28)。
 CA2-07 已把下述视图接入 Cloud WorkingSet 与 Agent SDK；主体权限和接收方需求分别校验，来源认证不代替字段授权。
-请求内只保存读取绑定/引用与有效期，晚到数据不复活旧权限，详见 [实现与证据](../design/2026-09-28-v2-permissioned-context-view.md)。S2S 直接历史、调试 HTTP 和量产全局撤销未纳入本包验收；其中记忆 / 声纹 HTTP 端点的主体授权已由 [CA2-15 S1a](../design/2026-10-02-v2-memory-identity-governance.md) 收口。
+请求内只保存读取绑定/引用与有效期，晚到数据不复活旧权限，详见 [实现与证据](../design/2026-09-28-v2-permissioned-context-view.md)。S2S 直接历史、调试 HTTP 和量产全局撤销未纳入本包验收；其后记忆 / 声纹 HTTP 端点的主体授权由 [CA2-15 S1a](../design/2026-10-02-v2-memory-identity-governance.md) 收口，S2S 直接历史由 CA2-15 S2 按 token 主体读取，collector 调试面要运维令牌（[调试面访问](../design/2026-10-03-v2-collector-access.md)）；量产全局撤销仍未做。
 
 CA2-06/12 首版已形成版本 2 观测信封、受控公钥→车辆/来源绑定、epoch/seq、逐信号采样/接收/过期时间、
 质量与单位；Python/Go 读者共用对照向量，签名启用与发布证据见 [本包记录](../design/2026-09-27-v2-vehicle-state-and-simulation.md)。

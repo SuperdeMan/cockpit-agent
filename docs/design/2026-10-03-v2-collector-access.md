@@ -1,6 +1,6 @@
 # Collector 调试面访问控制
 
-> 状态：2026-10-03 **用户批准**（凭据由现有 E2E 密钥派生；基础设施审批核对后执行）；**已实现、待发布**（§5）。来源：路线图 R2 第 6 项「S2S 直接历史与 collector 调试面的主体授权」，
+> 状态：2026-10-03 **用户批准**（凭据由现有 E2E 密钥派生；基础设施审批核对后执行）；**已部署 `7a3b38f9`**（§6）。来源：路线图 R2 第 6 项「S2S 直接历史与 collector 调试面的主体授权」，
 > [CA2-07 §3](2026-09-28-v2-permissioned-context-view.md) 与 [CA2-15](2026-10-02-v2-memory-identity-governance.md) 登记的未关闭边界。
 
 ## 1. 现状（2026-10-03 实测，代码与线上）
@@ -74,3 +74,13 @@ S2S 重建上下文时直接读 Memory（`llm-gateway/s2s/reflux.py::build_conte
 - 用例：令牌 9 种不可信情形；collector 每个非开放路由无凭据 401、伪造 403、e2e 身份令牌 403、未配置 503、拒绝带 CORS 头、
   `/stream` 三种失败都 1008 且之前不推数据；租约与 compose 的注入面；运行器签发；工具取令牌的先后与子进程不回退；
   `dev_stack dashboard` 注入且输出脱敏；dashboard 带令牌、被拒只问一次后重试、首帧认证与 1008 后丢弃令牌；发布探针先发认证帧。
+
+## 6. 发布与真栈核对（`7a3b38f9`）
+
+- 基础设施审批：dry-run 的变更清单只有 `deploy/cloud/probes/collector_ws_probe.py`、无安装项，三项本地校验通过后换锚
+  （`3a24c39a…` → `ef2be611…`）。部署：隔离 worktree，dry-run 零阻断、无 schema、CI/CD 摘要不变；status 5/5 零 warning；
+  部署过程中主机上的发布验收在 collector 容器里现签令牌探 `/stream` 通过。
+- `dev_stack verify`（跑改过的 `e2e_remote_safe`：运行器用本机 `.env` 签令牌，经 Tailscale 首帧认证收快照、带凭据读轨迹）通过，
+  证据 `20261003T065930Z-7a3b38f.json`——说明本机 `.env` 的密钥与云上一致，运维工具链可用。
+- 经 Tailscale 实测：不带凭据读会话 / 车态 / 导出与调试车态写入都是 401，伪造令牌 403，`/stream` 不认证或伪造都被 1008 关闭；带运维令牌读会话 200、`/stream` 收到快照；`/healthz`、`/api/agents` 照常 200。
+- 固定语料 20×3（临时干净 worktree）：60/60、102 轮，证据错误 0（带令牌读 collector 全部成功）、open operations 0，212 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 7594/18125/23766 ms；业务红 7 条：「未走手册」6 条（既有类别，V211 连带缺「2.9」），另有 V217 第 2 轮 1/3 首次出现 no_plan（「我问的是广州的天气」规划两次都没出计划，回了「没听清」）——主链路这次没改，登记观察。

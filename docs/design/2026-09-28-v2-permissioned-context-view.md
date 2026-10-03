@@ -39,6 +39,7 @@ RequestView 只保存本轮身份/权限快照与读取有效期，不存另一�
 
 本包覆盖 Cloud WorkingSet/Planner、D0/T2、Agent SDK 和对应模型调用；S2S 的直接历史重建并不经 WorkingSet，
 其语音会话主体授权接入归 CA2-16/22 的身份与跨端边界，未因本包关闭。既有 Tailnet 调试/管理 HTTP 的 Memory 读取也不因模型投影生效而获得完整 API 授权，本包不作该声明。没有接入的全局 IdP/token 撤销，以及已经发到供应商的数据回收不冒充已实现。
+（2026-10-03 更新：S2S 会话主体与直接历史已在 [CA2-15 S2](2026-10-02-v2-memory-identity-governance.md) 按 token 主体收口；collector 调试面要运维令牌，见 [调试面访问](2026-10-03-v2-collector-access.md)。）
 
 ## 4. 验证要求
 

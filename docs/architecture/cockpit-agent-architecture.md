@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.59（Cloud/Agent 权限化上下文视图；版本规则见附录 C）
-> 日期：2026-09-28；CA2-02–07/12 首版已有实现，运行与验收证据按独立 SHA 登记。
+> 版本：v1.60（collector 调试面运维凭据；版本规则见附录 C）
+> 日期：2026-10-03；CA2-02–07/12 首版已有实现，运行与验收证据按独立 SHA 登记。
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -12,7 +12,7 @@
 > v2 完整目标写在 [目标分册](cockpit-agent-v2-target-architecture.md)。CA2-02–04 见
 > [首批记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md)，CA2-05 见 [能力契约](../design/2026-09-27-v2-capability-contract.md)，
 > CA2-06/12 见 [车辆状态与仿真](../design/2026-09-27-v2-vehicle-state-and-simulation.md)（兼容与来源签名车道均已真栈复验，仍是模拟来源）；
-> CA2-07 见 [上下文视图](../design/2026-09-28-v2-permissioned-context-view.md)：Cloud/Agent 模型输入按权限投影；S2S、调试 HTTP 和全局身份治理另验。
+> CA2-07 见 [上下文视图](../design/2026-09-28-v2-permissioned-context-view.md)：Cloud/Agent 模型输入按权限投影；S2S 直接历史按 token 主体读取（CA2-15 S2），collector 调试面要运维令牌（[调试面访问](../design/2026-10-03-v2-collector-access.md)）；全局身份治理另验。
 > Decide、T1e、持久操作、量产多车账号与 ACL 仍未实现。
 
 ---
@@ -993,6 +993,9 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
 经 REST 提供给独立 `dashboard`（会话→轮次→详情三级下钻）。事件不改 gRPC 契约；
 完整 payload 与安全边界见 `docs/design/2026-06-15-observability-dashboard.md`（首版）与
 `docs/design/2026-07-10-dashboard-badcase-observability-redesign.md`（badcase 贯通）。
+collector 的合法主体是运维者：除 `/healthz`、`/metrics`、`/api/agents` 外，读写都要运维令牌（`runtime/obs_access.py`，
+密钥由 `E2E_IDENTITY_SECRET` 按独立用途派生，HTTP 只认 Bearer，`/stream` 首帧认证），见
+[调试面访问](../design/2026-10-03-v2-collector-access.md)（2026-10-03）。
 
 ### 8.1 LLM 网关多模型运行时（2026-07-17 定稿归档）
 
@@ -1101,7 +1104,7 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
   Prometheus `/metrics` + OTel 桥接由 R3.6 落地（`--profile observability` 门控）；
   `obs.llm` 自 2026-07-17 增 `provider`/`requested_tier`/`pinned` 归属字段
   （collector `llm_calls` 落 `provider` 列——「哪个脑答的」按 trace 可审计）。
-- **目标态差距**：告警、多车/多租户与正式鉴权（含 collector 鉴权边界）、采样与容量治理
+- **目标态差距**：告警、多车/多租户、按车主分权的正式鉴权（collector 目前只有单一运维主体）、采样与容量治理
   仍属于后续量产工作。
 - **评测体系**：
   - 意图分类：标注集 + 离线准确率/召回。
@@ -1296,4 +1299,5 @@ Phase 0 的链路骨架与 Phase 1 的工程化主干已形成；完整 Phase 1 
 | v1.56 | 2026-09-28 | 结果保留键 `_speech_verbatim` 与聚合确定性组合：手册答案不再经模型二次改写，保留卡片、失败、验证与动作契约；不宣称上游生成已无错误。 |
 | v1.57 | 2026-09-28 | 已登记胎压告警以指纹绑定的原文片段保留状态、处置与前提；失配弃权，普通请求保留原链；新增六句完整片段专项，不改原冻结基线。 |
 | v1.58 | 2026-09-28 | 启用模拟车辆 Ed25519 来源签名；私钥仅驻 edge 生产者，读取方接公钥策略，实际快照/HTTP/WS 隔离复验通过；CA2-07 权限化视图仍为下一包，签名不证明实车动作或授权。 |
+| v1.60 | 2026-10-03 | collector 调试面要运维令牌（单一运维主体，除健康与指标外的读写；令牌由现有 E2E 密钥派生、HTTP Bearer、`/stream` 首帧认证）；S2S 直接历史已按 token 主体读取。 |
 | v1.59 | 2026-09-28 | CA2-07 首版：WorkingSet/SDK 读取与模型投影共用主体权限，接收方需求独立过滤；请求身份、权限与有界观测失效后丢弃晚到结果。Cloud/Agent 证据与 S2S/调试 HTTP/全局身份未验面分栏。 |
