@@ -94,7 +94,7 @@ export function ListItem({
 }
 
 /** 分组容器：surface 底、圆角 16、行间 line 分隔（null / false 子项不占分隔线） */
-export function ListGroup({ p, children, testID, style }: { p: Palette; children: ReactNode; testID?: string; style?: StyleProp<ViewStyle> }) {
+export function ListGroup({ p, children, testID, style }: { p: Palette; children?: ReactNode; testID?: string; style?: StyleProp<ViewStyle> }) {
   const items = Children.toArray(children).filter(isValidElement)
   return (
     <View testID={testID} style={[{ backgroundColor: p.surface, borderRadius: RADIUS.lg, overflow: 'hidden' }, style]}>

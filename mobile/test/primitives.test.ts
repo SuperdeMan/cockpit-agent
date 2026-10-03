@@ -116,7 +116,7 @@ describe('ListItem / ListGroup', () => {
       createElement(ListItem, { key: 'b', p, title: 'b' }),
       createElement(ListItem, { key: 'c', p, title: 'c' }),
     ]
-    const view = await mount(createElement(ListGroup, { p, testID: 'g', children: rows }))
+    const view = await mount(createElement(ListGroup, { p, testID: 'g' }, ...rows))
     try {
       const lines = host(view, 'g').findAll((n) => typeof n.type === 'string' && flat(n.props.style).height === 1)
       expect(lines).toHaveLength(2)
