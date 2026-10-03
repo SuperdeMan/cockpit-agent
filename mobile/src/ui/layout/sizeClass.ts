@@ -62,6 +62,17 @@ export function layoutMode(i: LayoutInput): LayoutMode {
   return 'single'
 }
 
+/** 支持页（设置 / 车况 / 地图）的大屏版式（v3 P6，Figma 07 页 SP 组）：与对话双栏同一条宽度线——720 是内容约束
+ *  （§7.2 Q3），不是「折叠屏一定双栏」；行车档不出（§6 一屏一事，支持页照旧单栏）。三个支持页都只读这一处 */
+export function supportWide(width: number, driving: boolean): boolean {
+  return !driving && width >= TWO_PANE_MIN_WIDTH
+}
+
+/** 设置页大屏版式左侧导航列宽（Figma SP-1：240） */
+export const SUPPORT_NAV_WIDTH = 240
+/** 地图大屏版式右侧信息栏宽（Figma SP-3：320，与舞台最小宽同值） */
+export const SUPPORT_SIDE_WIDTH = STAGE_MIN_WIDTH
+
 /** 舞台宽：clamp(320, 42%, 440)；large / extra-large 上限 520 */
 export function stageWidth(width: number): number {
   const wc = widthClass(width)

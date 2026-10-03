@@ -12,6 +12,7 @@ import type { Msg, ReminderItem, ReminderListCard, UiCard } from '@shared/types.
 
 import { CardIcon } from '../cards/parts'
 import type { Palette } from '../../ui/theme'
+import { textStyle } from '../../ui/tokens'
 
  
 
@@ -39,25 +40,30 @@ export function latestReminderCard(messages: Msg[]): ReminderListCard | null {
 
 const STATUS_DIM = new Set(['done', 'cancelled'])
 
+/** 组内一行（Figma 07 A-1 提醒段）：时刻在前（accent numeric/m，组标签已经说了哪天，这里只给本地 HH:mm）+ 标题 body/m。
+ *  没有触发时刻的（待办）给一个方框图标占时刻位 */
 function Row({ p, item }: { p: Palette; item: ReminderItem }) {
   const dim = STATUS_DIM.has(item.status)
+  const at = item.fire_at_ms ? new Date(item.fire_at_ms) : null
+  const clock = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : ''
   return (
-    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', paddingVertical: 2 }}>
-      <CardIcon p={p} name={item.kind === 'todo' ? 'square' : 'clock'} size={14} color={dim ? p.fg3 : p.fg2} />
+    <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', paddingVertical: 6 }}>
+      {clock ? (
+        <Text style={[textStyle('numericM', p.fontScale), { color: dim ? p.fg3 : p.accent, minWidth: 44 }]}>{clock}</Text>
+      ) : (
+        <View style={{ minWidth: 44 }}>
+          <CardIcon p={p} name={item.kind === 'todo' ? 'square' : 'clock'} size={16} color={dim ? p.fg3 : p.fg2} />
+        </View>
+      )}
       <Text
-        style={{
-          color: dim ? p.fg3 : p.fg1,
-          fontSize: p.font(12),
-          flex: 1,
-          textDecorationLine: item.status === 'done' ? 'line-through' : 'none',
-        }}
+        style={[
+          textStyle('bodyM', p.fontScale),
+          { color: dim ? p.fg3 : p.fg1, flex: 1, textDecorationLine: item.status === 'done' ? 'line-through' : 'none' },
+        ]}
         numberOfLines={1}
       >
         {item.title}
       </Text>
-      {item.time_display ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>{item.time_display}</Text>
-      ) : null}
     </View>
   )
 }
@@ -73,17 +79,17 @@ export function ReminderSection({ p, messages }: { p: Palette; messages: Msg[] }
   const { groups, more } = groupByDay(live, Date.now(), 6)
 
   return (
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: p.fg3, fontSize: p.font(12) }}>提醒</Text>
+    <View style={{ gap: 8 }}>
+      <Text style={[textStyle('labelM', p.fontScale), { color: p.fg3 }]}>提醒</Text>
       {!card ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>问一句「我今天有什么提醒」就会出现在这里</Text>
+        <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>问一句「我今天有什么提醒」就会出现在这里</Text>
       ) : !live.length ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>没有待办提醒</Text>
+        <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>没有待办提醒</Text>
       ) : (
         <>
           {groups.map((g: { label: string; items: ReminderItem[] }) => (
-            <View key={g.label} style={{ gap: 2 }}>
-              <Text style={{ color: p.fg3, fontSize: p.font(11) }}>{g.label}</Text>
+            <View key={g.label} style={{ gap: 0 }}>
+              <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>{g.label}</Text>
               {g.items.map((it) => (
                 <Row key={it.id} p={p} item={it} />
               ))}
@@ -91,11 +97,11 @@ export function ReminderSection({ p, messages }: { p: Palette; messages: Msg[] }
           ))}
           {/* 无 fire_at 的条目 groupByDay 会滤掉——数不上就明说，别让它们静默消失 */}
           {live.some((it) => !it.fire_at_ms) ? (
-            <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
+            <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>
               另有 {live.filter((it) => !it.fire_at_ms).length} 条未定时
             </Text>
           ) : null}
-          {more ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>还有 {more} 条</Text> : null}
+          {more ? <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>还有 {more} 条</Text> : null}
         </>
       )}
     </View>

@@ -6,7 +6,7 @@
 //     没几何的路线卡与天气卡都不渲地图。判据本身在 mapGeometry.test，这里验宿主消费得对。
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { View } from 'react-native'
+import { Text, View } from 'react-native'
 
 jest.mock('react-native-reanimated', () => require('./support/reanimatedMock'))
 // 内嵌地图本体要原生 amap3d（jest 里缺席 ⇒ MAP_AVAILABLE=false 就不渲）。这里把它替成一个带 testID 的占位，
@@ -43,14 +43,15 @@ function pane(over: Record<string, unknown>) {
 }
 
 describe('桌面姿态横排', () => {
-  test('传了 orb ⇒ stage-tabletop 横排：球列 + stage-pane 可滚区并排；模式行仍写「舞台 · 桌面」', async () => {
+  test('传了 orb ⇒ stage-tabletop 横排：球列 + stage-pane 可滚区并排；模式只进 testID（v3 P6：不显示「舞台 · 桌面」内部名）', async () => {
     const view = await mount(pane({ mode: '桌面', orb: { state: 'idle', animated: false, driving: false }, topHeight: 246 }))
     try {
       expect(has(view, 'stage-tabletop')).toBe(true)
       expect(has(view, 'stage-orb-column')).toBe(true)
       expect(has(view, 'stage-pane')).toBe(true)
-      const mode = view.root.findAllByProps({ testID: 'stage-mode' }).find((n) => n.props.children)
-      expect(String(mode?.props.children.join ? mode?.props.children.join('') : mode?.props.children)).toContain('桌面')
+      expect(has(view, 'stage-mode-tabletop')).toBe(true)
+      const texts = view.root.findAllByType(Text).map((n) => [n.props.children].flat().join(''))
+      expect(texts.some((t) => t.includes('舞台 ·'))).toBe(false)
       // 球列宽 = 球径 + 16：OPPO 上半 246 ⇒ 120 球
       const col = view.root.findAllByProps({ testID: 'stage-orb-column' }).find((n) => n.type === View)!
       expect(flat(col.props.style).width).toBe(120 + 16)

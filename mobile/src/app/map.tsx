@@ -8,7 +8,7 @@
 // 从 store 取会让同一个页面在会话推进后显示另一批点。
 import { useLocalSearchParams, usePathname } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Dimensions, Text, View } from 'react-native'
+import { Dimensions, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
@@ -16,9 +16,11 @@ import { AMAP_KEY, MAP_AVAILABLE } from '@/core/map/available'
 import { fitCamera, type Camera, type Viewport } from '@/core/map/fit'
 import { fitPointsOf, parseGeometryParams } from '@/core/map/geometry'
 import { settingsStore } from '@/core/settings/store'
+import { useAssistant } from '@/features/assistant/AssistantProvider'
 import { ensureAmapInit } from '@/features/map/amapInit'
 import { MapLayers, roleGlyph } from '@/features/map/MapLayers'
-import { reportBottomChrome } from '@/ui/layout/bottomChrome'
+import { PRESENCE_LANE_DP, reportBottomChrome } from '@/ui/layout/bottomChrome'
+import { SUPPORT_SIDE_WIDTH, supportWide } from '@/ui/layout/sizeClass'
 import { Pill } from '@/ui/Pill'
 import { usePalette } from '@/ui/theme'
 import { RADIUS, textStyle } from '@/ui/tokens'
@@ -34,6 +36,8 @@ const FALLBACK_ZOOM = 11
 /** 留白：底部信息条会盖住地图（约 96dp + 安全区），所以 bottom 给得比其它三边大得多，
  *  否则「装进画面」算出来的点会正好藏在信息条底下——那等于没 fit。 */
 const FIT_PADDING = { top: 64, right: 56, bottom: 168, left: 56 }
+/** 大屏（v3 P6，Figma 07 SP-3）：信息在右侧栏，地图底部不再被盖住 */
+const FIT_PADDING_WIDE = { top: 56, right: 56, bottom: 56, left: 56 }
 const SINGLE_ZOOM = 16
 
 export default function MapScreen() {
@@ -50,6 +54,15 @@ export default function MapScreen() {
   // 离开本页即清零，设置页不该被地图的信息条顶高。
   const pathname = usePathname()
   useEffect(() => () => reportBottomChrome(pathname, 0), [pathname])
+  // 大屏版式（v3 P6）：判据只读 sizeClass.supportWide；行车事实取助手运行时的在场快照（没有运行时就看手动行车档）
+  const { width: windowWidth } = useWindowDimensions()
+  const runtime = useAssistant()
+  const wide = supportWide(windowWidth, runtime?.snapshot.driving ?? settings.drivingManual)
+  const fitPadding = wide ? FIT_PADDING_WIDE : FIT_PADDING
+  // 大屏没有底部信息条：占位清零（浮动在场回到屏幕右下）
+  useEffect(() => {
+    if (wide) reportBottomChrome(pathname, 0)
+  }, [wide, pathname])
 
   // 高德 SDK 初始化（判据与理由见 features/map/amapInit.ts；必须在渲染期、早于原生视图创建）
   ensureAmapInit(AMAP_KEY)
@@ -62,7 +75,7 @@ export default function MapScreen() {
   const initialCamera: Camera = useMemo(
     () =>
       fitCamera(fitPts, { width: win.width, height: win.height }, {
-        padding: FIT_PADDING,
+        padding: fitPadding,
         singleZoom: SINGLE_ZOOM,
       }) ?? { target: FALLBACK_CENTER, zoom: FALLBACK_ZOOM },
     // 估算相机只在点集变化时重算——把 win 放进依赖会让它随每次旋转重建，没有意义
@@ -73,11 +86,11 @@ export default function MapScreen() {
 
   const fitCam = useMemo(
     () =>
-      fitCamera(fitPts, viewport, { padding: FIT_PADDING, singleZoom: SINGLE_ZOOM }) ?? {
+      fitCamera(fitPts, viewport, { padding: fitPadding, singleZoom: SINGLE_ZOOM }) ?? {
         target: FALLBACK_CENTER,
         zoom: FALLBACK_ZOOM,
       },
-    [fitPts, viewport],
+    [fitPts, viewport, fitPadding],
   )
 
   const [selected, setSelected] = useState<number | null>(null)
@@ -148,8 +161,29 @@ export default function MapScreen() {
   const selGlyph = sel ? roleGlyph(p, sel.role, selected ?? 0) : null
   const hasRoute = geometry.path.length >= 2
 
-  return (
-    <View style={{ flex: 1, backgroundColor: p.bg }}>
+  // 副标题：两种版式同一句（窄屏信息条 / 大屏侧栏）
+  const subtitleText = geometry.subtitle
+    ? `${geometry.subtitle}${pts.length ? ' · 点标注看详情' : ''}`
+    : pts.length
+      ? `${pts.length} 个点 · 点按查看详情`
+      : hasRoute
+        ? '路线'
+        : '没有可显示的坐标'
+  const fitPill = pts.length || hasRoute ? (
+    <Pill
+      p={p}
+      testID="map-fit"
+      tone="accent"
+      solid
+      label={fitPts.length > 1 ? '全览' : '回中'}
+      onPress={() => {
+        setSelected(null)
+        fitToPoints(300)
+      }}
+    />
+  ) : null
+
+  const mapView = (
       <MapView
         ref={mapRef}
         style={{ flex: 1 }}
@@ -173,6 +207,73 @@ export default function MapScreen() {
       >
         <MapLayers p={p} points={pts} path={geometry.path} onPressPoint={selectPoint} />
       </MapView>
+  )
+
+  if (wide) {
+    // Figma 07 SP-3：左地图、右信息栏（surface/high 实色，左缘分隔线）；点一行 = 点那个标注，选中行 accent 浅底
+    return (
+      <View testID="map-wide" style={{ flex: 1, backgroundColor: p.bg, flexDirection: 'row' }}>
+        <View style={{ flex: 1 }}>{mapView}</View>
+        <View
+          testID="map-side-panel"
+          style={{ width: SUPPORT_SIDE_WIDTH, backgroundColor: p.surfaceHigh, borderLeftWidth: 1, borderColor: p.line }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12 }}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={[textStyle('titleM', settings.fontScale), { color: p.fg1 }]} numberOfLines={2}>
+                {geometry.title || '地图'}
+              </Text>
+              <Text style={[textStyle('caption', settings.fontScale), { color: p.fg2 }]}>{subtitleText}</Text>
+            </View>
+            {fitPill}
+          </View>
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 16 + PRESENCE_LANE_DP, gap: 2 }}>
+            {pts.map((pt, i) => {
+              const g = roleGlyph(p, pt.role, i)
+              const on = selected === i
+              return (
+                <Pressable
+                  key={`${pt.role ?? 'poi'}:${pt.name}:${i}`}
+                  testID={`map-side-row-${i}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  onPress={() => selectPoint(i)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    minHeight: 56,
+                    paddingHorizontal: 8,
+                    paddingVertical: 6,
+                    borderRadius: RADIUS.md,
+                    backgroundColor: on ? p.accentSoft : undefined,
+                  }}
+                >
+                  <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: g.color, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={[textStyle('labelM'), { color: g.on }]}>{g.text}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[textStyle('bodyM', settings.fontScale), { color: p.fg1 }]} numberOfLines={2}>
+                      {pt.name}
+                    </Text>
+                    {pt.address ? (
+                      <Text style={[textStyle('caption', settings.fontScale), { color: p.fg3 }]} numberOfLines={1}>
+                        {pt.address}
+                      </Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+              )
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    )
+  }
+
+  return (
+    <View style={{ flex: 1, backgroundColor: p.bg }}>
+      {mapView}
 
       {/* ⚠ 这条**不用** `Glass`：Aurora 的玻璃底是半透明的，靠叠在 AuroraBackground 的
           深空渐变上才成立（RN 无 backdrop-filter，M3-V 记录里写死了这条前提）。
@@ -217,13 +318,7 @@ export default function MapScreen() {
                   {geometry.title || '地图'}
                 </Text>
                 <Text style={[textStyle('caption', settings.fontScale), { color: p.fg2 }]} numberOfLines={1}>
-                  {geometry.subtitle
-                    ? `${geometry.subtitle}${pts.length ? ' · 点标注看详情' : ''}`
-                    : pts.length
-                      ? `${pts.length} 个点 · 点按查看详情`
-                      : hasRoute
-                        ? '路线'
-                        : '没有可显示的坐标'}
+                  {subtitleText}
                 </Text>
               </>
             )}
@@ -232,19 +327,7 @@ export default function MapScreen() {
           {sel ? (
             <Pill p={p} testID="map-close-detail" solid accessibilityLabel="收起详情" label="收起" onPress={() => setSelected(null)} />
           ) : null}
-          {pts.length || hasRoute ? (
-            <Pill
-              p={p}
-              testID="map-fit"
-              tone="accent"
-              solid
-              label={fitPts.length > 1 ? '全览' : '回中'}
-              onPress={() => {
-                setSelected(null)
-                fitToPoints(300)
-              }}
-            />
-          ) : null}
+          {fitPill}
         </View>
       </View>
     </View>

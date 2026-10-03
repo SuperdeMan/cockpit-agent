@@ -12,6 +12,7 @@ import {
   layoutMode,
   screenSwitch,
   stageWidth,
+  supportWide,
   tabletopSplit,
   tabletopStage,
   widthClass,
@@ -104,4 +105,12 @@ describe('外屏 ↔ 内屏切换（§7.4）', () => {
     expect(screenSwitch({ state: 'flat' }, { state: 'halfOpened' })).toBeNull()
     expect(screenSwitch(null, { state: 'flat' })).toBeNull()
   })
+})
+
+test('支持页大屏版式（v3 P6）：与对话双栏同一条 720 线；行车档一律单栏', () => {
+  expect(supportWide(719, false)).toBe(false)
+  expect(supportWide(720, false)).toBe(true)
+  expect(supportWide(847, false)).toBe(true) // 折叠内屏
+  expect(supportWide(847, true)).toBe(false) // 行车档
+  expect(supportWide(360, false)).toBe(false) // 外屏
 })

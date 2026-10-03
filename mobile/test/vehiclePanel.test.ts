@@ -130,3 +130,13 @@ test('CA2-06：保留模拟与部分过期说明，不把旧读数说成实时�
     expect(texts).not.toContain('与座舱实时同步')
   } finally { await act(async () => { view.unmount() }) }
 })
+
+test('v3 P6：大屏明细对半分进左右两组，「其他」跟在右组', async () => {
+  const view = await mount(createElement(VehicleDetails, { p, vehState: { ...vehicleStateSample, weird_key: 'x' }, columns: 2 }))
+  try {
+    const wide = view.root.findAllByProps({ testID: 'vehicle-details-wide' })
+    expect(wide.length).toBeGreaterThan(0)
+    expect(textsOf(view)).toContain('车门锁')
+    expect(textsOf(view).some((t) => t.startsWith('其他'))).toBe(true)
+  } finally { await act(async () => { view.unmount() }) }
+})

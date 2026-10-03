@@ -17,6 +17,13 @@ jest.mock('expo-router', () => ({
   Link: 'Link',
 }))
 jest.mock('@/core/config/storage', () => ({ loadServerConfig: jest.fn(async () => null) }))
+// 窗口宽（v3 P6）：本文件的设置页断言都是手机单栏的前提——RN 的 jest 默认窗口宽 750，已过支持页大屏线（720），
+// 不固定就会落进列表–详情、只渲染第一页。大屏版式另有一组用例，把宽度调到折叠内屏
+let mockWindowWidth = 360
+jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
+  __esModule: true,
+  default: () => ({ width: mockWindowWidth, height: 800, scale: 2, fontScale: 1 }),
+}))
 jest.mock('@/core/api/gateway', () => ({
   GatewaySession: jest.fn().mockImplementation(() => ({
     sessionId: 'diagnostic-test', start: mockSessionStart, close: mockSessionClose, sendText: mockSessionSend,
@@ -327,4 +334,37 @@ test('R01: native readouts remain available in prod; dev output callbacks also h
     expect(performHaptic).not.toHaveBeenCalled()
     expect(playCueTone).not.toHaveBeenCalled()
   } finally { await unmount(devView) }
+})
+
+
+describe('v3 P6：大屏（折叠内屏 847）设置页是列表–详情', () => {
+  afterEach(() => { mockWindowWidth = 360 })
+  test('左侧导航列 + 右侧只放选中的那一页；点导航换页，开关句柄照旧', async () => {
+    mockVariant = 'prod'
+    mockWindowWidth = 847
+    settingsStore.getState().update({ developerUnlocked: false, drivingManual: false })
+    const view = await mount(SettingsScreen)
+    try {
+      expect(view.root.findAllByProps({ testID: 'settings-wide' }).length).toBeGreaterThan(0)
+      const nav = ['general', 'assistant', 'voice', 'privacy', 'account', 'device']
+      for (const key of nav) expect(view.root.findAllByProps({ testID: `settings-nav-${key}` }).length).toBeGreaterThan(0)
+      // prod 未解锁：没有「开发者」这一页
+      expect(view.root.findAllByProps({ testID: 'settings-nav-developer' })).toHaveLength(0)
+      // 默认是「通用」：隐私页的清除入口不在树里
+      expect(view.root.findAllByProps({ testID: 'settings-switch-keepAwake' }).length).toBeGreaterThan(0)
+      expect(view.root.findAllByProps({ testID: 'settings-clear-history' })).toHaveLength(0)
+      await act(async () => { handler(view, 'settings-nav-privacy')() })
+      expect(view.root.findAllByProps({ testID: 'settings-clear-history' }).some((n) => typeof n.props.onPress === 'function')).toBe(true)
+      expect(view.root.findAllByProps({ testID: 'settings-switch-keepAwake' })).toHaveLength(0)
+    } finally { await unmount(view) }
+  })
+  test('行车档一律单栏（判据 sizeClass.supportWide）', async () => {
+    mockVariant = 'prod'
+    mockWindowWidth = 847
+    settingsStore.getState().update({ drivingManual: true })
+    const view = await mount(SettingsScreen)
+    try {
+      expect(view.root.findAllByProps({ testID: 'settings-wide' })).toHaveLength(0)
+    } finally { await unmount(view); settingsStore.getState().update({ drivingManual: false }) }
+  })
 })

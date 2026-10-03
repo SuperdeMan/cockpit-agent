@@ -4,8 +4,8 @@
 // ——prod 默认隐藏，构建行连点 7 次解锁（判据只在 core/diagnostics.ts::developerOptionsVisible）。
 // 持久化 AsyncStorage（settings store）；buildMeta 键集由 settingsMeta.test.ts 钉住。
 import { Link } from 'expo-router'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native'
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { Alert, Pressable, ScrollView, Switch, Text, View, useWindowDimensions } from 'react-native'
 import { useStore } from 'zustand'
 
 import {
@@ -37,6 +37,7 @@ import { speechController } from '../../core/voice/speech'
 import { Button } from '../../ui/Button'
 import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
+import { SUPPORT_NAV_WIDTH, supportWide } from '../../ui/layout/sizeClass'
 import { ListGroup, ListItem, ListSectionHeader, switchColors } from '../../ui/ListItem'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
@@ -496,6 +497,9 @@ export function SettingsScreen() {
   const [previewMsg, setPreviewMsg] = useState('')
   // 首次切端到端的一次性显式同意（方案 §5.2.2；红线三条件②的持久化证据）
   const [consentOpen, setConsentOpen] = useState(false)
+  // 大屏版式（v3 P6）：选中的页；窗口宽决定窄屏铺开还是列表–详情（sizeClass.supportWide）
+  const [pageKey, setPageKey] = useState('general')
+  const { width: windowWidth } = useWindowDimensions()
 
   useEffect(() => {
     void loadServerConfig().then(setServer)
@@ -572,11 +576,7 @@ export function SettingsScreen() {
   const caption = textStyle('caption', p.fontScale)
   const dev = developmentDiagnosticsEnabled()
 
-  return (
-    // Modal 与 ScrollView 并列：同意页要盖住整屏，塞进 ScrollView 里会跟着滚
-    <View style={{ flex: 1, backgroundColor: p.bg }}>
-    <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ paddingHorizontal: SPACE[3], paddingBottom: SPACE[3] + PRESENCE_LANE_DP, gap: SPACE[1] }}>
-      {/* ── 通用 ── */}
+  const secGeneral = (
       <Section p={p} title="通用">
         <ChoiceRow
           p={p}
@@ -624,8 +624,9 @@ export function SettingsScreen() {
           onChange={(reduceTransparency) => set({ reduceTransparency })}
         />
       </Section>
+  )
 
-      {/* ── 助手 ── */}
+  const secAssistant = (
       <Section p={p} title="助手">
         <Block>
           <TextField
@@ -664,15 +665,18 @@ export function SettingsScreen() {
           onPick={(model) => set({ model })}
         />
       </Section>
+  )
 
+  const secExamples = (
       <Section p={p} title="首页示例">
         <NoteRow p={p} text="首页与欢迎态显示的示例指令；没有对应能力的会自动隐藏" />
         <Block>
           <QuickCommandsEditor p={p} commands={settings.quickCommands} onChange={(quickCommands) => set({ quickCommands })} />
         </Block>
       </Section>
+  )
 
-      {/* ── 语音 ── */}
+  const secVoice = (
       <Section p={p} title="语音">
         {/* 拍板（计划 §5）：长选项缩成「实时 / 整句」，原来括号里的话搬到说明行（说明取共享表的 hint，不另写一份） */}
         <ChoiceRow
@@ -793,11 +797,13 @@ export function SettingsScreen() {
           </View>
         </Block>
       </Section>
+  )
 
-      {/* ── 免唤醒与端到端 ──：开关**默认全关/最保守**，且每条都在屏上说清代价——
-          视觉与 S2S 是架构红线里点名要「文案说清差异」的两条
-          （CLAUDE.md §5「唯一的受控例外」条件③、「视觉单帧同款三条件」第三条）。
-          组里每行单独一项（不用 Fragment 包几行）：分组卡按子项画分隔线 */}
+  // ── 免唤醒与端到端 ──：开关**默认全关/最保守**，且每条都在屏上说清代价——
+  // 视觉与 S2S 是架构红线里点名要「文案说清差异」的两条
+  // （CLAUDE.md §5「唯一的受控例外」条件③、「视觉单帧同款三条件」第三条）。
+  // 组里每行单独一项（不用 Fragment 包几行）：分组卡按子项画分隔线
+  const secHandsFree = (
       <Section p={p} title="免唤醒与端到端">
         {!hfAvail.usable ? <NoteRow p={p} text="这个安装包里没有端侧语音引擎，免唤醒不可用；装上带语音引擎的版本后这里会自动出现。" /> : null}
         {!hfAvail.usable && developerVisible ? <NoteRow p={p} text={`VAD=${String(hfAvail.vad)} / 唤醒词=${String(hfAvail.kws)}`} /> : null}
@@ -857,8 +863,9 @@ export function SettingsScreen() {
           <NoteRow p={p} text={`已于 ${new Date(settings.s2sConsentAt).toLocaleString('zh-CN', { hour12: false })} 同意端到端上传原始音频`} />
         ) : null}
       </Section>
+  )
 
-      {/* ── 隐私 ── */}
+  const secPrivacy = (
       <Section p={p} title="隐私">
         <SwitchRow
           p={p}
@@ -919,14 +926,17 @@ export function SettingsScreen() {
           </Block>
         ) : null}
       </Section>
+  )
 
+  const secPrivacyRecord = (
       <Section p={p} title="隐私记录">
         <Block>
           <PrivacyRecord p={p} />
         </Block>
       </Section>
+  )
 
-      {/* ── 账号与连接 ── */}
+  const secAccount = (
       <Section p={p} title="账号与连接">
         {/* 打磨批 B（评审 P17 / D5）：不再直出 URL 与令牌尾巴——完整地址在「重新配置」页 */}
         <Block>
@@ -949,7 +959,9 @@ export function SettingsScreen() {
           <SessionSummarySection p={p} result={session} loading={sessionLoading} onRefresh={() => void refreshSession(server)} />
         </Block>
       </Section>
+  )
 
+  const secCaps = (
       <Section p={p} title="能力开关">
         <NoteRow p={p} text="关掉的指令会被婉拒" />
         {AGENT_CATALOG.map((a) => (
@@ -964,10 +976,12 @@ export function SettingsScreen() {
           />
         ))}
       </Section>
+  )
 
-      {/* ── 设备（Figma S-4）── 身份与行车（B4-10 / 方案 §6.0 / AR05 R14）：**设备角色只决定布局**，
-          窗口尺寸不决定权限、横屏不决定你是驾驶员、平板不自动获得车控。能不能控车由「能力摘要」如实说，这里只说布局。
-          拍板（计划 §5）：选项缩成「手持 / 支架 / 车载平板」，原来的长标签搬到说明行 */}
+  // ── 设备（Figma S-4）── 身份与行车（B4-10 / 方案 §6.0 / AR05 R14）：**设备角色只决定布局**，
+  // 窗口尺寸不决定权限、横屏不决定你是驾驶员、平板不自动获得车控。能不能控车由「能力摘要」如实说，这里只说布局。
+  // 拍板（计划 §5）：选项缩成「手持 / 支架 / 车载平板」，原来的长标签搬到说明行
+  const secDevice = (
       <Section p={p} title="设备">
         <ChoiceRow
           p={p}
@@ -1002,9 +1016,10 @@ export function SettingsScreen() {
         ) : null}
         <LinkRow p={p} href="/onboarding" title="重新配置连接" subtitle="保存后回对话页自动重连" />
       </Section>
+  )
 
-      {/* ── 开发者（prod 默认隐藏；判据 developerOptionsVisible）── */}
-      {developerVisible ? (
+  // 开发者（prod 默认隐藏；判据 developerOptionsVisible）
+  const secDev = (
         <Section p={p} title="开发者">
           <NoteRow p={p} text="只读的取证屏与画廊：不采集、不播放、不发送。报问题时把底部的构建行一起抄上。" />
           <LinkRow p={p} href="/state-gallery" title="状态画廊" />
@@ -1028,9 +1043,10 @@ export function SettingsScreen() {
             />
           ) : null}
         </Section>
-      ) : null}
+  )
 
-      {/* 构建行：报问题先抄它。连点 DEVELOPER_UNLOCK_TAPS 次解锁开发者选项 */}
+  // 构建行：报问题先抄它。连点 DEVELOPER_UNLOCK_TAPS 次解锁开发者选项
+  const buildRow = (
       <Pressable testID="build-label-tap" onPress={onBuildTap} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', marginTop: SPACE[2] }}>
         <Text selectable testID="build-label" style={[caption, { color: p.fg3, textAlign: 'center' }]}>
           {buildLabel}
@@ -1039,7 +1055,8 @@ export function SettingsScreen() {
           <Text style={[caption, { color: p.fg3, textAlign: 'center' }]}>再点 {DEVELOPER_UNLOCK_TAPS - buildTaps} 次进入开发者选项</Text>
         ) : null}
       </Pressable>
-    </ScrollView>
+  )
+  const consentSheet = (
       <S2sConsentSheet
         p={p}
         fontScale={settings.fontScale}
@@ -1050,6 +1067,66 @@ export function SettingsScreen() {
         }}
         onDecline={() => setConsentOpen(false)}
       />
+  )
+
+  // 页（v3 P6，Figma 07 页 SP-1）：窄屏依次铺开（同 v3 P5a）；大屏左侧导航列、右侧只放选中的那一页。
+  // 判据只有 sizeClass.supportWide 一份；行车档一律单栏。交互上只是把分区变成导航列表，没有新功能
+  const pages: { key: string; title: string; body: ReactNode }[] = [
+    { key: 'general', title: '通用', body: secGeneral },
+    { key: 'assistant', title: '助手', body: <>{secAssistant}{secExamples}</> },
+    { key: 'voice', title: '语音', body: <>{secVoice}{secHandsFree}</> },
+    { key: 'privacy', title: '隐私', body: <>{secPrivacy}{secPrivacyRecord}</> },
+    { key: 'account', title: '账号与连接', body: <>{secAccount}{secCaps}</> },
+    { key: 'device', title: '设备', body: secDevice },
+    ...(developerVisible ? [{ key: 'developer', title: '开发者', body: secDev }] : []),
+  ]
+  const wide = supportWide(windowWidth, settings.drivingManual || autoDrivingNow)
+
+  if (!wide) {
+    return (
+      // Modal 与 ScrollView 并列：同意页要盖住整屏，塞进 ScrollView 里会跟着滚
+      <View style={{ flex: 1, backgroundColor: p.bg }}>
+        <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ paddingHorizontal: SPACE[3], paddingBottom: SPACE[3] + PRESENCE_LANE_DP, gap: SPACE[1] }}>
+          {pages.map((pg) => (
+            <Fragment key={pg.key}>{pg.body}</Fragment>
+          ))}
+          {buildRow}
+        </ScrollView>
+        {consentSheet}
+      </View>
+    )
+  }
+  const current = pages.find((pg) => pg.key === pageKey) ?? pages[0]
+  return (
+    <View testID="settings-wide" style={{ flex: 1, backgroundColor: p.bg, flexDirection: 'row' }}>
+      <ScrollView style={{ width: SUPPORT_NAV_WIDTH, flexGrow: 0 }} contentContainerStyle={{ padding: SPACE[3], gap: SPACE[1] }}>
+        {pages.map((pg) => {
+          const on = pg.key === current.key
+          return (
+            <Pressable
+              key={pg.key}
+              testID={`settings-nav-${pg.key}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              onPress={() => setPageKey(pg.key)}
+              style={{
+                minHeight: p.target(TARGET.parked),
+                justifyContent: 'center',
+                paddingHorizontal: SPACE[3],
+                borderRadius: RADIUS.full,
+                backgroundColor: on ? p.accentSoft : undefined,
+              }}
+            >
+              <Text style={[textStyle('labelL', p.fontScale), { color: on ? p.accent : p.fg1 }]}>{pg.title}</Text>
+            </Pressable>
+          )
+        })}
+        {buildRow}
+      </ScrollView>
+      <ScrollView testID="settings-detail" style={{ flex: 1 }} contentContainerStyle={{ paddingRight: SPACE[3], paddingBottom: SPACE[3] + PRESENCE_LANE_DP, gap: SPACE[1] }}>
+        {current.body}
+      </ScrollView>
+      {consentSheet}
     </View>
   )
 }
