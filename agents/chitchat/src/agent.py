@@ -22,6 +22,7 @@ from agents._sdk.grounding import shanghai_now
 # 编排层也要用同一条判据，而云侧镜像不 COPY agents/——在两边各写一份
 # 正是 B1 那个 bug 的成因。这里只剩兜底位的消费，判据与话术都在那一份里。
 from runtime import memory_read
+from runtime.question_shape import is_non_directive_question
 from runtime.session_facts import (
     asks_when, audit_answer, is_execution_audit_question,
 )
@@ -100,6 +101,19 @@ def _parse_search_mark(text: str) -> str:
     """整段回复是否以 <search>查询词</search> 开头；是则返回查询词，否则空串。"""
     m = _SEARCH_MARK_RE.match(text or "")
     return m.group(1).strip() if m else ""
+
+
+#: 车辆功能问句交给有把握的手册（2026-10-04，docs/design/2026-10-04-chitchat-defers-to-confident-manual.md）：
+#: 手册 Agent 的内部意图只跑词法检索、不调模型；查不到 / 不可达就照常闲聊，所以超时给得紧。
+_MANUAL_AGENT, _MANUAL_CLAIM, _MANUAL_QUERY = "manual-rag", "manual.claim", "manual.query"
+_MANUAL_CLAIM_TIMEOUT_S = 1.5
+
+
+def _manual_escalate_result(text: str) -> AgentResult:
+    """零播报改派手册问答：只交用户原话，不交闲聊的任何生成内容。"""
+    return AgentResult(speech="", data={"_escalate": {
+        "intent": _MANUAL_QUERY, "slots": {"question": text},
+        "reason": "manual_confident"}})
 
 
 def _escalate_result(query: str) -> AgentResult:
@@ -346,7 +360,25 @@ class ChitchatAgent(BaseAgent):
                 return AgentResult(speech="我这会儿查不到执行记录，稍后再试。")
             return AgentResult(
                 speech=audit_answer(history, with_time=asks_when(text)))
+        if await self._manual_confident(text, ctx):
+            # 规划退到了闲聊，可这句问的是本车功能、手册又有把握——交给手册，不让模型泛泛地编
+            # （固定语料：「空调温度怎么调」被答成「直接说『把空调调到24度』就行」）
+            logger.info("chitchat defers to the manual: manual_confident")
+            return _manual_escalate_result(text)
         return None
+
+    async def _manual_confident(self, text: str, ctx) -> bool:
+        """非指令问句才问手册（指令句闲聊不接管执行）；个人记忆的回忆问句是闲聊记忆路径的事，不问。
+        手册说有把握才算，调用失败一律当没把握。"""
+        if not is_non_directive_question(text or "") or memory_read.is_memory_recall_question(text):
+            return False
+        try:
+            res = await self.agents.call(_MANUAL_AGENT, _MANUAL_CLAIM, {"question": text}, ctx,
+                                         timeout=_MANUAL_CLAIM_TIMEOUT_S)
+        except Exception as exc:            # 手册不可达不影响闲聊
+            logger.debug("manual claim unavailable: %s", exc)
+            return False
+        return getattr(res, "status", "") == "ok" and bool((getattr(res, "data", None) or {}).get("confident"))
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         text = intent.raw_text or intent.slots.get("text", "")
@@ -380,7 +412,8 @@ class ChitchatAgent(BaseAgent):
         # 第三次之后把它收敛成唯一实现——**注释挡不住第三次，一个入口才行**。
         fixed = await self._deterministic_reply(text, ctx, meta)
         if fixed is not None:
-            yield ("speech", fixed.speech)
+            if fixed.speech:            # 改派是零播报：流出任何一个字，编排就不再认这次改派
+                yield ("speech", fixed.speech)
             yield ("final", fixed)
             return
         max_tokens, _ = _length(meta)

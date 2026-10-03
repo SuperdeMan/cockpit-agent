@@ -240,7 +240,7 @@ class ManualRagAgent(BaseAgent):
         unknown = self.kb.unknown_subject_terms(question)
         # 有把握 = 覆盖率够线且主题词在首页的章节路径里。只在正文里撞上的首页（「运动模式到底
         # 在哪切换」→ 讲特殊路况的页、「停车监控在哪打开」→ 智能领航）覆盖率再高也要再路由。
-        if chunks and not unknown and chunks[0].confident:
+        if self._confident(chunks, unknown):
             return list(chunks), "lexical", []
         if self.kb.route_block_reason(question):
             return list(chunks), "lexical", []
@@ -346,6 +346,29 @@ class ManualRagAgent(BaseAgent):
         budget_ms = int(getattr(self.manifest, "latency_budget_ms", 0) or 0)
         return started + budget_ms / 1000.0 - _BUDGET_MARGIN_S if budget_ms > 0 else None
 
+    @staticmethod
+    def _confident(chunks, unknown) -> bool:
+        """手册对这句**有把握**：词法首页覆盖率够线且主题词在章节路径里，问句也没有手册不认识的实词。
+        跳过目录路由与回答 `manual.claim` 用的是这同一条。"""
+        return bool(chunks) and not unknown and chunks[0].confident
+
+    async def _claim(self, intent, meta) -> AgentResult:
+        """内部意图 `manual.claim`（不进清单，规划器看不见）：这句是不是本车手册有把握答的。
+
+        闲聊兜底遇到车辆功能问句时来问（见 docs/design/2026-10-04-chitchat-defers-to-confident-manual.md）。
+        只跑词法检索、不调模型、不出卡片；车型参数与正式回答同一个来源。
+        """
+        question = str(intent.raw_text or intent.slots.get("question", "") or "").strip()
+        vehicle_model = str(
+            intent.slots.get("vehicle_model", "")
+            or ((meta or {}).get("vehicle_model", "") if hasattr(meta, "get") else "")
+        ).strip()
+        if not question:
+            return AgentResult(speech="", data={"confident": False})
+        chunks = await self.kb.retrieve(question, vehicle_model=vehicle_model)
+        return AgentResult(speech="", data={
+            "confident": self._confident(chunks, self.kb.unknown_subject_terms(question))})
+
     async def _generate_answer(self, messages, deadline: float | None = None) -> tuple[str | None, str]:
         """Retry one transient LLM RuntimeError, then keep the cited card.
 
@@ -378,6 +401,8 @@ class ManualRagAgent(BaseAgent):
         return None, "degraded"
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
+        if intent.name == "manual.claim":
+            return await self._claim(intent, meta)
         started = _clock()
         raw = str(intent.raw_text or "").strip()
         slot = str(intent.slots.get("question", "") or "").strip()
