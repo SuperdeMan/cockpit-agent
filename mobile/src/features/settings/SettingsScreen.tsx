@@ -181,6 +181,13 @@ function SessionSummarySection({
   )
 }
 
+/** 选项标签的显示宽度（汉字 1、其余 0.5）：分段按钮一段只放得下 6 个汉字宽；「English」只有 3.5 */
+function labelUnits(label: string): number {
+  let n = 0
+  for (const ch of label) n += (ch.codePointAt(0) ?? 0) >= 0x2e80 ? 1 : 0.5 // 0x2E80 起是中日韩部首、汉字与全角符号
+  return n
+}
+
 /** 单选行（Figma ListItem/Kind=Segmented）：标题 + 分段按钮（语义仍是单选，`choice-<值>` 句柄逐项沿用），
  *  可选一行说明。选项多或标签长（引擎列表）分段放不下，退回一排可换行的单选胶囊 */
 function ChoiceRow<T extends string>({
@@ -198,7 +205,7 @@ function ChoiceRow<T extends string>({
   onPick(v: T): void
   note?: string
 }) {
-  const segmented = options.length <= 3 && options.every((o) => o.label.length <= 6)
+  const segmented = options.length <= 3 && options.every((o) => labelUnits(o.label) <= 6)
   return (
     <ListItem
       p={p}
@@ -319,7 +326,9 @@ function QuickCommandsEditor({ p, commands, onChange }: { p: Palette; commands: 
   )
 }
 
-/** 音色格子（Figma S-2）：三列，图标 + 名字（· 男 / · 女 取自引擎元数据）；选中 = accent 描边 + accent 浅底。
+/** 音色格子（Figma S-2）：三列等宽，图标 + 名字，性别（取自引擎元数据）另起一行小字；选中 = accent 描边 + accent 浅底。
+ *  名字与性别分两行：真机上 MiniMax 的音色名比画板样例长，「甜美女性 · 女」挤在一行会被截成「甜美…」（P5a 真机）。
+ *  按行切三个一组、末行补空位：flexWrap + flexGrow 会把落单的最后一格拉满整行。
  *  语义仍是单选：`choice-<voice_id>` 句柄沿用、选中进无障碍 selected */
 function VoiceGrid({
   p,
@@ -332,40 +341,52 @@ function VoiceGrid({
   value: string
   onPick(id: string): void
 }) {
+  const rows: (typeof voices)[] = []
+  for (let i = 0; i < voices.length; i += 3) rows.push(voices.slice(i, i + 3))
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-      {voices.map((v) => {
-        const on = v.voice_id === value
-        const name = v.name + (v.gender === 'male' ? ' · 男' : v.gender === 'female' ? ' · 女' : '')
-        return (
-          <Pressable
-            key={v.voice_id}
-            testID={`choice-${v.voice_id}`}
-            accessibilityRole="button"
-            accessibilityLabel={`音色：${name}`}
-            accessibilityState={{ selected: on }}
-            onPress={() => onPick(v.voice_id)}
-            style={{
-              flexBasis: '30%',
-              flexGrow: 1,
-              minHeight: p.target(TARGET.parked),
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-              paddingHorizontal: 12,
-              borderRadius: RADIUS.md,
-              borderWidth: 1,
-              borderColor: on ? p.accent : 'transparent',
-              backgroundColor: on ? p.accentSoft : p.surfaceHigh,
-            }}
-          >
-            {iconRuntimeAvailable() ? <Icon name={voiceIcon(v)} size={18} color={on ? p.accent : p.fg2} /> : null}
-            <Text numberOfLines={1} style={[textStyle('labelM', p.fontScale), { color: on ? p.accent : p.fg1, flexShrink: 1 }]}>
-              {name}
-            </Text>
-          </Pressable>
-        )
-      })}
+    <View style={{ gap: 8 }}>
+      {rows.map((row, r) => (
+        <View key={r} style={{ flexDirection: 'row', gap: 8 }}>
+          {row.map((v) => {
+            const on = v.voice_id === value
+            const gender = v.gender === 'male' ? '男声' : v.gender === 'female' ? '女声' : ''
+            return (
+              <Pressable
+                key={v.voice_id}
+                testID={`choice-${v.voice_id}`}
+                accessibilityRole="button"
+                accessibilityLabel={`音色：${v.name}${gender ? `，${gender}` : ''}`}
+                accessibilityState={{ selected: on }}
+                onPress={() => onPick(v.voice_id)}
+                style={{
+                  flex: 1,
+                  minHeight: p.target(TARGET.parked),
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: RADIUS.md,
+                  borderWidth: 1,
+                  borderColor: on ? p.accent : 'transparent',
+                  backgroundColor: on ? p.accentSoft : p.surfaceHigh,
+                }}
+              >
+                {iconRuntimeAvailable() ? <Icon name={voiceIcon(v)} size={18} color={on ? p.accent : p.fg2} /> : null}
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={[textStyle('labelM', p.fontScale), { color: on ? p.accent : p.fg1 }]}>
+                    {v.name}
+                  </Text>
+                  {gender ? <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>{gender}</Text> : null}
+                </View>
+              </Pressable>
+            )
+          })}
+          {Array.from({ length: 3 - row.length }, (_, k) => (
+            <View key={`pad-${k}`} style={{ flex: 1 }} />
+          ))}
+        </View>
+      ))}
     </View>
   )
 }
