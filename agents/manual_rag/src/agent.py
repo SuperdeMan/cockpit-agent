@@ -25,8 +25,10 @@ from itertools import zip_longest
 import logging
 import os
 import re
+import time
 
 from agents._sdk import BaseAgent, AgentResult
+from agents._sdk.clients import DEFAULT_TIMEOUT as _LLM_TIMEOUT_S
 from agents._sdk.provenance import attach
 from runtime.anaphora import has_anaphoric_subject
 from runtime.clause_split import split_clauses
@@ -81,6 +83,12 @@ _NON_RETRYABLE_GENERATION_ERRORS = (
     "UNAUTHENTICATED",
     "FAILED_PRECONDITION",
 )
+# 生成守住步骤预算（清单 latency_budget_ms，执行器也按它切步）：留回传余量；剩余不够一次像样的生成就不再试，
+# 直接走降级——此前生成不传超时（客户端缺省 10 s）、超时后再重试一次，两次之和超过 15 s 预算，整步被执行器切掉，
+# 带引用卡片的降级根本走不到（固定语料 V201/V202）。
+_BUDGET_MARGIN_S = 1.0
+_MIN_GENERATION_S = 3.0
+_clock = time.monotonic        # 测试替换这一处，不动全局 time（asyncio 也读它）
 logger = logging.getLogger(__name__)
 _safety_level = alert_level
 _MAX_CHUNKS = 4
@@ -333,32 +341,44 @@ class ManualRagAgent(BaseAgent):
             data_time_label="手册版本" if revision else "",
         )
 
-    async def _generate_answer(self, messages) -> tuple[str | None, str]:
+    def _generation_deadline(self, started: float) -> float | None:
+        """生成必须收尾的时刻（单调钟）；清单没写预算 ⇒ None（按客户端缺省超时，行为同前）。"""
+        budget_ms = int(getattr(self.manifest, "latency_budget_ms", 0) or 0)
+        return started + budget_ms / 1000.0 - _BUDGET_MARGIN_S if budget_ms > 0 else None
+
+    async def _generate_answer(self, messages, deadline: float | None = None) -> tuple[str | None, str]:
         """Retry one transient LLM RuntimeError, then keep the cited card.
 
         LLMClient normalizes provider and transport failures to RuntimeError.
         Configuration, quota, and authentication errors are not useful to
         retry; other RuntimeErrors get one bounded retry. Programming errors
         stay visible instead of being mislabeled as provider degradation.
+        Every attempt fits the step budget: an attempt never outlives `deadline`,
+        and with less than `_MIN_GENERATION_S` left the answer degrades instead
+        ("out_of_budget") of being cut off by the executor with no card at all.
         """
-
-        try:
-            return await self.llm.complete(
-                messages, temperature=0.2, max_tokens=200), ""
-        except RuntimeError as exc:
-            logger.warning("manual answer generation failed: %s", exc)
-            if any(marker in str(exc).upper()
-                   for marker in _NON_RETRYABLE_GENERATION_ERRORS):
-                return None, "degraded"
-        try:
-            answer = await self.llm.complete(
-                messages, temperature=0.2, max_tokens=200)
-            return answer, "recovered"
-        except RuntimeError as exc:
-            logger.warning("manual answer generation retry failed: %s", exc)
-            return None, "degraded"
+        for attempt in (1, 2):
+            timeout = _LLM_TIMEOUT_S
+            if deadline is not None:
+                remaining = deadline - _clock()
+                if remaining < _MIN_GENERATION_S:
+                    logger.warning("manual answer generation skipped: %.1fs left of the step budget", remaining)
+                    return None, "out_of_budget"
+                timeout = min(timeout, remaining)
+            try:
+                answer = await self.llm.complete(
+                    messages, temperature=0.2, max_tokens=200, timeout=timeout)
+                return answer, ("recovered" if attempt == 2 else "")
+            except RuntimeError as exc:
+                logger.warning("manual answer generation %s: %s",
+                               "retry failed" if attempt == 2 else "failed", exc)
+                if attempt == 2 or any(marker in str(exc).upper()
+                                       for marker in _NON_RETRYABLE_GENERATION_ERRORS):
+                    return None, "degraded"
+        return None, "degraded"
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
+        started = _clock()
         raw = str(intent.raw_text or "").strip()
         slot = str(intent.slots.get("question", "") or "").strip()
         # 安全分级与告警信号只认用户原话（安全红线 6）；规划器的槽只可能参与检索。
@@ -477,7 +497,7 @@ class ManualRagAgent(BaseAgent):
              "content": _SYSTEM_MANUAL if authoritative else _SYSTEM_GENERIC},
             {"role": "user", "content": f"【参考资料】\n{context_block}\n\n{asked}"},
         ]
-        answer, generation_state = await self._generate_answer(messages)
+        answer, generation_state = await self._generate_answer(messages, self._generation_deadline(started))
         if answer is None:
             fallback = (_GENERATION_UNAVAILABLE_MANUAL if authoritative
                         else _GENERATION_UNAVAILABLE_GENERIC)
@@ -488,7 +508,8 @@ class ManualRagAgent(BaseAgent):
                     level,
                     question,
                     source_type=source_type,
-                    generation_degraded="llm_runtime_error",
+                    generation_degraded=("step_budget" if generation_state == "out_of_budget"
+                                         else "llm_runtime_error"),
                     **trace,
                 ),
                 ui_card=self._card(chunks, source_type),

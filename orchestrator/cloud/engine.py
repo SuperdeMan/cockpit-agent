@@ -20,7 +20,7 @@ from typing import AsyncIterator
 
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionState,
                      step_call_context, step_record)
-from .step_input import bind_step_inputs
+from .step_input import bind_step_inputs, projected_text
 from .task_identity import bind_task_identity, restore_task_identity, task_record
 from . import result_bundle
 from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
@@ -2560,7 +2560,7 @@ class PlannerEngine:
             status=step_result.status.value,
             attrs={"step_id": step_result.step_id},
         )
-        brief = self._prior_brief(prior or [], step_result)
+        brief = self._prior_brief(prior or [], step_result, getattr(ctx, "result_steps", None))
         follow_up = step_result.follow_up
         if evicted is not None:
             # Q1-C：淘汰**必须有话术**。静默丢弃就是 B3 那条「认不出就用默认值」
@@ -2757,19 +2757,33 @@ class PlannerEngine:
         return (base + (" " if base else "") + hint).strip()
 
     @staticmethod
-    def _prior_brief(prior: list[StepResult], step_result: StepResult) -> str:
-        """挂起前缀：前序已完成步的脱敏简报（安全计数/首句，同过程区口径）。
+    def _prior_brief(prior: list[StepResult], step_result: StepResult, steps=None) -> str:
+        """挂起前缀：前序已完成步的脱敏简报（安全计数/首句，同过程区口径），再加失败的兄弟步。
 
         身份比较（is）而非 step_id——T2 各轮 replan 的步 id 可能撞名；短回执
-        （「好的」类）不值一播，滤掉。"""
+        （「好的」类）不值一播，滤掉。
+
+        失败的兄弟步不许悄悄消失（固定语料 V201/V202：手册步超时，用户只听到「要打开后备箱吗？」）：
+        话术与完成轮同一条规则（`Aggregator.sibling_failure_line` ← `failure_line`），排在成功简报之后、挂起问句之前。
+        `steps`（step_id → Step）只用来说清楚**是哪件事**：这一步唯一归属到原话的某个分句、且结果的执行来源
+        就是这一步时引用那一句；对不上（整句、T2 跨轮撞号）就不引，不猜。"""
         parts = []
+        failures = []
         for r in prior:
-            if r is step_result or r.status != StepStatus.OK:
+            if r is step_result:
+                continue
+            if r.status == StepStatus.FAILED:
+                step = (steps or {}).get(r.step_id)
+                subject = (projected_text(step) if step is not None and str(getattr(r, "source_intent", "") or "")
+                           == str(getattr(step, "intent", "") or "") else None)
+                failures.append(Aggregator.sibling_failure_line(r, subject))
+                continue
+            if r.status != StepStatus.OK:
                 continue
             s = strip_markdown_speech(result_summary(r)).strip().rstrip("。！？!?；;，,")
             if len(s) >= 4:
                 parts.append(s)
-        return "；".join(parts) + "。" if parts else ""
+        return ("；".join(parts) + "。" if parts else "") + "".join(failures)
 
     async def _close_pending(self, ctx: PlanContext, pending) -> str:
         """关掉一条挂起，并记进本轮的 `closed_operation_ids`（Q1-C）；返回删除结果（`session.CLEAR_*`）。

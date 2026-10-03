@@ -268,17 +268,44 @@ class Aggregator:
         return s
 
     @classmethod
+    def failure_line(cls, result: StepResult) -> str:
+        """一步失败时给用户的那句话——完成轮的逐字拼接与挂起轮的前缀（`engine._prior_brief`）共用这一条。
+
+        状态证实其实已生效 ⇒ 说不确定；Agent 自己有失败话术 ⇒ 照用（恢复指引在里面，C11-B）；
+        没有话术的真异常（超时 / 熔断，error 由执行器填）⇒ 按错误码给友好说法。
+        """
+        if cls._exec_confirmed_by_state(result):
+            return _EXEC_UNCERTAIN_SPEECH
+        line = strip_markdown_speech(result.speech or "").strip()
+        if line:
+            return line
+        friendly = cls._ERROR_FRIENDLY.get(result.error or "", result.error or "处理失败")
+        return f"抱歉，{friendly}。"
+
+    @classmethod
+    def sibling_failure_line(cls, result: StepResult, subject: str | None = None) -> str:
+        """挂起轮前缀里的失败步——同 `failure_line`，再说清楚是哪件事，与挂起问的那件区分开。
+
+        能唯一归属到用户原话的某个分句时引用那一句（`subject`，调用方按步骤输入绑定给出）；Agent 自己的
+        失败话术本就点明了领域，照用；只剩通用错误说法时说「另一项请求没有完成」，不让用户以为是挂起的那件出了错。
+        """
+        line = cls._sentence(cls.failure_line(result))
+        if subject:
+            return f"关于「{subject}」：{line}"
+        if strip_markdown_speech(result.speech or "").strip() or cls._exec_confirmed_by_state(result):
+            return line
+        friendly = cls._ERROR_FRIENDLY.get(result.error or "", result.error or "处理失败")
+        return f"另一项请求没有完成：{friendly}。"
+
+    @classmethod
     def _literal_speech(cls, results: list[StepResult]) -> str:
         """Preserve producer meaning, status and order; change punctuation only."""
         lines = []
         for result in results:
-            if result.status == StepStatus.FAILED and cls._exec_confirmed_by_state(result):
-                line = _EXEC_UNCERTAIN_SPEECH
+            if result.status == StepStatus.FAILED:
+                line = cls.failure_line(result)
             else:
                 line = strip_markdown_speech(result.speech or "").strip()
-                if not line and result.status == StepStatus.FAILED:
-                    friendly = cls._ERROR_FRIENDLY.get(result.error or "", result.error or "处理失败")
-                    line = f"抱歉，{friendly}。"
             if line:
                 lines.append(cls._sentence(line))
         return "\n\n".join(lines)

@@ -537,3 +537,80 @@ def test_loop_suspend_excludes_streamed_and_seed_results():
     )
 
     assert captured["prior"] == []   # 天气已流出（spoken）、种子已播报——都不复读
+
+
+# ── 失败的兄弟步不许悄悄消失（固定语料 V201/V202：手册步超时，用户只听到「要打开后备箱吗？」）──
+
+def _bound_pair():
+    from orchestrator.cloud.step_input import bind_step_inputs
+    text = "告诉我空调有哪些模式，然后打开后备箱"
+    manual = Step("s1", "manual-rag", intent="manual.query", slots={"question": "空调有哪些模式"},
+                  origin_text=text, capability_description="车型使用手册问答：部件与功能有哪些模式")
+    trunk = Step("s2", "edge-vehicle", intent="trunk.open", origin_text=text,
+                 capability_description="打开后备箱")
+    plan = Plan(steps=[manual, trunk], raw_text=text)
+    plan.safety_origin_text = text
+    bind_step_inputs(plan, origin_exchange_id="x1")
+    return manual, trunk
+
+
+def test_prior_brief_names_a_failed_sibling_by_its_own_clause():
+    manual, trunk = _bound_pair()
+    timeout = StepResult("s1", StepStatus.FAILED, error="step_timeout")
+    timeout.source_intent = "manual.query"
+    pending = StepResult("s2", StepStatus.NEED_CONFIRM, speech="要打开后备箱吗？")
+    brief = PlannerEngine._prior_brief([timeout, pending], pending, {"s1": manual, "s2": trunk})
+    assert brief == "关于「告诉我空调有哪些模式」：抱歉，处理超时了，请稍后再试。"
+
+
+def test_prior_brief_does_not_guess_the_clause_when_ownership_is_unclear():
+    """T2 跨轮撞号（同号不同步）或拿不到步骤：不引句子，只说「另一项请求」没完成，与挂起问的那件区分开。"""
+    manual, _ = _bound_pair()
+    stale = StepResult("s1", StepStatus.FAILED, error="step_timeout")
+    stale.source_intent = "info.weather"
+    pending = StepResult("s2", StepStatus.NEED_CONFIRM, speech="要打开后备箱吗？")
+    expected = "另一项请求没有完成：处理超时了，请稍后再试。"
+    assert PlannerEngine._prior_brief([stale, pending], pending, {"s1": manual}) == expected
+    assert PlannerEngine._prior_brief([stale, pending], pending) == expected
+
+
+def test_paraphrased_slot_leaves_the_clause_unbound_and_the_failure_still_said():
+    """真实 V202：规划器把问题改写成「空调有哪些工作模式」，分句绑定按保守口径认不出（不为这里放宽它）。"""
+    from orchestrator.cloud.step_input import bind_step_inputs
+    text = "告诉我空调有哪些模式，然后打开后备箱"
+    manual = Step("s1", "manual-rag", intent="manual.query", slots={"question": "空调有哪些工作模式"},
+                  origin_text=text, capability_description="车型使用手册问答：部件与功能有哪些模式")
+    trunk = Step("s2", "edge-vehicle", intent="trunk.open", origin_text=text, capability_description="打开后备箱")
+    plan = Plan(steps=[manual, trunk], raw_text=text)
+    plan.safety_origin_text = text
+    bind_step_inputs(plan, origin_exchange_id="x1")
+    timeout = StepResult("s1", StepStatus.FAILED, error="step_timeout")
+    timeout.source_intent = "manual.query"
+    pending = StepResult("s2", StepStatus.NEED_CONFIRM, speech="要打开后备箱吗？")
+    assert PlannerEngine._prior_brief([timeout, pending], pending, {"s1": manual, "s2": trunk}) == \
+        "另一项请求没有完成：处理超时了，请稍后再试。"
+
+
+def test_prior_brief_keeps_successes_first_and_the_agents_own_failure_words():
+    ok = StepResult("w1", StepStatus.OK, speech="明天有雨，最高29℃。")
+    failed = StepResult("n1", StepStatus.FAILED, speech="地图服务暂时不可用，这段路程算不出来，稍后再试")
+    pending = StepResult("r1", StepStatus.NEED_SLOT, speech="什么时候提醒你？")
+    assert PlannerEngine._prior_brief([ok, failed, pending], pending) == \
+        "明天有雨，最高29℃。地图服务暂时不可用，这段路程算不出来，稍后再试。"
+
+
+def test_suspend_final_reports_a_failed_sibling():
+    """接线：执行器路径挂起时，失败的兄弟步随挂起 final 说出来（修前只剩追问）。"""
+    parallel = json.dumps({"steps": [
+        {"id": "s1", "capability_ref": "cap_0001", "slots": {}, "depends_on": [], "slot_refs": {}},
+        {"id": "s2", "capability_ref": "cap_0001", "slots": {}, "depends_on": [], "slot_refs": {}},
+    ]})
+    spy = _Spy(plan_json=parallel, unary_seq=[
+        _Resp(status=3, speech="资料服务暂时不可用，稍后再试"),
+        _Resp(status=2, speech=_ASK_TIME, missing_slots=["time_text"]),
+    ])
+    engine, _ = _make_engine(spy)
+    final = _run(engine, _req("查一下资料，再提醒我带伞"))[-1]
+    assert final["kind"] == "final"
+    assert final["speech"] == "资料服务暂时不可用，稍后再试。" + _ASK_TIME
+
