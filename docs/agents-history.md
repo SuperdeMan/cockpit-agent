@@ -10414,4 +10414,4 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   手机 jest 整套并行时 5 个界面套件因负载超时，单独重跑全过。
 - 验证：全量 10689 / 35 / 11，四门禁、smoke 13/13；注入缺陷 19 处全部判红；HMI 364、手机 tsc / eslint / jest 通过。发布：dry-run 零阻断，
   status 5/5 零 warning，verify `20261002T231742Z-fa9cbe9.json`；线上只读核对：无 token、只自称 `user_id`、伪造 token 三种 S2S `session.start` 都被 1008 关闭（不建会话、不写数据）；Memory / 云端 / llm-gateway / 车端四个容器里的关键文件与提交一致（部署包从 Windows worktree 打出，是 CRLF 形式）；固定语料 20×3：60/60、99 轮，证据错误 0、open operations 0，221 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 6609/21828/31516 ms；业务红 4 条全是既有签名类别（「未走手册」3，其中 V211 因此缺「2.9」；V207 缺「露营」）；手机新包 `xiaozhou-companion-prod-release-fa9cbe9ea-20261003-0726.apk`：构建 exit 0、`BUILD SUCCESSFUL`、包内 `variant=prod build=fa9cbe9ea`；装到测试机 OPPO，设备上 `base.apk` 与本地 SHA-256 一致、非 DEBUGGABLE。
-- 未做：免唤醒语音投影与手机 S2S 的真人语音实测；小米未装新包（S2S 挡位会被拒，classic 不受影响）。CA2-15 剩 S3（未批准）。
+- 未做：免唤醒语音投影与手机 S2S 的真人语音实测。小米（对照机）2026-10-03 09:59 装上同一个包（哈希一致、非 DEBUGGABLE）。用户批准 S3，下一步做它。

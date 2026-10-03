@@ -229,4 +229,4 @@ S2S 的 `session.start` 在生产里同样直接信客户端帧里的 `user_id`�
 - 固定语料 20×3：60/60、99 轮，证据错误 0、open operations 0，221 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 6609/21828/31516 ms；业务红 4 条全是既有签名类别（「未走手册」3，其中 V211 因此缺「2.9」；V207 缺「露营」）。
 - 手机新包 `xiaozhou-companion-prod-release-fa9cbe9ea-20261003-0726.apk`：构建 exit 0、`BUILD SUCCESSFUL`、包内 `variant=prod build=fa9cbe9ea`；装到测试机 OPPO，设备上 `base.apk` 与本地 SHA-256 一致、非 DEBUGGABLE。
 - 未做：免唤醒语音「没认出 ⇒ 只读普通偏好」的真栈语音实测（要真人在车机上说话、且账户已录声纹）；手机 S2S 的真机语音实测（要在设置里切到 S2S
-  并说话）；**小米（你日常用的那台）还没装新包**——它在 S2S 挡位下会被 1008 拒绝，默认的 classic 链路不受影响。
+  并说话）。小米（对照机）2026-10-03 09:59 装上同一个包（哈希一致、非 DEBUGGABLE）。
