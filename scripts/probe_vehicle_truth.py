@@ -1,8 +1,10 @@
-"""CA2-19 S1 real-stack probe: vehicle readings are never invented and say where they come from.
+"""CA2-19 real-stack probe: vehicle readings are never invented, alert explanations never declare a fault resolved.
 
-Read-only: three query utterances from a synthetic signed E2E user on vehicle v1 (battery, tire pressure,
-a charging plan). No confirmation, vehicle command or merchant/payment call is issued. Prints a verdict per
-turn and writes a JSON evidence file; the release SHA is checked before and after.
+Read-only: query utterances from a synthetic signed E2E user on vehicle v1. No confirmation, vehicle command
+or merchant/payment call is issued (edge queries answer with a read-only `*.query` action). Suites:
+- `vehicle` (S1): battery, tire pressure, a charging plan — each in its own session.
+- `alerts` (S2): one session — a tire-warning question, an oil lamp report, then "it went off, can I keep driving".
+Prints a verdict per turn and writes a JSON evidence file; the release SHA is checked before and after.
 """
 from __future__ import annotations
 
@@ -25,18 +27,27 @@ from scripts.render_cloud_env import DEMO_AUTH_SCOPES  # noqa: E402
 
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
 
-#: (说法, 判据)——判据只看用户听到的话
-TURNS = (
-    ("还剩多少电", lambda s: "模拟车读数" in s and "%" in s),
-    ("胎压正常吗", lambda s: "读不到胎压" in s and "胎压正常" not in s),
-    ("去厦门火车站路上要不要充电", lambda s: ("模拟车读数" in s and "估算" in s) or "没读到当前电量" in s),
-)
+#: 套件名 → (同一会话?, ((说法, 判据), ...))；判据只看用户听到的话
+SUITES = {
+    "vehicle": (False, (
+        ("还剩多少电", lambda s: "模拟车读数" in s and "%" in s),
+        ("胎压正常吗", lambda s: "读不到胎压" in s and "胎压正常" not in s),
+        ("去厦门火车站路上要不要充电", lambda s: ("模拟车读数" in s and "估算" in s) or "没读到当前电量" in s),
+    )),
+    "alerts": (True, (
+        ("胎压报警灯亮了是什么意思", lambda s: "不能据此判断故障已排除" in s),
+        ("机油灯亮了", lambda s: "停车" in s or "不能据此判断故障已排除" in s),
+        ("机油灯灭了，现在还能继续开吗",
+         lambda s: "适合出行" not in s and ("排除" in s or "检查" in s)),
+    )),
+}
 
 
-async def probe(expected_sha: str) -> dict:
+async def probe(expected_sha: str, suite: str) -> dict:
     import websockets
+    same_session, turns = SUITES[suite]
     snapshot = audit.cloud_release_snapshot(expected_sha)
-    result = {"release_start": snapshot, "turns": []}
+    result = {"suite": suite, "release_start": snapshot, "turns": []}
     if snapshot["failures"]:
         result["error"] = "release_mismatch"
         return result
@@ -49,8 +60,9 @@ async def probe(expected_sha: str) -> dict:
             await asyncio.wait_for(ws.recv(), timeout=wire._HELLO_WAIT_S)
         except asyncio.TimeoutError:
             pass
-        for n, (text, judge) in enumerate(TURNS, 1):
-            obs = await wire._one_turn(ws, f"{user}-session-{n}", text)
+        for n, (text, judge) in enumerate(turns, 1):
+            session = f"{user}-session-1" if same_session else f"{user}-session-{n}"
+            obs = await wire._one_turn(ws, session, text)
             speech = str(obs.get("speech") or "")
             result["turns"].append({"say": text, "speech": speech, "actions": obs.get("actions") or [],
                                     "card_type": obs.get("card_type") or "", "pass": bool(judge(speech))})
@@ -63,16 +75,19 @@ async def probe(expected_sha: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-sha", required=True)
+    parser.add_argument("--suite", choices=sorted(SUITES), default="vehicle")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    result = asyncio.run(probe(args.expected_sha))
+    result = asyncio.run(probe(args.expected_sha, args.suite))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     for turn in result.get("turns", []):
-        print(("PASS " if turn["pass"] else "FAIL ") + turn["say"] + " -> " + turn["speech"][:120]
-              + (f" actions={len(turn['actions'])}" if turn["actions"] else ""))
+        print(("PASS " if turn["pass"] else "FAIL ") + turn["say"] + " -> " + turn["speech"][:160]
+              + (f" actions={turn['actions']}" if turn["actions"] else ""))
+    # 端侧查询本身会回一个只读动作（battery.query / tire_pressure.query）；除此之外的动作都算失败
     ok = (not result.get("error") and not result.get("continuity_errors")
-          and all(t["pass"] and not t["actions"] for t in result.get("turns", [])))
+          and all(t["pass"] and all(str(a).endswith(".query") for a in t["actions"])
+                  for t in result.get("turns", [])))
     print("verdict:", "PASS" if ok else "FAIL", result.get("error") or result.get("continuity_errors") or "")
     return 0 if ok else 1
 

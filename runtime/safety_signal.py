@@ -44,10 +44,14 @@ from runtime.question_shape import (DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES,
 #: 它们一个都不在这张表里。**宁可漏一个告警，也不要对着一盏正常的灯劝人停车。**
 WARNING_LIGHTS = ("故障灯", "警告灯", "报警灯", "警示灯", "指示灯",
                   "机油灯", "水温灯", "胎压灯", "电池灯", "发动机灯",
-                  "abs灯", "epc灯", "黄灯", "红灯", "故障码")
+                  "abs灯", "epc灯", "黄灯", "红灯", "故障码",
+                  # CA2-19 S2：仪表上的感叹号图标只用于警示（制动 / 胎压 / 通用警告），没有一盏功能灯长这样
+                  "感叹号")
 #: 警示**语境**动词/现象。与灯无关的告警形态（异响、冒烟、失灵…）走这条。
 ALERT_VERBS = ("报警", "警告", "警示", "故障", "漏气", "掉压", "亏气",
-               "异响", "冒烟", "起火", "失灵", "过热", "打滑", "抖动")
+               "异响", "冒烟", "起火", "失灵", "过热", "打滑", "抖动",
+               # CA2-19 S2：胎压异常的自述（完成 / 状态形态；「胎压低于多少要充气」这种问阈值的不收）
+               "胎压低了", "胎压偏低", "胎压过低", "胎压不足")
 #: 兼容旧名（`alert_signal` 取名字时两张表都要扫）。
 ALERT_CONTEXT = WARNING_LIGHTS + ALERT_VERBS
 #: 命中这些系统 = 立即停车族；其余告警 = 尽快处理族。
@@ -178,6 +182,31 @@ def alert_signal(text: str) -> str:
 
 def alert_advice(level: str) -> str:
     return ADVICE_CRITICAL if level == "critical" else ADVICE_AMBER
+
+
+# ── 解释告警 ≠ 宣布故障已排除（CA2-19 S2）─────────────────────────────────────
+#: 系统解释告警、给处置时一律以这句收尾。系统手里没有能证明故障已排除的车况来源（模拟车没有告警灯 /
+#: 故障码信号），所以无论手册说明多完整、用户说了什么，系统都不宣布「已排除 / 可以放心继续开」。
+NOT_RESOLVED_NOTE = "不能据此判断故障已排除。"
+
+
+def with_not_resolved(speech: str) -> str:
+    """给告警类回答补收尾句；已经说过就不重复。"""
+    text = (speech or "").rstrip()
+    if "不能据此判断故障已排除" in text:
+        return text
+    if text and text[-1] not in "。！？!?":
+        text += "。"
+    return text + NOT_RESOLVED_NOTE
+
+
+def user_cleared_reply(alert: dict | None) -> str:
+    """会话里确有一条告警、用户这一句说它灭了 / 处理好了时的确定性回答（QA T47 裁决 A 保留：
+    用户的话可以撤掉会话里的约束；但系统据此不能宣布安全，更不能回落成「天气良好，适合出行」）。"""
+    alert = alert if isinstance(alert, dict) else {}
+    name = str(alert.get("signal") or "").strip() or "这个告警"
+    return (f"好的。{name}不再提示，不等于故障已经排除——系统这边没法确认，"
+            "建议尽快到服务点检查一下；路上留意仪表，再出现就在安全位置靠边停车检查。")
 
 
 # ── 驾驶员状态 ───────────────────────────────────────────────────────────

@@ -3066,3 +3066,11 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   `STALE_AFTER_S` 时点明。由假设推出的量（续航 = 电量 × 满电续航）写「估算」。
 - 要读车况就在 manifest 声明 `context_scopes: [vehicle_state]`；没声明，权限投影会把车况滤掉（导航至今如此，它的续航提醒在线上拿不到电量）。
   冻结的旧接口（`additional_parameters: legacy`）上下文范围进 ABI 指纹：改范围前先迁 v2 契约，冻结清单不能为此改写。
+
+### 9.59 解释告警不宣布故障已排除（CA2-19 S2，2026-10-04）
+
+- 告警类回答（手册各分支、道路安全）一律以 `runtime.safety_signal.NOT_RESOLVED_NOTE` 收尾（`with_not_resolved`，已说过不重复）；
+  手册问答所有告警拼接只走 `_alert_answer`。系统手里没有证明故障已排除的车况来源，不得说「已排除 / 可以放心继续开」。
+- 用户说告警灭了 / 处理好了：可以撤掉会话里的告警约束（QA T47 裁决 A），但会话里确有告警时只答 `user_cleared_reply`，
+  不回落成天气建议的「适合出行」。
+- 告警词表改动要同步 `agents/road_safety/manifest.yaml` 那条告警续问路由提示（正则是词表的镜像，对账测试会红）。

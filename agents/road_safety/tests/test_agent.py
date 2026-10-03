@@ -593,3 +593,20 @@ def test_route_advice_with_data_still_asks_the_model():
                                  raw_text="开车去上海安全吗", ctx=make_context()))
     assert res.speech == "上海有小雨，注意减速、保持车距。"
     assert ("info", "info.weather", {"city": "上海"}) in agent._agents.calls
+
+
+def test_user_saying_the_lamp_went_off_is_not_turned_into_safe_to_drive():
+    """CA2-19 S2：会话里挂着机油灯、用户说「灭了，还能继续开吗」——T47 让这一轮不再按旧告警答，
+    但此前会回落到天气建议，答出「天气状况良好，适合出行」。现在：不宣布安全、建议检查。"""
+    import json
+    agent = RoadSafetyAgent()
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", raw_text="机油灯灭了，现在还能继续开吗",
+                                 meta={"focus_safety_alert": json.dumps({"level": "critical", "signal": "机油灯"})}))
+    assert "不等于故障已经排除" in res.speech and "机油灯" in res.speech
+    assert "适合出行" not in res.speech
+
+
+def test_resolution_words_without_a_session_alert_keep_the_general_path():
+    agent = RoadSafetyAgent()
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", raw_text="车没故障，今天适合出行吗"))
+    assert "不等于故障已经排除" not in res.speech

@@ -30,7 +30,7 @@ from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.provenance import attach
 from runtime.anaphora import has_anaphoric_subject
 from runtime.clause_split import split_clauses
-from runtime.safety_signal import alert_advice, alert_level, alert_signal
+from runtime.safety_signal import alert_advice, alert_level, alert_signal, with_not_resolved
 from .providers import build_knowledge_retriever
 from .providers.base import CONFIDENT_COVERAGE
 from .toc_router import SCOPE_OTHER_VEHICLE, ManualTocRouter
@@ -58,6 +58,12 @@ _SYSTEM_GENERIC = (
 # chitchat 是同一份的另外两个消费方）。这里曾经有一份本地副本——收口发生在
 # 第三个消费方出现的**当天**，不是等它错了再收（§4.3 时区族那笔账）。
 _UNVERIFIED_NUMBERS = "具体数值请以车辆铭牌或随车手册为准，我这里没有本车型的权威数据。"
+
+
+def _alert_answer(level: str, body: str) -> str:
+    """告警类回答的唯一拼法：处置建议前置、正文居中、「不能据此判断故障已排除」收尾（CA2-19 S2）。
+    手册说明再完整也只是说明——系统手里没有证明故障已排除的车况来源。"""
+    return with_not_resolved(f"{alert_advice(level)}{body}")
 _UNGROUNDED_NUMBER = (
     "检索到了相关手册内容，但生成答案中的数值无法从引用片段核对。"
     "请查看屏幕中的手册原文，或联系小米汽车服务中心确认。"
@@ -379,15 +385,15 @@ class ManualRagAgent(BaseAgent):
             if evidence is not None:
                 if not evidence.available:
                     return AgentResult(
-                        speech=(f"{alert_advice(level)}当前无法核验本车型相关处置的完整手册条件，"
-                                "请核对随车手册或联系服务中心，不能据此判断故障已排除。"),
+                        speech=_alert_answer(level, "当前无法核验本车型相关处置的完整手册条件，"
+                                             "请核对随车手册或联系服务中心，不能据此判断故障已排除。"),
                         data=self._safety_data(level, question, source_type="manual",
                                               grounding_rejected="source_evidence",
                                               source_evidence_guard=evidence.guard_id),
                         ui_card=self._card([], "manual"),
                     )
                 return AgentResult(
-                    speech=f"{alert_advice(level)}{evidence.speech}",
+                    speech=_alert_answer(level, evidence.speech),
                     data=self._safety_data(level, question, source_type="manual",
                                           retrieval="source_evidence", retrieval_basis=basis,
                                           source_evidence_guard=evidence.guard_id,
@@ -407,7 +413,7 @@ class ManualRagAgent(BaseAgent):
         if not chunks:
             speech = "手册里没有查到这方面的内容，建议联系客服或前往服务点确认。"
             if level:
-                speech = f"{alert_advice(level)}{speech}"
+                speech = _alert_answer(level, speech)
             return AgentResult(speech=speech,
                                data=self._safety_data(level, question, **trace),
                                ui_card=self._card([], ""))
@@ -423,9 +429,8 @@ class ManualRagAgent(BaseAgent):
         # 理由：这一档下模型唯一能引用的就是演示语料里的数值，说出去就是把
         # 通用参考冒充成本车权威值（QA 轮 I-036 的完整形态）。
         if level and not authoritative:
-            advice = alert_advice(level)
             return AgentResult(
-                speech=f"{advice}{_UNVERIFIED_NUMBERS}",
+                speech=_alert_answer(level, _UNVERIFIED_NUMBERS),
                 data=self._safety_data(level, question, source_type=source_type, **trace),
                 ui_card=self._card(chunks, source_type))
 
@@ -447,7 +452,7 @@ class ManualRagAgent(BaseAgent):
                 answer = f"根据《{manual_title}》的图标目录，这是“{image.caption}”。{description}"
             else:
                 answer = f"根据《{manual_title}》，{description}"
-            speech = f"{alert_advice(level)}{answer}" if level else answer
+            speech = _alert_answer(level, answer) if level else answer
             return AgentResult(
                 speech=speech,
                 data=self._safety_data(
@@ -476,7 +481,7 @@ class ManualRagAgent(BaseAgent):
         if answer is None:
             fallback = (_GENERATION_UNAVAILABLE_MANUAL if authoritative
                         else _GENERATION_UNAVAILABLE_GENERIC)
-            speech = f"{alert_advice(level)}{fallback}" if level else fallback
+            speech = _alert_answer(level, fallback) if level else fallback
             return AgentResult(
                 speech=speech,
                 data=self._safety_data(
@@ -497,7 +502,7 @@ class ManualRagAgent(BaseAgent):
         # 看起来同样精确的数：带单位/小数的数值若无法在本轮引用片段内核对，整段弃权。
         ungrounded = _ungrounded_numeric_claims(answer, chunks) if authoritative else []
         if ungrounded:
-            speech = f"{alert_advice(level)}{_UNGROUNDED_NUMBER}" \
+            speech = _alert_answer(level, _UNGROUNDED_NUMBER) \
                 if level else _UNGROUNDED_NUMBER
             return AgentResult(
                 speech=speech,
@@ -508,7 +513,7 @@ class ManualRagAgent(BaseAgent):
             )
 
         # 安全信号（有权威手册）：处置建议**前置**，不让它淹没在模型话术里。
-        speech = f"{alert_advice(level)}{answer}" \
+        speech = _alert_answer(level, answer) \
             if level else answer
         return AgentResult(
             speech=speech,

@@ -230,3 +230,18 @@ def test_card_carries_provenance():
     prov = (res.ui_card or {}).get("_prov") or {}
     assert prov.get("mode") == "mock", f"当前知识库是 mock，_prov 必须如实标注：{prov}"
     assert prov.get("vendor"), "_prov 必须带 vendor"
+
+
+# ── CA2-19 S2：解释告警不宣布故障已排除 ─────────────────────────────────
+
+def test_every_alert_answer_closes_with_not_resolved():
+    agent = _agent("胎压灯亮说明有轮胎气压不足，补气后灯会熄灭，可以放心继续行驶。")
+    res = asyncio.run(run_handle(agent, "manual.query", raw_text="胎压报警灯亮了是什么意思"))
+    assert res.speech.endswith("不能据此判断故障已排除。")
+    assert res.speech.count("不能据此判断故障已排除") == 1
+
+
+def test_plain_questions_get_no_alert_closing():
+    agent = _agent("空调有自动、制冷、除霜三种模式。")
+    res = asyncio.run(run_handle(agent, "manual.query", raw_text="空调有哪些模式"))
+    assert "故障已排除" not in res.speech

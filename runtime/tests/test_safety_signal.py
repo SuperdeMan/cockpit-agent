@@ -255,3 +255,35 @@ def test_every_driver_state_signal_maps_back_to_its_state():
 @pytest.mark.parametrize("signal", ["机油灯", "胎压灯", "车辆告警", "", None])
 def test_vehicle_signals_are_not_driver_states(signal):
     assert driver_state_of_signal(signal) == ""
+
+
+# ─── CA2-19 S2：解释告警 ≠ 宣布故障已排除；识别补齐感叹号与胎压低 ───
+
+from runtime.safety_signal import NOT_RESOLVED_NOTE, user_cleared_reply, with_not_resolved  # noqa: E402
+
+
+@pytest.mark.parametrize("text,level", [
+    ("仪表盘亮了个黄色感叹号是什么意思", "amber"),
+    ("仪表盘上那个红色感叹号是什么意思", "amber"),
+    ("胎压低了怎么办", "amber"),
+    ("右后轮胎压偏低，还能开吗", "amber"),
+    ("胎压低于多少需要充气", ""),            # 问阈值，不是告警自述
+    ("大灯亮了", ""),                         # 功能灯照旧不是告警
+    ("机油灯灭了", ""),                       # 解除陈述不登记成新告警
+])
+def test_alert_recognition_covers_exclamation_icons_and_low_tire_pressure(text, level):
+    assert alert_level(text) == level
+
+
+def test_with_not_resolved_closes_once_and_fixes_punctuation():
+    closed = with_not_resolved("请尽快检查")
+    assert closed == "请尽快检查。" + NOT_RESOLVED_NOTE
+    assert with_not_resolved(closed) == closed
+    assert with_not_resolved("不能据此判断故障已排除，请核对手册。") == "不能据此判断故障已排除，请核对手册。"
+
+
+def test_user_cleared_reply_never_declares_it_safe():
+    reply = user_cleared_reply({"level": "critical", "signal": "机油灯"})
+    assert "机油灯" in reply and "不等于故障已经排除" in reply
+    assert "适合出行" not in reply and "可以继续开" not in reply
+    assert "这个告警" in user_cleared_reply(None)

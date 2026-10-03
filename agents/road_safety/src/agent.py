@@ -21,7 +21,7 @@ import time
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
-from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
+from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level, user_cleared_reply,
                                    alert_resolved, alert_signal, driver_state,
                                    driver_state_mentioned, driver_state_of_signal)
 from runtime.clock import hour_of as clock_hour
@@ -292,7 +292,16 @@ class RoadSafetyAgent(BaseAgent):
         # 旧告警不再是这轮回答的前提——否则「机油灯灭了，现在还能继续开吗」会被答成
         # 「您这次会话里还有未解除的机油灯」。判据同 `runtime.safety_signal.alert_resolved`
         # （编排同一轮也据此清焦点；这里只是让**这一轮**不再读到它）。
-        alert = {} if alert_resolved(intent.raw_text or "") else _focus_safety_alert(meta)
+        prior = _focus_safety_alert(meta)
+        if alert_resolved(intent.raw_text or ""):
+            # CA2-19 S2：用户说灭了 / 处理好了，这一轮不再按旧告警答（T47）；但会话里确有那条告警时，
+            # 系统不据此宣布安全——此前会回落到天气建议，答出「天气状况良好，适合出行」。
+            if prior:
+                return AgentResult(speech=user_cleared_reply(prior),
+                                   follow_up="需要我帮您找最近的服务点吗？")
+            alert = {}
+        else:
+            alert = prior
         if alert:
             return self._alert_bound_advice(alert)
 
