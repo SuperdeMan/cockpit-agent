@@ -19,6 +19,10 @@ logger = logging.getLogger("agent.mcp_bridge.client")
 
 PROTOCOL_VERSION = "2025-06-18"
 CLIENT_INFO = {"name": "cockpit-mcp-bridge", "version": "0.1.0"}
+#: 单次 HTTP 响应体上限（CA2-17 S3）：实测最大 `tools/list` 102 KB、整份菜单 64 KB，约 20 倍余量。
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+#: 服务器通知「工具列表变了」（MCP 规范的方法名）。客户端只记一个标记，由准入层在下次调用前复核。
+TOOLS_LIST_CHANGED = "notifications/tools/list_changed"
 # stdio 子进程只继承运行 Python 所需的系统变量（CA2-17）；server 需要的配置在 servers.yaml 里显式给
 _CHILD_ENV_KEYS = frozenset({
     "PATH", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
@@ -76,6 +80,22 @@ class McpTimeout(McpError):
         self.sent = bool(sent)
 
 
+class McpOversize(McpTimeout):
+    """响应体超过上限（CA2-17 S3）：请求已送达、结果读不全——与送达后超时同一处置（写调用按结果不确定）。"""
+
+    def __init__(self, message: str):
+        super().__init__(message, sent=True)
+
+
+class _Reply:
+    """读完（且没超上限）的 HTTP 响应：只留状态码、响应头与正文。"""
+
+    def __init__(self, status_code: int, headers, text: str):
+        self.status_code = status_code
+        self.headers = headers
+        self.text = text
+
+
 def _rpc_error(server_id: str, error) -> McpError:
     """Keep only the protocol code; remote messages are untrusted free text."""
     code = error.get("code") if isinstance(error, dict) else None
@@ -95,6 +115,8 @@ class StdioMcpClient:
         self._lock = asyncio.Lock()          # stdio 是单条串行管道，请求必须排队
         self.server_info: dict = {}
         self.healthy = False
+        # 收到 tools/list_changed 后置位；准入层（`pinning.PinnedClient`）复核后清掉
+        self.tools_changed = False
 
     # ── 生命周期 ──────────────────────────────────────────────────────
     async def start(self) -> None:
@@ -149,9 +171,12 @@ class StdioMcpClient:
             await self._send({"jsonrpc": "2.0", "id": rid, "method": method,
                               "params": params or {}})
             deadline = timeout_s if timeout_s is not None else self._timeout
+            # 总时限（CA2-17 S3）：按行计时的话，一直吐噪声行的 server 能把请求无限拖住
+            loop = asyncio.get_running_loop()
+            end = loop.time() + deadline
             while True:
                 line = await asyncio.wait_for(
-                    self._proc.stdout.readline(), timeout=deadline)
+                    self._proc.stdout.readline(), timeout=max(0.0, end - loop.time()))
                 if not line:
                     self.healthy = False
                     raise McpError(f"{self.server_id}: 子进程已退出")
@@ -159,6 +184,10 @@ class StdioMcpClient:
                     msg = json.loads(line.decode("utf-8"))
                 except json.JSONDecodeError:
                     continue                       # server 打的非协议噪声，跳过
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("method") == TOOLS_LIST_CHANGED:
+                    self.tools_changed = True
                 if msg.get("id") != rid:
                     continue                       # 通知/乱序响应
                 if "error" in msg:
@@ -217,6 +246,10 @@ class HttpMcpClient:
         self._lock = asyncio.Lock()
         self.server_info: dict = {}
         self.healthy = False
+        # CA2-17 S3：收到 tools/list_changed 置位；会话失效重新握手后、重试原请求**之前**调
+        # `on_session_renewed`（准入层在这里重新比对工具指纹，对不上就抛错、原请求不重试）
+        self.tools_changed = False
+        self.on_session_renewed = None
 
     # ── 生命周期（与 stdio 同形）──────────────────────────────────
     async def start(self) -> None:
@@ -265,16 +298,51 @@ class HttpMcpClient:
                 return msg
         return None
 
+    @staticmethod
+    def _sse_methods(text: str) -> set[str]:
+        """SSE 流里服务器顺带发来的通知方法名（只认 method，不读参数）。"""
+        methods = set()
+        for block in text.split("\n\n"):
+            data_lines = [ln[5:].lstrip() for ln in block.splitlines()
+                          if ln.startswith("data:")]
+            if not data_lines:
+                continue
+            try:
+                msg = json.loads("\n".join(data_lines))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(msg, dict) and isinstance(msg.get("method"), str):
+                methods.add(msg["method"])
+        return methods
+
+    async def _post_once(self, payload: dict, budget: float) -> _Reply:
+        """流式读响应体，超过上限即停（CA2-17 S3）——不把一个超大响应整包读进内存。"""
+        async with self._http.stream(
+                "POST", self._url,
+                content=json.dumps(payload, ensure_ascii=False).encode(),
+                headers=self._post_headers(), timeout=budget) as resp:
+            chunks, size = [], 0
+            async for chunk in resp.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_RESPONSE_BYTES:
+                    raise McpOversize(
+                        f"{self.server_id}: 响应超过 {MAX_RESPONSE_BYTES} 字节上限")
+                chunks.append(chunk)
+            text = b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
+            return _Reply(resp.status_code, resp.headers, text)
+
     async def _post(self, payload: dict, timeout_s: float | None):
         import httpx
         if self._http is None:
             raise McpError(f"{self.server_id}: HTTP 客户端未启动")
+        budget = timeout_s if timeout_s is not None else self._timeout
         sanitized_error = None
         try:
-            return await self._http.post(
-                self._url, content=json.dumps(payload, ensure_ascii=False).encode(),
-                headers=self._post_headers(),
-                timeout=timeout_s if timeout_s is not None else self._timeout)
+            # 总时限（CA2-17 S3）：httpx 的读超时按数据块计，慢慢吐字节的服务器能无限拖住一次调用
+            return await asyncio.wait_for(self._post_once(payload, budget), timeout=budget)
+        except asyncio.TimeoutError:
+            sanitized_error = McpTimeout(
+                f"{self.server_id}: HTTP 请求超过总时限", sent=True)
         except httpx.TimeoutException as e:
             sent = not isinstance(e, httpx.ConnectTimeout)
             sanitized_error = McpTimeout(
@@ -306,6 +374,9 @@ class HttpMcpClient:
             logger.info("[mcp:%s] 会话失效，重新握手", self.server_id)
             self._session_id = ""
             await self.initialize()
+            if self.on_session_renewed is not None:
+                # 服务器可能已换了一版：先让准入层重新比对工具指纹，对不上就在这里抛错、不重试原请求
+                await self.on_session_renewed()
             return await self._request(
                 method, params, timeout_s,
                 retry_on_session_loss=retry_on_session_loss, _retried=True)
@@ -313,6 +384,8 @@ class HttpMcpClient:
             raise McpError(f"{self.server_id}: HTTP {resp.status_code}")
         ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
         if ctype == "text/event-stream":
+            if TOOLS_LIST_CHANGED in self._sse_methods(resp.text):
+                self.tools_changed = True
             msg = self._parse_sse(resp.text, rid)
             if msg is None:
                 raise McpError(f"{self.server_id}: SSE 流中无 id={rid} 的响应")

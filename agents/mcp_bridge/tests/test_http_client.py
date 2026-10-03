@@ -326,3 +326,98 @@ def test_alive_semantics_http():
         asyncio.run(c.list_tools())          # 瞬时失败按次抛
     assert c.alive and c.healthy             # 不永久拒载
     assert asyncio.run(c.list_tools()) == []  # 下次自动恢复
+
+
+# ─── CA2-17 S3：响应上限、总时限、list_changed、重新握手后先复核 ───
+
+def _init_or(handler_after_init):
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        rid = body.get("id")
+        if rid is None:
+            return httpx.Response(202)
+        if body["method"] == "initialize":
+            return httpx.Response(200, headers={"Content-Type": "application/json",
+                                                "Mcp-Session-Id": "s1"},
+                                  text=_rpc_result(rid, {"serverInfo": {}}))
+        return handler_after_init(request, body, rid)
+    return handler
+
+
+def test_response_over_the_cap_is_uncertain_not_buffered():
+    from agents.mcp_bridge.src.mcp_client import MAX_RESPONSE_BYTES, McpOversize, McpTimeout
+
+    def big(request, body, rid):
+        return httpx.Response(200, headers={"Content-Type": "application/json"},
+                              content=b" " * (MAX_RESPONSE_BYTES + 1))
+
+    c = _client(_init_or(big))
+    asyncio.run(c.initialize())
+    with pytest.raises(McpOversize) as info:
+        asyncio.run(c.call_tool("create", {}))
+    assert isinstance(info.value, McpTimeout) and info.value.sent is True
+
+
+def test_slow_drip_response_hits_the_total_deadline():
+    from agents.mcp_bridge.src.mcp_client import McpTimeout
+
+    class _Drip(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for _ in range(50):
+                await asyncio.sleep(0.05)       # 每块都在读超时内，整体却拖很久
+                yield b" "
+
+    def drip(request, body, rid):
+        return httpx.Response(200, headers={"Content-Type": "application/json"}, stream=_Drip())
+
+    c = _client(_init_or(drip))
+    asyncio.run(c.initialize())
+    with pytest.raises(McpTimeout) as info:
+        asyncio.run(c.call_tool("query", {}, timeout_s=0.3))
+    assert info.value.sent is True
+
+
+def test_sse_list_changed_notification_marks_tools_changed():
+    def sse(request, body, rid):
+        text = ("event: message\n"
+                'data: {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}\n\n'
+                "event: message\n"
+                f"data: {_rpc_result(rid, {'content': [], 'structuredContent': {}})}\n\n")
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, text=text)
+
+    c = _client(_init_or(sse))
+    asyncio.run(c.initialize())
+    assert c.tools_changed is False
+    asyncio.run(c.call_tool("query", {}))
+    assert c.tools_changed is True
+
+
+def test_session_renewal_hook_runs_before_the_retry_and_can_stop_it():
+    seen = {"calls": 0, "hook": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        rid = body.get("id")
+        if rid is None:
+            return httpx.Response(202)
+        if body["method"] == "initialize":
+            return httpx.Response(200, headers={"Content-Type": "application/json",
+                                                "Mcp-Session-Id": f"s{rid}"},
+                                  text=_rpc_result(rid, {"serverInfo": {}}))
+        seen["calls"] += 1
+        if request.headers.get("Mcp-Session-Id") == "s1":
+            return httpx.Response(404)
+        return httpx.Response(200, headers={"Content-Type": "application/json"},
+                              text=_rpc_result(rid, {"content": []}))
+
+    c = _client(handler)
+    asyncio.run(c.initialize())
+
+    async def refuse():
+        seen["hook"] += 1
+        raise McpError("merchant: create 的接口与准入时不一致，已停用")
+
+    c.on_session_renewed = refuse
+    with pytest.raises(McpError):
+        asyncio.run(c.call_tool("create", {}))
+    assert seen == {"calls": 1, "hook": 1}      # 404 之后没有重试

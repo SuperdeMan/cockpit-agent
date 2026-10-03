@@ -12,14 +12,13 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from itertools import islice
-from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from runtime.external_text import plain_name
+from runtime.external_url import https_url_host, pay_url_allowed
 
-from ..admission import normalize_hostname
 from ..candidate_ref import RESERVED_ID_SLOT
 from ..mcp_client import McpTimeout
 from .base import (DeclaredBusinessRejected, MerchantWorkflow,
@@ -1503,24 +1502,9 @@ class McDonaldsWorkflow(MerchantWorkflow):
         pay_url = payload.get("payH5Url")
         if not isinstance(pay_url, str) or not pay_url:
             return None
-        try:
-            parsed = urlparse(pay_url)
-            host = normalize_hostname(parsed.hostname or "")
-            scheme_ok = (
-                parsed.scheme.lower() == "https" and
-                parsed.username is None and parsed.password is None and
-                parsed.port in (None, 443) and pay_url == pay_url.strip() and
-                not any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127
-                        for ch in pay_url)
-            )
-        except ValueError:
-            host, scheme_ok = "", False
-        allowed = {
-            normalize_hostname(value)
-            for value in (getattr(self.server, "pay_url_hosts", []) or [])
-        }
-        allowed.discard("")
-        if not scheme_ok or not host or host not in allowed:
+        # 一份判据（CA2-17 S3）：`runtime.external_url.pay_url_allowed`，与通用写路径、支付网关同一份
+        host = https_url_host(pay_url)
+        if not pay_url_allowed(pay_url, getattr(self.server, "pay_url_hosts", []) or []):
             logger.warning("[麦当劳] 支付链接不在白名单，拒绝登记：host=%s", host)
             return None
         try:

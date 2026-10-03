@@ -9,6 +9,7 @@ HTTP_PROXY 用时 httpx 的 CONNECT 全失败 → Agent 降级 mock。改用本�
 重新受白名单约束（见 docs/design/2026-07-05-nearby-discovery-redesign.md §11）。
 
 配置：EGRESS_ALLOW=逗号分隔的允许域名；EGRESS_PORT=监听端口（默认 8080）。
+只放行白名单主机的 443（CA2-17 S3）：接入的厂商都是 https，别的端口一律拒。
 """
 from __future__ import annotations
 import asyncio
@@ -20,6 +21,20 @@ log = logging.getLogger("egress")
 
 ALLOW = {h.strip().lower() for h in os.getenv("EGRESS_ALLOW", "").split(",") if h.strip()}
 PORT = int(os.getenv("EGRESS_PORT", "8080"))
+ALLOWED_PORT = 443
+
+
+def parse_target(hostport: str) -> tuple[str, int]:
+    """CONNECT 目标 → (小写主机, 端口)；没写端口按 443，端口不是数字给 -1（随后被拒）。"""
+    host, sep, port_s = hostport.rpartition(":")
+    if not sep:
+        return hostport.lower(), ALLOWED_PORT
+    return host.lower(), int(port_s) if port_s.isdigit() else -1
+
+
+def allowed(host: str, port: int) -> bool:
+    """白名单主机的 443 才放行。"""
+    return host in ALLOW and port == ALLOWED_PORT
 
 
 async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -54,15 +69,13 @@ async def _handle(cr: asyncio.StreamReader, cw: asyncio.StreamWriter) -> None:
             cw.close()
             return
         hostport = parts[1]
-        host, _, port_s = hostport.rpartition(":")
-        host = (host or hostport).lower()
-        port = int(port_s) if port_s.isdigit() else 443
+        host, port = parse_target(hostport)
         # 读掉剩余请求头直到空行
         while True:
             h = await asyncio.wait_for(cr.readline(), timeout=15)
             if h in (b"\r\n", b"\n", b""):
                 break
-        if host not in ALLOW:
+        if not allowed(host, port):
             log.warning("DENY %s from %s", hostport, peer)
             cw.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
             await cw.drain()

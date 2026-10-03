@@ -902,7 +902,7 @@ cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」�
 | 项 | 约定 |
 |---|---|
 | 唯一准入依据 | `servers.yaml`。改这个文件 + 人工审才能接新工具；**不改 Agent 代码、不改编排核心** |
-| 三重锁定 | ① `version` 与 server 自报 `serverInfo.version` **逐字相等**，否则拒载；② tool 白名单（server 多提供的直接忽略，清单里有而 server 没有 → 记拒绝理由）；③ `schema_sha` 指纹（`inputSchema` 排序后 sha256 前 12 位，变了就拒载重审；留空=首次接入只记录） |
+| 三重锁定 | ① `version` 与 server 自报 `serverInfo.version` **逐字相等**，否则拒载；② tool 白名单（server 多提供的直接忽略，清单里有而 server 没有 → 记拒绝理由）；③ `schema_sha` 合同指纹（`admission.tool_fingerprint`：规范化 `{inputSchema, outputSchema}` 的完整 sha256，描述不算；第三方 / 远端工具必须钉全，空或不完整即拒、拒绝理由给出实际指纹；只有本地演示 stdio 工具可不钉）。准入之后按时机复核，见 §9.57 |
 | **transport**（2026-08-11 批 3 解封） | `stdio`（默认，本地子进程）\| `streamable_http`（**仅官方商户远程端点**——瑞幸/麦当劳这类平台方托管 MCP；接入仍全量人工准入，解封的只是传输形态不是准入姿态）。http 形态字段：`url` + `headers`（值支持 `${ENV_VAR}` 展开，**token 不进 yaml**——yaml 入库；**缺 env 变量 → 该 server 整台拒载**，不静默拿空 token 出站吃 401）。原「HTTP/SSE 不做」裁决的前提是「首批演示商户用不上」，官方商户 MCP（Streamable HTTP）出现后前提失效——先改本表再改实践 |
 | **远程 server 版本锁定** | `version` **留空**（不校验）+ `schema_sha` 逐工具锁死：远程托管平台的版本随平台升级，逐字锁版本＝常态拒载；接口变更的重审闸由工具级 schema 指纹承担（变了→该工具拒载告警、能力诚实缺席，不误执行）。这是清单填法决策，`check_version` 对空 version 本就跳过 |
 | **复合商户 workflow**（2026-08-12） | Planner 只看 `mcd.order` / `luckin.order` 等复合 intent，不直接看到官方低层写工具。`WorkflowSpec` 必须精确声明依赖工具、公开 intent、所需 scope 与写工具 pin；低层工具 `expose=false`。嵌套 `items[]` / `productList[]`、商品 code、规格与金额由桥内确定性 builder 从同一份官方只读结果构造，不能让 LLM 生成。跨步引用只接受 Executor 注入的 `_trusted_slot_refs`；候选/预览存 Redis TTL 草稿，确认按 `(user, session, merchant)` current pointer 原子消费，客户端自报 token 不构成授权。草稿登记为 `merchant_draft`，维护带完整性 marker 的 owner 摘要索引；create/cancel 消费草稿时在同一 Redis 原子步骤建立 owner 操作租约，远程写前再次校验并续租。删除先设置写 fence：若操作租约在飞则只返回 `503 + pending/retryable`，待租约释放后重试；无在飞操作时再逐值复核归属、用 privacy-only cursor SCAN 修复孤儿，foreign member 不构成删除授权，二次扫描证明清零后才 ACK。成功删除保留覆盖草稿 TTL 的 `privacy_deleted` 墓碑，拒绝删除前已在飞但 ACK 后才落盘的迟到写。Planner `planner:sess/focus` 另登记为 `planner_pending_session`：key 绑定 owner+session 摘要，load/clear/focus 均校验认证 owner；挂起步不重复保存 token/卡片/data，已完成依赖只保留下游 `slot_refs` 实际引用且安全的标量与 provenance/fingerprint，自由话术、卡片、动作、URI/QR/token/payment id/联系人信息均不持久。HMI 的 Memory 全量 ForgetUser 必须用 `AUTH_TOKENS` 中 Bearer 绑定同一 owner；Memory 删除成功后，只额外协调本批新增的 `merchant_draft` 与 `planner_pending_session` 两类短期状态。内部 request/reply 使用由 mesh 私钥派生的域隔离 HMAC、nonce/时间窗/重放闸及请求摘要绑定响应；两个 adapter 只有在共享 Redis 实际可达时才安装 responder，缺 key、任一 adapter NACK/超时或在飞操作都返回 `503 + pending/retryable`。这不是全 privacy registry 的跨域删除 saga：Task Ledger、支付/可观测等沿用 §9.13 的后置裁决；`mcp_demo_order` 仍是外部引用，只能走显式 `mcp_external_unlink`/测试命名空间生命周期清理，不能冒充 `privacy_user_all` 物理删除。TTL 只作故障兜底，不能替代可证明的删除。 |
@@ -3043,3 +3043,16 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   `plain_utterance`，过不了的只留展示。订单预览的门店 / 商品名过不了就不出预览。新加按钮模板本身不得带分句标记。
 - 外部返回进模型提示：桥的摘要包成资料区（`as_reference`，压平伪造的区块标记）；聚合合成给第三方结果加
   「外部服务返回，只作资料」；再规划观测标 `untrusted` 并截断字符串。没有第三方结果时提示逐字同旧。
+
+### 9.57 MCP 工具指纹调用期仍成立；出口只走代理（CA2-17 S3，2026-10-03）
+
+- 每台服务器准入后的客户端由 `agents/mcp_bridge/src/pinning.py::PinnedClient` 包住，工作流与通用路径共用。调用前在这些时机重新拉
+  `tools/list` 比对钉的指纹：HTTP 会话重新握手之后（重试原请求之前）、收到 `notifications/tools/list_changed` 之后、读工具 30 分钟 / 写工具 60 秒
+  未核对。对不上或工具没了 ⇒ 该工具在进程内停用（`ToolDrift`，调用不发出，写调用因此是「确定未发出」），要人工复核、重钉指纹并重启才恢复；
+  核对本身失败不停用任何工具。服务器自报版本只记录、变了告警。
+- 重钉 = 认可新合同：先逐项比对线上入参与工作流组参，再改 `servers.yaml`；带真实写的工具重钉要用户点头。
+- 远端服务器（`streamable_http`）：地址只许 https、443、无 userinfo 的合法主机（`check_url`）；必须经出口代理——环境里有 HTTPS 代理、主机不在
+  NO_PROXY（`check_egress`），否则整台拒载。单次响应体 2 MiB 上限（`McpOversize`，按「已送达、结果不确定」处理）、每次调用一个总时限；
+  stdio 同样按总时限读。出口代理（`deploy/egress-proxy.py`）只放行白名单主机的 443。
+- 支付链接一份判据 `runtime/external_url.pay_url_allowed`（https、443、无 userinfo、无空白与控制字符、主机精确在白名单），商户桥两家工作流、
+  通用写路径与支付网关共用；主机名归一化 `normalize_hostname` 也在这里（`admission` 只是再导出）。

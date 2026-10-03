@@ -34,12 +34,14 @@ from cockpit.agent.v1 import agent_pb2
 from runtime.clock import local_dt
 from runtime.capability_contract import declaration, to_proto as contract_proto, migration_inventory
 from runtime.external_text import as_reference, plain_name, plain_utterance
+from runtime.external_url import https_url_host, pay_url_allowed
 
 from . import candidate_ref
 from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
-                        check_account, check_version, load_local_capabilities,
-                        load_servers, normalize_hostname)
+                        check_account, check_egress, check_url, check_version,
+                        load_local_capabilities, load_servers)
 from .mcp_client import McpError, StdioMcpClient
+from .pinning import PinnedClient
 from .order_ref import (HISTORY, NEUTRAL, OrderRef, allows_history_fallback,
                         is_deictic_placeholder, reference_scope)
 
@@ -186,7 +188,7 @@ class McpBridgeAgent(BaseAgent):
                 self.rejections.append(f"{spec.id}: {spec.env_error}")
                 logger.warning("[mcp:%s] **拒载**：%s", spec.id, spec.env_error)
                 continue
-            account_error = check_account(spec)
+            account_error = check_account(spec) or check_url(spec) or check_egress(spec)
             if account_error:
                 self.rejections.append(f"{spec.id}: {account_error}")
                 logger.warning("[mcp:%s] **拒载**：%s", spec.id, account_error)
@@ -218,6 +220,10 @@ class McpBridgeAgent(BaseAgent):
             self.rejections.extend(f"{spec.id}: {r}" for r in rejected)
             for r in rejected:
                 logger.warning("[mcp:%s] 拒绝工具 %s", spec.id, r)
+            # CA2-17 S3：准入只证明启动那一刻；之后每次调用前按时机复核指纹（`pinning.py`），工作流与通用路径共用这一个客户端
+            client = PinnedClient(client, spec.id,
+                                  {tool.name: tool.schema_sha for tool, _ in admitted},
+                                  {tool.name for tool, _ in admitted if tool.write})
             for tool, schema in admitted:
                 self._bindings[tool.intent] = _Binding(spec, client, tool, schema)
             by_name = {tool.name: _Binding(spec, client, tool, schema)
@@ -1595,18 +1601,10 @@ class McpBridgeAgent(BaseAgent):
         pay_url = pay_url or self._dig(order, b.tool.pay_url_locator)
         if not pay_url:
             return None
-        host = ""
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(pay_url)
-            host = normalize_hostname(parsed.hostname or "")
-            scheme_ok = parsed.scheme.lower() == "https"
-        except ValueError:
-            scheme_ok = False
-        if (not scheme_ok or not b.server.pay_url_hosts or
-                host not in b.server.pay_url_hosts):
-            logger.warning("[mcp:%s] 支付链接域名不在白名单，拒出码：host=%s",
-                           b.server.id, host)
+        # 一份判据（CA2-17 S3）：https、443、无 userinfo、无空白与控制字符、主机精确在白名单——与两家工作流、网关同一份
+        if not pay_url_allowed(pay_url, b.server.pay_url_hosts):
+            logger.warning("[mcp:%s] 支付链接不合判据或主机不在白名单，拒出码：host=%s",
+                           b.server.id, https_url_host(pay_url))
             return None
         try:
             resp = await self._payment.authorize(

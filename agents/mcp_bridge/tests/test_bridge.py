@@ -166,7 +166,7 @@ def test_version_lock_rejects_drift():
 def test_admit_ignores_tools_not_in_allowlist():
     """server 多提供的工具直接忽略——动态放行正是要防的事。"""
     spec = ServerSpec(id="x", command=[], version="1", tools=[
-        ToolSpec(name="menu.list", intent="shop.menu")])
+        ToolSpec(name="menu.list", intent="shop.menu", schema_sha=schema_fingerprint({}))])
     offered = [{"name": "menu.list", "inputSchema": {}},
                {"name": "delete.everything", "inputSchema": {}}]
     admitted, rejected = admit(spec, offered)

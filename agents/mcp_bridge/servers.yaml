@@ -5,7 +5,9 @@
 #   1. server 版本（`version` 与 server 自报的 serverInfo.version **逐字相等**，否则拒载；
 #      **远程托管 server 留空**——平台版本随平台升级，锁定粒度收敛到工具级 schema_sha，§9.9）
 #   2. tool 白名单（server 多提供的工具直接忽略；清单里有而 server 没有 → 记拒绝理由）
-#   3. tool schema 指纹（`schema_sha`，接口变了就拒载重审；留空=首次接入，只记录不校验）
+#   3. tool 合同指纹（`schema_sha` = 规范化 {inputSchema, outputSchema} 的完整 sha256，`admission.tool_fingerprint`；
+#      必须钉全，空或不完整即拒——首次接入先看拒绝理由里的实际指纹，人工审过再钉。运行中按时机复核，
+#      对不上就停用该工具，见 `src/pinning.py`；CA2-17 S3 2026-10-03 按线上定义整体重钉）
 #
 # 写操作额外强制：显式幂等模式 + `require_confirm: true` + 补偿声明。`tool` 须给
 # 通过准入的 `compensate_tool`；`abandon_unpaid` 须在 confirm_prompt 确定性说明
@@ -51,7 +53,7 @@ servers:
         required_scopes: []
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "f46214ddb414"
+        schema_sha: "d9f2d029168f59bc4eeab23596a9786aacf37a7d3bcbfa051cb1e77dfbb9673b"
         description: 查看演示咖啡店的菜单与价格（演示商户，非真实品牌；瑞幸/麦当劳等真实门店的菜单请用对应品牌能力，不适用本工具）
         slots: []
         examples: ["咖啡有什么", "看看咖啡菜单", "咖啡多少钱"]
@@ -69,7 +71,7 @@ servers:
         timeout_outcome: uncertain
         idempotency_key_arg: idempotency_key
         compensate_tool: order.cancel  # 缺它 → admission 拒载
-        schema_sha: "041a13dc1703"
+        schema_sha: "6b9e7d7abf079d805ef868d947fa959e61b4b9feef8a066a2e3186b94d04f894"
         description: 在演示咖啡店下单一杯咖啡（仅限拿铁/美式/摩卡等演示饮品；麦当劳/瑞幸等真实品牌的餐饮下单暂未接入，不适用本工具）
         confirm_prompt: "准备下单：{args}，确认吗？"
         # 规划期槽位用自然词（LLM 会填 item/size），经 arg_map 翻成商户的参数名
@@ -90,7 +92,7 @@ servers:
         required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "df8761c5f320"
+        schema_sha: "4887ae9df4b21eb568314caef643fbb1c725e55157a5c0400eb7e5ed533aea8e"
         description: 查询咖啡订单的状态（演示商户）
         slots: [order_id]
         examples: ["查一下我的订单", "我那杯咖啡好了吗", "刚才的单子怎么样了"]
@@ -112,7 +114,7 @@ servers:
         timeout_outcome: uncertain
         idempotency_key_arg: ""
         compensate_policy: terminal
-        schema_sha: "943700876d93"
+        schema_sha: "219d8c215b26815d21fb6de2be005d572dd39c21aab5b4f80fa54f36b861ee13"
         description: 取消咖啡订单并退款（演示商户，不产生真实交易）
         confirm_prompt: "准备取消订单 {args} 并退款，确认吗？"
         slots: [order_id]
@@ -152,7 +154,7 @@ servers:
         required_scopes: []
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "9e2fcd061b03"
+        schema_sha: "324f5f0f0cc0a8a3ad134728051b532e3e579bf444cd786d6e21b2dec0507c03"
         # 诚实描述：这是常见餐品与营养成分（能量/蛋白质等），不是当店实时价目——
         # 带价格的当店菜单（query-meals）required storeCode，归二期多步链
         # 2026-08-13 由 mcd.menu 改名 mcd.nutrition：它返回的一直是营养成分不是菜单，
@@ -171,7 +173,7 @@ servers:
         required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "6c5c0def4de0"
+        schema_sha: "e2976d938b0866b5862d0fbcff49ebac172da1d0e6bb19f84af5be1a5a3a27b0"
         description: 查询麦当劳订单状态与配送进度（商家是订单状态的真相源）
         slots: [order_id]
         arg_map: {order_id: orderId}
@@ -200,7 +202,7 @@ servers:
         required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "235a50ac3f94"
+        schema_sha: "701cd75f95c57f32a2b254922c11b27e98a7d2a99a7ec42e890ee0d9a11d6a73"
         # searchType **不写死**（2026-08-14 真机 schema 取证）：1=搜索**收藏餐厅**、
         # 2=按位置搜索（city+keyword 必填）。此前写死 1，「附近的麦当劳」永远只会
         # 查到共享服务账号收藏的碧海君庭一家——workflow 按有无位置线索动态选档；收藏档只给账号持有人（CA2-17）。
@@ -214,7 +216,7 @@ servers:
         required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "ccfacc629a1f"
+        schema_sha: "10e03d957d94424898847128904b07f738dc79e4f52059386fca2ae612fb2678"
         const_args: {orderType: 1, beType: 1}
         timeout_ms: 15000
       - name: query-meal-detail
@@ -225,7 +227,7 @@ servers:
         required_scopes: [merchant.write]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "2dc343f13d94"
+        schema_sha: "67660b8c28d1764b8f9b6f96a42c9b5507d34e6d0c4d89bb313436d7c0a2e882"
         const_args: {orderType: 1, beType: 1}
         timeout_ms: 15000
       - name: calculate-price
@@ -236,7 +238,7 @@ servers:
         required_scopes: [merchant.write]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "b25bd7d955a0"
+        schema_sha: "3138e6e2f2119e2a8d7514c1c40fc146784454fead3ba582099258b28589897f"
         const_args: {orderType: 1, beType: 1}
         timeout_ms: 15000
       - name: create-order
@@ -256,7 +258,7 @@ servers:
         amount_locator: data.orderDetail.realTotalAmount
         amount_unit: yuan
         success_predicate: {success: [true], code: [200]}
-        schema_sha: "0bee66827dd1"
+        schema_sha: "82524f6c5be92a8132baef9b7f39e002e7d634c0122adebaccb0d5fbf1506685"
         const_args: {orderType: 1, beType: 1}
         confirm_prompt: "确认后将创建麦当劳未支付订单；不支付会由商户自动失效。"
         timeout_ms: 20000
@@ -335,7 +337,7 @@ servers:
         required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "095c2b916b52"
+        schema_sha: "c4bc0800ed95350ec07e9eb607dceaf377feebbfd269802a30175ebf6cfda51b"
         description: 查询瑞幸咖啡订单详情与状态（商家是订单状态的真相源）
         slots: [order_id]
         arg_map: {order_id: orderId}
@@ -371,7 +373,7 @@ servers:
         required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "cee4310bfb4d"
+        schema_sha: "c388eab331c82b5437665a5bbd3f8a4af6c54168eff87ae7a281d014cab73a74"
         timeout_ms: 15000
       - name: searchProductForMcp
         intent: luckin.internal.search_product
@@ -381,7 +383,7 @@ servers:
         required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "c4426494a931"
+        schema_sha: "719a326a8c1941295f3678db5ecf4ec64be7fe0ff13691fcc922bcbb019004a2"
         timeout_ms: 15000
       - name: queryProductDetailInfo
         intent: luckin.internal.product_detail
@@ -391,7 +393,7 @@ servers:
         required_scopes: [merchant.write]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "dfb46188253d"
+        schema_sha: "1bb7847012912b52d2e627b830eb9805e0443bf4a4c7940be09a9df3f24c6642"
         timeout_ms: 15000
       - name: switchProduct
         intent: luckin.internal.switch_product
@@ -401,7 +403,7 @@ servers:
         required_scopes: [merchant.write]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "f2bb3c6177ff"
+        schema_sha: "129d89f5700298c99e64b2a0bcfa764a1bf0c6faa1ac7302c0b56d44988e6c13"
         timeout_ms: 15000
       - name: previewOrder
         intent: luckin.internal.preview_order
@@ -411,7 +413,7 @@ servers:
         required_scopes: [merchant.write]
         idempotency_mode: none
         retry_policy: safe
-        schema_sha: "6ef3aceeab1f"
+        schema_sha: "ed6becc9fccdb2fd740d51c6dac89c471aaefe44afa047414a009708b45f6def"
         timeout_ms: 15000
       - name: createOrder
         intent: luckin.internal.create_order
@@ -430,7 +432,7 @@ servers:
         amount_locator: data.discountPrice
         amount_unit: yuan
         success_predicate: {success: [true], code: [0]}
-        schema_sha: "6e7211974147"
+        schema_sha: "1f56367e1b2a1d0212e5a7774b056b61d7ee16f1c9a9d7204019ff7f05293099"
         confirm_prompt: "确认后将创建瑞幸咖啡未支付订单。"
         timeout_ms: 20000
       - name: cancelOrder
@@ -446,7 +448,7 @@ servers:
         idempotency_key_arg: ""
         compensate_policy: terminal
         success_predicate: {success: [true], code: [0]}
-        schema_sha: "095c2b916b52"
+        schema_sha: "c4bc0800ed95350ec07e9eb607dceaf377feebbfd269802a30175ebf6cfda51b"
         confirm_prompt: "确认取消这笔瑞幸咖啡订单吗？"
         timeout_ms: 20000
     workflows:

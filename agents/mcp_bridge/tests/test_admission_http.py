@@ -10,7 +10,10 @@ from agents.mcp_bridge.src.admission import (COMPENSATE_POLICIES, REJECT_COMPENS
                                              REJECT_ENV, ToolSpec, ServerSpec,
                                              WorkflowSpec, admit, admit_workflow,
                                              load_servers,
-                                             normalize_hostname)
+                                             normalize_hostname, schema_fingerprint)
+
+# 非演示服务器的工具必须钉全指纹（CA2-17 S3）；下面的夹具都提供空 inputSchema
+PIN = schema_fingerprint({})
 
 
 def _write_yaml(tmp_path, body: str) -> str:
@@ -165,7 +168,7 @@ def test_declared_read_result_rejects_invalid_predicate_and_amount_unit():
 
 
 def test_declared_amount_unit_must_be_explicit_in_yaml(tmp_path):
-    path = _write_yaml(tmp_path, """
+    path = _write_yaml(tmp_path, f"""
         servers:
           - id: merchant
             command: [python, -m, merchant]
@@ -173,7 +176,8 @@ def test_declared_amount_unit_must_be_explicit_in_yaml(tmp_path):
             tools:
               - name: lookup
                 intent: merchant.status
-                success_predicate: {success: [true]}
+                schema_sha: "{PIN}"
+                success_predicate: {{success: [true]}}
                 result_map:
                   order_id: data.orderId
                   status: data.status
@@ -189,7 +193,7 @@ def test_declared_amount_unit_must_be_explicit_in_yaml(tmp_path):
 def test_remote_write_requires_declared_business_success_predicate():
     write = ToolSpec(
         name="create", intent="merchant.internal.create", write=True,
-        expose=False, require_confirm=True,
+        expose=False, require_confirm=True, schema_sha=PIN,
         idempotency_mode="local_at_most_once", retry_policy="never",
         timeout_outcome="uncertain", compensate_policy="terminal")
     remote = ServerSpec(
@@ -227,7 +231,7 @@ def test_admission_rejects_unknown_or_noncanonical_transport(transport):
 def test_third_party_stdio_cannot_expose_write_tool():
     write = ToolSpec(
         name="create", intent="merchant.internal.create", write=True,
-        expose=True, require_confirm=True,
+        expose=True, require_confirm=True, schema_sha=PIN,
         idempotency_mode="local_at_most_once", retry_policy="never",
         timeout_outcome="uncertain", compensate_policy="terminal",
         success_predicate={"success": [True]})
@@ -244,7 +248,7 @@ def test_third_party_stdio_cannot_expose_write_tool():
 def test_third_party_stdio_hidden_write_requires_success_predicate():
     write = ToolSpec(
         name="create", intent="merchant.internal.create", write=True,
-        expose=False, require_confirm=True,
+        expose=False, require_confirm=True, schema_sha=PIN,
         idempotency_mode="local_at_most_once", retry_policy="never",
         timeout_outcome="uncertain", compensate_policy="terminal")
     third_party = ServerSpec(
@@ -563,7 +567,7 @@ def test_pay_url_locator_requires_nonempty_server_host_allowlist():
 def test_pay_url_locator_rejects_every_non_hostname_allowlist_entry(host):
     spec = ServerSpec(id="merchant", command=[], version="", tools=[],
                       pay_url_hosts=[host])
-    tool = ToolSpec(name="lookup", intent="m.lookup",
+    tool = ToolSpec(name="lookup", intent="m.lookup", schema_sha=PIN,
                     pay_url_locator="payment.url")
     spec.tools = [tool]
     admitted, rejected = admit(spec, _offered("lookup"))
@@ -574,7 +578,7 @@ def test_pay_url_locator_rejects_every_non_hostname_allowlist_entry(host):
 def test_pay_url_locator_accepts_only_normalized_hostname_allowlist():
     spec = ServerSpec(id="merchant", command=[], version="", tools=[],
                       pay_url_hosts=["pay.example.cn", "backup.example.cn"])
-    tool = ToolSpec(name="lookup", intent="m.lookup",
+    tool = ToolSpec(name="lookup", intent="m.lookup", schema_sha=PIN,
                     pay_url_locator="payment.url",
                     amount_locator="payment.amount", amount_unit="yuan")
     spec.tools = [tool]
@@ -593,7 +597,7 @@ def test_pay_url_locator_requires_audited_amount_contract(
         pay_url_hosts=["pay.example.cn"])
     tool = ToolSpec(
         name="lookup", intent="m.lookup", pay_url_locator="payment.url",
-        amount_locator=amount_locator, amount_unit=amount_unit)
+        amount_locator=amount_locator, amount_unit=amount_unit, schema_sha=PIN)
     spec.tools = [tool]
 
     admitted, rejected = admit(spec, _offered("lookup"))
@@ -610,7 +614,7 @@ def test_unicode_payment_hostname_is_rejected_instead_of_idna_aliasing(host):
 
 
 def test_non_demo_server_cannot_admit_forward_owner():
-    tool = ToolSpec(name="lookup", intent="m.lookup", forward_owner=True)
+    tool = ToolSpec(name="lookup", intent="m.lookup", forward_owner=True, schema_sha=PIN)
     non_demo = ServerSpec(
         id="third-party", command=[], version="", tools=[tool],
         demo=False, trust="third_party", transport="stdio")

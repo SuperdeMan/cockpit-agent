@@ -1232,3 +1232,54 @@ def test_real_item_queries_are_untouched(raw):
 def test_empty_query_stays_empty():
     assert normalize_menu_query(None) == ""
     assert normalize_menu_query("") == ""
+
+
+# ─── CA2-17 S3：启动准入的 URL / 出口代理检查，准入后统一包上调用期指纹复核 ───
+
+def _remote_bootstrap_server():
+    server, offered = _bootstrap_server()
+    return replace(server, transport="streamable_http", url="https://mcp.example.cn/mcp"), offered
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_refuses_a_remote_server_that_would_bypass_the_egress_proxy(monkeypatch):
+    server, offered = _remote_bootstrap_server()
+    monkeypatch.setattr(agent_module, "load_servers", lambda _: [server])
+    monkeypatch.setattr(McpBridgeAgent, "_make_client",
+                        staticmethod(lambda _: pytest.fail("refused server was started")))
+    for key in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(key, raising=False)
+    agent = McpBridgeAgent(draft_store=object())
+
+    await agent.bootstrap()
+
+    assert agent._bindings == {} and agent._workflow_bindings == {}
+    assert any("egress_proxy_missing" in reason for reason in agent.rejections)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_wraps_every_admitted_binding_in_the_pinned_client(monkeypatch):
+    from agents.mcp_bridge.src.pinning import PinnedClient
+
+    server, offered = _remote_bootstrap_server()
+    client = _BootstrapClient(offered)
+    captured = []
+    monkeypatch.setattr(agent_module, "load_servers", lambda _: [server])
+    monkeypatch.setattr(McpBridgeAgent, "_make_client", staticmethod(lambda _: client))
+    monkeypatch.setenv("HTTPS_PROXY", "http://http-proxy:8080")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    def make_workflow(self, handler, actual_server, spec, tools):
+        captured.append({name: binding.client for name, binding in tools.items()})
+        return SimpleNamespace()
+
+    monkeypatch.setattr(McpBridgeAgent, "_make_workflow", make_workflow)
+    agent = McpBridgeAgent(draft_store=object())
+    await agent.bootstrap()
+
+    pinned = agent._bindings["merchant.menu"].client
+    assert isinstance(pinned, PinnedClient) and pinned._inner is client
+    assert all(b.client is pinned for b in agent._bindings.values())
+    assert captured and all(c is pinned for c in captured[0].values())
+    assert set(pinned._pins) == {"menu", "create", "status"} and pinned._writes == {"create"}

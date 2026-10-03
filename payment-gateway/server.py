@@ -19,9 +19,10 @@ import hmac
 import logging
 import os
 import time
-from urllib.parse import urlparse
 
 import grpc
+
+from runtime.external_url import pay_url_allowed
 
 try:
     from cockpit.payment.v1 import payment_pb2, payment_pb2_grpc
@@ -75,14 +76,8 @@ def _external_pay_hosts() -> set[str]:
 
 
 def _host_allowed(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return False
-    if parsed.scheme != "https":
-        return False
-    host = (parsed.hostname or "").lower()
-    return bool(host) and host in _external_pay_hosts()
+    """第二层白名单：与商户桥同一份判据（https、443、无 userinfo、无空白与控制字符、主机精确匹配，CA2-17 S3）。"""
+    return pay_url_allowed(url, _external_pay_hosts())
 
 
 def _qr_svg_data_uri(content: str) -> str:

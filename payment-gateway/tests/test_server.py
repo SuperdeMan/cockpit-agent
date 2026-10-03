@@ -219,6 +219,10 @@ def test_merchant_hosted_registers_pending_pay(servicer, env):
     "https://evil.example.com/pay?x=1",          # 域名不在白名单
     "http://m.mcd.cn/pay",                        # 非 https
     "",                                           # 缺链接
+    # CA2-17 S3：与商户桥同一份判据——端口、userinfo、空白也拦
+    "https://m.mcd.cn:8443/pay",
+    "https://user@m.mcd.cn/pay",
+    "https://m.mcd.cn/pay x",
 ])
 def test_merchant_hosted_pay_url_gate(servicer, env, bad_url):
     env.setenv("PAYMENT_EXTERNAL_PAY_HOSTS", "m.mcd.cn")

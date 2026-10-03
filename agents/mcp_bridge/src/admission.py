@@ -9,13 +9,14 @@ schema 指纹都要**逐字对得上**，否则拒载并告警。母提案 §4.F
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import logging
 import math
 import os
 import re
 from dataclasses import dataclass, field
+
+from runtime.external_url import https_url_host, normalize_hostname  # noqa: F401  (re-exported)
 
 logger = logging.getLogger("agent.mcp_bridge.admission")
 
@@ -26,6 +27,8 @@ REJECT_MISSING = "tool_missing_on_server"
 REJECT_ENV = "env_var_missing"
 REJECT_ACCOUNT = "account_undeclared"
 REJECT_COMPENSATE = "compensate_invalid"
+REJECT_URL = "url_rejected"
+REJECT_EGRESS = "egress_proxy_missing"
 
 _ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 COMPENSATE_POLICIES = ("tool", "abandon_unpaid", "terminal")
@@ -60,7 +63,7 @@ class ToolSpec:
     description: str = ""
     examples: list = field(default_factory=list)
     slots: list = field(default_factory=list)
-    schema_sha: str = ""         # 声明的 inputSchema 指纹（空=首次接入，不校验只记录）
+    schema_sha: str = ""         # 工具合同的完整指纹（`tool_fingerprint`）；必须钉全，空或不完整即拒
     timeout_ms: int = 15000
     idempotency_key_arg: str = ""
     idempotency_mode: str = "none"
@@ -306,14 +309,33 @@ def _slot_schema(raw) -> dict:
     return out
 
 
-def schema_fingerprint(schema) -> str:
-    """inputSchema 的稳定指纹：键排序后 sha256 前 12 位。schema 变了=接口变了=要重审。"""
+def tool_fingerprint(tool) -> str:
+    """工具合同的指纹（CA2-17 S3）：规范化 `{inputSchema, outputSchema}` 的完整 sha256。
+
+    合同变了 = 接口变了 = 要重审。描述不算：桥不用服务器给的描述，商户改文档不该停服务；outputSchema 算：
+    结果字段的含义变了（比如金额单位）同样是接口变了。服务器没给 outputSchema 时合同里就没有这一项——
+    之后加上也算变化。
+    """
+    if not isinstance(tool, dict):
+        return ""
+    contract = {"inputSchema": tool.get("inputSchema") or {}}
+    if "outputSchema" in tool:
+        contract["outputSchema"] = tool.get("outputSchema")
     try:
         return hashlib.sha256(
-            json.dumps(schema or {}, sort_keys=True, ensure_ascii=False).encode()
-        ).hexdigest()[:12]
+            json.dumps(contract, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
     except (TypeError, ValueError):
         return ""
+
+
+def schema_fingerprint(schema) -> str:
+    """只有 inputSchema 的工具的指纹（测试与 e2e 夹具拼准入清单用），与 `tool_fingerprint` 同一口径。"""
+    return tool_fingerprint({"inputSchema": schema})
+
+
+def _pinned(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-f]{64}", str(value or "")))
 
 
 def _expand_env(value: str) -> tuple[str, str]:
@@ -329,35 +351,6 @@ def _expand_env(value: str) -> tuple[str, str]:
         return v
 
     return _ENV_REF.sub(_sub, value or ""), missing
-
-
-def normalize_hostname(value: str) -> str:
-    """Return a canonical pure hostname, or empty for unsafe host syntax."""
-    raw = str(value or "").strip().rstrip(".")
-    # The allowlist is an audited configuration boundary, not a user-facing URL
-    # parser.  Keep it ASCII-only so Python's legacy IDNA 2003 codec cannot turn
-    # a Unicode lookalike such as ``faß.de`` into the distinct host ``fass.de``.
-    if (not raw or not raw.isascii() or any(ch.isspace() for ch in raw) or
-            any(ch in raw for ch in "/:@?#*[]")):
-        return ""
-    try:
-        ipaddress.ip_address(raw)
-    except ValueError:
-        pass
-    else:
-        return ""
-    try:
-        host = raw.encode("idna").decode("ascii").lower()
-    except (UnicodeError, ValueError):
-        return ""
-    labels = host.split(".")
-    if len(host) > 253 or len(labels) < 2:
-        return ""
-    if any(not label or len(label) > 63 or label.startswith("-") or
-           label.endswith("-") or not re.fullmatch(r"[a-z0-9-]+", label)
-           for label in labels):
-        return ""
-    return host
 
 
 def load_local_capabilities(path: str) -> list[LocalCapabilitySpec]:
@@ -497,6 +490,46 @@ def check_account(spec: ServerSpec) -> str:
     return ""
 
 
+def check_url(spec: ServerSpec) -> str:
+    """远端服务器地址（CA2-17 S3）：只许 https、443、无 userinfo 的合法主机。"""
+    if spec.transport != "streamable_http":
+        return ""
+    if not https_url_host(spec.url):
+        return f"{REJECT_URL}: 远端服务器地址必须是 https、443、无 userinfo 的合法主机"
+    return ""
+
+
+def _proxy_bypassed(host: str, no_proxy: str) -> bool:
+    for entry in (part.strip().lower() for part in str(no_proxy or "").split(",")):
+        if not entry:
+            continue
+        if entry == "*":
+            return True
+        domain = entry.lstrip(".")
+        if host == domain or host.endswith("." + domain):
+            return True
+    return False
+
+
+def check_egress(spec: ServerSpec, environ=None) -> str:
+    """非演示的远端服务器必须经出口代理（CA2-17 S3）：环境里有 HTTPS 代理，且主机不在 NO_PROXY 里。
+
+    客户端按环境变量走代理（httpx trust_env）；变量缺了或主机被列进 NO_PROXY 就会直连——整台拒载，不让它悄悄绕过白名单代理。
+    """
+    if spec.transport != "streamable_http" or spec.demo:
+        return ""
+    env = os.environ if environ is None else environ
+    proxy = next((str(env.get(key) or "").strip() for key in
+                  ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+                  if str(env.get(key) or "").strip()), "")
+    if not proxy:
+        return f"{REJECT_EGRESS}: 没有配置 HTTPS 出口代理"
+    no_proxy = ",".join(str(env.get(key) or "") for key in ("NO_PROXY", "no_proxy"))
+    if _proxy_bypassed(https_url_host(spec.url), no_proxy):
+        return f"{REJECT_EGRESS}: 服务器主机在 NO_PROXY 里，会绕过出口代理"
+    return ""
+
+
 def check_version(spec: ServerSpec, server_info: dict) -> str:
     """版本锁定：声明版本与 server 自报版本必须逐字相等。不等 → 拒载理由。"""
     actual = str((server_info or {}).get("version", ""))
@@ -526,8 +559,14 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
         if found is None:
             rejected.append(f"{t.name}: {REJECT_MISSING}")
             continue
-        actual_sha = schema_fingerprint(found.get("inputSchema"))
-        if t.schema_sha and actual_sha != t.schema_sha:
+        actual_sha = tool_fingerprint(found)
+        if not _pinned(t.schema_sha):
+            # 指纹必须钉全（CA2-17 S3）：首次接入也先拒，日志给出实际指纹，人工审过再钉。唯一例外是本地演示
+            # 服务器（stdio + demo，代码就在本仓）没钉的工具：它的合同只随本仓代码变；钉了却不完整照样拒。
+            if t.schema_sha or not (spec.demo and spec.transport == "stdio"):
+                rejected.append(f"{t.name}: {REJECT_SCHEMA}（schema_sha 未钉完整指纹，实际 {actual_sha}）")
+                continue
+        elif actual_sha != t.schema_sha:
             rejected.append(f"{t.name}: {REJECT_SCHEMA}（声明 {t.schema_sha} ≠ "
                             f"实际 {actual_sha}）")
             continue
