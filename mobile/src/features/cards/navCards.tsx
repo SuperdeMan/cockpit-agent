@@ -25,7 +25,7 @@ import { cardGeometry, geometryParams } from '../../core/map/geometry'
 import { Pill } from '../../ui/Pill'
 import type { Palette } from '../../ui/theme'
 import type { IconName } from '../../ui/Icon'
-import { CardButtons, CardIcon, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
+import { CardButtons, CardIcon, CardShell, Chip, KV, ProvBadge, cardText, type SendFn } from './parts'
 
 function ItemRow({
   p,
@@ -182,10 +182,17 @@ export function PlaceList({ p, card, onSend }: { p: Palette; card: PlaceListCard
           onPress={() => onSend(`看${it.name}的详情`, it.id ? { nearby_poi_id: it.id } : undefined)}
         />
       ))}
-      <MapEntry p={p} card={card} />
-      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
-        点选看详情；说「导航去第N个」直接导航；「换一批」看更多
-      </Text>
+      {/* 空态（v3 P4，§5 拍板「空态改写建议」）：只给一句结论。画板上的「扩大到 5 公里 / 换一批」两个 chip 没做——
+          nearby.search 的 radius 槽 2026-08-14 已摘除（零消费），provider 的 page 也没有调用方，点了只会原样再搜一遍。
+          同理，下面提示行原来的「「换一批」看更多」也删了：那是一句做不到的承诺 */}
+      {(card.items || []).length ? (
+        <>
+          <MapEntry p={p} card={card} />
+          <Text style={{ color: p.fg3, fontSize: p.font(11) }}>点选看详情；说「导航去第N个」直接导航</Text>
+        </>
+      ) : (
+        <Text style={[cardText(p, 'bodyM'), { color: p.fg2 }]}>附近没找到{card.category || card.keyword || '结果'}。</Text>
+      )}
     </CardShell>
   )
 }

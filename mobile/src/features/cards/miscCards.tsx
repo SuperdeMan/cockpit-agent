@@ -21,7 +21,7 @@ import { sceneOpenText } from '../../core/cards/cardActions'
 import { REMINDER_TITLE, SCENE_STATE } from '../../core/cards/cardMeta'
 import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET } from '../../ui/tokens'
-import { CardButtons, CardIcon, CardShell, Chip, ProvBadge, type SendFn } from './parts'
+import { CardButtons, CardIcon, CardShell, Chip, ProvBadge, cardText, type SendFn } from './parts'
 
 export function ManualEvidence({ p, card }: { p: Palette; card: ManualCardType }) {
   const images = manualImages(card)
@@ -150,7 +150,11 @@ export function ReminderList({ p, card }: { p: Palette; card: ReminderListCard; 
         </>
       ) : null}
       {!(card.items || []).length && !(card.todos || []).length ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>暂无提醒</Text>
+        // 空态（v3 P4，§5 拍板「提醒空态给一句怎么加」）：建提醒是 reminder Agent 的本职，这句说得到做得到
+        <View style={{ gap: 4 }}>
+          <Text style={[cardText(p, 'bodyM'), { color: p.fg2 }]}>暂无提醒</Text>
+          <Text style={[cardText(p, 'caption'), { color: p.fg3 }]}>说「明天 8 点提醒我加油」就能加一条</Text>
+        </View>
       ) : null}
     </CardShell>
   )

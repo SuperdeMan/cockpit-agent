@@ -264,6 +264,8 @@ export function cardFixtures(): Fixture[] {
       todos: [{ id: 't1', kind: 'todo', title: '买机油', status: 'pending' }],
     },
   },
+  { label: 'reminder_list（空态 · 给一句怎么加）', card: { type: 'reminder_list', view: 'multi', date_label: '近期', items: [] } },
+  { label: 'place_list（空态 · 附近没找到）', card: { type: 'place_list', category: '咖啡', items: [], _prov: { mode: 'real', vendor: 'amap', fetched_at: iso(-60_000) } } },
   { label: 'reminder_card（fired）', card: { type: 'reminder_card', context: 'fired', item: { id: 'r1', kind: 'reminder', title: '接孩子放学', status: 'fired', time_display: '今天 17:30', fire_at_ms: NOW }, actions: [{ label: '完成', send_text: '完成接孩子放学' }, { label: '推迟10分钟', send_text: '推迟10分钟' }] } },
   {
     label: 'scene_card（confirm + danger）',
