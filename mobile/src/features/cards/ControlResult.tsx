@@ -5,9 +5,11 @@
 import { Text, View } from 'react-native'
 
 import { STATUS_WORD, itemName, overallStatus, type ControlItem, type ControlStatus } from '../../core/cards/controlResult'
+import type { DrivingSummary } from '../../core/cards/drivingSummary'
 import type { IconName } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
 import { RADIUS } from '../../ui/tokens'
+import { DrivingSummaryView } from './DrivingCardSummary'
 import { CardIcon, CardShell, cardText } from './parts'
 
 /** 对象 → 图标（图标库里有的才配，其余用车） */
@@ -172,29 +174,31 @@ function MultiResult({ p, items }: { p: Palette; items: readonly ControlItem[] }
   )
 }
 
-/** 行车档（Figma Card/DrivingSummary · 车控）：标题 + 一行「目标值 / 动作 + 状态」，多项给总状态 + 对象清单 */
-function DrivingResult({ p, items }: { p: Palette; items: readonly ControlItem[] }) {
+/** 行车档（Figma Card/DrivingSummary · 车控「24°C 已执行」）：与其它卡的行车摘要同一个视图。
+ *  一项：主数值「目标值 / 动作 + 状态」，没生效 / 未核实 / 执行中时副行给证据行原话；
+ *  多项：主数值给总状态（有没生效 / 未核实的就数它们），副行列对象 */
+export function controlDrivingSummary(items: readonly ControlItem[]): DrivingSummary {
   const one = items.length === 1 ? items[0] : null
   const status = overallStatus(items) ?? 'executed'
-  const main = one ? `${one.value || one.action} ${STATUS_WORD[one.status]}`.trim() : STATUS_WORD[status]
-  return (
-    <CardShell
-      p={p}
-      gap={8}
-      testID="control-result"
-      icon={one ? objectIcon(one) : 'vehicle'}
-      title={one ? `车控 · ${itemName(one)}` : `车控 · ${items.length} 项`}
-    >
-      <Text style={[cardText(p, 'numericL'), { color: one?.status === 'failed' ? p.red : p.fg1 }]} numberOfLines={1}>
-        {main}
-      </Text>
-      {one ? null : (
-        <Text style={[cardText(p, 'bodyM'), { color: p.fg2 }]} numberOfLines={1}>
-          {items.map(itemName).join('、')}
-        </Text>
-      )}
-    </CardShell>
-  )
+  const alarming = status === 'failed' || status === 'unverified'
+  if (one) {
+    return {
+      icon: objectIcon(one),
+      title: `车控 · ${itemName(one)}`,
+      main: `${one.value || one.action} ${STATUS_WORD[one.status]}`.trim(),
+      sub: alarming || one.status === 'running' ? controlFootText(one, null) : '',
+      tone: alarming ? 'warn' : undefined,
+      button: null,
+    }
+  }
+  return {
+    icon: 'vehicle',
+    title: `车控 · ${items.length} 项`,
+    main: alarming ? controlCountText(items) : `${items.length} 项${STATUS_WORD[status]}`,
+    sub: items.map(itemName).join('、'),
+    tone: alarming ? 'warn' : undefined,
+    button: null,
+  }
 }
 
 export function ControlResult({
@@ -209,6 +213,6 @@ export function ControlResult({
   driving?: boolean
 }) {
   if (!items.length) return null
-  if (driving) return <DrivingResult p={p} items={items} />
+  if (driving) return <DrivingSummaryView p={p} summary={controlDrivingSummary(items)} testID="control-result" />
   return items.length === 1 ? <SingleResult p={p} item={items[0]} at={at} /> : <MultiResult p={p} items={items} />
 }

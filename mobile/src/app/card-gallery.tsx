@@ -16,6 +16,7 @@ import { useStore } from 'zustand'
 import { settingsStore } from '@/core/settings/store'
 import { controlItems } from '@/core/cards/controlResult'
 import { CardRenderer, KNOWN_CARD_TYPES } from '@/features/cards/CardRenderer'
+import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 import { ControlResult } from '@/features/cards/ControlResult'
 import { cardFixtures, controlFixtures } from '@/features/cards/fixtures'
 import { Chip } from '@/features/cards/parts'
@@ -28,7 +29,9 @@ export default function CardGallery() {
   // `?only=payment_qr` 只渲染匹配的卡型（子串匹配，逗号分隔多个）。
   // 加它的理由很实际：全表 40 条时用 adb 滚动定位极不可靠——慢拖会被卡内 Pressable
   // 吃掉、快扫又带惯性，同一条指令时灵时不灵。**取证屏就该能直达要取的那一条。**
-  const { only } = useLocalSearchParams<{ only?: string }>()
+  // `?driving=1`：每条样本改按行车摘要渲染（v3 P4d：逐型核对 Figma 06 的「行车摘要」格）
+  const { only, driving } = useLocalSearchParams<{ only?: string; driving?: string }>()
+  const asDriving = driving === '1'
   // 每次挂载重算：付款码倒计时、提醒「今天/明天」都是相对量（见 fixtures.ts 的说明）
   const all = useMemo(() => cardFixtures(), [])
   const fixtures = useMemo(() => {
@@ -73,12 +76,16 @@ export default function CardGallery() {
             </Text>
             <Chip p={p} tone={f.realStack ? 'accent' : 'plain'} text={f.realStack ? '真栈已验' : '样本'} />
           </View>
-          <CardRenderer
-            p={p}
-            card={f.card}
-            // 画廊里点按钮不上行——这屏是取证用的，误触发一次真实下单不值当
-            onSend={(text) => setLog((prev) => [`${f.label} → ${text}`, ...prev].slice(0, 8))}
-          />
+          {asDriving ? (
+            <DrivingCardSummary p={p} card={f.card} onSend={(text) => setLog((prev) => [`${f.label} → ${text}`, ...prev].slice(0, 8))} />
+          ) : (
+            <CardRenderer
+              p={p}
+              card={f.card}
+              // 画廊里点按钮不上行——这屏是取证用的，误触发一次真实下单不值当
+              onSend={(text) => setLog((prev) => [`${f.label} → ${text}`, ...prev].slice(0, 8))}
+            />
+          )}
         </View>
       ))}
 
@@ -90,7 +97,7 @@ export default function CardGallery() {
             </Text>
             <Chip p={p} text="样本" />
           </View>
-          <ControlResult p={p} items={controlItems(f.msg).filter((it) => it.kind === 'vehicle')} at={f.at} driving={f.driving} />
+          <ControlResult p={p} items={controlItems(f.msg).filter((it) => it.kind === 'vehicle')} at={f.at} driving={f.driving || asDriving} />
         </View>
       ))}
 

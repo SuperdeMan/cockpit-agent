@@ -1,78 +1,88 @@
 // mobile/src/features/cards/DrivingCardSummary.tsx
-// 行车压缩卡（B4-11 / 方案 §6「一屏只有一张卡、只显示标题 + ≤2 个字段 + 1 个主按钮」）。
-// **不逐个改全量渲染器**：从任意卡里探取（core/cards/cardFields.ts），card_group 取主卡
-// （display_priority 的判据在 cardGroup.ts，这里不判）。只在行车档的语音层里用——
-// 记录里的卡照旧全量渲（记录在常驻层身后）。目标 56dp（TARGET.driving）。
-import { Pressable, Text } from 'react-native'
+// 行车压缩卡（B4-11 / 方案 §6「一屏只有一张卡、只显示标题 + ≤2 个字段 + 1 个主按钮」；v3 P4d 按卡型模板，差异 D11）。
+// 模板在 core/cards/drivingSummary.ts（标题 / 主数值 / 副行 / 主按钮按卡型取，card_group 取主卡）；这里只画
+// Figma Card/DrivingSummary：卡头图标 + title/l、主数值 numeric/l、副行 body/m 次级色、一个实心主按钮（行车 56）。
+// 车控结果卡的行车形态也用这个视图（ControlResult）。只在行车档的语音层里用——记录里的卡照旧全量渲。
+import { Text, View } from 'react-native'
 
-import { cardListRows, cardPrimaryButton, cardPrimaryFields } from '@/core/cards/cardFields'
-import { splitCardGroup } from '@/core/cards/cardGroup'
+import { drivingSummary, type DrivingSummary } from '@/core/cards/drivingSummary'
 import type { FontScalePref } from '@/core/settings/store'
-import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import { Button } from '@/ui/Button'
 import type { Palette } from '@/ui/theme'
+import { RADIUS, textStyle } from '@/ui/tokens'
 
-import { CardShell, ProvBadge, type SendFn } from './parts'
+import { CardIcon, type SendFn } from './parts'
 
- 
+export function DrivingSummaryView({
+  p,
+  summary,
+  onSend,
+  testID = 'driving-card',
+}: {
+  p: Palette
+  summary: DrivingSummary
+  onSend?: SendFn
+  testID?: string
+}) {
+  const main = summary.tone === 'up' ? p.dataUp : summary.tone === 'down' ? p.dataDown : summary.tone === 'warn' ? p.amber : p.fg1
+  const button = summary.button
+  return (
+    <View
+      testID={testID}
+      style={{
+        backgroundColor: p.surface,
+        borderWidth: 1,
+        borderColor: p.line,
+        borderRadius: RADIUS.lg,
+        padding: 16,
+        gap: 8,
+        boxShadow: p.elev1,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <CardIcon p={p} name={summary.icon} size={20} color={p.fg2} />
+        <Text testID="driving-card-head" numberOfLines={1} style={[textStyle('titleL', p.fontScale), { color: p.fg1, flex: 1 }]}>
+          {summary.title}
+        </Text>
+      </View>
+      {summary.main ? (
+        <Text testID="driving-card-title" numberOfLines={1} style={[textStyle('numericL', p.fontScale), { color: main }]}>
+          {summary.main}
+        </Text>
+      ) : null}
+      {summary.sub ? (
+        <Text numberOfLines={1} style={[textStyle('bodyM', p.fontScale), { color: summary.subWarn ? p.amber : p.fg2 }]}>
+          {summary.sub}
+        </Text>
+      ) : null}
+      {button && onSend ? (
+        <Button
+          p={p}
+          testID="driving-card-button"
+          label={button.label}
+          accessibilityLabel={button.label}
+          variant="filled"
+          driving
+          fontScale={p.fontScale}
+          onPress={() => onSend(button.send_text)}
+          style={{ alignSelf: 'stretch' }}
+        />
+      ) : null}
+    </View>
+  )
+}
+
 export function DrivingCardSummary({
   p,
-  fontScale,
   card,
   onSend,
 }: {
   p: Palette
-  fontScale: FontScalePref
-  card: any
+  /** 字号档已在 Palette.fontScale 里；参数留着与调用方兼容 */
+  fontScale?: FontScalePref
+  card: unknown
   onSend: SendFn
 }) {
-  const main = card?.type === 'card_group' ? splitCardGroup((card.items as any[]) || []).main : card
-  if (!main || typeof main !== 'object') return null
-  const fields = cardPrimaryFields(main, 3) // 首个当标题，其余最多两个字段
-  const rows = cardListRows(main, 1)
-  const title = fields[0]?.[1] ?? rows[0]?.title ?? String(main.type || '')
-  const kv = fields.slice(1, 3)
-  const button = cardPrimaryButton(main)
-  const h = scale(TARGET.driving, 'target', fontScale)
-  const body = scale(TYPE.body, 'text', fontScale)
-  return (
-    <CardShell p={p} title={String(main.type || '')} right={<ProvBadge p={p} prov={main._prov} />}>
-      <Text
-        testID="driving-card-title"
-        numberOfLines={1}
-        style={{ color: p.fg1, fontSize: scale(TYPE.h2, 'text', fontScale), fontWeight: '600' }}
-      >
-        {title}
-      </Text>
-      {rows[0]?.sub ? (
-        <Text numberOfLines={1} style={{ color: p.fg2, fontSize: body }}>
-          {rows[0].sub}
-        </Text>
-      ) : null}
-      {kv.map(([k, v]) => (
-        <Text key={k} numberOfLines={1} style={{ color: p.fg2, fontSize: body }}>
-          {k}: {v}
-        </Text>
-      ))}
-      {button ? (
-        <Pressable
-          testID="driving-card-button"
-          accessibilityRole="button"
-          accessibilityLabel={button.label}
-          onPress={() => onSend(button.send_text)}
-          style={{
-            minHeight: h,
-            borderRadius: RADIUS.md,
-            backgroundColor: p.accentSoft,
-            borderWidth: 1,
-            borderColor: p.accent,
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingHorizontal: 16,
-          }}
-        >
-          <Text style={{ color: p.accent, fontSize: scale(TYPE.h2, 'text', fontScale) }}>{button.label}</Text>
-        </Pressable>
-      ) : null}
-    </CardShell>
-  )
+  const summary = drivingSummary(card)
+  return summary ? <DrivingSummaryView p={p} summary={summary} onSend={onSend} /> : null
 }

@@ -2,7 +2,8 @@
 // 时刻用例一律用**本地时间**构造（new Date(y, m, d, h, mi)），期望也按本地读——CI 在 TZ=UTC0 跑，本机在 CST，两边都得过。
 import { PRIMARY_KEYS, fieldLabel } from '@/core/cards/cardFields'
 import {
-  CONF_LABEL, aqiLevel, clockLabel, confLevel, dayLabel, durationLabel, isPlaceholderOrderId, kickoffLabel, orderStatusLabel, teamAbbr, vendorName,
+  CONF_LABEL, aqiLevel, clockLabel, confLevel, dayLabel, durationLabel, etaClock, isPlaceholderOrderId, kickoffLabel, orderStatusLabel, skyIcon,
+  teamAbbr, vendorName, weatherIcon,
 } from '@/core/cards/cardMeta'
 
 test('厂商 id → 显示名：认识的给中文 / 品牌名，大小写不敏感；不认识的原样（不编名字）', () => {
@@ -98,4 +99,21 @@ test('队名缩写：中文前两字；英文多词取首字母、单词取前�
   expect(teamAbbr('Arsenal')).toBe('ARS')
   expect(teamAbbr('FC Barcelona')).toBe('BAR')
   expect(teamAbbr('')).toBe('?')
+})
+
+test('天况图标与天气卡头（全量卡与行车摘要共用）：有预警给雷暴图标；雪落到雨', () => {
+  expect(skyIcon('雷阵雨')).toBe('weather-thunder-alert')
+  expect(skyIcon('小雪')).toBe('weather-rain')
+  expect(skyIcon('晴')).toBe('weather-sunny')
+  expect(skyIcon('雾')).toBe('weather-cloudy')
+  expect(weatherIcon({ text: '晴', alerts: [{ title: '高温预警' }] } as never)).toBe('weather-thunder-alert')
+  expect(weatherIcon({ text: '晴', focus: { text_day: '中雨' } } as never)).toBe('weather-rain')
+})
+
+test('到达时刻：秒与毫秒都按本地时区给 HH:mm；没有给空串', () => {
+  const at = new Date(2026, 9, 3, 14, 32)
+  expect(etaClock(at.getTime())).toBe('14:32')
+  expect(etaClock(Math.floor(at.getTime() / 1000))).toBe('14:32')
+  expect(etaClock(undefined)).toBe('')
+  expect(etaClock(Number.NaN)).toBe('')
 })

@@ -1,6 +1,10 @@
 // 卡片元信息的人话（Android Visual v3 P4a，差异 D10）：来源厂商中文名、本地时区的时刻标签、置信档位。
 // 原来卡片直显 `qweather · 05:13`（厂商 id + UTC 时刻切片）与「置信 high」——id 与枚举都不是给人看的。
-// 判据只在这里；渲染件（features/cards/parts.tsx）只消费。零 RN import。
+// 判据只在这里；渲染件（features/cards/parts.tsx）只消费。零 RN import（图标名是类型导入）。
+// v3 P4d：天况图标、到达时刻、提醒与场景的状态名也搬到这里——全量卡与行车摘要（drivingSummary.ts）读同一份。
+import type { ReminderCard, SceneCard, WeatherCard } from '@shared/types.ts'
+
+import type { IconName } from '../../ui/Icon'
 
 /** 厂商 id → 显示名。来源：后端各 Agent 写进 `_prov.vendor` 的值（agents/** 与夹具里出现过的全部）。
  *  有通行中文名的用中文，没有的用品牌原名；**未知 id 原样显示**（宁可露 id 也不编一个名字） */
@@ -145,4 +149,42 @@ export function teamAbbr(name: string): string {
   const words = s.split(/[\s.\-]+/).filter((w) => w && !/^(fc|cf|afc|sc|ac|cd|the)$/i.test(w))
   const pick = words.length ? words : s.split(/\s+/)
   return (pick.length >= 2 ? pick[0][0] + pick[1][0] : pick[0].slice(0, 3)).toUpperCase()
+}
+
+
+/** 天况 → 图标（图标库只有晴 / 云 / 雨 / 雷暴四种；雪、雾等落到最近的一种） */
+export function skyIcon(text: string): IconName {
+  if (/雷/.test(text)) return 'weather-thunder-alert'
+  if (/雨|雪/.test(text)) return 'weather-rain'
+  if (/晴/.test(text)) return 'weather-sunny'
+  return 'weather-cloudy'
+}
+
+/** 天气卡头图标（Figma 06：有预警用 thunder-alert） */
+export function weatherIcon(card: Pick<WeatherCard, 'alerts' | 'focus' | 'text'>): IconName {
+  if (card.alerts?.length) return 'weather-thunder-alert'
+  return skyIcon(card.focus?.text_day || card.text || '')
+}
+
+/** 路线到达时刻 `eta_ts`（秒或毫秒都见过）→ 本地「HH:mm」；没有 / 解析不了给空串 */
+export function etaClock(ts?: number): string {
+  if (!ts || !Number.isFinite(ts)) return ''
+  const d = new Date(ts > 1e11 ? ts : ts * 1000)
+  return Number.isNaN(d.getTime()) ? '' : `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** 提醒单条卡的标题（按 context 四态） */
+export const REMINDER_TITLE: Readonly<Record<ReminderCard['context'], string>> = {
+  created: '提醒已创建',
+  updated: '提醒已改期',
+  fired: '提醒到点',
+  offer: '要不要设个提醒？',
+}
+
+/** 场景卡的状态（按 context 四态）：标签 + 色调 */
+export const SCENE_STATE: Readonly<Record<SceneCard['context'], { label: string; tone: 'accent' | 'amber' }>> = {
+  confirm: { label: '待确认', tone: 'amber' },
+  created: { label: '已保存', tone: 'accent' },
+  activated: { label: '已开启', tone: 'accent' },
+  suggest: { label: 'AI 建议', tone: 'amber' },
 }

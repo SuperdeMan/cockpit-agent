@@ -21,25 +21,11 @@ import type {
   WeatherCard,
 } from '@shared/types.ts'
 
-import { aqiLevel, clockLabel, dayLabel, kickoffLabel, teamAbbr, vendorName } from '../../core/cards/cardMeta'
+import { aqiLevel, clockLabel, dayLabel, kickoffLabel, skyIcon, teamAbbr, vendorName, weatherIcon } from '../../core/cards/cardMeta'
 import type { IconName } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
 import { RADIUS } from '../../ui/tokens'
 import { Badge, CardIcon, CardShell, Chip, ConfBadge, FreshChip, ProvBadge, cardText, relativeTime, type SendFn } from './parts'
-
-/** 天况 → 图标（图标库只有晴 / 云 / 雨 / 雷暴四种；雪、雾等落到最近的一种） */
-function skyIcon(text: string): IconName {
-  if (/雷/.test(text)) return 'weather-thunder-alert'
-  if (/雨|雪/.test(text)) return 'weather-rain'
-  if (/晴/.test(text)) return 'weather-sunny'
-  return 'weather-cloudy'
-}
-
-/** 天气卡头图标（Figma 06：有预警用 thunder-alert） */
-function weatherIcon(card: WeatherCard): IconName {
-  if (card.alerts?.length) return 'weather-thunder-alert'
-  return skyIcon(card.focus?.text_day || card.text || '')
-}
 
 /** 天气卡（Figma weather / Card/MetricBlock）：Hero（numeric/xl 温度 + 天况 + 体感行）→ 指标块（湿度 / 风 / 空气质量，
  *  AQI 的图标与数值走 data/aqi 色阶）→ 预警行 → 三日预报（三列两端分布：今天 / 周X + 图标 + 区间）。

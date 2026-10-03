@@ -18,7 +18,8 @@ import type {
   TripItineraryCard,
 } from '@shared/types.ts'
 
-import { durationLabel } from '../../core/cards/cardMeta'
+import { navToText, poiPickText, tripStopText } from '../../core/cards/cardActions'
+import { durationLabel, etaClock } from '../../core/cards/cardMeta'
 import { MAP_AVAILABLE } from '../../core/map/available'
 import { cardGeometry, geometryParams } from '../../core/map/geometry'
 import { Pill } from '../../ui/Pill'
@@ -115,12 +116,7 @@ export function PoiList({ p, card, onSend }: { p: Palette; card: PoiListCard; on
       : purpose === 'waypoint_choice'
         ? '点选或说「第N个」加为途经点'
         : '点选或说「第N个」开始导航'
-  const sendFor = (name: string) =>
-    purpose === 'dest_choice'
-      ? name
-      : purpose === 'waypoint_choice'
-        ? `导航去${card.destination || ''}途经${name}`
-        : `导航去${name}`
+  const sendFor = (name: string) => poiPickText(card, name)
   return (
     <CardShell p={p} icon={purpose === 'dest_choice' ? 'flag' : 'location'} title={title}>
       {(card.items || []).map((it, i) => (
@@ -150,7 +146,7 @@ export function PoiDetail({ p, card, onSend }: { p: Palette; card: PoiDetailCard
       <KV p={p} k="类型" v={card.category} />
       <KV p={p} k="评分" v={card.rating ? `★${card.rating}` : ''} />
       <MapEntry p={p} card={card} />
-      <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: `导航去${card.name}` }]} />
+      <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: navToText(card.name) }]} />
     </CardShell>
   )
 }
@@ -214,7 +210,7 @@ export function PlaceDetail({ p, card, onSend }: { p: Palette; card: PlaceDetail
       <KV p={p} k="今日营业" v={card.open_today} />
       <KV p={p} k="每周" v={card.open_week} />
       <MapEntry p={p} card={card} />
-      <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: `导航去${card.name}` }]} />
+      <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: navToText(card.name) }]} />
     </CardShell>
   )
 }
@@ -238,15 +234,13 @@ export function RoutePlan({ p, card, onSend }: { p: Palette; card: RoutePlanCard
       <View style={{ flexDirection: 'row', gap: 6 }}>
         {card.distance_km !== undefined ? <Chip p={p} text={`${card.distance_km}km`} /> : null}
         {durationLabel(card.duration_min) ? <Chip p={p} text={`约${durationLabel(card.duration_min)}`} /> : null}
-        {card.eta_ts ? (
-          <Chip p={p} text={`预计 ${new Date(card.eta_ts * (card.eta_ts > 1e11 ? 1 : 1000)).toTimeString().slice(0, 5)} 到`} />
-        ) : null}
+        {etaClock(card.eta_ts) ? <Chip p={p} text={`预计 ${etaClock(card.eta_ts)} 到`} /> : null}
       </View>
       {/* 2026-09-11：后端带几何（origin_loc / destination_loc / waypoints 坐标 / path）时给「查看路线」——
           用户原话「导航去 xxx 应该能有入口进入地图并把途经路线渲染出来」。没几何就没入口（同 M3-3 可降级） */}
       {card.cancelled ? null : <MapEntry p={p} card={card} />}
       {card.estimate && !card.cancelled ? (
-        <CardButtons p={p} onSend={onSend} buttons={[{ label: '开始导航', send_text: `导航去${card.destination}` }]} />
+        <CardButtons p={p} onSend={onSend} buttons={[{ label: '开始导航', send_text: navToText(card.destination) }]} />
       ) : null}
     </CardShell>
   )
@@ -450,9 +444,9 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
                         tone="accent"
                         fontSize={12}
                         paddingHorizontal={10}
-                        accessibilityLabel={`导航去第${day.day_index}天的${s.name}`}
+                        accessibilityLabel={tripStopText(day.day_index, s.name)}
                         label="导航"
-                        onPress={() => onSend(`导航去第${day.day_index}天的${s.name}`)}
+                        onPress={() => onSend(tripStopText(day.day_index, s.name))}
                       />
                     ) : null}
                   </View>

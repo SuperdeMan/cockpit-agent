@@ -17,6 +17,8 @@ import type {
 } from '@shared/types.ts'
 import { manualImages } from '@shared/manualCard.mjs'
 
+import { sceneOpenText } from '../../core/cards/cardActions'
+import { REMINDER_TITLE, SCENE_STATE } from '../../core/cards/cardMeta'
 import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET } from '../../ui/tokens'
 import { CardButtons, CardIcon, CardShell, Chip, ProvBadge, type SendFn } from './parts'
@@ -154,16 +156,9 @@ export function ReminderList({ p, card }: { p: Palette; card: ReminderListCard; 
   )
 }
 
-const CONTEXT_TITLE: Record<ReminderCard['context'], string> = {
-  created: '提醒已创建',
-  updated: '提醒已改期',
-  fired: '提醒到点',
-  offer: '要不要设个提醒？',
-}
-
 export function ReminderSingle({ p, card, onSend }: { p: Palette; card: ReminderCard; onSend: SendFn }) {
   return (
-    <CardShell p={p} icon="clock" title={CONTEXT_TITLE[card.context] || '提醒'}>
+    <CardShell p={p} icon="clock" title={REMINDER_TITLE[card.context] || '提醒'}>
       <ReminderRow p={p} item={card.item} />
       <CardButtons p={p} onSend={onSend} buttons={card.actions} />
     </CardShell>
@@ -172,18 +167,11 @@ export function ReminderSingle({ p, card, onSend }: { p: Palette; card: Reminder
 
 // ─────────────────────────── M3-1 增量 ───────────────────────────
 
-const SCENE_CONTEXT: Record<SceneCard['context'], { label: string; tone: 'accent' | 'amber' }> = {
-  confirm: { label: '待确认', tone: 'amber' },
-  created: { label: '已保存', tone: 'accent' },
-  activated: { label: '已开启', tone: 'accent' },
-  suggest: { label: 'AI 建议', tone: 'amber' },
-}
-
 /** 场景卡：一张卡复用四态（confirm/created/activated/suggest）。
  *  `danger` 步骤打「需确认」角标——卡上先让用户看见，真正的二次确认仍由
  *  全局确认条走 `is_confirmation=true`（VAL 安全门控，卡片按钮不是授权）。 */
 export function SceneSingle({ p, card, onSend }: { p: Palette; card: SceneCard; onSend: SendFn }) {
-  const meta = SCENE_CONTEXT[card.context] || SCENE_CONTEXT.created
+  const meta = SCENE_STATE[card.context] || SCENE_STATE.created
   const steps = card.actions_preview || []
   return (
     <CardShell p={p} icon="layers" title={card.name} right={<Chip p={p} tone={meta.tone} text={meta.label} />}>
@@ -229,7 +217,7 @@ export function SceneList({ p, card, onSend }: { p: Palette; card: SceneListCard
           <Pressable
             key={s.id}
             accessibilityRole="button"
-            onPress={() => onSend(`开启${s.name}`)}
+            onPress={() => onSend(sceneOpenText(s.name))}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
