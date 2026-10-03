@@ -65,3 +65,28 @@ def test_directives_and_memory_recall_never_ask_the_manual(monkeypatch):
         res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text=text, ctx=make_context()))
         assert "_escalate" not in (res.data or {})
     assert agents.calls == []
+
+
+def test_the_real_internal_client_carries_the_manuals_verdict(monkeypatch):
+    """不替换内部调用客户端：只把 gRPC 桩换掉，判定要穿过真实的 AgentClient 转换才算数。
+    （上面几条换掉了整个客户端——真栈上转换把 data 丢了，它们照样是绿的。）"""
+    from unittest.mock import MagicMock, patch
+    from cockpit.agent.v1 import agent_pb2
+    from agents._sdk.manifest import load_manifest
+    from agents._sdk.server import _to_struct
+    from pathlib import Path
+    monkeypatch.setenv("MANUAL_RAG_ENDPOINT", "stub:1")
+    manual = load_manifest(str(Path(__file__).resolve().parents[2] / "manual_rag" / "manifest.yaml"))
+    agent = ChitchatAgent()
+    agent.llm.complete = AsyncMock(return_value="闲聊的回答")
+    stub = MagicMock()
+    stub.Describe = AsyncMock(return_value=manual)
+    stub.Execute = AsyncMock(return_value=agent_pb2.ExecuteResponse(
+        status=agent_pb2.ExecuteResponse.OK, data=_to_struct({"confident": True})))
+    with patch("agents._sdk.agent_client.aio_channel", return_value=MagicMock()), \
+            patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=stub):
+        res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="空调温度怎么调？", ctx=make_context()))
+    assert res.data["_escalate"] == _ESCALATE
+    request = stub.Execute.await_args.args[0]
+    assert request.intent.name == "manual.claim" and dict(request.intent.slots) == {"question": "空调温度怎么调？"}
+

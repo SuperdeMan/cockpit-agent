@@ -233,3 +233,26 @@ def test_fork_propagates_parent_meta():
     client = AgentClient(caller=agent, call_depth=0, call_stack=[], parent_meta=parent_meta)
     child = client.fork("b")
     assert child._parent_meta == parent_meta
+
+
+def test_call_returns_the_callees_structured_data(monkeypatch):
+    """call() 要把被调方的 data 原样带回——调用方要的可能只有 data（手册 manual.claim 只回 data.confident）。
+    回归：转换时丢了 data，闲聊让手册的单测换掉了整个客户端没测到，真栈 20 轮一次都没改派成。"""
+    from cockpit.agent.v1 import agent_pb2
+    from agents._sdk.server import _to_struct
+    monkeypatch.setenv("MANUAL_RAG_ENDPOINT", "stub:1")
+    client = AgentClient(caller=_MockAgent(agent_id="chitchat"))
+    result = {}
+
+    async def run():
+        with patch("agents._sdk.agent_client.aio_channel", return_value=MagicMock()):
+            stub = MagicMock()
+            stub.Describe = AsyncMock(return_value=_manifest("manual_rag"))
+            stub.Execute = AsyncMock(return_value=agent_pb2.ExecuteResponse(
+                status=agent_pb2.ExecuteResponse.OK, data=_to_struct({"confident": True})))
+            with patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=stub):
+                result["res"] = await client.call("manual-rag", "manual.claim", {"question": "空调有哪些模式？"})
+
+    asyncio.run(run())
+    assert result["res"].status == "ok" and result["res"].data == {"confident": True}
+

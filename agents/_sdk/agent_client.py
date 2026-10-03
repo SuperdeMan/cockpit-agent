@@ -187,6 +187,9 @@ class AgentClient:
             ui_card=_struct_to_dict(resp.ui_card) or None,
             actions=actions,
             follow_up=resp.follow_up,
+            # 结构化结果原样带回：调用方要的可能只有 data（手册的 manual.claim 只回 data.confident）。
+            # 此前这里把它丢了，闲聊让手册的单测换掉了整个客户端，真栈 20 轮一次都没改派成（2026-10-04）。
+            data=_struct_to_dict(resp.data) if resp.HasField("data") else None,
         )
 
     def _channel_for(self, endpoint: str):
