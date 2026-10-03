@@ -16,6 +16,7 @@ import websockets
 from scripts import probe_history_window as identity
 from scripts import probe_qa_long_sessions as audit
 from scripts.e2e_identity import sign_identity
+from scripts.obs_token import collector_headers
 
 
 def digest(value):
@@ -59,7 +60,8 @@ async def probe(sha, expected_authentication):
         ws_url, collector, secret = identity._endpoints()
         run_id = "e2e-vstate-" + uuid.uuid4().hex[:12]
         unknown_vehicle = run_id + "-unbound"
-        async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
+        # collector 读写要运维凭据（runtime/obs_access.py）；本客户端只访问 collector
+        async with httpx.AsyncClient(timeout=20, trust_env=False, headers=collector_headers()) as client:
             async def observation(vehicle):
                 response = await client.get(collector + "/api/vehicle/observation", params={"vehicle_id":vehicle})
                 response.raise_for_status()

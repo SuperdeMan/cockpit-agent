@@ -19,7 +19,7 @@ import sys
 import time
 import zlib
 
-from support.e2e import CaseRecorder, is_network_timeout
+from support.e2e import CaseRecorder, collector_headers, is_network_timeout
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -236,7 +236,7 @@ async def _run(recorder: CaseRecorder) -> int:
         try:
             obs = (await client.get("http://localhost:8092/api/turns",
                                     params={"session": SESSION, "limit": 5},
-                                    timeout=5)).json()
+                                    headers=collector_headers(), timeout=5)).json()
             blob = json.dumps(obs, ensure_ascii=False)
             check("data:image" not in blob and "iVBORw0KGgo" not in blob,
                   "obs 轮次记录不含图像字节（只有 frame_id）")

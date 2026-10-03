@@ -21,7 +21,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from support.e2e import CaseRecorder, assert_persistent_source_contract
+from support.e2e import CaseRecorder, assert_persistent_source_contract, collector_headers
 
 
 def _source_contract() -> None:
@@ -111,9 +111,12 @@ def cleanup_namespace(user: str, sessions: tuple[str, ...]) -> None:
         raise RuntimeError(f"S2S memory cleanup left {remaining} owner records")
 
 
-def _get(url: str, timeout: float = 10.0, *, token: str = ""):
+def _get(url: str, timeout: float = 10.0, *, token: str = "", headers: dict | None = None):
     # CA2-15 S1：记忆端点只按 Bearer 的主体办事——测试身份用运行器签发的同一个 token。
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"} if token else {})
+    # collector 要的是运维凭据（runtime/obs_access.py），由调用方经 headers 传入。
+    request = urllib.request.Request(
+        url, headers=headers if headers is not None else
+        ({"Authorization": f"Bearer {token}"} if token else {}))
     with urllib.request.urlopen(request, timeout=timeout) as r:
         return json.loads(r.read())
 
@@ -430,11 +433,11 @@ async def run(recorder: CaseRecorder) -> None:
           f"roles={roles}")
 
     try:
-        rows = _get(f"{COLLECTOR}/api/sessions?q={session}")
+        rows = _get(f"{COLLECTOR}/api/sessions?q={session}", headers=collector_headers())
         row = next((r for r in rows if r["session_id"] == session), None)
         check("obs 有该会话", row is not None, f"turns={row['turns']}" if row else "未找到")
         if row:
-            ot = _get(f"{COLLECTOR}/api/sessions/{session}/turns")
+            ot = _get(f"{COLLECTOR}/api/sessions/{session}/turns", headers=collector_headers())
             paths = {t.get("path") for t in ot}
             check("obs.turn 标 path=s2s", "s2s" in paths, f"paths={paths}")
     except Exception as e:

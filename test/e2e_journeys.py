@@ -54,7 +54,7 @@ from scripts.e2e_contract import (
     strict_json_loads,
     strict_yaml_load,
 )
-from support.e2e import CaseRecorder
+from support.e2e import CaseRecorder, collector_headers
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -216,9 +216,12 @@ def _memory_capability_for_journey(journey: dict, number: int) -> str:
 # ───────────────────────── 基础设施（复用 e2e_scene 成熟原语） ─────────────────────────
 
 def http_json(url: str, payload: dict | None = None, timeout: int = 10):
+    headers = {"Content-Type": "application/json"}
+    if url.startswith(COLLECTOR):
+        headers.update(collector_headers())       # collector 读写要运维凭据，别的服务不带
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode() if payload is not None else None,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST" if payload is not None else "GET")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())

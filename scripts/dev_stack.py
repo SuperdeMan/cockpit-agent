@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.cloud_capacity import collect_capacity
 from scripts.cloud_infra_approval import ApprovalError, apply_approval, prepare_approval
 from scripts.cloud_retention import run_retention
+from scripts.obs_token import operator_token
 from scripts.cloud_release_lib import (
     ReleaseError,
     ReleaseRequest,
@@ -613,6 +614,8 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
                 keys.add("VITE_WS_TOKEN")
             selected_env = read_root_env(repo, keys)
             endpoints = cloud_endpoints(selected_env.get("TAILNET_FQDN", ""))
+        if args.command == "dashboard":
+            selected_env["VITE_COLLECTOR_TOKEN"] = operator_token(root=repo)
         command = frontend_command(
             repo=repo,
             app=args.command,
@@ -621,7 +624,7 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             selected_env=selected_env,
         )
         redacted_environment = {
-            key: "[REDACTED]" if key == "VITE_WS_TOKEN" and value else value
+            key: "[REDACTED]" if key in {"VITE_WS_TOKEN", "VITE_COLLECTOR_TOKEN"} and value else value
             for key, value in command.env.items()
         }
         # The dev server holds the console until the operator stops it, so the

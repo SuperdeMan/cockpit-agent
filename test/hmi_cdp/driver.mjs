@@ -7,7 +7,7 @@
 //
 // 前置：make up 全栈在跑；hmi 容器 5173（宿主 vite 若占 5173 先停，历史坑）。
 // 用法：node test/hmi_cdp/run_cases.mjs [caseId...]
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -454,13 +454,30 @@ export class Cdp {
   }
 }
 
+// collector 读写要运维凭据（runtime/obs_access.py）：运行器传下来的令牌优先，否则用本机 .env 现签一枚
+let collectorToken = process.env.E2E_COLLECTOR_TOKEN || ''
+export function collectorHeaders() {
+  if (!collectorToken) {
+    const python = process.env.CDP_PYTHON || process.env.PYTHON || 'python'
+    try {
+      collectorToken = execFileSync(python, [join(REPO_ROOT, 'scripts', 'obs_token.py')], {
+        cwd: REPO_ROOT, windowsHide: true, encoding: 'utf8', timeout: 20000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+    } catch {
+      collectorToken = ''
+    }
+  }
+  return collectorToken ? { Authorization: `Bearer ${collectorToken}` } : {}
+}
+
 // collector 车况面（与 e2e_journeys 同源断言面）
 export async function vehicleState() {
-  return await (await fetch(`${COLLECTOR}/api/vehicle/state`)).json()
+  return await (await fetch(`${COLLECTOR}/api/vehicle/state`, { headers: collectorHeaders() })).json()
 }
 export async function debugVehicle(key, value) {
   await fetch(`${COLLECTOR}/api/debug/vehicle`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...collectorHeaders() },
     body: JSON.stringify({ key, value }),
   })
 }
@@ -472,7 +489,7 @@ export async function turnDetail(traceId, attempts = 12, ready = null) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(
-        `${COLLECTOR}/api/turns/${encodeURIComponent(traceId)}`)
+        `${COLLECTOR}/api/turns/${encodeURIComponent(traceId)}`, { headers: collectorHeaders() })
       detail = await response.json()
       if (response.ok && detail && detail.error !== 'not found' &&
           (!ready || ready(detail))) {

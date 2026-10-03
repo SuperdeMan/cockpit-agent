@@ -12,7 +12,7 @@ import uuid
 
 import websockets
 
-from support.e2e import CaseRecorder, _redact_text
+from support.e2e import CaseRecorder, _redact_text, collector_auth_frame, collector_headers
 
 
 HMI_URL = os.environ["HMI_URL"]
@@ -34,8 +34,8 @@ def append_path(base: str, path: str) -> str:
     return base.rstrip("/") + path
 
 
-def require_http_200(name: str, url: str) -> bytes:
-    request = urllib.request.Request(url, method="GET")
+def require_http_200(name: str, url: str, headers: dict[str, str] | None = None) -> bytes:
+    request = urllib.request.Request(url, method="GET", headers=headers or {})
     with urllib.request.urlopen(request, timeout=20) as response:
         if response.status != 200:
             raise RemoteSafeError(f"{name} returned HTTP {response.status}")
@@ -53,8 +53,12 @@ def active_provider_model(payload: bytes) -> dict[str, str]:
 
 
 async def collector_stream_probe(url: str) -> None:
-    async with websockets.connect(url, open_timeout=20, close_timeout=5):
-        return
+    # 首帧认证后才推快照（runtime/obs_access.py）：收到快照才算流通
+    async with websockets.connect(url, open_timeout=20, close_timeout=5) as socket:
+        await socket.send(collector_auth_frame())
+        frame = json.loads(await asyncio.wait_for(socket.recv(), timeout=20))
+        if frame.get("type") != "snapshot":
+            raise RemoteSafeError("collector stream did not send a snapshot")
 
 
 def append_query_token(url: str, token: str) -> str:
@@ -82,7 +86,7 @@ def wait_collector_trace(trace_id: str, *, timeout_s: float) -> None:
     url = append_path(COLLECTOR_URL, f"/api/traces/{trace_id}")
     while time.monotonic() < deadline:
         try:
-            require_http_200("collector trace", url)
+            require_http_200("collector trace", url, collector_headers())
             return
         except Exception:
             time.sleep(0.5)

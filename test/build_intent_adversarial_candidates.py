@@ -163,7 +163,9 @@ def import_collector_labels(base_url: str, timeout: float = 15.0
     """只 GET `<base>/api/export/labels`；不写标注、不读 SQLite。"""
     url = f"{base_url.rstrip('/')}/api/export/labels"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        from scripts.obs_token import collector_headers      # collector 读写要运维凭据
+        request = urllib.request.Request(url, headers=collector_headers())
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8", "replace"))
     except Exception as exc:                       # 拿不到就是拿不到，不猜
         return [], [{"reason": "collector_unreachable", "detail": str(exc)}]

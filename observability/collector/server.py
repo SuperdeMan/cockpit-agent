@@ -9,12 +9,14 @@ import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import otel_bridge
 from .db import ObsDB
 from .metrics_export import render_prometheus_metrics
 from .store import CollectorStore
+from runtime import obs_access
 from runtime.vehicle_state import LEGACY_VEHICLE
 
 logger = logging.getLogger("obs.collector")
@@ -29,6 +31,9 @@ SUBJECTS = (
     "obs.log",
 )
 DEBUG_KEYS = {"speed_kmh", "battery", "gear", "location"}
+#: 不带用户内容、不改状态的接口（健康、agent 维度计数与健康）；其余读写一律要运维凭据（`runtime/obs_access.py`）。
+OPEN_PATHS = frozenset({"/healthz", "/metrics", "/api/agents"})
+_FROM_ENV = object()
 # 保留期清理周期（秒）。清理本体见 db.cleanup（badcase 与 gold 标注豁免）。
 _CLEANUP_INTERVAL_S = 6 * 3600
 
@@ -43,7 +48,7 @@ class Hub:
         self._observations: dict[WebSocket, dict] = {}
 
     async def join(self, websocket: WebSocket, vehicle_id=LEGACY_VEHICLE) -> None:
-        await websocket.accept()
+        """登记一个已接受、已认证的连接（接受与首帧认证在 `/stream` 里，认证前不推任何东西）。"""
         self.clients.add(websocket)
         self.vehicles[websocket] = vehicle_id
         self._locks[websocket] = asyncio.Lock()
@@ -106,8 +111,27 @@ def create_app(
     store: CollectorStore | None = None,
     hub: Hub | None = None,
     db: ObsDB | None = None,
+    operator_key=_FROM_ENV,
 ) -> FastAPI:
     app = FastAPI(title="cockpit-observability-collector")
+    app.state.operator_key = obs_access.key_from_env() if operator_key is _FROM_ENV else operator_key
+
+    async def require_operator(request, call_next):
+        if request.method == "OPTIONS" or request.url.path in OPEN_PATHS:
+            return await call_next(request)
+        if not app.state.operator_key:
+            return JSONResponse({"error": "operator access not configured"}, status_code=503)
+        token = obs_access.bearer(request.headers.get("authorization", ""))
+        if not token:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        try:
+            obs_access.verify(app.state.operator_key, token)
+        except obs_access.ObsTokenError:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        return await call_next(request)
+
+    # 先加的在内层：CORS 必须在最外层，401/403 才带得上 CORS 头（dashboard 读得到才会请运维者给令牌）、预检不被拦。
+    app.add_middleware(BaseHTTPMiddleware, dispatch=require_operator)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -251,6 +275,17 @@ def create_app(
     async def stream(websocket: WebSocket):
         dashboard_hub = app.state.hub
         vehicle_id = websocket.query_params.get("vehicle_id", LEGACY_VEHICLE)
+        await websocket.accept()
+        # 浏览器不能给 WebSocket 设头：首帧认证，限时内没有有效凭据就关，之前不推任何东西
+        try:
+            first = await asyncio.wait_for(websocket.receive_text(), timeout=obs_access.AUTH_FRAME_TIMEOUT_S)
+            obs_access.verify(app.state.operator_key, obs_access.token_from_frame(first))
+        except (asyncio.TimeoutError, obs_access.ObsTokenError, WebSocketDisconnect, RuntimeError):
+            try:
+                await websocket.close(code=1008)
+            except Exception:
+                pass
+            return
         await dashboard_hub.join(websocket, vehicle_id)
         try:
             await dashboard_hub.send_observation(websocket, app.state.store, initial=True)

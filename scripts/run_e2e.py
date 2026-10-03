@@ -93,6 +93,7 @@ from scripts.cloud_release_lib import (  # noqa: E402
     validate_ssh_identity,
 )
 from scripts.cloud_remote_lock import RemoteCloudLock, RemoteLockError  # noqa: E402
+from runtime import obs_access  # noqa: E402
 from scripts.e2e_target import (  # noqa: E402
     E2ETargetError,
     endpoint_environment,
@@ -1581,6 +1582,15 @@ def _skip_policy_errors(
     if "forbid" in declared or not actual.issubset(declared):
         return ["result_protocol"]
     return []
+
+
+def _with_collector_token(source_env: Mapping[str, str]) -> Mapping[str, str]:
+    key = obs_access.key_from_env(source_env)
+    if key is None:
+        return source_env
+    env = source_env if isinstance(source_env, MutableMapping) else dict(source_env)
+    env[obs_access.TOKEN_ENV] = obs_access.issue(key)
+    return env
 
 
 def _child_environment(
@@ -4300,6 +4310,10 @@ def main(
         except BaseException:
             _clear_capability_environment(mutable_env)
             raise
+    if not args.lease_child:
+        # collector 的读写要运维凭据：用这次运行生效的密钥（本地租约的一次性密钥 / 云上的 .env）签一枚，
+        # 子进程只拿令牌、不拿密钥（runtime/obs_access.py）。
+        source_env = _with_collector_token(source_env)
     if target.name == "cloud":
         try:
             assert args.identity is not None

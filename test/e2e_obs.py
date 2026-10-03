@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 
-from support.e2e import CaseRecorder, compose_argv
+from support.e2e import CaseRecorder, collector_headers, compose_argv
 
 try:                                   # Windows 控制台默认 GBK，强制 UTF-8 输出
     sys.stdout.reconfigure(encoding="utf-8")
@@ -87,7 +87,7 @@ async def _run() -> int:
     trace_local = uuid.uuid4().hex[:16]
     trace_cloud = uuid.uuid4().hex[:16]
 
-    async with httpx.AsyncClient(base_url=COLLECTOR, timeout=10) as api:
+    async with httpx.AsyncClient(base_url=COLLECTOR, timeout=10, headers=collector_headers()) as api:
         health = (await api.get("/healthz")).json()
         check("collector 在线（NATS 已连）", bool(health.get("nats")), str(health))
 
@@ -169,7 +169,7 @@ async def _run() -> int:
     subprocess.run(compose_argv("restart", "observability-collector"),
                    check=True, capture_output=True)
     await asyncio.sleep(4)
-    async with httpx.AsyncClient(base_url=COLLECTOR, timeout=10) as api:
+    async with httpx.AsyncClient(base_url=COLLECTOR, timeout=10, headers=collector_headers()) as api:
         async def _after_restart():
             try:
                 rows = (await api.get("/api/sessions", params={"q": SESSION})).json()

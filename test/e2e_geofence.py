@@ -22,6 +22,7 @@ from pathlib import Path
 
 from support.e2e import (
     CaseRecorder,
+    collector_headers,
     assert_persistent_source_contract,
     postgres_psql_argv,
 )
@@ -126,7 +127,8 @@ def stored_geofence(user: str, title: str):
 
 
 def vehicle_state() -> dict:
-    with urllib.request.urlopen(f"{COLLECTOR}/api/vehicle/state", timeout=10) as response:
+    request = urllib.request.Request(f"{COLLECTOR}/api/vehicle/state", headers=collector_headers())
+    with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode())
 
 
@@ -134,7 +136,7 @@ def debug_vehicle(key, value):
     req = urllib.request.Request(
         f"{COLLECTOR}/api/debug/vehicle",
         data=json.dumps({"key": key, "value": value}).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers={"Content-Type": "application/json", **collector_headers()}, method="POST")
     with urllib.request.urlopen(req, timeout=10) as r:
         r.read()
 

@@ -2,10 +2,15 @@
 from fastapi.testclient import TestClient
 
 from observability.collector.server import create_app
+from runtime import obs_access
+
+# collector 的读写接口要运维凭据（runtime/obs_access.py）：测试客户端注入密钥并带上令牌。
+_OPERATOR_KEY = obs_access.derive_key("collector-test-secret-" + "x" * 32)
 
 
 def _client():
-    client = TestClient(create_app())
+    client = TestClient(create_app(operator_key=_OPERATOR_KEY))
+    client.headers.update(obs_access.headers(obs_access.issue(_OPERATOR_KEY)))
     db = client.app.state.db
     db.insert_turn({"trace_id": "tr-1", "session_id": "sess-a", "ts": 1000,
                     "user_text": "导航去机场", "speech": "已开始导航",

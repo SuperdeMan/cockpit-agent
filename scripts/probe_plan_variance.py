@@ -26,6 +26,7 @@ import json
 import sys
 import time
 import urllib.request
+from pathlib import Path
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")     # Windows GBK 宿主常驻放大器
@@ -81,8 +82,13 @@ def _classify(msg: dict) -> dict:
 def _plan_mode(session_id: str) -> str:
     """从 obs collector 取该 session 的 plan_mode（取不到返回空串，不猜）。"""
     try:
-        with urllib.request.urlopen(
-                f"{OBS_URL}/api/sessions/{session_id}/turns?limit=5", timeout=5) as r:
+        root = str(Path(__file__).resolve().parents[1])
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from scripts.obs_token import collector_headers  # collector 读写要运维凭据
+        request = urllib.request.Request(f"{OBS_URL}/api/sessions/{session_id}/turns?limit=5",
+                                         headers=collector_headers())
+        with urllib.request.urlopen(request, timeout=5) as r:
             turns = json.loads(r.read().decode("utf-8"))
     except Exception:
         return ""

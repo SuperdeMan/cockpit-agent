@@ -255,6 +255,18 @@ def _environment(env: Mapping[str, str] | None) -> Mapping[str, str]:
     return os.environ if env is None else env
 
 
+def collector_headers(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """collector 的读写要运维凭据（`runtime/obs_access.py`）：运行器传下来的令牌做成 Authorization 头。"""
+    from scripts.obs_token import collector_headers as _headers
+    return _headers(_environment(env))
+
+
+def collector_auth_frame(env: Mapping[str, str] | None = None) -> str:
+    """collector `/stream` 的首帧认证（浏览器同款：WebSocket 不能设头）。"""
+    from scripts.obs_token import collector_auth_frame as _frame
+    return _frame(_environment(env))
+
+
 def _required_env(name: str, env: Mapping[str, str]) -> str:
     value = env.get(name)
     if not isinstance(value, str) or not value.strip():

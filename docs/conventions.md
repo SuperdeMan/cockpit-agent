@@ -3014,3 +3014,12 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   算同一个人（`memory/revision.py::aliases_from_family`）。写入找现行条目、召回过滤、读取折叠用同一组写法（`subject_group`），
   不另写判据；泛称（孩子）不归到具体称谓。
 - 存量证据数的改写走 `scripts/memory_evidence_recount.py`（默认 dry-run；`--apply` 是生产数据修改，单独授权）。
+
+### 9.54 Collector 调试面要运维凭据（2026-10-03）
+
+- collector 的合法主体是运维者。除 `/healthz`、`/metrics`、`/api/agents` 外，读写都要 `runtime/obs_access.py` 签的运维令牌：
+  HTTP 只认 `Authorization: Bearer`（不进 URL），`/stream` 首帧 `{"type":"auth","token":…}`；没配密钥一律 503，不推任何数据。
+- 运维密钥由 `E2E_IDENTITY_SECRET` 按独立用途派生（不新增密钥）；collector 只拿这把密钥、不开 e2e 身份闸。令牌 ≤12 小时。
+- 取令牌只走一处：e2e 子进程用运行器传下的 `E2E_COLLECTOR_TOKEN`（不得持有密钥），测试经 `support.e2e.collector_headers`，
+  其余工具经 `scripts/obs_token.py`（`python scripts/obs_token.py` 打印一枚给云上 dashboard 粘贴）。凭据只发给 collector。
+- 新增 collector 路由默认要凭据；确需开放的只能是不带用户内容、不改状态的接口，并改 `OPEN_PATHS` 与它的测试。

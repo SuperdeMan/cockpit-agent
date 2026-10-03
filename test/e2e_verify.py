@@ -22,7 +22,7 @@ import sys
 import time
 import uuid
 
-from support.e2e import CaseRecorder
+from support.e2e import CaseRecorder, collector_headers
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -79,7 +79,7 @@ async def _run(recorder: CaseRecorder) -> int:
     print("=== M2 Outcome Verifier / T2 分档 真栈验证 ===")
     # 每例独立 session：焦点态会跨轮影响路由（同 session 里「附近有什么好吃的」之后
     # 问「深圳天气」曾被焦点带成 NEED_SLOT 追问城市——那不是对账的问题，但会让断言失真）
-    async with httpx.AsyncClient(base_url=COLLECTOR, timeout=20) as api:
+    async with httpx.AsyncClient(base_url=COLLECTOR, timeout=20, headers=collector_headers()) as api:
         # ① 车控步 state_match + 列表步 schema。**必须用混合多意图句**——单句「打开空调」
         #    被端侧快路径直接执行、根本不上云，云侧 executor 看不到（T0 设计使然，非缺陷）。
         t1 = uuid.uuid4().hex

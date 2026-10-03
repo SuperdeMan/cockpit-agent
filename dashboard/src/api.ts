@@ -16,6 +16,71 @@ const BASE =
   'http://localhost:8092'
 const WS_URL = BASE.replace(/^http/, 'ws') + '/stream'
 
+// collector 的读写要运维凭据（runtime/obs_access.py）。本地 dashboard 由 `dev_stack.py dashboard`
+// 启动时注入；云上 dashboard 第一次被拒时请运维者粘贴（`python scripts/obs_token.py`），只存本页会话。
+const TOKEN_KEY = 'collector-operator-token'
+const INJECTED_TOKEN = (import.meta.env.VITE_COLLECTOR_TOKEN as string | undefined) || ''
+let pastedToken = ''
+
+function storedToken(): string {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || pastedToken
+  } catch {
+    return pastedToken
+  }
+}
+
+export function operatorToken(): string {
+  return storedToken() || INJECTED_TOKEN
+}
+
+function forgetToken(): void {
+  pastedToken = ''
+  try {
+    sessionStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // sessionStorage 不可用：只清内存里的那一枚
+  }
+}
+
+let asking: Promise<string> | null = null
+
+function askForToken(): Promise<string> {
+  // 同时被拒的几个请求只问一次
+  if (!asking) {
+    asking = Promise.resolve().then(() => {
+      const token = (window.prompt(
+        'collector 需要运维令牌：运行 python scripts/obs_token.py，把输出粘贴到这里',
+      ) || '').trim()
+      if (token) {
+        pastedToken = token
+        try {
+          sessionStorage.setItem(TOKEN_KEY, token)
+        } catch {
+          // 不可写就只留在内存里
+        }
+      }
+      asking = null
+      return token
+    })
+  }
+  return asking
+}
+
+function withAuth(init: RequestInit, token: string): RequestInit {
+  const headers = new Headers(init.headers)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  return { ...init, headers }
+}
+
+async function collectorFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const response = await fetch(url, withAuth(init, operatorToken()))
+  if (response.status !== 401 && response.status !== 403) return response
+  forgetToken()
+  const token = await askForToken()
+  return token ? fetch(url, withAuth(init, token)) : response
+}
+
 export type ObsHandlers = {
   onSnapshot?: (snapshot: {
     vehicle_id?: string
@@ -44,13 +109,24 @@ export function connectObs(handlers: ObsHandlers): () => void {
   let closed = false
   let retry: ReturnType<typeof setTimeout> | undefined
 
-  const open = () => {
-    websocket = new WebSocket(WS_URL)
-    websocket.onopen = () => handlers.onConn?.(true)
-    websocket.onclose = () => {
+  const open = async () => {
+    // 浏览器不能给 WebSocket 设头：首帧认证；没有令牌先问，问不到就不连
+    const token = operatorToken() || (await askForToken())
+    if (closed) return
+    if (!token) {
       handlers.onConn?.(false)
+      return
+    }
+    websocket = new WebSocket(WS_URL)
+    websocket.onopen = () => {
+      websocket?.send(JSON.stringify({ type: 'auth', token }))
+      handlers.onConn?.(true)
+    }
+    websocket.onclose = (event) => {
+      handlers.onConn?.(false)
+      if (event.code === 1008) forgetToken()   // 凭据不对或过期：下次重连前重新要
       if (!closed) {
-        retry = setTimeout(open, 1500)
+        retry = setTimeout(() => void open(), 1500)
       }
     }
     websocket.onerror = () => websocket?.close()
@@ -71,7 +147,7 @@ export function connectObs(handlers: ObsHandlers): () => void {
     }
   }
 
-  open()
+  void open()
   return () => {
     closed = true
     if (retry) clearTimeout(retry)
@@ -83,7 +159,7 @@ export async function setVehicleEnv(
   key: string,
   value: unknown,
 ): Promise<void> {
-  const response = await fetch(BASE + '/api/debug/vehicle', {
+  const response = await collectorFetch(BASE + '/api/debug/vehicle', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ key, value }),
@@ -106,7 +182,7 @@ async function getJSON<T>(path: string, params?: Record<string, string | number>
           .map(([k, v]) => [k, String(v)]),
       ).toString()
     : ''
-  const response = await fetch(BASE + path + search)
+  const response = await collectorFetch(BASE + path + search)
   if (!response.ok) throw new Error(`${path}: ${response.status}`)
   return response.json() as Promise<T>
 }
@@ -140,7 +216,7 @@ export function fetchLogs(params: {
 }
 
 export async function markBadcase(traceId: string, badcase: boolean, note = ''): Promise<boolean> {
-  const response = await fetch(
+  const response = await collectorFetch(
     BASE + `/api/turns/${encodeURIComponent(traceId)}/badcase`,
     {
       method: 'POST',
@@ -155,7 +231,7 @@ export async function markBadcase(traceId: string, badcase: boolean, note = ''):
 // ── 落域标注（数据飞轮 P0）：一次标注 = 评测用例 + 范例 + 训练标注的原料 ──
 
 export async function saveLabel(traceId: string, goldIntents: string): Promise<boolean> {
-  const response = await fetch(
+  const response = await collectorFetch(
     BASE + `/api/turns/${encodeURIComponent(traceId)}/label`,
     {
       method: 'POST',
@@ -169,10 +245,6 @@ export async function saveLabel(traceId: string, goldIntents: string): Promise<b
 
 export function fetchIntentOptions(): Promise<string[]> {
   return getJSON('/api/intents/observed')
-}
-
-export function exportUrl(traceId: string): string {
-  return BASE + `/api/export/${encodeURIComponent(traceId)}`
 }
 
 export async function fetchExport(traceId: string): Promise<unknown> {

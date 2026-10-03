@@ -17,7 +17,7 @@ import time
 import uuid
 import urllib.request
 
-from support.e2e import CaseRecorder
+from support.e2e import CaseRecorder, collector_headers
 
 try:
     import websockets
@@ -36,7 +36,8 @@ COLLECTOR = "http://localhost:8092"
 
 
 def _get(path: str):
-    with urllib.request.urlopen(COLLECTOR + path, timeout=5) as r:
+    request = urllib.request.Request(COLLECTOR + path, headers=collector_headers())
+    with urllib.request.urlopen(request, timeout=5) as r:
         return json.loads(r.read().decode())
 
 
@@ -44,7 +45,7 @@ def _post_debug(key: str, value):
     data = json.dumps({"key": key, "value": value}).encode()
     req = urllib.request.Request(
         COLLECTOR + "/api/debug/vehicle", data=data,
-        headers={"content-type": "application/json"}, method="POST")
+        headers={"content-type": "application/json", **collector_headers()}, method="POST")
     with urllib.request.urlopen(req, timeout=5) as r:
         return json.loads(r.read().decode())
 

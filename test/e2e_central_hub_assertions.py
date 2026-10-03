@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from support.e2e import CaseRecorder
+from support.e2e import CaseRecorder, collector_headers
 
 try:
     import websockets
@@ -35,7 +35,8 @@ DEFAULT_FIXTURE = Path(__file__).parent / "fixtures" / "central_hub_cases.json"
 
 
 def _get(path: str):
-    with urllib.request.urlopen(COLLECTOR + path, timeout=5) as response:
+    request = urllib.request.Request(COLLECTOR + path, headers=collector_headers())
+    with urllib.request.urlopen(request, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -44,7 +45,7 @@ def _post_debug(key: str, value):
     request = urllib.request.Request(
         COLLECTOR + "/api/debug/vehicle",
         data=data,
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json", **collector_headers()},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=5) as response:

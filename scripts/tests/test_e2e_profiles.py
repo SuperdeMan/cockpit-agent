@@ -287,6 +287,7 @@ def test_profile_envs_commands_and_auth_token_scope_are_frozen_and_secret_free_f
         "edge-gateway",
         "llm-gateway",
         "memory",
+        "observability-collector",
     ]
     assert calls[1][0][-4:] == [
         "edge-gateway",

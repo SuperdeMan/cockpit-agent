@@ -50,6 +50,7 @@ if str(_ROOT) not in sys.path:
 from runtime.execution_claim import execution_claim                       # noqa: E402
 from scripts import probe_qa_regression as probe                         # noqa: E402
 from scripts.dev_stack_lib import read_root_env                          # noqa: E402
+from scripts.obs_token import collector_headers                          # noqa: E402
 from scripts.e2e_target import endpoint_environment, resolve_e2e_target  # noqa: E402
 
 
@@ -1395,8 +1396,8 @@ def recovery_turns() -> tuple[dict, dict, dict]:
     )
 
 
-def _http_json(url: str, timeout: float = 20.0) -> dict | list:
-    with urllib.request.urlopen(url, timeout=timeout) as response:
+def _http_json(url: str, timeout: float = 20.0, headers: dict | None = None) -> dict | list:
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=timeout) as response:
         return json.load(response)
 
 
@@ -1614,7 +1615,7 @@ async def _fetch_detail(collector: str, trace_id: str, *, attempts: int = 8) -> 
     stable_ready_reads = 0
     for attempt in range(attempts):
         try:
-            detail = await asyncio.to_thread(_http_json, url)
+            detail = await asyncio.to_thread(_http_json, url, headers=collector_headers())
         except Exception as exc:
             detail = {"error": f"{type(exc).__name__}: {exc}"}
         if isinstance(detail, dict) and detail.get("error") != "not found":
@@ -1661,7 +1662,8 @@ async def _fetch_detail(collector: str, trace_id: str, *, attempts: int = 8) -> 
 
 async def _vehicle_state(collector: str) -> dict:
     try:
-        value = await asyncio.to_thread(_http_json, f"{collector}/api/vehicle/state")
+        value = await asyncio.to_thread(_http_json, f"{collector}/api/vehicle/state",
+                                        headers=collector_headers())
         return value if isinstance(value, dict) else {}
     except Exception:
         return {}
@@ -1889,9 +1891,10 @@ _VEHICLE_ENV_KEYS = frozenset({"speed_kmh", "battery", "gear", "location", "cabi
 
 
 def _http_post_json(url: str, payload: dict, timeout: float = 20.0) -> dict:
+    """只用于 collector 的调试车态接口：带运维凭据（runtime/obs_access.py）。"""
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
-        url, data=data, headers={"content-type": "application/json"}, method="POST")
+        url, data=data, headers={"content-type": "application/json", **collector_headers()}, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         value = json.load(response)
     return value if isinstance(value, dict) else {}

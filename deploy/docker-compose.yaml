@@ -719,6 +719,9 @@ services:
       NATS_URL: nats://nats:4222
       OBS_COLLECTOR_PORT: "8092"
       DEBUG_VEHICLE_CONTROL: ${DEBUG_VEHICLE_CONTROL:-true}
+      # 调试面的运维凭据由它派生（runtime/obs_access.py）；缺失 ⇒ 除健康与指标外的接口一律 503。
+      # 只要密钥、不开 E2E_IDENTITY_ENABLED：collector 不接受 e2e 身份令牌。
+      E2E_IDENTITY_SECRET: ${E2E_IDENTITY_SECRET-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # badcase 排查持久层：turns/spans/llm/logs 落 SQLite（named volume，重启不丢）
       OBS_DB_PATH: /data/obs.db

@@ -5,6 +5,16 @@ from fastapi.testclient import TestClient
 
 from observability.collector.db import ObsDB, _plan_summary_of
 from observability.collector.server import create_app
+from runtime import obs_access
+
+# collector 的读写接口要运维凭据（runtime/obs_access.py）：测试客户端注入密钥并带上令牌。
+_OPERATOR_KEY = obs_access.derive_key("collector-test-secret-" + "x" * 32)
+
+
+def _operator_client() -> TestClient:
+    client = TestClient(create_app(operator_key=_OPERATOR_KEY))
+    client.headers.update(obs_access.headers(obs_access.issue(_OPERATOR_KEY)))
+    return client
 
 
 # ── _plan_summary_of：attrs → (intents, plan_mode, edge_nlu, actionability) ──
@@ -141,7 +151,7 @@ def test_non_planning_span_does_not_touch_turns():
 # ── gold 标注 + 导出 + 清单（REST 全链） ─────────────────────────────────────
 
 def _client() -> TestClient:
-    client = TestClient(create_app())
+    client = _operator_client()
     db = client.app.state.db
     db.insert_turn({"trace_id": "tr-1", "session_id": "s", "ts": 1000,
                     "user_text": "帮我看看附近有什么咖啡店"})

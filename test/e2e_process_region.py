@@ -14,7 +14,7 @@ import json
 import sys
 import urllib.request
 
-from support.e2e import CaseRecorder
+from support.e2e import CaseRecorder, collector_headers
 
 # Windows 控制台默认 GBK，放不下 ✓/✗ 等字符 → 统一切 UTF-8（失败则忽略）
 try:
@@ -50,7 +50,7 @@ def _reset_vehicle_parked():
             data = json.dumps({"key": key, "value": value}).encode("utf-8")
             req = urllib.request.Request(
                 COLLECTOR + "/api/debug/vehicle", data=data,
-                headers={"content-type": "application/json"}, method="POST")
+                headers={"content-type": "application/json", **collector_headers()}, method="POST")
             urllib.request.urlopen(req, timeout=5).read()
         except Exception as e:
             print(f"  (车态复位 {key}={value} 跳过：{type(e).__name__}——干净栈本为泊车态)")

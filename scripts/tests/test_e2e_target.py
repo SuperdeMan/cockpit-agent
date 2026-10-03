@@ -472,11 +472,25 @@ def test_remote_safe_probe_reads_only_names_the_runner_hands_the_child(
     assert sorted(required - set(delivered)) == []
 
 
-def _frame_types_the_probe_reacts_to(source: str) -> set[str]:
-    """Every literal the probe compares a frame's ``type`` against."""
+_COLLECTOR_PROBE = "collector_stream_probe"
+
+
+def _frame_types_the_probe_reacts_to(source: str, *, collector: bool = False) -> set[str]:
+    """Every literal the probe compares a frame's ``type`` against.
+
+    ``collector_stream_probe`` reads the collector's own stream (it authenticates and waits for a snapshot),
+    so its comparisons are checked against the collector, everything else against the edge gateway.
+    """
+    tree = ast.parse(source)
+    inside = {
+        id(node)
+        for function in ast.walk(tree)
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and function.name == _COLLECTOR_PROBE
+        for node in ast.walk(function)
+    }
     names: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.Compare):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare) or (id(node) in inside) != collector:
             continue
         left = node.left
         if not (
@@ -516,6 +530,13 @@ def test_remote_safe_probe_waits_only_for_frames_the_edge_gateway_emits():
     emitted = set(re.findall('"type":[ ]*"([a-z_0-9]+)"', gateway))
 
     assert sorted(awaited - emitted) == []
+
+    awaited_from_collector = _frame_types_the_probe_reacts_to(
+        (ROOT / "test/e2e_remote_safe.py").read_text(encoding="utf-8"), collector=True,
+    )
+    collector = (ROOT / "observability/collector/server.py").read_text(encoding="utf-8")
+    assert awaited_from_collector == {"snapshot"}
+    assert awaited_from_collector <= set(re.findall('"type": "([a-z_0-9]+)"', collector))
 
 
 _GO_SCALARS = {"string": str, "bool": bool}

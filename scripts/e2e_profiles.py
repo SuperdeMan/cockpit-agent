@@ -16,6 +16,7 @@ from typing import Any
 from urllib.request import urlopen
 
 from scripts.e2e_stack_lease import (
+    IDENTITY_SERVICES,
     IdentityCleanupError,
     IdentityEnableError,
     IdentityStackLease,
@@ -32,7 +33,6 @@ AUTH_SCOPES = (
     "network.external",
     "payment.invoke",
 )
-IDENTITY_SERVICES = ("edge-gateway", "llm-gateway", "memory")
 AUTH_SERVICES = (
     "edge-gateway",
     "cloud-gateway",

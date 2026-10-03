@@ -29,7 +29,8 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.e2e_identity import encode_secret, generate_secret, sign_identity  # noqa: E402
 
 
-IDENTITY_SERVICES = ("edge-gateway", "llm-gateway", "memory")
+#: 跟着身份租约重建的服务。collector 只拿密钥派生运维凭据（`runtime/obs_access.py`），不开 e2e 身份闸。
+IDENTITY_SERVICES = ("edge-gateway", "llm-gateway", "memory", "observability-collector")
 DEFAULT_SCOPES = (
     "vehicle.control",
     "media.control",
@@ -806,6 +807,10 @@ def compose_gate_override(
         }
         for name in ("edge-gateway", "llm-gateway")
     }
+    # collector 只要密钥（派生运维凭据），不要 E2E_IDENTITY_ENABLED：它不接受 e2e 身份令牌
+    services["observability-collector"] = {
+        "environment": {"E2E_IDENTITY_SECRET": "${E2E_IDENTITY_SECRET-}"},
+    }
     services["memory"] = {
         "environment": {
             "E2E_CAPABILITY_ENABLED": "${E2E_CAPABILITY_ENABLED:-false}",
@@ -895,6 +900,7 @@ def wait_identity_services(timeout_s: int = 90) -> bool:
             _http_ready("http://127.0.0.1:8090/healthz")
             and _http_ready("http://127.0.0.1:50059/api/health")
             and _tcp_ready("127.0.0.1", 50053)
+            and _http_ready("http://127.0.0.1:8092/healthz")
         ):
             return True
         time.sleep(0.5)
@@ -902,7 +908,7 @@ def wait_identity_services(timeout_s: int = 90) -> bool:
 
 
 class IdentityStackLease:
-    """One owner enables and later restores the three-service identity stack."""
+    """One owner enables and later restores the identity stack (gateways, memory, collector)."""
 
     def __init__(
         self,

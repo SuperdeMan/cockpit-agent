@@ -89,7 +89,9 @@ def _collector() -> str:
 
 
 def _http_json(url: str):
-    with urllib.request.urlopen(url, timeout=15) as r:
+    from scripts.obs_token import collector_headers      # collector 读写要运维凭据（runtime/obs_access.py）
+    request = urllib.request.Request(url, headers=collector_headers())
+    with urllib.request.urlopen(request, timeout=15) as r:
         return json.loads(r.read().decode("utf-8"))
 
 

@@ -483,7 +483,7 @@ def test_fetch_detail_waits_for_partial_collector_row_to_become_terminal(monkeyp
     ])
     calls = 0
 
-    def http_json(_url):
+    def http_json(_url, **_kwargs):
         nonlocal calls
         calls += 1
         return next(payloads)
@@ -515,7 +515,7 @@ def test_fetch_detail_waits_for_agent_span_after_complete_cloud_turn(monkeypatch
     ])
     calls = 0
 
-    def http_json(_url):
+    def http_json(_url, **_kwargs):
         nonlocal calls
         calls += 1
         return next(payloads)
@@ -549,7 +549,7 @@ def test_fetch_detail_does_not_miss_a_late_unpinned_non_minimax_call(monkeypatch
     ])
     calls = 0
 
-    def http_json(_url):
+    def http_json(_url, **_kwargs):
         nonlocal calls
         calls += 1
         return next(payloads)

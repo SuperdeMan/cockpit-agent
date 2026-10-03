@@ -3158,12 +3158,17 @@ def test_collector_probe_rejects_second_connection_without_snapshot(
     capsys,
 ):
     monkeypatch.setenv("WS_URL", "wss://example.invalid/stream")
+    monkeypatch.setenv("E2E_IDENTITY_SECRET", "collector-probe-test-secret-" + "z" * 32)
     probe = _load_probe(COLLECTOR_WS_PROBE_PATH, "cloud_collector_probe_test")
     messages = iter(("snapshot", "event"))
+    first_frames = []
 
     class Socket:
         def __init__(self, payload_type: str):
             self.payload_type = payload_type
+
+        async def send(self, data):
+            first_frames.append(json.loads(data))
 
         async def recv(self):
             return json.dumps({"type": self.payload_type})
@@ -3192,6 +3197,11 @@ def test_collector_probe_rejects_second_connection_without_snapshot(
         "reconnect": False,
         "status": "fail",
     }
+    # 每次连接先发运维令牌的认证帧（runtime/obs_access.py）
+    from runtime import obs_access
+    key = obs_access.key_from_env()
+    assert [frame["type"] for frame in first_frames] == ["auth", "auth"]
+    assert all(obs_access.verify(key, frame["token"]) for frame in first_frames)
 def test_redis_restore_converts_rdb_to_complete_aof_before_compose_start():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^restore_redis_rdb\(\) \{(?P<body>.*?)^\}", text)["body"]

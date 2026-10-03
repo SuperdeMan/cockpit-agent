@@ -146,7 +146,12 @@ def cmd_from_labels(args) -> int:
     查不到就留空——范例块里 agent 可省，intent 才是落域信号。"""
     base = (args.collector or "http://localhost:8092").rstrip("/")
     try:
-        with urllib.request.urlopen(f"{base}/api/export/labels", timeout=15) as r:
+        root = str(Path(__file__).resolve().parents[1])
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from scripts.obs_token import collector_headers  # collector 读写要运维凭据
+        request = urllib.request.Request(f"{base}/api/export/labels", headers=collector_headers())
+        with urllib.request.urlopen(request, timeout=15) as r:
             payload = json.loads(r.read().decode("utf-8"))
     except Exception as e:
         print(f"✗ collector 不可达（{base}）：{e}")

@@ -432,11 +432,12 @@ npm run dev
 
 ```bash
 curl http://localhost:8092/healthz
-curl http://localhost:8092/api/vehicle/state
 curl http://localhost:8092/api/agents
-curl http://localhost:8092/api/sessions          # badcase 排查：会话/轮次（SQLite 持久）
+T=$(python scripts/obs_token.py)                 # 除健康与指标外都要运维令牌（runtime/obs_access.py）
+curl -H "Authorization: Bearer $T" http://localhost:8092/api/vehicle/state
+curl -H "Authorization: Bearer $T" http://localhost:8092/api/sessions   # badcase 排查：会话/轮次
 curl -X POST http://localhost:8092/api/debug/vehicle \
-  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $T" -H 'content-type: application/json' \
   -d '{"key":"speed_kmh","value":130}'
 ```
 

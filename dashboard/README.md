@@ -26,6 +26,8 @@ npm run dev
 默认地址为 `http://localhost:5174`。环境变量：
 
 - `VITE_COLLECTOR_URL`：默认 `http://localhost:8092`
+- `VITE_COLLECTOR_TOKEN`：collector 运维令牌，`python scripts/dev_stack.py dashboard` 启动时自动注入；
+  没有注入（如云上 8445）时第一次被拒会请你粘贴 `python scripts/obs_token.py` 的输出，只存本页会话
 - `VITE_EDGE_GATEWAY_URL`：默认 `http://localhost:8090`
 
 ## 验证
@@ -43,8 +45,8 @@ npm run build
 Dashboard 不直接写空调、车窗等车控状态。命令复用 Edge Gateway，车控仍只经 VAL；
 动态滑块只调用 collector 的环境量 debug 接口。
 
-`DEBUG_VEHICLE_CONTROL` 仅用于本地演示；非开发环境必须设为 `false`，并把 collector
-置于正式鉴权边界之后。内容级采集（用户原话/话术/plan/LLM 输入输出）由
+`DEBUG_VEHICLE_CONTROL` 仅用于本地演示；非开发环境必须设为 `false`。collector 的读写都要运维令牌
+（[设计](../docs/design/2026-10-03-v2-collector-access.md)），dashboard 只在本页会话里保存它。内容级采集（用户原话/话术/plan/LLM 输入输出）由
 `OBS_CONTENT_CAPTURE` 门控（统一脱敏）——**量产必须 off**，off 后仅保留长度与
 哈希指纹，链路形状排查不受影响。
 

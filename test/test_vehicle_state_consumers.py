@@ -142,9 +142,12 @@ async def test_collector_serializes_fresh_snapshots_and_sends_expiry_without_eve
 
 def test_collector_http_vehicle_scope(lab):
     from fastapi.testclient import TestClient
+    from runtime import obs_access
     store=CollectorStore(); store.vehicle_states=lab.store()
     store.apply_state(lab.message("v1",battery=15).data); store.apply_state(lab.message("v2",battery=88).data)
-    with TestClient(create_app(store=store)) as client:
+    key=obs_access.derive_key("vehicle-scope-test-secret-"+"v"*32)    # collector 读写要运维凭据
+    with TestClient(create_app(store=store, operator_key=key),
+                    headers=obs_access.headers(obs_access.issue(key))) as client:
         assert client.get("/api/vehicle/state?vehicle_id=v2").json()=={"battery":88}
         assert client.get("/api/vehicle/state?vehicle_id=absent").json()=={}
         assert client.get("/api/vehicle/observation?vehicle_id=v1").json()["signals"]["battery"]["authenticated"]

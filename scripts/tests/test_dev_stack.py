@@ -1818,6 +1818,7 @@ def test_dashboard_and_local_hmi_receive_explicit_selected_endpoints(tmp_path: P
     assert dashboard.env == {
         "VITE_COLLECTOR_URL": "http://localhost:8092",
         "VITE_EDGE_GATEWAY_URL": "http://localhost:8090",
+        "VITE_COLLECTOR_TOKEN": "",
     }
     assert hmi.env["VITE_AUDIO_API_URL"] == "http://localhost:50059"
 
@@ -1855,6 +1856,29 @@ def test_cli_hmi_runs_only_vite_and_redacts_token(
     assert "docker" not in " ".join(runner.calls[0])
     assert "top-secret-token" not in json.dumps(events)
     assert events[-1]["environment"]["VITE_WS_TOKEN"] == "[REDACTED]"
+
+
+def test_cli_dashboard_injects_a_collector_token_only_into_the_dev_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    dev.set_target(tmp_path, "cloud")
+    seen: list[dict[str, object]] = []
+
+    class EnvRunner(FakeCliRunner):
+        def run(self, argv, **kwargs):
+            seen.append(kwargs)
+            return super().run(argv, **kwargs)
+
+    runner = EnvRunner()
+    events: list[dict[str, object]] = []
+    monkeypatch.setattr(cli, "read_root_env", lambda *_args: {"TAILNET_FQDN": "demo.ts.net"})
+    monkeypatch.setattr(cli, "operator_token", lambda **_kwargs: "obs.v1.top-secret.sig")
+
+    assert cli.main(["dashboard"], repo=tmp_path, release_runner=runner, emit=events.append) == 0
+    assert seen[0]["env"]["VITE_COLLECTOR_TOKEN"] == "obs.v1.top-secret.sig"
+    assert seen[0]["env"]["VITE_COLLECTOR_URL"] == "https://demo.ts.net:8446"
+    assert "top-secret" not in json.dumps(events)
+    assert events[-1]["environment"]["VITE_COLLECTOR_TOKEN"] == "[REDACTED]"
 
 
 def test_cloud_connection_defaults_stay_hidden_from_unit_tests(

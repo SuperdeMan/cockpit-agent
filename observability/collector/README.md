@@ -13,6 +13,7 @@
 export PYTHONPATH=$PWD:$PWD/gen/python
 export NATS_URL=nats://localhost:4222
 export OBS_DB_PATH=./obs.db   # 不设=内存库（可跑但不跨重启）；compose 挂 obs-data 卷
+export E2E_IDENTITY_SECRET=...  # 运维凭据的派生根（与根 .env 同值）；不设则除健康与指标外一律 503
 python -m observability.collector.main
 ```
 
@@ -39,8 +40,11 @@ python -m observability.collector.main
 ## 安全边界
 
 - `POST /api/debug/vehicle` 只允许 `speed_kmh/battery/gear/location`。
-- 非开发环境必须设置 `DEBUG_VEHICLE_CONTROL=false`、`OBS_CONTENT_CAPTURE=off`，
-  并把 collector 置于正式鉴权边界之后（无鉴权、无多车隔离、无告警）。
+- 除 `/healthz`、`/metrics`、`/api/agents` 外，读写都要运维令牌（`runtime/obs_access.py`，
+  [设计](../../docs/design/2026-10-03-v2-collector-access.md)）：HTTP 用 `Authorization: Bearer`，`/stream` 首帧
+  `{"type":"auth","token":…}`；密钥由 `E2E_IDENTITY_SECRET` 派生，缺失时这些接口一律 503。
+  `python scripts/obs_token.py` 打印一枚 12 小时内有效的令牌。
+- 非开发环境必须设置 `DEBUG_VEHICLE_CONTROL=false`、`OBS_CONTENT_CAPTURE=off`（仍无多车隔离、无告警）。
 - collector 是旁路；NATS 或 collector 故障不得影响座舱主链路。
 
 ## 验证

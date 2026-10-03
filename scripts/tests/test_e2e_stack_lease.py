@@ -1272,6 +1272,10 @@ def test_compose_exposes_identity_gate_only_to_edge_and_llm_gateway():
         assert env["E2E_IDENTITY_SECRET"] == "${E2E_IDENTITY_SECRET-}"
     assert "E2E_IDENTITY_ENABLED" not in services["memory"]["environment"]
     assert "E2E_IDENTITY_SECRET" not in services["memory"]["environment"]
+    # collector 只拿密钥派生运维凭据，不开 e2e 身份闸（runtime/obs_access.py）
+    collector = services["observability-collector"]["environment"]
+    assert collector["E2E_IDENTITY_SECRET"] == "${E2E_IDENTITY_SECRET-}"
+    assert "E2E_IDENTITY_ENABLED" not in collector
 
 
 def test_compose_recreate_overlays_runner_gates_on_operational_root(
@@ -1326,6 +1330,10 @@ def test_compose_recreate_overlays_runner_gates_on_operational_root(
         "E2E_CAPABILITY_ENABLED": "${E2E_CAPABILITY_ENABLED:-false}",
         "E2E_CAPABILITY_SECRET": "${E2E_CAPABILITY_SECRET-}",
     }
+    assert services["observability-collector"]["environment"] == {
+        "E2E_IDENTITY_SECRET": "${E2E_IDENTITY_SECRET-}",
+    }
+    assert "observability-collector" in observed["argv"]
     for name in ("proactive", "mcp-bridge"):
         assert services[name]["environment"][
             "E2E_NAMESPACE_ADMIN_ENABLED"

@@ -30,6 +30,7 @@ for import_root in (REPO_ROOT, REPO_ROOT / "test", REPO_ROOT / "gen" / "python")
 
 from agents.manual_rag.src.index_format import load_manual_package  # noqa: E402
 from scripts.dev_stack_lib import read_root_env  # noqa: E402
+from scripts.obs_token import collector_headers  # noqa: E402
 from scripts.e2e_target import endpoint_environment, resolve_e2e_target  # noqa: E402
 from scripts.eval_manual_rag_full_coverage import (  # noqa: E402
     build_section_cases,
@@ -171,7 +172,9 @@ def _runtime_endpoints(env_root: Path) -> tuple[str, str]:
 
 
 def _http_json(url: str) -> Any:
-    with urllib.request.urlopen(url, timeout=15) as response:
+    # 本探针只用它读 collector：读写要运维凭据（runtime/obs_access.py）
+    request = urllib.request.Request(url, headers=collector_headers())
+    with urllib.request.urlopen(request, timeout=15) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
