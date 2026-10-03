@@ -10459,3 +10459,18 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   在临时干净 worktree 里跑（复制本机 `.env` 与 `dev-stack.local`，跑完连 worktree 一起删）。③ Bash heredoc 又吞了反斜杠，补丁改用 Write 写。
 - 验证：全量 10740 / 35 / 11，四门禁、smoke 13/13，dashboard 23、HMI 364、dashboard 构建；注入缺陷 12 处全部判红。发布：基础设施审批变更清单只有 collector
   探针、换锚后部署，status 5/5，verify `20261003T065930Z-7a3b38f.json`；经 Tailscale 实测：不带凭据读会话 / 车态 / 导出与调试车态写入都是 401，伪造令牌 403，`/stream` 不认证或伪造都被 1008 关闭；带运维令牌读会话 200、`/stream` 收到快照；`/healthz`、`/api/agents` 照常 200；固定语料 20×3（临时干净 worktree）：60/60、102 轮，证据错误 0（带令牌读 collector 全部成功）、open operations 0，212 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 7594/18125/23766 ms；业务红 7 条：「未走手册」6 条（既有类别，V211 连带缺「2.9」），另有 V217 第 2 轮 1/3 首次出现 no_plan（「我问的是广州的天气」规划两次都没出计划，回了「没听清」）——主链路这次没改，登记观察。
+
+## 2026-10-03：CA2-17 S1——共享商户账号、订单句柄与支付归属（`ab576883`）
+
+- 测量（两路只读探查 + 线上核对，[设计](design/2026-10-03-v2-mcp-bridge-delegation.md)）：外部返回改不了 scope 与目标用户 / 车辆；但麦当劳 / 瑞幸是全车共用的服务账号，运行时不标注；
+  报单号绕过账本归属，任何有 `merchant.read` 的人能读账号下任何订单；收藏门店给所有人看；支付网关缺 scope 时 fail-open、查单 / 取消 / 退款不校验归属；
+  stdio 子进程继承商户 token。线上两个网关强制鉴权、规划 fail-closed，只有车主带商户与支付权限。
+- 用户决定：先做 S1；单号与收藏只给账号持有人（车主）。
+- 实现：`servers.yaml` 声明 `account: service` + `account_holder`（带静态凭据却不声明即拒载）；报单号只认持有人或本人账本该商户名下的单，否则婉拒、不出站；
+  收藏档只给持有人；桥出口统一打「共享商户账号」（保留键）、确认话术如实说明、HMI 四种卡角标；SDK 在 Execute 入口绑定请求主体与授权、支付客户端随 metadata 带给网关，
+  网关缺授权即拒、只为本人建单、别人的单按不存在处理；stdio 子进程最小环境。不改：草稿绑车辆（CA2-09 确认已绑车辆）、demo 写的 scope（真实商户写只能经必须声明
+  `merchant.write` 的 workflow）。
+- 坑：① 两份补丁的锚点在文件里出现两次（麦当劳 prepare / menu 同一段、HMI 两张卡同一段角标），前一份已部分落盘——拆开按实际次数重做。② 支付客户端模块级导入
+  payment proto，SDK server 直接依赖它会把支付协议带进所有 Agent 镜像——主体 contextvar 单放 `agents/_sdk/caller.py`。③ 异步生成器的 finally 可能在别的
+  Context 里跑，`ContextVar.reset` 会抛——复位兜底为空值。
+- 验证：全量 10756 / 35 / 11，四门禁、smoke 13/13，HMI 364；注入缺陷 14 处全部判红。发布：status 5/5，verify `20261003T085402Z-ab57688.json`；线上只读核对：桥合成 12 个能力、麦当劳与瑞幸均正常准入（账号声明有效、无拒载）；支付网关不带请求主体与授权时查单 PERMISSION_DENIED，带上之后查不存在的单 NOT_FOUND；固定语料 20×3（临时干净 worktree）：60/60、101 轮，证据错误 0、open operations 0，207 次 LLM 全为 minimax/MiniMax-M3，零动作、零车态变化，p50/p95/p99 7782/14250/19063 ms；业务红 7 条全是既有的「未走手册」签名（V211 连带缺「2.9」）。
