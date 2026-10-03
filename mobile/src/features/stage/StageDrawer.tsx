@@ -51,7 +51,7 @@ export function StageDrawer({
           justifyContent: 'center',
         }}
       >
-        <View style={{ width: 4, height: 36, borderRadius: 2, backgroundColor: p.fill2 }} />
+        <View style={{ width: 4, height: 36, borderRadius: 2, backgroundColor: p.lineStrong }} />
         <Text style={{ color: p.fg3, fontSize: p.font(11), marginTop: 6 }}>{open ? '›' : '‹'}</Text>
       </Pressable>
       <Animated.View style={[{ overflow: 'hidden', marginVertical: 10 }, paneStyle]}>

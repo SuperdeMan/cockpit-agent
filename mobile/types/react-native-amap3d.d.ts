@@ -6,7 +6,7 @@
 // `skipLibCheck` 管不着它——那只跳过 `.d.ts`，这是 `.tsx` 源码。
 // ⇒ tsconfig 的 `paths` 把**类型解析**重定向到本文件；运行时解析仍走 metro 的正常路径。
 //
-// 只声明用得到的三个出口。写全等于替一个我们不维护的库背类型书，
+// 只声明用得到的出口（MapView / Marker / Polyline / MapType / AMapSdk）。写全等于替一个我们不维护的库背类型书，
 // 而**只声明用到的那部分，本身就是一份「我们依赖它的哪些面」的清单**
 // ——哪天换库，要对齐的就是这个文件里的东西。
 declare module 'react-native-amap3d' {
@@ -37,10 +37,21 @@ declare module 'react-native-amap3d' {
     latLngBounds: LatLngBounds
   }
 
+  /** 底图类型（`lib/src/types.ts::MapType`，运行时枚举；Android 侧 +1 映射到 AMap.MAP_TYPE_*） */
+  export enum MapType {
+    Standard,
+    Satellite,
+    Night,
+    Navi,
+    Bus,
+  }
+
   export interface MapViewProps {
     style?: ViewStyle
     initialCameraPosition?: CameraPosition
     myLocationEnabled?: boolean
+    /** 底图（`map-view.tsx:20`）——v3 P7：深色主题用夜间底图（对照 Figma 04 页 M 组） */
+    mapType?: MapType
     /** 三枚系统控件（`map-view.tsx:50-62`）——舞台内嵌地图关掉它们：160dp 的小图放不下罗盘 / 比例尺 / 缩放钮 */
     compassEnabled?: boolean
     scaleControlsEnabled?: boolean

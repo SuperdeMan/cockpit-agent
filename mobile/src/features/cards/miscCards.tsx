@@ -231,7 +231,7 @@ export function SceneList({ p, card, onSend }: { p: Palette; card: SceneListCard
               borderRadius: RADIUS.md,
               borderWidth: 1,
               borderColor: p.line,
-              backgroundColor: p.panel,
+              backgroundColor: p.surfaceHigh,
             }}
           >
             <Text style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '600' }}>{s.name}</Text>

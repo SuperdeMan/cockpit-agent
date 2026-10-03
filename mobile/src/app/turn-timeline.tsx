@@ -118,8 +118,8 @@ export default function TurnTimelineScreen() {
             paddingHorizontal: 12,
             borderRadius: 12,
             borderWidth: 1,
-            borderColor: p.fill2,
-            backgroundColor: p.fill,
+            borderColor: p.line,
+            backgroundColor: p.surfaceHigh,
             alignSelf: 'flex-start',
           }}
         >
@@ -138,7 +138,7 @@ export default function TurnTimelineScreen() {
           <View
             key={t.interactionId}
             testID="timeline-turn"
-            style={{ gap: 4, borderTopWidth: 1, borderTopColor: p.fill2, paddingTop: 8 }}
+            style={{ gap: 4, borderTopWidth: 1, borderTopColor: p.line, paddingTop: 8 }}
           >
             <Text style={{ color: p.fg1, fontSize: p.font(12) }}>
               {hms(t.startedAtWall)} · {t.kind} · {t.interactionId}

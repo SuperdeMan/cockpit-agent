@@ -120,19 +120,19 @@ rg -n "255, ?255, ?255, ?0\.56" hmi/src/aurora.css mobile/src/ui/theme.ts
 | 角色（契约 / Make 变量） | HMI | mobile |
 |---|---|---|
 | 页面底 `--background` / Space-950 | `--au-bg` | `p.bg` |
-| 次底 Space-900 | `--au-bg-2` | `p.panel` |
+| 次底 Space-900 | `--au-bg-2` | `p.surfaceLow` |
 | 正文 `--foreground` / Primary | `--au-text` | `p.fg1` |
 | 次要文字 Secondary（含 `--secondary-foreground`） | `--au-text-2` | `p.fg2` |
 | 弱文字 Tertiary（含 `--muted-foreground`） | `--au-text-3` | `p.fg3` |
 | 分隔 `--border` | `--au-line` / `--au-line-2` | `p.line` |
-| 内嵌控件底 `--muted` / `--input` | `--au-fill` / `--au-fill-2` | `p.fill` / `p.fill2` |
-| 顶缘高光 | `--au-hi` | `p.hi` |
+| 内嵌控件底 `--muted` / `--input` | `--au-fill` / `--au-fill-2` | `p.surfaceHigh` / `p.surfaceHighest` |
+| 顶缘高光 | `--au-hi` | —（v3 起 mobile 不用玻璃高光，材质改色调层级） |
 | 交互蓝 `--primary` / `--ring` | `--au-primary` | `p.accent`（软底 `p.accentSoft`） |
 | Make 的 `--accent`（极光蓝） | `--au-blue`，仅 AI 时刻 | `AURORA.blue` |
 | 危险 `--destructive` | `--au-danger` | `p.red` |
 | 警告 / 确认琥珀 | `--au-warn` / `--au-conf-mid` | `p.amber`（软底 `p.amberSoft`） |
 | 在线 / 成功 | `--au-online` | `p.green` |
-| 卡片 / 玻璃 `--card` | `.au-glass` / `--au-glass-*` | `<Glass p>` / `p.glass*` |
+| 卡片 / 玻璃 `--card` | `.au-glass` / `--au-glass-*` | 卡片 `p.surface`、浮层 `p.surfaceHigh`（v3 实色层级；`<Glass>` 与 `p.glass*` 已于 P7 删除） |
 | 圆角 `--radius` 及阶 | `--au-r-*` | `RADIUS.*` |
 | `--chart-1…5` | 极光四色 + 交互蓝，只给图表与 AI 元素 | 同左 |
 
@@ -190,7 +190,7 @@ function MyCardView({ card, onAction }: { card: MyCard; onAction?: (text: string
 
 ```
 mobile/src/ui/              aurora/（AuroraOrb 八态 idle/thinking/speaking/armed/listening/attention/looking/muted ·
-                            AuroraBackground · EdgeGlow · Glass · StreamCursor · ThinkDots）· Icon · Pill · theme · tokens · layout/
+                            EdgeGlow · StreamCursor · ThinkDots）· Icon · Pill · theme · tokens · layout/
 mobile/src/features/cards/  CardRenderer（REGISTRY 全量卡型 + 兜底卡 + 每卡 ErrorBoundary）· parts（CardShell / KV / Chip /
                             CardButtons / CardIcon / FreshChip / ProvBadge）· infoCards / navCards / miscCards / merchantCards
 ```
@@ -310,7 +310,7 @@ import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 **Figma 资产链接**：`get_design_context` 返回的图片 / SVG 链接是临时的，**不得写进代码**。下载后按类型落地：
 
 - 线性图标 → §5 注册表；
-- 装饰性背景、氛围光 → 用 CSS / RN 渐变复刻（参考 `shell.css` 的 `.au-scene-bg`、mobile `AuroraBackground`），不用位图；
+- 装饰性背景、氛围光 → 用 CSS / RN 渐变复刻（参考 `shell.css` 的 `.au-scene-bg`；mobile v3 不再画氛围背景，`AuroraBackground` 已于 P7 删除），不用位图；
 - 确需位图 → HMI 放 `public/`（或 `src/` 下 import 让 Vite 加 hash），mobile 放 `assets/images/` 并 `require`；
 - 数据绘制区（地图、K 线、队徽、声波）由代码绘制，设计只给规格。
 

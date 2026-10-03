@@ -459,7 +459,7 @@ function OptionRow({
         borderRadius: 12,
         borderWidth: 1,
         borderColor: p.line,
-        backgroundColor: p.panel,
+        backgroundColor: p.surfaceHigh,
       }}
     >
       {imageUrl && !broken ? (

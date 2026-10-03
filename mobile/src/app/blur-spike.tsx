@@ -106,7 +106,7 @@ export default function BlurSpikeScreen() {
           setBlurOn((v) => !v)
           setMountCount((n) => n + 1)
         }}
-        style={{ backgroundColor: p.fill, borderRadius: 12, padding: 12, minHeight: 44, justifyContent: 'center' }}
+        style={{ backgroundColor: p.surfaceHigh, borderRadius: 12, padding: 12, minHeight: 44, justifyContent: 'center' }}
       >
         <Text style={{ color: p.fg1 }}>挂载/卸载 ③（稳定性判据：20 次不崩）· 已切 {mountCount} 次</Text>
       </Pressable>

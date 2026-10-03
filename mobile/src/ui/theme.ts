@@ -1,7 +1,7 @@
-// 主题（M1-6 建立，Aurora Glass 复刻轮换肤）：深浅两套 + 'system' 跟随系统，字号两档。
-// 色板照 hmi/src/aurora.css 的 --au-* token 逐值搬（深空底/文字三级冷白/交互蓝/极光四色/玻璃材质）。
-// RN 无 backdrop-filter，玻璃=半透明底叠在 AuroraBackground 深空渐变上（aurora.css 自己也定义了
-// --au-glass-fallback 这条降级路线，App 端走的就是它的增强版：加四边不等光照边框 + inset 顶缘高光）。
+// 主题（M1-6 建立，Aurora Glass 复刻轮换肤；Android Visual v3 方向 B 起改色调层级）：深浅两套 + 'system' 跟随系统，字号两档。
+// 色板起点是 hmi/src/aurora.css 的 --au-* token（深空底 / 文字三级 / 交互色 / 极光四色）；v3 起材质不再是半透明玻璃，
+// 改为实色色调层级 surfaceLow < surface < surfaceHigh < surfaceHighest（Figma 10 Handoff 页 token 表），
+// 旧的玻璃键已于 v3 P7 删除。语音层的真模糊另有 sheetTint（见下）。
 // 虹彩纪律（设计契约 §5）：极光渐变只准出现在光球 / 发送按钮 / 流式光标 / AI 内容描边，正文与数字绝不虹彩。
 import { useColorScheme } from 'react-native'
 
@@ -21,8 +21,6 @@ export const AURORA = {
 export interface Palette {
   dark: boolean
   bg: string
-  panel: string
-  card: string
   line: string
   fg1: string
   fg2: string
@@ -34,22 +32,8 @@ export interface Palette {
   red: string
   green: string
   teal: string
-  /** 顶缘高光（玻璃上边框） */
-  hi: string
-  /** 内嵌控件底色（玻璃面板内的子块/输入框） */
-  fill: string
-  fill2: string
-  /** 玻璃面板：底色 + 四边不等光照边框（上左亮下右暗）+ 完整投影（boxShadow 字符串，含 inset） */
-  glassBg: string
-  glassBdTop: string
-  glassBdLeft: string
-  glassBdRight: string
-  glassBdBottom: string
-  glassShadow: string
-  /** 深空场景底（AuroraBackground 渐变；blob 色在组件内定义） */
-  sceneGradient: string
   // ── Android Visual v3（方向 B）：色调层级与语义扩键。值逐值照 Figma「小舟随行 · Android Visual v3」
-  //    Color 集合（10 Handoff 页 token 表）；旧的 panel / card / fill* / glass* 保留到 P7 迁移完再删。
+  //    Color 集合（10 Handoff 页 token 表）；旧的 panel / card / hi / fill* / glass* / sceneGradient 已于 v3 P7 删除（删前全仓无引用）。
   /** 色调层级（代替半透明玻璃）：bg < surfaceLow < surface（卡片）< surfaceHigh（弹层 / Dock / 语音层）< surfaceHighest */
   surfaceLow: string
   surface: string
@@ -91,25 +75,12 @@ export interface Palette {
 // 文字要压在 surface 各级（最亮到 #1C2540）上都 ≥4.5:1，原来的 0.58 / 0.48 只按 bg 算过
 export const DARK = {
   bg: '#06080F',
-  panel: '#0A0E1A',
-  card: 'rgba(255,255,255,0.05)',
   line: 'rgba(255,255,255,0.10)',
   fg1: 'rgba(255,255,255,0.92)',
   fg2: 'rgba(255,255,255,0.66)',
   fg3: 'rgba(255,255,255,0.52)',
   accentSoft: 'rgba(70,214,224,0.14)',
   amberSoft: 'rgba(245,158,11,0.16)',
-  hi: 'rgba(255,255,255,0.16)',
-  fill: 'rgba(255,255,255,0.05)',
-  fill2: 'rgba(255,255,255,0.10)',
-  glassBg: 'rgba(255,255,255,0.056)',
-  glassBdTop: 'rgba(255,255,255,0.17)',
-  glassBdLeft: 'rgba(255,255,255,0.13)',
-  glassBdRight: 'rgba(255,255,255,0.07)',
-  glassBdBottom: 'rgba(255,255,255,0.05)',
-  glassShadow:
-    '0 8px 40px rgba(0,0,0,0.5), 0 2px 12px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.13)',
-  sceneGradient: 'linear-gradient(155deg, #06080f 0%, #0a0e1a 55%, #080d18 100%)',
   surfaceLow: '#0A0E1A',
   surface: '#0F1525',
   surfaceHigh: '#151D30',
@@ -136,27 +107,12 @@ export const DARK = {
 // 由 theme.test 的「每级底色」用例守），accentSoft 改用 accent 本色
 export const LIGHT = {
   bg: '#EDF1FA',
-  panel: '#E4EBF7',
-  card: 'rgba(255,255,255,0.80)',
   line: 'rgba(10,14,26,0.10)',
   fg1: 'rgba(10,14,26,0.92)',
   fg2: 'rgba(10,14,26,0.74)',
   fg3: 'rgba(10,14,26,0.62)',
   accentSoft: 'rgba(3,105,161,0.10)',
   amberSoft: 'rgba(180,83,9,0.12)',
-  // 浅色「顶缘高光」刻意不是白：RN 无 backdrop 磨砂，fill 灰底上压 1px 白边会渲成一条孤立白线
-  // （aurora.css 的纯白 bd-top 是压在 blur 玻璃上才成立），这里退成比 line 更淡的深色
-  hi: 'rgba(10,14,26,0.05)',
-  fill: 'rgba(10,14,26,0.045)',
-  fill2: 'rgba(10,14,26,0.08)',
-  glassBg: 'rgba(255,255,255,0.76)',
-  glassBdTop: 'rgba(255,255,255,1)',
-  glassBdLeft: 'rgba(255,255,255,1)',
-  glassBdRight: 'rgba(10,14,26,0.06)',
-  glassBdBottom: 'rgba(10,14,26,0.06)',
-  glassShadow:
-    '0 8px 32px rgba(10,14,26,0.09), 0 2px 8px rgba(10,14,26,0.05), inset 0 1px 0 rgba(255,255,255,1)',
-  sceneGradient: 'linear-gradient(155deg, #edf1fa 0%, #e4ebf7 100%)',
   surfaceLow: '#F4F6FB',
   surface: '#FFFFFF',
   surfaceHigh: '#FFFFFF',

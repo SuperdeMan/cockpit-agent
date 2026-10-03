@@ -6,7 +6,7 @@
 import { router } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
-import { MapView, type MapViewHandle } from 'react-native-amap3d'
+import { MapType, MapView, type MapViewHandle } from 'react-native-amap3d'
 
 import { AMAP_KEY, MAP_AVAILABLE } from '@/core/map/available'
 import { fitCamera, type Viewport } from '@/core/map/fit'
@@ -46,12 +46,13 @@ function StageMapBody({ p, geometry, height }: { p: Palette; geometry: MapGeomet
   }, [camera, fitPts.length, viewport])
   const open = useCallback(() => router.push({ pathname: '/map', params: geometryParams(geometry) }), [geometry])
   return (
-    <View testID="stage-map" style={{ height, borderRadius: RADIUS.lg, overflow: 'hidden', backgroundColor: p.fill }}>
+    <View testID="stage-map" style={{ height, borderRadius: RADIUS.lg, overflow: 'hidden', backgroundColor: p.surfaceHigh }}>
       <MapView
         ref={mapRef}
         style={{ flex: 1 }}
         initialCameraPosition={camera ?? undefined}
         myLocationEnabled={false}
+        mapType={p.dark ? MapType.Night : MapType.Standard}
         compassEnabled={false}
         scaleControlsEnabled={false}
         zoomControlsEnabled={false}
@@ -65,7 +66,7 @@ function StageMapBody({ p, geometry, height }: { p: Palette; geometry: MapGeomet
       </MapView>
       {/* 压在瓦片上的浮层一律实色底（map.tsx 既有判据） */}
       <View pointerEvents="box-none" style={{ position: 'absolute', left: 8, right: 8, bottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <View style={{ flex: 1, backgroundColor: p.panel, borderRadius: RADIUS.md, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: p.line }}>
+        <View style={{ flex: 1, backgroundColor: p.surfaceHigh, borderRadius: RADIUS.md, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: p.line }}>
           <Text numberOfLines={1} style={{ color: p.fg1, fontSize: p.font(12), fontWeight: '600' }}>{geometry.title}</Text>
           {geometry.subtitle ? <Text numberOfLines={1} style={{ color: p.fg3, fontSize: p.font(11) }}>{geometry.subtitle}</Text> : null}
         </View>

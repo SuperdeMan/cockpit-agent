@@ -14,6 +14,8 @@ import type { DockItem } from '@/core/presence/commitment'
 import type { IssueView } from '@/core/session/contracts'
 import { paletteOf } from '@/ui/theme'
 
+jest.mock('react-native-reanimated', () => require('./support/reanimatedMock'))
+
 void [Modal, ScrollView]
 
 const p = paletteOf('dark', true, 'normal')

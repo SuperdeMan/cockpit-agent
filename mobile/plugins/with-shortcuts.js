@@ -4,19 +4,23 @@
 // 不引 expo-quick-actions：两条静态入口不需要运行时 API，少一个 autolinking 缝候选（B3 foldstate 同一判据）。
 // 标签必须是 @string 资源引用（aapt 拒字面量），所以同时写 strings.xml。
 // 「说话」落 xiaozhou://voice：只回对话页并升层、不开麦（§12.2）；「车况」落既有的 /vehicle 路由。
+// 图标（v3 P7，Figma 07 系统面）：每条一枚自己的字形（话筒 / 车），不再两条都挂 App 图标；
+// 字形从共享图标库生成 VectorDrawable，见 shortcut-icons.js。
 const fs = require('fs')
 const path = require('path')
 const { AndroidConfig, withAndroidManifest, withDangerousMod, withStringsXml } = require('expo/config-plugins')
 
+const { shortcutBgFile, shortcutIconFiles } = require('./shortcut-icons')
+
 const SHORTCUTS = [
-  { id: 'voice', short: '说话', long: '和小舟说话', data: 'xiaozhou://voice' },
-  { id: 'vehicle', short: '车况', long: '查看车况', data: 'xiaozhou://vehicle' },
+  { id: 'voice', short: '说话', long: '和小舟说话', data: 'xiaozhou://voice', icon: 'voice-input' },
+  { id: 'vehicle', short: '车况', long: '查看车况', data: 'xiaozhou://vehicle', icon: 'vehicle' },
 ]
 
 function shortcutsXml(pkg) {
   const items = SHORTCUTS.map(
     (s) =>
-      `  <shortcut android:shortcutId="${s.id}" android:enabled="true" android:icon="@mipmap/ic_launcher"\n` +
+      `  <shortcut android:shortcutId="${s.id}" android:enabled="true" android:icon="@drawable/ic_shortcut_${s.id}"\n` +
       `    android:shortcutShortLabel="@string/shortcut_${s.id}_short" android:shortcutLongLabel="@string/shortcut_${s.id}_long">\n` +
       `    <intent android:action="android.intent.action.VIEW" android:data="${s.data}"\n` +
       `      android:targetPackage="${pkg}" android:targetClass="${pkg}.MainActivity" />\n` +
@@ -49,6 +53,15 @@ module.exports = function withShortcuts(config) {
       const dir = path.join(c.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'xml')
       fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(path.join(dir, 'shortcuts.xml'), shortcutsXml(pkg), 'utf8')
+      // 图标资源：字形读 ../hmi/src/components（构建镜像第 1b 步与 mobile 并排镜像了 hmi/src）
+      const res = path.join(c.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res')
+      const components = path.join(c.modRequest.projectRoot, '..', 'hmi', 'src', 'components')
+      const files = Object.assign(shortcutBgFile(), ...SHORTCUTS.map((s) => shortcutIconFiles(components, s.id, s.icon)))
+      for (const [rel, xml] of Object.entries(files)) {
+        const file = path.join(res, rel)
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, xml, 'utf8')
+      }
       return c
     },
   ])

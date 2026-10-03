@@ -46,6 +46,7 @@ import { usePalette, type Palette } from '../../ui/theme'
 import { RADIUS, SPACE, TARGET, textStyle } from '../../ui/tokens'
 import { useAssistant } from '../assistant/AssistantProvider'
 import { S2sConsentSheet } from './S2sConsentSheet'
+import { labelUnits, VOICE_GRID_GAP, voiceGridColumns } from './voiceGrid'
 
 /** 分区（Figma ListSection/Header + 分组卡）：accent 标题 + surface 圆角 16 的组，行间 line 分隔。
  *  组里每个子项都是一「行」（ChoiceRow / SwitchRow / NoteRow / Block / LinkRow / ListItem），各自带内边距 */
@@ -182,12 +183,7 @@ function SessionSummarySection({
   )
 }
 
-/** 选项标签的显示宽度（汉字 1、其余 0.5）：分段按钮一段只放得下 6 个汉字宽；「English」只有 3.5 */
-function labelUnits(label: string): number {
-  let n = 0
-  for (const ch of label) n += (ch.codePointAt(0) ?? 0) >= 0x2e80 ? 1 : 0.5 // 0x2E80 起是中日韩部首、汉字与全角符号
-  return n
-}
+// 选项标签的显示宽度（汉字 1、其余 0.5）见 voiceGrid.ts::labelUnits：分段按钮一段只放得下 6 个汉字宽；「English」只有 3.5
 
 /** 单选行（Figma ListItem/Kind=Segmented）：标题 + 分段按钮（语义仍是单选，`choice-<值>` 句柄逐项沿用），
  *  可选一行说明。选项多或标签长（引擎列表）分段放不下，退回一排可换行的单选胶囊 */
@@ -342,12 +338,15 @@ function VoiceGrid({
   value: string
   onPick(id: string): void
 }) {
+  // 列数按量到的宽度与最长的名字算（voiceGrid.ts）：两字名三列，四字名在手机外屏退两列，不截成「甜美…」
+  const [width, setWidth] = useState(0)
+  const cols = voiceGridColumns(width, voices.map((v) => v.name), textStyle('labelM', p.fontScale).fontSize ?? 13)
   const rows: (typeof voices)[] = []
-  for (let i = 0; i < voices.length; i += 3) rows.push(voices.slice(i, i + 3))
+  for (let i = 0; i < voices.length; i += cols) rows.push(voices.slice(i, i + cols))
   return (
-    <View style={{ gap: 8 }}>
+    <View testID="voice-grid" style={{ gap: VOICE_GRID_GAP }} onLayout={(e) => setWidth(Math.round(e.nativeEvent.layout.width))}>
       {rows.map((row, r) => (
-        <View key={r} style={{ flexDirection: 'row', gap: 8 }}>
+        <View key={r} style={{ flexDirection: 'row', gap: VOICE_GRID_GAP }}>
           {row.map((v) => {
             const on = v.voice_id === value
             const gender = v.gender === 'male' ? '男声' : v.gender === 'female' ? '女声' : ''
@@ -383,7 +382,7 @@ function VoiceGrid({
               </Pressable>
             )
           })}
-          {Array.from({ length: 3 - row.length }, (_, k) => (
+          {Array.from({ length: cols - row.length }, (_, k) => (
             <View key={`pad-${k}`} style={{ flex: 1 }} />
           ))}
         </View>

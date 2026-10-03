@@ -43,8 +43,11 @@ export function Weather({ p, card }: { p: Palette; card: WeatherCard; onSend: Se
   if (humidity) tiles.push({ icon: 'humidity', value: `${humidity}%`, label: '湿度' })
   if (windScale) tiles.push({ icon: 'wind', value: `${windScale} 级`, label: windDir || '风力' })
   if (aqi) {
-    const value = `${aqi} ${card.air_quality?.category || ''}`.trim()
-    tiles.push({ icon: 'air-quality', value, label: '空气质量', color: level === null ? undefined : p.aqi[level] })
+    // 档位进标签行（v3 P7）：「27 优」放数值行时，窄舞台（约 80dp 一格）截成「27 …」，「156 中度污染」在对话列里也放不下；
+    // 数值行只放数字，标签行「空气优」/「中度污染」（四字档位不再加前缀），颜色仍随档位
+    const category = (card.air_quality?.category || '').trim()
+    const label = !category ? '空气质量' : category.length <= 2 ? `空气${category}` : category
+    tiles.push({ icon: 'air-quality', value: String(aqi), label, color: level === null ? undefined : p.aqi[level] })
   }
   return (
     <CardShell p={p} icon={weatherIcon(card)} title={`天气 · ${card.city}`} right={<ProvBadge p={p} prov={card._prov} />}>

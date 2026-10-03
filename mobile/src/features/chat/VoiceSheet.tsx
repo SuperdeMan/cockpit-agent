@@ -499,7 +499,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
             />
           )}
           {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
-          <EdgeGlow active={edgeGlowActive(snapshot)} animated={props.motion.loops} />
+          <EdgeGlow active={edgeGlowActive(snapshot)} animated={props.motion.loops} followMic={snapshot.primary === 'listening'} />
           {/* 顶缘把手带（B5-12，泓舟 B4 真机轮原话①）：底栏「收起 / 打断」撤掉——收起 = 向下拖
               （2026-09-11 起整层任意位置都行，Pan 挂在外层）/ 轻点把手带 / 点暗区 / 返回键，
               打断 = Composer 的 ⬆/■ 合一键（B5-13）。

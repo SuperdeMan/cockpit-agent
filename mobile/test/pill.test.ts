@@ -72,8 +72,8 @@ test('solid：soft 底换实色 surfaceHigh 并补一圈 line（压在地图瓦�
 })
 
 // ── Android Visual v3（方向 B）：Figma Pill 组件四档
-test('v3：floating = surfaceHigh 实色 + line 描边 + 二级投影；glass 是它的别名', async () => {
-  for (const tone of ['floating', 'glass'] as const) {
+test('v3：floating = surfaceHigh 实色 + line 描边 + 二级投影（过渡别名 glass 已于 P7 删除）', async () => {
+  for (const tone of ['floating'] as const) {
     const view = await mount(createElement(Pill, { p, testID: 'x', label: 'a', tone, onPress: () => {} }))
     try {
       const s = flat(pillOf(view, 'x')!.props.style)

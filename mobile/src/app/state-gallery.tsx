@@ -11,7 +11,7 @@ import { settingsStore } from '@/core/settings/store'
 import { Chip } from '@/features/cards/parts'
 import { FocusDock } from '@/features/chat/FocusDock'
 import { PresenceCapsule } from '@/features/chat/PresenceCapsule'
-import { AuroraBackground, AuroraOrb } from '@/ui/aurora'
+import { AuroraOrb } from '@/ui/aurora'
 import { usePalette } from '@/ui/theme'
 
 export default function StateGallery() {
@@ -26,7 +26,6 @@ export default function StateGallery() {
   }, [all, only])
   return (
     <View style={{ flex: 1, backgroundColor: p.bg }}>
-      <AuroraBackground p={p} />
       <ScrollView contentContainerStyle={{ padding: 12, gap: 18 }}>
         <Text style={{ color: p.fg2, fontSize: p.font(12) }}>
           样本 {fixtures.length}{fixtures.length === all.length ? '' : `/${all.length}`} 条{only ? `（only=${only}）` : ''} · 主题跟随设置页 · 按钮在这里只记录不上行

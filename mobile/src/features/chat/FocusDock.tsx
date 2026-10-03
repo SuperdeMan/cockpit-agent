@@ -6,6 +6,7 @@
 // 确认按钮比例照 A-6.4：取消 flex1 / 确认 flex2；剩余时间**只读共享 TTL**（commitment.ts）。
 import { useState } from 'react'
 import { Linking, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native'
+import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
@@ -18,7 +19,7 @@ import type { FontScalePref } from '@/core/settings/store'
 import { Button } from '@/ui/Button'
 import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 import { SheetPanel } from '@/ui/Sheet'
-import { RADIUS, TARGET, TYPE, scale, textStyle } from '@/ui/tokens'
+import { MOTION, RADIUS, TARGET, TYPE, scale, textStyle } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
 import { dockLabelMode } from './dockLabel'
@@ -41,6 +42,8 @@ export interface FocusDockProps {
   onIssueAction?(kind: RecoveryKind, issue: IssueView): void
   expanded?: boolean
   onExpandedChange?(expanded: boolean): void
+  /** 进出场动画（v3 P7 拍板动效：进 180 / 出 120ms，自下而上淡入）；「减少动效」时调用方传 false，直接出现 / 消失 */
+  animated?: boolean
 }
 
 function fmt(ms: number): string {
@@ -66,8 +69,14 @@ export function FocusDock(props: FocusDockProps) {
   const issues = props.issues ?? []
   if (!pinned && !degradations.length && !issues.length) return null
   const solid = p.surfaceHigh
+  const animated = props.animated !== false
   return (
-    <View testID="focus-dock" style={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}>
+    <Animated.View
+      testID="focus-dock"
+      entering={animated ? FadeInDown.duration(MOTION.base) : undefined}
+      exiting={animated ? FadeOutDown.duration(MOTION.fast) : undefined}
+      style={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}
+    >
       {pinned ? <Commitments {...props} pinned={pinned} solid={solid} /> : null}
       {issues.map((issue) => (
         <IssueRow
@@ -93,7 +102,7 @@ export function FocusDock(props: FocusDockProps) {
           onReenableBargeIn={props.onReenableBargeIn}
         />
       ))}
-    </View>
+    </Animated.View>
   )
 }
 

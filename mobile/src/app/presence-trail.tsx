@@ -40,8 +40,8 @@ export default function PresenceTrailScreen() {
         paddingHorizontal: 12,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: p.fill2,
-        backgroundColor: p.fill,
+        borderColor: p.line,
+        backgroundColor: p.surfaceHigh,
       }}
     >
       <Text style={{ color: p.fg1, fontSize: p.font(13) }}>{label}</Text>

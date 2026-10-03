@@ -5,6 +5,7 @@
 // 期开关）。没有这一层，ASR 结束时的 `rec.stop()` 会把 VAD/KWS 的音频一起掐掉——
 // 那正是「答完之后免唤醒续问」赖以工作的东西，而且它坏掉时**不报错、只是再也不响应**。
 import { micBusStats, micLease, resetMicBusForTest } from '@/core/voice/micBus'
+import { levelOf, micLevel, subscribeMicLevel } from '@/core/voice/micLevel'
 import { setRecorderForTest, type FrameSink, type Recorder } from '@/core/voice/recorder'
 
 class FakeRecorder implements Recorder {
@@ -122,4 +123,32 @@ test('同一个 lease 重复 start/stop 幂等（极短按 PTT 会这么调）',
   await a.stop()
   await a.stop()
   expect(rec.stops).toBe(1)
+})
+
+// ── 顶缘光随音量（v3 P7）：响度是总线上的旁路读数，不占 lease、不新开采集 ──
+test('响度：帧经过总线就更新读数；最后一路停麦时归零并通知（顶缘光立刻落下）', async () => {
+  const seen: number[] = []
+  const off = subscribeMicLevel(() => seen.push(micLevel()))
+  try {
+    const a = micLease()
+    const b = micLease()
+    await a.start(() => {})
+    await b.start(() => {})
+    rec.emit(new Int16Array(160).fill(8000)) // 约 -12 dBFS：说话
+    expect(micLevel()).toBeGreaterThan(0.9)
+    expect(micBusStats().active).toBe(2) // 量响度没有多领一路
+    await a.stop()
+    expect(micLevel()).toBeGreaterThan(0.9) // 还有人在收：麦没关，读数不归零
+    await b.stop()
+    expect(micLevel()).toBe(0)
+    expect(seen[seen.length - 1]).toBe(0)
+  } finally {
+    off()
+  }
+})
+
+test('响度：静音帧读 0，-60 dBFS 以下不抬光', () => {
+  expect(levelOf(new Int16Array(160))).toBe(0)
+  expect(levelOf(new Int16Array(160).fill(30))).toBe(0) // ≈ -61 dBFS
+  expect(levelOf(new Int16Array(0))).toBe(0)
 })

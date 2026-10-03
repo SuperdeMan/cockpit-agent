@@ -121,6 +121,6 @@ export function AssistantSurface() {
     {dock ? <FocusDock p={p} fontScale={settings.fontScale} snapshot={snapshot} onConfirm={runtime.onConfirm}
       onSlotReply={runtime.onSlotReply} issues={runtime.state.issues} onIssueAction={runtime.onIssueAction}
       onCancelTurn={runtime.onInterrupt} onReenableBargeIn={runtime.hf.recycle}
-      expanded={runtime.dockExpanded} onExpandedChange={runtime.setDockExpanded} /> : null}
+      expanded={runtime.dockExpanded} onExpandedChange={runtime.setDockExpanded} animated={loopsAnimated(runtime.motionEnv)} /> : null}
   </SafeAreaView>
 }

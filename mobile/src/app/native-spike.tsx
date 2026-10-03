@@ -91,7 +91,7 @@ export default function NativeSpikeScreen() {
               testID={`haptic-${kind}`}
               accessibilityRole="button"
               onPress={() => { if (developmentDiagnosticsEnabled()) performHaptic(kind) }}
-              style={{ backgroundColor: p.fill, borderRadius: 12, padding: 12, minHeight: 44, justifyContent: 'center' }}
+              style={{ backgroundColor: p.surfaceHigh, borderRadius: 12, padding: 12, minHeight: 44, justifyContent: 'center' }}
             >
               <Text style={{ color: p.fg1, fontSize: p.font(14) }}>
                 {kind}（{kind === 'wake' ? '唤醒·轻' : kind === 'confirm' ? '确认·双' : kind === 'dead' ? '判死·一记重' : '快门·轻'}）
@@ -105,7 +105,7 @@ export default function NativeSpikeScreen() {
               testID={`cue-${kind}`}
               accessibilityRole="button"
               onPress={() => { if (developmentDiagnosticsEnabled()) playCueTone(kind) }}
-              style={{ backgroundColor: p.fill, borderRadius: 12, padding: 12, minHeight: 44, justifyContent: 'center' }}
+              style={{ backgroundColor: p.surfaceHigh, borderRadius: 12, padding: 12, minHeight: 44, justifyContent: 'center' }}
             >
               <Text style={{ color: p.fg1, fontSize: p.font(14) }}>{kind}（{kind === 'wake' ? '唤醒 · 两音上行' : '需确认 · 两音下行'}）</Text>
             </Pressable>

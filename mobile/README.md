@@ -235,7 +235,7 @@ react-native.config.js RN 社区 autolinking 的显式补登（M4：onnxruntime-
 patches/               patch-package 补丁——改 node_modules 的唯一通道（react-native-audio-api 输入预设
                        VoiceCommunication = 平台 AEC；expo-camera 视觉单帧内存路径，AR02）；生成时 --include 限定到真正改的文件
 plugins/               config plugins：with-native-voice（abiFilters/noCompress，必须排在 expo-build-properties 之后）
-                       / with-amap-key（有 key 才挂）/ with-shortcuts（长按图标「说话」「车况」）
+                       / with-amap-key（有 key 才挂）/ with-shortcuts（长按图标「说话」「车况」；图标由 shortcut-icons 从共享图标库生成 VectorDrawable）
                        / with-unified-drive-root（Windows subst 构建的盘符根统一）
 modules/kws/           Expo 本地原生模块：sherpa-onnx KeywordSpotter 的极窄桥（M4-2）
                        android/libs + android/src/main/jniLibs + assets/kws 均 gitignore
@@ -262,7 +262,7 @@ src/core/obs/          trace_id（HMI 同构）+ 会话前缀 app-
 src/core/voice/        M2 语音面：recorder（16k 归一）/ resample / asr（流式+模型回退+批处理兜底）
                        / tts（流式+收尾三分支）/ audioCtx（pcmPlayer 注入适配）/ queuePlayer（单个队列节点顺序吃片）
                        / speech（SpeechSink 实现）/ audioFocus（+ M4 有界事件日志）/ cueTone / catalog / wav / base64
-                       M4 追加：micBus（一路麦多路消费，免唤醒的地基）/ vad（ORT+silero，
+                       M4 追加：micBus（一路麦多路消费，免唤醒的地基；v3 P7 起顺带量响度 → micLevel，供语音层顶缘光）/ vad（ORT+silero，
                        端点判据共用 @shared/sileroEndpoint.mjs）/ kws（sherpa 原生桥的 JS 面）
                        / handsFree（voiceLoop.mjs FSM 接 RN 引擎 + S2S）/ tapTalk（轻点即说，说完自动收尾）
                        事实与命令（AR02/AR03）：captureFacts（采集事实：读设备与上行出口）/ playbackFacts（播放事实：
@@ -290,7 +290,7 @@ src/features/settings/ 设置页 + S2sConsentSheet（S2S 挡位隐私同意）�
 src/features/vision/   VisionCapture（命中才挂 CameraView、拍完立刻卸载；内存上传零落盘，AR02）
 src/ui/                主题（深浅/跟随系统 + 字号两档；Palette.target() 给卡片渲染器的目标高缩放）/ tokens（TARGET 按钮档、
                        PILL 胶囊档）/ Pill（胶囊类可点控件：外框 = 触控目标、视觉 = PILL）/ aurora（AuroraOrb 光球、
-                       AuroraBackground、EdgeGlow、Glass、StreamCursor、ThinkDots）/ layout（sizeClass 尺寸类 + 桌面姿态球径 +
+                       EdgeGlow、StreamCursor、ThinkDots）/ layout（sizeClass 尺寸类 + 桌面姿态球径 +
                        舞台地图高、foldPosture 折叠姿态、sheetHeight 语音层高度（chrome + 固定头区 + 该档该看见的内容；行车 / 泊车同一条式子）、sheetGesture 整层下滑收起判据 + 落点判据 sheetPanAtTop）
 types/                 第三方类型补丁：RN 内部 URL 实现 / react-native-amap3d（见文件头注）
 test/                  jest（jest-expo）：守卫 + 契约单测 + 变异反向验证；计数以 `npm test` 本次输出为准

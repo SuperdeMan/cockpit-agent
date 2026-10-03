@@ -86,7 +86,7 @@ export function ListItem({
       accessibilityState={disabled ? { disabled: true } : undefined}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [frame, pressed ? { backgroundColor: p.fill2 } : null]}
+      style={({ pressed }) => [frame, pressed ? { backgroundColor: p.surfaceHighest } : null]}
     >
       {body}
     </Pressable>

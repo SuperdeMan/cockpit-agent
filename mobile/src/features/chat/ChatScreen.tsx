@@ -397,6 +397,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       onReenableBargeIn={hf.recycle}
       expanded={dockExpanded}
       onExpandedChange={setDockExpanded}
+      animated={!reduceMotion}
     />
   ) : null
 

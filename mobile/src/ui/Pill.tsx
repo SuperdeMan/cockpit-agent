@@ -6,7 +6,7 @@
 //  · 视觉高只由 token 决定，站点不再各写一份 paddingVertical；
 //  · 颜色四档 + `solid`（压在不可控内容上 ⇒ 实色底）+ `selected`（单选项）覆盖既有站点的全部用色。
 //  · Android Visual v3（方向 B）：plain / accent / amber / floating 四档照 Figma Pill 组件——soft 底不描边，
-//    floating = surfaceHigh 实色 + line 描边 + 二级投影（取代半透明 glass；`glass` 暂作 floating 的别名，P2 换完调用点即删）；
+//    floating = surfaceHigh 实色 + line 描边 + 二级投影（取代半透明 glass；过渡别名 `glass` 已于 v3 P7 删除）；
 //    字重 500、左右 16；禁用 38%；**选中不再兼禁用**——已选中的单选项（如商户规格）原来被画成半透明。
 // 按钮类（Dock 确认/取消、卡内按钮排、设置页按钮）不用它：那一档视觉就是外框本身（`TARGET`）。
 import type { ReactNode } from 'react'
@@ -16,8 +16,7 @@ import type { FontScalePref } from '../core/settings/store'
 import type { Palette } from './theme'
 import { PILL, RADIUS, TARGET, scale } from './tokens'
 
-/** `glass`：v3 之前的半透明玻璃档，现等同 `floating`（P2 换完调用点后删） */
-export type PillTone = 'plain' | 'accent' | 'amber' | 'floating' | 'glass'
+export type PillTone = 'plain' | 'accent' | 'amber' | 'floating'
 
 export interface PillProps {
   p: Palette
@@ -68,7 +67,7 @@ export function pillColors(
       ? { bg: p.accentSoft, border: undefined, fg: p.accent }
       : tone === 'amber'
         ? { bg: p.amberSoft, border: undefined, fg: p.amber }
-        : tone === 'floating' || tone === 'glass'
+        : tone === 'floating'
           ? { bg: p.surfaceHigh, border: p.line, fg: p.fg1 }
           : { bg: p.surfaceHighest, border: undefined, fg: p.fg1 }
   // 压在地图瓦片等不可控内容上：soft 底是半透明的，换成实色 surfaceHigh，补一圈 line 把边缘托出来
@@ -130,7 +129,7 @@ export function Pill({
           gap: 6,
           // 选中的单选项即使不可再点也按选中画，不按禁用淡出
           opacity: disabled && !selected ? 0.38 : 1,
-          boxShadow: elevated || tone === 'floating' || tone === 'glass' ? p.elev2 : undefined,
+          boxShadow: elevated || tone === 'floating' ? p.elev2 : undefined,
         }}
       >
         {children}

@@ -17,6 +17,7 @@
 //  · 不做帧缓冲/重放。前滚缓冲是 `PcmRing` 的职责（HMI 侧同款分工），塞进总线会让
 //    「谁该补哪一段」变成总线的判断，而那是回路的判断。
 //  · 不吞异常。`start()` 的权限错误必须原样抛给发起方——PTT 要靠它提示「去设置里开」。
+import { reportMicFrame, resetMicLevel } from './micLevel'
 import { recorder, type FrameSink, type Recorder } from './recorder'
 
 interface Sink {
@@ -30,6 +31,8 @@ let running = false
 let chain: Promise<void> = Promise.resolve()
 
 function fanout(frame: Int16Array): void {
+  // 顶缘光随音量（v3 P7）：量的是已经在采的帧，不新开采集、不占 lease
+  reportMicFrame(frame)
   for (const s of sinks) {
     if (!s.active) continue
     try {
@@ -51,6 +54,7 @@ async function ensureStopped(): Promise<void> {
   if (activeCount() > 0) return
   await recorder().stop()
   running = recorder().recording
+  if (!running) resetMicLevel()
 }
 
 function activeCount(): number {
@@ -101,6 +105,7 @@ class Lease implements Recorder {
       if (stopping) {
         await stopping
         running = recorder().recording
+        if (!running) resetMicLevel()
       } else await ensureStopped()
     })
     chain = p.catch(() => {})

@@ -1,7 +1,6 @@
 // mobile/src/features/stage/StagePane.tsx
 // 舞台面板（B4-6 / 方案 §7.2「舞台=卡的大视图」）：ChatScreen.tsx 原右舞台三段（车况 / 提醒 / 焦点卡）抽出，
 // 焦点卡一段改读 stageScene（天气 / 路线 / 日程 / 焦点）。它是**已经在会话里的事实的第二个视图**，不向后端取数。
-// 材质 G1-tint（Glass）：压在静态 AuroraBackground 上，真模糊没收益，也避开「同屏多个动态 Blur」（§5.11）。
 // testID：stage-pane（可滚区）/ stage-mode-<twopane|drawer|tabletop>（容器，写当前布局模式——Maestro 07 与形态截图的判据物）。
 // v3 P6（Figma 07 页 A 组）：不再显示「舞台 · 双栏」这类内部名——模式只进 testID；材质从 Glass 换成 surface/low 实色、
 // 圆角 20、内边距 16、段间 16；段标题 label/m 三级色。

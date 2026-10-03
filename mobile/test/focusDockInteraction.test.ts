@@ -6,6 +6,8 @@ import type { DockItem } from '@/core/presence/commitment'
 import { paletteOf } from '@/ui/theme'
 import { Modal, ScrollView } from 'react-native'
 
+jest.mock('react-native-reanimated', () => require('./support/reanimatedMock'))
+
 // RN 的 lazy getters 首次加载会触发 Jest 转译；放在 collect 阶段，避免把冷加载计入交互用例的 5s 限时。
 void [Modal, ScrollView]
 

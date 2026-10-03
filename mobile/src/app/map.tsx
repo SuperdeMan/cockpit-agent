@@ -27,7 +27,7 @@ import { RADIUS, textStyle } from '@/ui/tokens'
 
 // ⚠ 静态 import 是安全的：amap3d 的 JS 侧在原生缺席时也能加载，只有**渲染**才会炸
 //（同 react-native-svg 那次的形态）。所以守卫放在渲染分支上，不放在 import 上。
-import { MapView, type MapViewHandle } from 'react-native-amap3d'
+import { MapType, MapView, type MapViewHandle } from 'react-native-amap3d'
 
 /** 零点位时的兜底中心（深圳）。**只在没有任何可画的点时用**，且屏上会明说没有坐标 */
 const FALLBACK_CENTER = { latitude: 22.5429, longitude: 113.9089 }
@@ -189,6 +189,11 @@ export default function MapScreen() {
         style={{ flex: 1 }}
         initialCameraPosition={initialCamera}
         myLocationEnabled={false}
+        // v3 P7（对照 Figma 04 页 M 组）：深色主题用高德夜间底图；不要缩放键与比例尺——
+        // 它们固定在右下 / 左下，正好被底部信息条压住半截（双指缩放与「全览」照旧）
+        mapType={p.dark ? MapType.Night : MapType.Standard}
+        zoomControlsEnabled={false}
+        scaleControlsEnabled={false}
         onLayout={(e) => {
           const { width, height } = e.nativeEvent.layout
           setViewport((v) =>
@@ -275,8 +280,8 @@ export default function MapScreen() {
     <View style={{ flex: 1, backgroundColor: p.bg }}>
       {mapView}
 
-      {/* ⚠ 这条**不用** `Glass`：Aurora 的玻璃底是半透明的，靠叠在 AuroraBackground 的
-          深空渐变上才成立（RN 无 backdrop-filter，M3-V 记录里写死了这条前提）。
+      {/* ⚠ 这条**不用**半透明玻璃（v3 前的 `Glass`，P7 已删）：玻璃底是半透明的，靠叠在深空渐变底（AuroraBackground，
+          同于 P7 删除）上才成立（RN 无 backdrop-filter，M3-V 记录里写死了这条前提）。
           地图页底下是**地图瓦片**——亮度不可控、内容不可预测，半透明底直接变成
           「白字压在浅色路网上」。2026-08-27 真机实证：换 Glass 后这条信息条几乎读不出来。
           ⇒ 压在不可控内容上的浮层一律用不透明底（v3 P5b，Figma Map/InfoStrip：surface/high 实色、圆角 16、
