@@ -40,6 +40,8 @@ class ChargingPlan:
     # 没有路线时都是空——卡片据此决定带不带几何，Android 地图页据此决定给不给「查看路线」
     path: list[list[float]] = field(default_factory=list)
     origin_loc: dict | None = None
+    # CA2-19 S3：到达目的地时的估算剩余电量（%）。只有读到电量才有，读不到就是 None——不估
+    arrive_soc: int | None = None
 
 
 class ChargingProvider(ABC):

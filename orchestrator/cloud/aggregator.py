@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import re
 from .models import StepResult, StepStatus
+from .waypoints import merged_waypoints
 
 logger = logging.getLogger("planner.aggregator")
 
@@ -296,16 +297,8 @@ class Aggregator:
           孤立的充电列表 + 直达导航。
         """
         actions = [a for r in results for a in r.actions]
-
-        waypoints: list[dict] = []
-        for r in results:
-            data = r.data or {}
-            wp = data.get("waypoint")
-            if isinstance(wp, dict) and wp.get("name"):
-                waypoints.append(wp)
-            for wp in (data.get("waypoints") or []):
-                if isinstance(wp, dict) and wp.get("name"):
-                    waypoints.append(wp)
+        # 合并规则一份（`waypoints.merged_waypoints`）：焦点提取据同一份对齐活动路线（CA2-19 S3）
+        waypoints = merged_waypoints(results)
 
         composed, seen_nav = [], set()
         for a in actions:

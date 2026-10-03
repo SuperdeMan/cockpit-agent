@@ -242,14 +242,19 @@ class ChargingPlannerAgent(BaseAgent):
 
         stations.sort(key=lambda s: (-s.available, s.distance_km))
         top = stations[0]
+        # CA2-19 S3：选站理由可追溯；高德基础 POI 没有实时空闲，按距离选、如实标「空闲状态未知」
+        reason = ("空闲桩最多" if top.total > 0 else "离目的地最近（空闲状态未知）")
 
         # 途经点契约：聚合器据此把该站并入导航 navigate 动作（payload.waypoints）
+        # 理由只进 data.choice_reason：途经点会被聚合器原样并进导航动作载荷，不往里加字段
         waypoint = {"name": top.name, "address": top.address,
                     "lat": top.lat, "lng": top.lng}
         extra = (f"，{top.available}/{top.total}空闲" if top.total > 0
                  else (f"，评分{top.rating}" if top.rating else ""))
         dist = f"{top.distance_km}km" if top.distance_km else "目的地附近"
-        speech = (f"已为前往{resolved}的路线加入途经充电站：{top.name}"
+        # CA2-19 S3：只说推荐。这一步自己不发导航——同轮有导航时聚合器才把途经点并进导航动作；
+        # 单独问「X附近有充电站吗」时没有路线，此前却说「已为前往X的路线加入途经充电站」
+        speech = (f"前往{resolved}，可以在目的地附近的{top.name}补电"
                   f"（{dist}{extra}）。")
         # 复用 charging_route 卡：出发地 → ⚡该站 → 目的地
         # stops 带坐标（2026-09-11）：Android 地图页据此标出补电站；HMI 只读 name/address
@@ -262,12 +267,12 @@ class ChargingPlannerAgent(BaseAgent):
             {"id": s.id, "name": s.name, "available": s.available,
              "total": s.total, "price": s.price_per_kwh,
              "distance_km": s.distance_km, "operator": s.operator,
-             "lat": s.lat, "lng": s.lng}
+             "lat": s.lat, "lng": s.lng, "availability_known": s.total > 0}
             for s in stations
         ]
         return AgentResult(
             speech=speech, ui_card=card,
-            data={"waypoint": waypoint, "items": items},
+            data={"waypoint": waypoint, "items": items, "choice_reason": reason},
             follow_up="想换一个充电站可以说『换一个』")
 
     # 行政区划级后缀——以此结尾的目的地视为"过泛"，先确认具体地点再规划途经点
@@ -399,9 +404,13 @@ class ChargingPlannerAgent(BaseAgent):
             "duration_min": plan.total_duration_min,
             "stops": [{"name": s.get("name", ""), "address": s.get("address", ""),
                        "at_km": s.get("at_km"),
+                       # CA2-19 S3：到站估算电量与选择理由（只有读到电量才有）
+                       **({"arrive_soc": s["arrive_soc"], "reason": s.get("reason", "")}
+                          if s.get("arrive_soc") is not None else {}),
                        **({"lat": s["lat"], "lng": s["lng"]}
                           if s.get("lat") is not None and s.get("lng") is not None else {})}
                       for s in plan.stops],
+            **({"arrive_soc": plan.arrive_soc} if plan.arrive_soc is not None else {}),
             **self._soc_card(soc),
             **({"origin_loc": plan.origin_loc} if plan.origin_loc else {}),
             **({"path": plan.path} if plan.path else {}),
@@ -410,7 +419,8 @@ class ChargingPlannerAgent(BaseAgent):
         return AgentResult(
             speech=plan.summary.rstrip("。") + "。",   # provider summary 可能已带句号，避免"。。"
             ui_card=card,
-            data={"stops": plan.stops, "summary": plan.summary},
+            data={"stops": plan.stops, "summary": plan.summary,
+                  **({"arrive_soc": plan.arrive_soc} if plan.arrive_soc is not None else {})},
         )
 
     async def _status(self, intent, ctx, meta) -> AgentResult:

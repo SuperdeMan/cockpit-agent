@@ -240,3 +240,39 @@ def test_apply_focus_meta_injects_route_only_into_location_scoped_steps():
     injected = json.loads(nav.meta["focus_active_route"])
     assert injected["destination"] == "万象天地"
     assert "focus_active_route" not in chat.meta
+
+
+# ─── CA2-19 S3：活动路线的途经点与实际下发的导航动作一致 ───
+
+def _charging_result(step_id="s2", name="南网充电站"):
+    return StepResult(step_id=step_id, status=StepStatus.OK, source_intent="charging.find",
+                      data={"waypoint": {"name": name, "address": "服务区", "lat": 22.6, "lng": 114.0},
+                            "items": [{"name": name}]})
+
+
+def _plan_two():
+    return Plan(steps=[Step(id="s1", agent_id="navigation", intent="navigation.navigate_to"),
+                       Step(id="s2", agent_id="charging-planner", intent="charging.find")])
+
+
+def test_charging_waypoint_merged_into_the_navigate_action_is_in_the_active_route():
+    from orchestrator.cloud.aggregator import Aggregator
+    nav = _route_result(waypoints=[])
+    nav.actions = [{"type": "navigate", "payload": {"destination": "万象天地", "lat": 22.53, "lng": 113.95}}]
+    results = [nav, _charging_result()]
+    sent = Aggregator.compose_actions(results)[0]["payload"]["waypoints"]
+    focus = extract_focus(_plan_two(), results)
+    assert [w["name"] for w in focus.active_route["waypoints"]] == [w["name"] for w in sent] == ["南网充电站"]
+
+
+def test_navigation_declared_waypoints_and_charging_keep_step_order():
+    nav = _route_result()
+    nav.data["waypoints"] = [{"name": "肯德基(海岸城店)", "lat": 22.52, "lng": 113.94}]
+    focus = extract_focus(_plan_two(), [nav, _charging_result()])
+    assert [w["name"] for w in focus.active_route["waypoints"]] == ["肯德基(海岸城店)", "南网充电站"]
+
+
+def test_a_waypoint_without_a_new_route_does_not_invent_one():
+    focus = extract_focus(Plan(steps=[Step(id="s2", agent_id="charging-planner", intent="charging.find")]),
+                          [_charging_result()])
+    assert focus is None or not focus.active_route

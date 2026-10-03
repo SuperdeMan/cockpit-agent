@@ -28,6 +28,7 @@ import uuid
 from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext, step_fingerprint
+from .waypoints import merged_waypoints
 from runtime import memory_projection, memory_read, voice_attestation
 from runtime.clock import hhmm as clock_hhmm
 from runtime.positions import distinct_positions, scan_positions
@@ -1995,6 +1996,13 @@ def extract_focus(plan, results, *, candidates_from=None) -> "Focus | None":
             data.get("_safety_alert") if isinstance(data, dict) else None)
         if alert:
             focus.safety_alert = merge_safety_alert(focus.safety_alert, alert)
+    # CA2-19 S3：本轮开了新路线时，活动路线的途经点与实际下发的导航动作一致——聚合器把别的步声明的途经点
+    # （如充电站）并进了导航动作，同一份规则在这里对齐，下一轮「换掉 / 不去那个充电站」才有对象可指。
+    if focus.active_route:            # 每轮的焦点是新建的：有活动路线就是本轮盖的章
+        merged = merged_waypoints(results)
+        if merged:
+            focus.active_route["waypoints"] = [
+                {"name": str(w.get("name")), "lat": w.get("lat"), "lng": w.get("lng")} for w in merged]
     _derive_choice_view(focus)
     return None if focus.is_empty() else focus
 

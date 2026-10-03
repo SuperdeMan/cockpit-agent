@@ -131,3 +131,63 @@ async def test_low_battery_alert_names_its_source_and_stamps_the_station_card():
     payload = cap.sent[0]
     assert "电量只剩 18%（模拟车读数） 了" in payload["speech"]
     assert payload["card"]["_prov"] == {"vendor": "amap"} and payload["card"]["soc_note"] == "模拟车读数"
+
+
+# ─── CA2-19 S3：选站可追溯——到站估算电量、选择理由、空闲状态未知如实标 ───
+
+def test_plan_stops_carry_arrival_estimate_and_reason():
+    plan = asyncio.run(_amap().plan_route("厦门火车站", soc=72, meta=LOC))
+    assert plan.stops
+    first = plan.stops[0]
+    # 72% × 500km = 360km 可用，首段放在 85% 处（306km），到站估算 72 − 306/500×100 ≈ 11%
+    assert first["arrive_soc"] == 11 and "约剩11%" in first["reason"] and "补到80%" in first["reason"]
+    assert plan.arrive_soc is not None and f"到达时估算剩余约{plan.arrive_soc}%" in plan.summary
+
+
+def test_direct_plan_states_the_arrival_estimate():
+    plan = asyncio.run(_amap(distance_km=120.0).plan_route("近郊", soc=90, meta=LOC))
+    assert plan.stops == [] and plan.arrive_soc == 66 and "到达时估算剩余约66%" in plan.summary
+
+
+def test_unknown_soc_has_no_estimates_at_all():
+    plan = asyncio.run(_amap().plan_route("厦门火车站", soc=None, meta=LOC))
+    assert plan.arrive_soc is None and all("arrive_soc" not in s for s in plan.stops)
+
+
+def test_agent_card_and_data_carry_the_estimates():
+    agent = ChargingPlannerAgent()
+    agent.charging = _amap()
+    ctx = make_context(context_values={"vehicle.battery": "72"})
+    res = asyncio.run(run_handle(agent, "charging.plan", slots={"destination": "厦门火车站"},
+                                 raw_text="去厦门要充几次电", ctx=ctx, meta=dict(LOC)))
+    assert res.ui_card["arrive_soc"] == res.data["arrive_soc"]
+    assert res.ui_card["stops"][0]["arrive_soc"] == 11 and res.ui_card["stops"][0]["reason"]
+
+
+def test_destination_station_choice_is_explained_and_availability_marked_unknown():
+    agent = ChargingPlannerAgent()
+
+    async def nearby(point, charger_type="", meta=None):
+        return [ChargingStation(id="s1", name="国网充电站", distance_km=0.8, lat=24.4, lng=118.1),
+                ChargingStation(id="s2", name="南网充电站", distance_km=1.6, lat=24.5, lng=118.2)]
+
+    agent.charging.find_nearby = nearby
+    res = asyncio.run(run_handle(agent, "charging.find", slots={"destination": "厦门火车站站前广场"},
+                                 raw_text="厦门火车站附近找个充电站", ctx=make_context(), meta=dict(LOC)))
+    assert res.data["choice_reason"] == "离目的地最近（空闲状态未知）"
+    assert all(item["availability_known"] is False for item in res.data["items"])
+    assert set(res.data["waypoint"]) == {"name", "address", "lat", "lng"}     # 途经点不夹带新字段进导航载荷
+
+
+def test_destination_search_alone_does_not_claim_a_route_was_changed():
+    """单独问「X附近有充电站吗」时没有导航步、没有路线——此前说「已为前往X的路线加入途经充电站」。"""
+    agent = ChargingPlannerAgent()
+
+    async def nearby(point, charger_type="", meta=None):
+        return [ChargingStation(id="s1", name="国网充电站", distance_km=0.8, lat=24.4, lng=118.1)]
+
+    agent.charging.find_nearby = nearby
+    res = asyncio.run(run_handle(agent, "charging.find", slots={"destination": "厦门火车站站前广场"},
+                                 raw_text="厦门火车站附近有充电站吗", ctx=make_context(), meta=dict(LOC)))
+    assert "国网充电站" in res.speech and "已为" not in res.speech and "加入途经" not in res.speech
+    assert res.actions == []

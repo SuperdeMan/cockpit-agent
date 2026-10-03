@@ -4,6 +4,7 @@ Read-only: query utterances from a synthetic signed E2E user on vehicle v1. No c
 or merchant/payment call is issued (edge queries answer with a read-only `*.query` action). Suites:
 - `vehicle` (S1): battery, tire pressure, a charging plan — each in its own session.
 - `alerts` (S2): one session — a tire-warning question, an oil lamp report, then "it went off, can I keep driving".
+- `routes` (S3): a charging plan states its arrival estimate; a destination charger search claims no route change.
 Prints a verdict per turn and writes a JSON evidence file; the release SHA is checked before and after.
 """
 from __future__ import annotations
@@ -39,6 +40,10 @@ SUITES = {
         ("机油灯亮了", lambda s: "停车" in s or "不能据此判断故障已排除" in s),
         ("机油灯灭了，现在还能继续开吗",
          lambda s: "适合出行" not in s and ("排除" in s or "检查" in s)),
+    )),
+    "routes": (False, (
+        ("去厦门火车站路上要不要充电", lambda s: "到达时估算剩余约" in s or "没读到当前电量" in s),
+        ("厦门火车站附近有充电站吗", lambda s: "充电站" in s and "已为" not in s and "加入途经" not in s),
     )),
 }
 

@@ -153,9 +153,11 @@ class AmapChargingProvider(ChargingProvider):
         # 续航足够 → 直达。带 15% 保留余量（Q2，旅程 A1-2 抓到：10%→50km 对 47.7km
         # 判「足够直达」只剩 2.3km 余量，真车是抛锚风险）——到达时至少留 15% 可用续航。
         if distance_km <= usable * 0.85 or not points:
+            arrive = self._arrive_soc(float(soc_pct), distance_km)
             return ChargingPlan(
-                summary=f"{head}。{soc_said}，足够直达，无需途中补电。",
-                stops=[], total_duration_min=int(duration_min), distance_km=distance_km, **geo)
+                summary=f"{head}。{soc_said}，足够直达，到达时估算剩余约{arrive}%，无需途中补电。",
+                stops=[], total_duration_min=int(duration_min), distance_km=distance_km,
+                arrive_soc=arrive, **geo)
 
         # 续航不够 → 沿途按里程放补电途经点：首段用到 ~85% 续航，之后每段约 65% 满电续航
         targets, d = [], usable * 0.85
@@ -173,11 +175,32 @@ class AmapChargingProvider(ChargingProvider):
                         f"沿途充电站暂未取到，到达附近时我再为你推荐。",
                 stops=[], total_duration_min=int(duration_min), distance_km=distance_km, **geo)
 
+        arrive = self._annotate_stops(stops, float(soc_pct), distance_km)
         plan_line = "；".join(f"约{s['at_km']}公里处·{s['name']}" for s in stops)
         summary = (f"{head}。{soc_said}，"
-                   f"建议途中补电 {len(stops)} 次：{plan_line}；补电后抵达{destination}。")
+                   f"建议途中补电 {len(stops)} 次：{plan_line}；补电后抵达{destination}，到达时估算剩余约{arrive}%。")
         return ChargingPlan(summary=summary, stops=stops,
-                            total_duration_min=int(duration_min), distance_km=distance_km, **geo)
+                            total_duration_min=int(duration_min), distance_km=distance_km,
+                            arrive_soc=arrive, **geo)
+
+    def _arrive_soc(self, start_pct: float, km: float) -> int:
+        """按满电续航假设估算跑完 km 公里后的剩余电量（%）。估算，不是读数。"""
+        return max(0, round(start_pct - km / self._full_range * 100))
+
+    def _annotate_stops(self, stops: list[dict], soc_pct: float, distance_km: float) -> int:
+        """CA2-19 S3：每个补电点写上到站估算电量与选择理由（可追溯），返回到达目的地的估算剩余电量。
+
+        规则就是放点的那条：首段用到约 85% 续航、之后每段约 65% 满电续航、补电按充到 80% 算——
+        理由里把「到这里约剩多少、为什么在这补」说出来，而不是只给一个站名。
+        """
+        running, last_km = soc_pct, 0.0
+        for stop in stops:
+            km = float(stop.get("at_km") or 0)
+            stop["arrive_soc"] = self._arrive_soc(running, km - last_km)
+            charge_to = str(stop.get("charge_to") or "80%")
+            stop["reason"] = f"按估算续航到这里约剩{stop['arrive_soc']}%，在此补到{charge_to}"
+            running, last_km = float(charge_to.rstrip("%") or 80), km
+        return self._arrive_soc(running, distance_km - last_km)
 
     async def _stations_at(self, targets, points, meta, *, charge_to: str) -> list[dict]:
         """沿路线在各目标里程处取最近的一个真实充电站；取不到的点跳过（不编）。"""

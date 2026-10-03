@@ -71,7 +71,8 @@ def test_find_near_destination_resolves_landmark_and_emits_waypoint():
     assert res.ui_card["stops"][0]["name"] == "逸安启超级充电站"
     wp = res.data["waypoint"]
     assert wp["name"] == "逸安启超级充电站" and wp["lat"] == 22.516 and wp["lng"] == 113.9473
-    assert "途经充电站" in res.speech
+    # CA2-19 S3：这一步自己不发导航，话术只说推荐（同轮有导航时由聚合器把途经点并进导航动作）
+    assert "逸安启超级充电站" in res.speech and "已为" not in res.speech
 
 
 def test_find_without_destination_unchanged():
