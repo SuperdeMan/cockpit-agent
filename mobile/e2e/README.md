@@ -370,6 +370,29 @@ maestro hierarchy     # 主屏能不能拿到完整树、testID 有没有落成�
 （`tapOn: "发送"` / placeholder 文本），并把这条结论写回本文件——
 届时 testID 那套「驱动用 id、断言用文本」的取舍就得重新权衡。
 
+## 在 ColorOS / HyperOS 真机上跑（2026-10-04，OPPO 测试机 / 小米）
+
+2026-10-04 在小米（HyperOS 3，release 包 `7d6141af`，外屏 360dp）上 01 / 03 / 04 / 06 / 08 / 09 / 10 / 11 全过、
+内屏 07 过；05 要人开麦，不在自动化里。前几轮全红，原因都不在 App：
+
+1. **屏幕变暗时第一下注入的触摸会被吞掉（HyperOS）**。主屏光球常驻动画，Maestro 每次 tap 前要等「界面稳定」
+   约 11 秒，加上 `openLink` 的等待，一条 flow 开头常有 50 秒以上没有用户活动；60 秒灭屏的机器这时已经变暗，
+   下一次 tap 只用来亮屏，系统日志是 `W/InputManager: Input event injection from pid N failed`。
+   症状像 App 的毛病：`tapOn composer-input` 报 COMPLETED 但输入框没焦点 → `inputText` 落到空连接
+   （`MaestroIME: No active input connection`）→ `hideKeyboard` 发的返回键没有键盘可收，**直接把 App 退到桌面**
+   → 下一步「找不到 composer-send」。**跑之前先保证屏幕不变暗**：每 15 秒 `adb shell input keyevent KEYCODE_F12`
+   （会刷新用户活动，App 忽略这个键；`KEYCODE_WAKEUP` **不**刷新，没用）。不改系统设置。
+2. **驱动安装每次都要人确认**：ColorOS 弹「涉及敏感权限」、HyperOS 弹「USB安装提示」（10 秒不点自动拒绝，
+   前 ~4 秒点了也不算）。Maestro 默认每次开跑重装驱动、跑完卸载，所以每一轮都会弹，**不点就一直挂着，不报错**。
+   装上一次以后加 `--no-reinstall-driver` 就不再弹；在个人手机上跑完记得
+   `adb uninstall dev.mobile.maestro.test` / `dev.mobile.maestro`。
+3. **中文 `inputText` 走 Maestro 自己的输入法**：它会临时把默认输入法切成 `MaestroInputMethodService` 并加进已启用列表。
+   跑完核一下 `settings get secure default_input_method` 回到了原输入法；卸载驱动会把它从列表里去掉。
+4. **OPPO 可用内存只剩几百 MB 时，驱动抓界面树会 120 秒无响应**（`DeviceServerDiedException`），每步都要一两分钟。
+   换内存宽裕的机器，或先重启。
+5. **折叠屏的内屏宽度**：小米内屏原生 741dp，展开即双栏（07 直接过）；OPPO 内屏原生 698dp，走舞台抽屉，
+   要看双栏得在系统「显示与亮度 › 显示大小」选「较小」（821dp，`wm density` 在 ColorOS 上没有权限改），测完改回。
+
 ## 判据取舍（写 flow 时的三条）
 
 - **驱动用 testID，断言用文本**：文案会变（Aurora 那批重画过发送键），而断言要验的
