@@ -129,7 +129,7 @@ async def run(dsn: str, *, apply: bool, user: str, created_before: int) -> int:
         if not apply:
             print("[dry-run] nothing written; add --apply to write evidence_count and weight")
             return 0
-        written = 0
+        undo = []
         async with conn.transaction():
             for row, count, weight in changes:
                 # 只在条目没被并发改过时写（同时发生的 reinforce 已经按新口径 +1，不能覆盖）
@@ -137,8 +137,11 @@ async def run(dsn: str, *, apply: bool, user: str, created_before: int) -> int:
                     "UPDATE memory_item SET evidence_count=$2, weight=$3 "
                     "WHERE id=$1 AND superseded_by IS NULL AND evidence_count=$4",
                     row["id"], count, weight, row["evidence_count"])
-                written += str(tag).endswith(" 1")
-        print(f"[apply] updated {written} of {len(changes)} rows")
+                if str(tag).endswith(" 1"):
+                    undo.append([row["id"], row["evidence_count"], float(row["weight"])])
+        # 改写前的值（只有 id 与两个数，不含原文），由调用方存档，需要时可人工还原
+        print(json.dumps({"undo": undo}))
+        print(f"[apply] updated {len(undo)} of {len(changes)} rows")
         return 0
     finally:
         await conn.close()
