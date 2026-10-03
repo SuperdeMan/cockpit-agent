@@ -768,12 +768,16 @@ def test_navigate_bare_city_goes_admin_center():
 def test_range_advisory_low_battery_long_trip():
     """车辆接地 advisory（旅程 B3-2）：续航盖不住本程（含 15% 余量）→ 话术主动提示补能；
     充足/缺数据不打扰（fail-open）。"""
+    from runtime.vehicle_reading import Reading
     adv = NavigationAgent._range_advisory
-    assert "补能" in adv(114.2, {"vehicle_battery": "15"})     # 15%→75km 盖不住 114km
-    assert adv(47.7, {"vehicle_battery": "80"}) == ""          # 充足
-    assert adv(114.2, {}) == ""                                # 无电量数据
-    assert adv(0, {"vehicle_battery": "15"}) == ""             # 无里程
-    assert adv(114.2, {"vehicle_battery": "abc"}) == ""        # 脏数据
+    assert "补能" in adv(114.2, Reading("battery", "15"))      # 15%→75km 盖不住 114km
+    assert adv(47.7, Reading("battery", "80")) == ""           # 充足
+    assert adv(114.2, Reading("battery")) == ""                # 读不到电量
+    assert adv(0, Reading("battery", "15")) == ""              # 无里程
+    assert adv(114.2, Reading("battery", "abc")) == ""         # 脏数据
+    # CA2-19 S1：0% 是合法读数（此前被当成「没数据」不提醒）；模拟车读数要点明，续航标估算
+    zero = adv(114.2, Reading("battery", 0, source_kind="simulated"))
+    assert "约0%（模拟车读数）" in zero and "估算续航" in zero
 
 
 def test_navigate_writes_remindable_eta():
@@ -1217,3 +1221,27 @@ def test_search_poi_auto_navigate_also_writes_episodic_trail():
     hits = [(t, kw) for t, kw in captured if "导航去过滴水湖" in t]
     assert hits and hits[0][1]["kind"] == "episodic"
     assert hits[0][1]["scope"] == "episodic.place"
+
+
+def test_range_advisory_reaches_navigation_through_the_real_projection():
+    """CA2-19 S1：电量走真实 `project_meta` 连同来源到得了导航，提醒带「模拟车读数」。
+    ⚠ 导航 manifest 现在只声明 location（冻结旧接口，改范围要先迁 v2 契约，见 CA2-19 设计 §5.3）——
+    这里按声明了 vehicle_state 的范围验证链路本身；没声明就拿不到（最后一条断言）。"""
+    import json
+    import time
+    from runtime.context_access import project_meta
+
+    scopes = ["location", "vehicle_state"]
+    ctx = make_context()
+    now = time.time() * 1000
+    raw = {"vehicle_observation": json.dumps({
+        "version": 2, "vehicle_id": ctx.vehicle_id, "state": {"battery": 12},
+        "signals": {"battery": {"quality": "good", "freshness": "bounded", "expires_at_ms": now + 60_000,
+                                "observed_at_ms": now - 1_000, "source_kind": "simulated"}}})}
+    ctx._projection_meta = project_meta(ctx, raw, scopes)
+    reading = NavigationAgent._battery_reading(ctx, ctx._projection_meta)
+    assert reading.percent() == 12 and reading.source_kind == "simulated"
+    advice = NavigationAgent._range_advisory(114.2, reading)
+    assert "约12%（模拟车读数）" in advice and "补能" in advice
+    # 没声明就拿不到（这正是修之前的样子）
+    assert "vehicle_observation" not in project_meta(ctx, raw, ["location"])

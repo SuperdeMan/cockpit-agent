@@ -57,9 +57,13 @@ class ChargingProvider(ABC):
         ...
 
     @abstractmethod
-    async def plan_route(self, destination: str, soc: str = "",
-                         meta=None) -> ChargingPlan:
-        """规划长途充能方案。"""
+    async def plan_route(self, destination: str, soc: int | None = None,
+                         meta=None, *, soc_note: str = "") -> ChargingPlan:
+        """规划长途充能方案。
+
+        `soc` 是当前电量百分比；读不到就是 None——不判断够不够，也不拿任何缺省值代替（CA2-19 S1）。
+        `soc_note` 是说出口时跟在电量后面的来源说明（如「（模拟车读数）」），可为空。
+        """
         ...
 
     async def suggest_destinations(self, query: str, meta=None) -> list[dict]:

@@ -18,6 +18,7 @@ from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM
 from agents._sdk.shared_state import TRIP_ACTIVE
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
+from runtime.vehicle_reading import Reading
 from agents.navigation.src.providers import build_poi_provider
 from agents.info.src.providers import build_weather_provider
 from .models import Trip, Stop
@@ -143,20 +144,19 @@ class TripPlannerAgent(BaseAgent):
         return AgentResult(status="failed", speech="行程助手暂不支持该请求。")
 
     # ── 电量 ───────────────────────────────────────────────────
-    async def _soc_pct(self, ctx, meta) -> float:
-        """当前电量百分比：优先边端注入的真实车辆电量，回退 memory，再回退 50%。
-        与 charging_planner._resolve_soc 同源，保证多日行程起点 SoC 与仪表一致。"""
-        soc = str((meta or {}).get("vehicle_battery", "") or "").strip()
-        if not soc:
-            try:
-                vals = await ctx.fetch("vehicle.battery")
-                soc = vals.get("vehicle.battery", "")
-            except Exception:
-                soc = ""
-        try:
-            return float(str(soc).replace("%", "").strip()) or 50.0
-        except ValueError:
-            return 50.0
+    async def _soc_pct(self, ctx, meta) -> float | None:
+        """当前电量百分比；读不到是 None（CA2-19 S1）。
+
+        与 charging_planner._resolve_soc 同源：只认编排下发、验签未过期的车况读数，裸 `vehicle_battery`
+        只是测试 / 旧通道兜底。此前读不到按 50% 算、`or 50.0` 还把真实的 0% 也当成 50%——
+        行程据此排出来的补电点建在编出来的电量上。
+        """
+        reading = ctx.vehicle_reading("battery") if hasattr(ctx, "vehicle_reading") else Reading("battery")
+        if not reading.known:
+            raw = str((meta or {}).get("vehicle_battery", "") or "").strip()
+            reading = Reading("battery", raw) if raw else reading
+        pct = reading.percent()
+        return float(pct) if pct is not None else None
 
     # ── 持久化（memory profile KV；Agent 无状态化）───────────────
     async def _load_trip(self, ctx) -> Trip | None:

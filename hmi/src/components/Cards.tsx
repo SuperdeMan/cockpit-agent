@@ -36,12 +36,12 @@ function AIBadge({ label }: { label: string }) {
 }
 
 // 当前电量进度条（照 A-5 充电路线卡）：soc 形如 "62%" → 解析为百分比 + 渐变填充。
-function SocBar({ soc, dest }: { soc: string; dest: string }) {
+function SocBar({ soc, dest, note }: { soc: string; dest: string; note?: string }) {
   const pct = Math.max(0, Math.min(100, parseInt(soc, 10) || 0))
   const ok = pct > 50
   return (
     <div className="cr-soc">
-      <div className="cr-soc-head"><span>当前电量</span><b className="au-num" style={{ color: ok ? 'var(--au-primary)' : 'var(--au-warn)' }}>{pct}%</b></div>
+      <div className="cr-soc-head"><span>当前电量{note ? ` · ${note}` : ''}</span><b className="au-num" style={{ color: ok ? 'var(--au-primary)' : 'var(--au-warn)' }}>{pct}%</b></div>
       <div className="cr-soc-track"><div className="cr-soc-fill" style={{ width: `${pct}%`, background: ok ? 'linear-gradient(to right,#46D6E0,#34D399)' : 'linear-gradient(to right,#F59E0B,#EF4444)' }} /></div>
       <div className="cr-soc-foot"><span>出发地</span><span>目的地 · {dest}</span></div>
     </div>
@@ -1158,7 +1158,11 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
         </div>
       </div>
       <CardHR />
-      {card.soc && <div style={{ padding: '12px 16px 10px' }}><SocBar soc={card.soc} dest={card.destination} /></div>}
+      {card.soc
+        ? <div style={{ padding: '12px 16px 10px' }}><SocBar soc={card.soc} dest={card.destination} note={card.soc_note} /></div>
+        : card.soc_note
+          ? <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--au-text-3)' }}>当前电量：{card.soc_note}</div>
+          : null}
       <CardHR />
       {card.stops.length > 0 ? (
         <div style={{ padding: '14px 18px' }}>

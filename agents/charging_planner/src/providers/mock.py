@@ -43,8 +43,8 @@ class MockChargingProvider(ChargingProvider):
             total=available + random.randint(0, 3),
         )
 
-    async def plan_route(self, destination: str, soc: str = "",
-                         meta=None) -> ChargingPlan:
+    async def plan_route(self, destination: str, soc: int | None = None,
+                         meta=None, *, soc_note: str = "") -> ChargingPlan:
         """基于电量给**诚实**的充能策略。
 
         无真实路线/充电站数据源（mock）时，绝不编造具体服务区名、里程、总时长
@@ -52,24 +52,23 @@ class MockChargingProvider(ChargingProvider):
         只给电量相关的策略建议，具体站点交由到达沿途时的 charging.find 实时推荐。
         接入真实 EV 路线/充电 Provider 后，可在此返回精确站点与时间。
         """
-        soc_pct = 50
-        if soc:
-            try:
-                soc_pct = int(str(soc).replace("%", "").strip())
-            except ValueError:
-                soc_pct = 50
-
-        if soc_pct >= 80:
+        soc_pct = soc
+        if soc_pct is None:
+            # CA2-19 S1：没读到电量就不判断够不够，也不拿缺省值代替
             stops: list[dict] = []
-            advice = f"当前电量{soc_pct}%较充足，中短途可直达；若为长途，建议出发前补满"
+            advice = ("没读到当前电量，没法判断够不够直达；出发前看一下仪表盘电量，"
+                      "需要补电时我再为你推荐附近的快充站")
+        elif soc_pct >= 80:
+            stops = []
+            advice = f"当前电量{soc_pct}%{soc_note}较充足，中短途可直达；若为长途，建议出发前补满"
         elif soc_pct >= 50:
             stops = [{"note": "长途中段补电", "charge_to": "80%"}]
-            advice = (f"当前电量{soc_pct}%，中短途够用；长途建议中途补电约 1 次，"
+            advice = (f"当前电量{soc_pct}%{soc_note}，中短途够用；长途建议中途补电约 1 次，"
                       f"到达沿途时我再为你推荐附近的快充站")
         else:
             stops = [{"note": "尽快就近补电", "charge_to": "80%"},
                      {"note": "长途中段补电", "charge_to": "80%"}]
-            advice = (f"当前电量{soc_pct}%偏低，建议先就近补电；长途约需中途补电 1~2 次，"
+            advice = (f"当前电量{soc_pct}%{soc_note}偏低，建议先就近补电；长途约需中途补电 1~2 次，"
                       f"沿途我会为你推荐附近快充站")
 
         summary = f"前往{destination}：{advice}"

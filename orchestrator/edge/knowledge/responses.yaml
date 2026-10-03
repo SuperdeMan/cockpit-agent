@@ -586,6 +586,13 @@ tire_pressure_query_success:
   - 胎压监测结果：各轮胎压均在正常范围内
   speech_brief:
   - 胎压正常
+tire_pressure_query_unavailable:
+  scene: 胎压信息
+  status: 未读到
+  speech_full:
+  - 暂时读不到胎压数据，没法判断胎压是否正常；仪表盘上的胎压报警灯如果亮着，请尽快检查轮胎
+  speech_brief:
+  - 暂时读不到胎压数据，没法判断是否正常
 dashcam_on_success:
   scene: 行车记录仪已开启
   status: 成功
@@ -687,6 +694,13 @@ battery_query_success:
   speech_brief:
   - 电量{value}%
   - 还剩{value}%
+battery_query_unavailable:
+  scene: 当前电量
+  status: 未读到
+  speech_full:
+  - 暂时读不到电量数据，可以看一下仪表盘
+  speech_brief:
+  - 暂时读不到电量
 Car_general_restrictions_2:
   scene: 行车过程中限制开启
   status: 安全限制

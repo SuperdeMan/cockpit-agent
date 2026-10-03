@@ -594,3 +594,35 @@ def test_reflow_behaviour_unchanged_for_single_city():
 
     assert len(out.itinerary) >= 2 and all(d.city == "" for d in out.itinerary)
     assert [s.name for d in out.itinerary for s in d.stops] == ["P0", "P1", "P2", "P3"]
+
+
+# ─── CA2-19 S1：读不到电量不按编出来的电量排补电；0% 是合法读数 ───
+
+def _long_trip():
+    trip = Trip(destination="远途", days=1)
+    trip.itinerary = [Day(day_index=1, stops=[
+        Stop(stop_id="s1", name="A", grounded=True, poi={"name": "A", "lat": 30.0, "lng": 120.0}, dwell_min=60),
+        Stop(stop_id="s2", name="B", grounded=True, poi={"name": "B", "lat": 31.0, "lng": 121.0}, dwell_min=60)])]
+    points = [{"lat": 30 + i * 0.01, "lng": 120, "cum_km": i * 20} for i in range(60)]
+    route = {"distance_km": 1180.0, "duration_min": 600, "points": points}
+    return trip, FakePOI(search_map={"充电站": [_poi("沿途充电站", 30.5, 120.5)]}, route=route)
+
+
+def test_solve_without_a_reading_weaves_no_charging_and_narrates_why():
+    trip, prov = _long_trip()
+    out = asyncio.run(pipeline.solve(prov, trip, None, {}, full_range_km=500, day_cap_min=100000))
+    leg = out.itinerary[0].legs[0]
+    assert leg.distance_km == 1180.0 and leg.charging_stops == []
+    assert leg.soc_before is None and leg.soc_after is None
+    assert out.ev["start_soc"] is None
+    speech, _ = pipeline.narrate(out)
+    assert "没读到当前电量" in speech and "补电" in speech
+
+
+def test_solve_treats_zero_percent_as_a_reading():
+    trip, prov = _long_trip()
+    out = asyncio.run(pipeline.solve(prov, trip, 0.0, {}, full_range_km=500, day_cap_min=100000))
+    assert out.ev["start_soc"] == 0
+    assert out.itinerary[0].legs[0].charging_stops            # 0% 必须补电，不会被当成 50%
+    speech, _ = pipeline.narrate(out)
+    assert "没读到当前电量" not in speech

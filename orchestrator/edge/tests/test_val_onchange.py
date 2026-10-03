@@ -210,3 +210,43 @@ def test_ambient_set_color_turns_light_on():
                "data": {"object": "ambient_light", "operate": "set", "tag": "orange"}})
     assert v.state["ambient_light_color"] == "orange"
     assert v.state["ambient_light"] is True    # 设色隐含开灯
+
+
+# ─── CA2-19 S1：读数类查询不编车况 ───
+
+def test_battery_query_names_the_simulated_source():
+    ok, speech = VAL().execute({"domain": "query", "intent": "query",
+                                "data": {"object": "battery", "operate": "query"}})
+    assert ok is True and speech.endswith("（模拟车读数）")
+
+
+def test_battery_query_without_a_reading_does_not_say_zero():
+    # 车况不全时状态闸先拦（「车辆状态暂不可用」）；模拟分支读不到也回 None 而不是 0——两道都不报 0%
+    v = VAL()
+    v.state.pop("battery", None)
+    ok, speech = v.execute({"domain": "query", "intent": "query",
+                            "data": {"object": "battery", "operate": "query"}})
+    assert "0%" not in speech and ("暂不可用" in speech or "读不到电量" in speech)
+    assert v._simulate("battery", "query", {}) == (None, None)
+
+
+def test_tire_pressure_query_without_data_does_not_claim_normal_or_mutate_state():
+    v = VAL()
+    before = dict(v.state)
+    ok, speech = v.execute({"domain": "query", "intent": "query",
+                            "data": {"object": "tire_pressure_monitoring", "operate": "query"}})
+    assert ok is True
+    assert "读不到胎压" in speech and "正常范围" not in speech and speech != "胎压正常"
+    assert v.state == before                                   # 查询不写状态
+
+
+def test_tire_pressure_query_says_normal_only_with_a_reading_that_says_so():
+    v = VAL()
+    v.state["tire_pressure"] = {"status": "normal"}
+    ok, speech = v.execute({"domain": "query", "intent": "query",
+                            "data": {"object": "tire_pressure_monitoring", "operate": "query"}})
+    assert ok is True and "正常" in speech and "读不到" not in speech
+    v.state["tire_pressure"] = {"front_left": 2.1}             # 形状不认识：不算正常
+    ok, speech = v.execute({"domain": "query", "intent": "query",
+                            "data": {"object": "tire_pressure_monitoring", "operate": "query"}})
+    assert "读不到胎压" in speech

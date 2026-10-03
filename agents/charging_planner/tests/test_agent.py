@@ -120,7 +120,7 @@ def test_amap_charging_plan_waypoints_along_route():
     p._poi.get_route = fake_route
     p._poi.search = fake_search
     plan = asyncio.run(p.plan_route(
-        "厦门火车站", soc="50%", meta={"current_lat": "22.5", "current_lng": "113.8"}))
+        "厦门火车站", soc=50, meta={"current_lat": "22.5", "current_lng": "113.8"}))
     assert "870" in plan.summary                       # 真实全程里程
     assert "公里处" in plan.summary                     # 途经点带"约N公里处"位置
     assert plan.stops and "at_km" in plan.stops[0]      # 途经点带里程
@@ -139,7 +139,7 @@ def test_amap_charging_plan_direct_when_range_enough():
 
     p._poi.get_route = fake_route
     plan = asyncio.run(p.plan_route(
-        "近郊", soc="80%", meta={"current_lat": "22.5", "current_lng": "113.8"}))
+        "近郊", soc=80, meta={"current_lat": "22.5", "current_lng": "113.8"}))
     assert "足够直达" in plan.summary and plan.stops == []
 
 
@@ -148,7 +148,7 @@ def test_plan_emits_charging_route_card_with_waypoints():
     from agents.charging_planner.src.providers.base import ChargingPlan
     agent = ChargingPlannerAgent()
 
-    async def fake_plan(destination, soc="", meta=None):
+    async def fake_plan(destination, soc=None, meta=None, *, soc_note=""):
         return ChargingPlan(
             summary="前往X，全程约613公里，途中补电1次：约212公里处·南网充电站",
             stops=[{"name": "南网充电站", "address": "服务区", "at_km": 212, "charge_to": "80%"}],
@@ -241,7 +241,7 @@ def test_amap_charging_plan_requires_location():
     """无定位 → 诚实说明需要当前位置，不编造路线/站点。"""
     from agents.charging_planner.src.providers.amap import AmapChargingProvider
     p = AmapChargingProvider(key="test-key")
-    plan = asyncio.run(p.plan_route("厦门火车站", soc="50%", meta={}))
+    plan = asyncio.run(p.plan_route("厦门火车站", soc=50, meta={}))
     assert "定位" in plan.summary or "当前位置" in plan.summary
     assert plan.stops == []
 
@@ -275,7 +275,10 @@ def test_status_returns_battery():
         slots={}, raw_text="现在电量多少", ctx=ctx))
     assert res.status == "ok"
     assert "72%" in res.speech
-    assert res.data == {"battery": "72%"}
+    # CA2-19 S1：读数连同来源一起交出；测试车况来自模拟车，话术要点明
+    assert res.data["battery"] == "72%"
+    assert res.data["battery_source"]["kind"] == "simulated"
+    assert res.data["battery_note"] == "模拟车读数" and "（模拟车读数）" in res.speech
 
 
 def test_find_provider_outage_degrades_honestly_no_mock():
@@ -342,14 +345,17 @@ def test_unsupported_intent():
     assert res.status == "failed"
 
 
-def test_resolve_soc_prefers_meta_battery_over_memory():
-    """充电规划优先用边端注入的真实电量(meta.vehicle_battery)，不用 memory 默认/陈旧值。"""
+def test_resolve_soc_reads_the_verified_reading_and_never_invents_one():
+    """CA2-19 S1：电量只认编排下发、验签未过期的车况读数（带来源）；裸 `vehicle_battery` 只是测试 / 旧通道的兜底；
+    两样都没有就是读不到——不是 50%，也不是 0。"""
     agent = ChargingPlannerAgent()
-    ctx = make_context(context_values={"vehicle.battery": "50%"})  # memory 旧/默认
-    soc = asyncio.run(agent._resolve_soc(ctx, {"vehicle_battery": "72"}))
-    assert soc == "72"                                              # 取边端真实电量
-    soc2 = asyncio.run(agent._resolve_soc(ctx, {}))
-    assert soc2 == "50%"                                           # 无 meta 时回退 memory
+    ctx = make_context(context_values={"vehicle.battery": "72%"})
+    soc = asyncio.run(agent._resolve_soc(ctx, {"vehicle_battery": "50"}))
+    assert soc.percent() == 72 and soc.source_kind == "simulated"   # 验签读数优先
+    bare = asyncio.run(agent._resolve_soc(make_context(), {"vehicle_battery": "0"}))
+    assert bare.percent() == 0 and bare.spoken_note() == ""          # 0 是合法读数；来源不明不加说明
+    unknown = asyncio.run(agent._resolve_soc(make_context(), {}))
+    assert unknown.known is False and unknown.percent() is None
 
 
 def test_find_bare_city_destination_asks_choice():
@@ -475,7 +481,7 @@ def test_amap_charging_plan_carries_stop_coordinates_and_path():
     p._poi.get_route = fake_route
     p._poi.search = fake_search
     plan = asyncio.run(p.plan_route(
-        "厦门火车站", soc="50%", meta={"current_lat": "22.5", "current_lng": "113.8"}))
+        "厦门火车站", soc=50, meta={"current_lat": "22.5", "current_lng": "113.8"}))
     assert plan.stops[0]["lat"] == 23.0 and plan.stops[0]["lng"] == 114.0
     assert plan.origin_loc == {"lat": 22.5, "lng": 113.8}
     assert plan.path == [[22.5, 113.8], [23.0, 114.0], [24.46, 118.1]]
@@ -486,7 +492,7 @@ def test_plan_card_writes_geometry_only_when_present():
     from agents.charging_planner.src.providers.base import ChargingPlan
     agent = ChargingPlannerAgent()
 
-    async def fake_plan(destination, soc="", meta=None):
+    async def fake_plan(destination, soc=None, meta=None, *, soc_note=""):
         return ChargingPlan(
             summary="x", distance_km=613.1, total_duration_min=382,
             stops=[{"name": "南网充电站", "address": "服务区", "at_km": 212, "charge_to": "80%",
@@ -503,7 +509,7 @@ def test_plan_card_writes_geometry_only_when_present():
     assert card["path"] == [[22.5, 113.8], [23.1, 114.2]]
     assert card["origin_loc"] == {"lat": 22.5, "lng": 113.8}
 
-    async def bare_plan(destination, soc="", meta=None):
+    async def bare_plan(destination, soc=None, meta=None, *, soc_note=""):
         return ChargingPlan(summary="x", distance_km=613.1, total_duration_min=382,
                             stops=[{"name": "南网充电站", "address": "服务区", "at_km": 212}])
 

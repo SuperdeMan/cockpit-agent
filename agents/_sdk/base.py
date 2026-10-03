@@ -64,6 +64,19 @@ class Context:
         return allowed
 
 
+    def vehicle_reading(self, key: str):
+        """车况读数连同时效与来源（CA2-19 S1，`runtime.vehicle_reading.Reading`）。
+
+        `key` 是车况信号名（battery / speed_kmh / gear）。没有读权限、没读到或已过期 ⇒ `value is None`——
+        调用方不得自己补缺省值；`fetch` 只给裸数值，要说出口或上卡片的读数用这里。
+        """
+        from runtime import vehicle_reading
+        if not self._can_read("vehicle_state"):
+            return vehicle_reading.Reading(key)
+        reading = vehicle_reading.from_projection(self._projection_meta, self.vehicle_id, key)
+        self.read_states["vehicle_state"] = memory_read.FOUND if reading.known else memory_read.UNAVAILABLE
+        return reading
+
     async def fetch(self, *scopes: str) -> dict:
         # The legacy KV interface remains a dict; read_states keeps denial/off
         # distinct from an authoritative empty result.

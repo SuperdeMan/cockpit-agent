@@ -17,6 +17,8 @@ from agents._sdk.provenance import attach
 from agents._sdk.landmark import is_landmark_description, landmark_candidates
 from agents._sdk.shared_state import CHARGING_DEST_CHOICES
 from runtime.proactive import publish_proactive
+from runtime import vehicle_reading
+from runtime.vehicle_reading import Reading
 from .low_battery import LowBatteryWatcher
 from .providers import build_charging_provider
 from .providers.base import GeoPoint
@@ -61,7 +63,7 @@ class ChargingPlannerAgent(BaseAgent):
             self._publish_proactive, self._find_stations_for_advice,
             threshold=float(os.getenv("CHARGING_LOW_SOC", "20")),
             throttle_s=float(os.getenv("CHARGING_LOW_SOC_THROTTLE_S", "1800")),
-            agent_id=self.manifest.agent_id)
+            agent_id=self.manifest.agent_id, attach_prov=self._attach_station_prov)
         await self._nc.subscribe("vehicle.state.changed", cb=self._on_state_event)
         logger.info("charging: 已订阅车况，低电量主动建议开启（阈值 %s%%）",
                     os.getenv("CHARGING_LOW_SOC", "20"))
@@ -70,7 +72,10 @@ class ChargingPlannerAgent(BaseAgent):
         result = self._vehicle_states.ingest(msg.data)
         if not result.accepted or not self._low_battery:
             return
-        state = self._vehicle_states.snapshot(result.vehicle_id)
+        # CA2-19 S1：用 view 而不是 snapshot——同一份车况连同每个信号的时效与来源
+        view = self._vehicle_states.view(result.vehicle_id)
+        state = view["state"]
+        battery = vehicle_reading.from_view(view, "battery")
         if result.vehicle_id == "v1":
             self._state = state
             watcher = self._low_battery
@@ -81,14 +86,18 @@ class ChargingPlannerAgent(BaseAgent):
                     self._publish_proactive, self._find_stations_for_advice,
                     threshold=float(os.getenv("CHARGING_LOW_SOC", "20")),
                     throttle_s=float(os.getenv("CHARGING_LOW_SOC_THROTTLE_S", "1800")),
-                    agent_id=self.manifest.agent_id, vehicle_id=result.vehicle_id)
+                    agent_id=self.manifest.agent_id, vehicle_id=result.vehicle_id,
+                    attach_prov=self._attach_station_prov)
         try:
-            await watcher.on_state(list(result.changes), state)
+            await watcher.on_state(list(result.changes), state, battery)
         except Exception as e:
             logger.warning("charging: 低电量建议异常（忽略）：%s", e)
 
     async def _find_stations_for_advice(self, point):
         return await self.charging.find_nearby(point)
+
+    def _attach_station_prov(self, card: dict) -> dict:
+        return attach(card, self.charging)
 
     async def _publish_proactive(self, payload: dict) -> None:
         await publish_proactive(self._nc, payload)
@@ -104,14 +113,24 @@ class ChargingPlannerAgent(BaseAgent):
             return await handler(intent, ctx, meta)
         return AgentResult(status=FAILED, speech="充能助手暂不支持该请求。")
 
-    async def _resolve_soc(self, ctx, meta) -> str:
-        """当前电量：优先取边端注入的真实车辆电量(meta.vehicle_battery，与可观测台/仪表一致)，
-        回退 memory 的 vehicle.battery。避免规划用了默认 50%、与用户实际电量(如72%)不符。"""
-        soc = str((meta or {}).get("vehicle_battery", "") or "").strip()
-        if soc:
-            return soc
-        ctx_values = await ctx.fetch("vehicle.battery")
-        return ctx_values.get("vehicle.battery", "")
+    async def _resolve_soc(self, ctx, meta) -> Reading:
+        """当前电量连同时效与来源（CA2-19 S1）：只认编排下发、验签且未过期的车况读数。
+
+        读不到 ⇒ `value is None`，调用方如实说没读到、不判断够不够，**不拿任何缺省值代替**（此前按 50% 算，
+        会说出「当前电量50%足够直达」这种编出来的车况）。直接给了裸 `vehicle_battery` 的只有测试与旧通道
+        （生产由权限视图从同一份车况派生），来源不明、不加说明。
+        """
+        reading = ctx.vehicle_reading("battery") if hasattr(ctx, "vehicle_reading") else Reading("battery")
+        if reading.known:
+            return reading
+        raw = str((meta or {}).get("vehicle_battery", "") or "").strip()
+        return Reading("battery", raw) if raw else reading
+
+    @staticmethod
+    def _soc_card(reading: Reading) -> dict:
+        """卡片上的电量：读到才给 `soc`（客户端据此画电量条），来源 / 说明一律带上。"""
+        pct = reading.percent()
+        return {"soc": f"{pct}%" if pct is not None else "", **reading.card_fields("soc")}
 
     async def _find(self, intent, ctx, meta) -> AgentResult:
         """找附近的充电站。带 destination 槽位时按目的地搜，最优站作为导航途经点。"""
@@ -177,13 +196,15 @@ class ChargingPlannerAgent(BaseAgent):
         ]
         return AgentResult(
             speech=speech,
-            ui_card={"type": "charging_list", "items": items, "soc": soc},
+            # CA2-19 S1：站点数据带来源（`_prov`），电量带时效与来源
+            ui_card=attach({"type": "charging_list", "items": items, **self._soc_card(soc)},
+                           self.charging),
             data={"items": items},
             follow_up="说『导航去第一个』或告诉我你的偏好",
         )
 
     async def _find_near_destination(self, destination: str, charger_type: str,
-                                     soc: str, meta) -> AgentResult:
+                                     soc: Reading, meta) -> AgentResult:
         """按目的地搜充电站，把最优站作为导航途经点（出 charging_route 卡 + data.waypoint）。
 
         聚合器据 data.waypoint 把该站并入导航步的 navigate 动作（payload.waypoints），
@@ -236,7 +257,7 @@ class ChargingPlannerAgent(BaseAgent):
                        "destination": resolved,
                        "stops": [{"name": top.name, "address": top.address,
                                   "lat": top.lat, "lng": top.lng}],
-                       "soc": soc}, self.charging)
+                       **self._soc_card(soc)}, self.charging)
         items = [
             {"id": s.id, "name": s.name, "available": s.available,
              "total": s.total, "price": s.price_per_kwh,
@@ -356,9 +377,11 @@ class ChargingPlannerAgent(BaseAgent):
 
         soc = await self._resolve_soc(ctx, meta)
 
-        # 调充电 Provider 规划（高德：真实路线距离/时长 + 目的地附近真实充电站）
+        # 调充电 Provider 规划（高德：真实路线距离/时长 + 目的地附近真实充电站）。
+        # 电量读不到就传 None：provider 不判断够不够、不拿缺省值代替（CA2-19 S1）
         try:
-            plan = await self.charging.plan_route(dest, soc=soc, meta=meta)
+            plan = await self.charging.plan_route(dest, soc=soc.percent(), meta=meta,
+                                                  soc_note=soc.spoken_note())
         except ProviderError as e:
             # §9.5 铁律③：不出 mock 假路线卡；R9 契约：OK 话术（FAILED 会被聚合器吞成裸报错）。
             logger.warning("charging plan failed（诚实降级，无 mock 回退）: %s", e)
@@ -379,7 +402,7 @@ class ChargingPlannerAgent(BaseAgent):
                        **({"lat": s["lat"], "lng": s["lng"]}
                           if s.get("lat") is not None and s.get("lng") is not None else {})}
                       for s in plan.stops],
-            "soc": soc,
+            **self._soc_card(soc),
             **({"origin_loc": plan.origin_loc} if plan.origin_loc else {}),
             **({"path": plan.path} if plan.path else {}),
         } if plan.distance_km > 0 else None,  # 无路线（需定位/取路失败）→ 纯语音
@@ -392,8 +415,13 @@ class ChargingPlannerAgent(BaseAgent):
 
     async def _status(self, intent, ctx, meta) -> AgentResult:
         """查询当前充电状态。"""
-        battery = await self._resolve_soc(ctx, meta) or "未知"
+        reading = await self._resolve_soc(ctx, meta)
+        pct = reading.percent()
+        if pct is None:
+            # CA2-19 S1：读不到就如实说，不报缺省值
+            return AgentResult(speech="暂时没读到当前电量，可以看一下仪表盘。",
+                               data={"battery": "", **reading.card_fields("battery")})
         return AgentResult(
-            speech=f"当前电量：{battery}。",
-            data={"battery": battery},
+            speech=f"当前电量：{pct}%{reading.spoken_note()}。",
+            data={"battery": f"{pct}%", **reading.card_fields("battery")},
         )

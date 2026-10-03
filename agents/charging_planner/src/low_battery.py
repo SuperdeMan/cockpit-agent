@@ -19,6 +19,7 @@ import logging
 import time
 
 from runtime.proactive import P_ADVISORY
+from runtime.vehicle_reading import Reading
 
 from .providers.base import GeoPoint
 
@@ -54,9 +55,11 @@ class LowBatteryWatcher:
     """电量变沿 → 一条低电量建议。纯逻辑，NATS/provider 由外部注入（全离线可测）。"""
 
     def __init__(self, publish, find_stations, *, threshold: float = 20.0,
-                 throttle_s: float = 1800.0, now_fn=time.time, agent_id="charging-planner", vehicle_id="v1"):
+                 throttle_s: float = 1800.0, now_fn=time.time, agent_id="charging-planner", vehicle_id="v1",
+                 attach_prov=None):
         self._publish = publish                 # async (payload: dict) -> None
         self._find = find_stations              # async (GeoPoint|None) -> list[station]
+        self._attach_prov = attach_prov or (lambda card: card)   # 站点卡盖来源章（CA2-19 S1）
         self._threshold = threshold
         self._throttle_s = throttle_s
         self._now = now_fn
@@ -65,9 +68,13 @@ class LowBatteryWatcher:
         self._below = False                     # 上一次是否已在阈值下（边沿判据）
         self._last_fire = float("-inf")         # 不是 0——注入时钟下 0 会让首次就撞节流窗
 
-    async def on_state(self, changes: list, state: dict) -> bool:
-        """车况变更回调。发了返回 True。"""
-        soc = _soc(state)
+    async def on_state(self, changes: list, state: dict, battery: Reading | None = None) -> bool:
+        """车况变更回调。发了返回 True。
+
+        `battery` 是同一份车况的读数连同时效与来源（CA2-19 S1）：有它就按它判、话术跟着说明来源；
+        没有（旧调用方）退回只看 state 里的值、不加说明。
+        """
+        soc = battery.percent() if battery is not None else _soc(state)
         if soc is None:
             return False
         below, was = soc < self._threshold, self._below
@@ -77,14 +84,14 @@ class LowBatteryWatcher:
         now = self._now()
         if now - self._last_fire < self._throttle_s:
             return False
-        payload = await self._build(soc, state)
+        payload = await self._build(soc, state, battery)
         if not payload:
             return False
         self._last_fire = now
         await self._publish(payload)
         return True
 
-    async def _build(self, soc: float, state: dict) -> dict | None:
+    async def _build(self, soc: float, state: dict, battery: Reading | None = None) -> dict | None:
         point = _location_point(state)
         stations = []
         if point is not None:
@@ -94,18 +101,21 @@ class LowBatteryWatcher:
                 logger.info("低电量建议：查桩失败，本次不打扰（%s）", e)
                 return None
         pct = int(soc)
+        note = battery.spoken_note() if battery is not None else ""
         if stations:
             top = stations[0]
-            speech = (f"电量只剩 {pct}% 了，附近有 {len(stations)} 个充电站，"
+            speech = (f"电量只剩 {pct}%{note} 了，附近有 {len(stations)} 个充电站，"
                       f"最近的是{top.name}（{top.distance_km}km），要导航过去吗？")
-            card = {"type": "charging_list", "soc": str(pct),
-                    "items": [{"id": s.id, "name": s.name, "available": s.available,
-                               "total": s.total, "price": s.price_per_kwh,
-                               "distance_km": s.distance_km, "operator": s.operator}
-                              for s in stations[:3]]}
+            card = self._attach_prov({
+                "type": "charging_list", "soc": f"{pct}%",
+                **(battery.card_fields("soc") if battery is not None else {}),
+                "items": [{"id": s.id, "name": s.name, "available": s.available,
+                           "total": s.total, "price": s.price_per_kwh,
+                           "distance_km": s.distance_km, "operator": s.operator}
+                          for s in stations[:3]]})
         else:
             # 拿不到位置/没搜到 → 只说事实，不编站点
-            speech = f"电量只剩 {pct}% 了，要我帮你找个充电桩吗？"
+            speech = f"电量只剩 {pct}%{note} 了，要我帮你找个充电桩吗？"
             card = None
         payload = {
             "vehicle_id": self._vehicle_id,

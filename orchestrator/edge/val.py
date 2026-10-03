@@ -15,6 +15,7 @@ from typing import Any
 
 from runtime.positions import scan_positions
 from orchestrator.edge.vehicle_driver import SimulatedVehicleDriver
+from runtime.vehicle_reading import Reading
 
 logger = logging.getLogger("edge.val")
 
@@ -25,6 +26,11 @@ def _load_yaml(path: str) -> dict:
         return {}
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _tire_pressure_normal(value) -> bool:
+    """胎压读数明确说「正常」才算正常；没有读数或形状不认识都不算（CA2-19 S1，不编车况）。"""
+    return isinstance(value, dict) and value.get("status") == "normal"
 
 
 class VAL:
@@ -49,6 +55,12 @@ class VAL:
     @property
     def state(self):
         return self.driver.state
+
+    @property
+    def source_kind(self) -> str:
+        """读数来源类型：VAL 背后是模拟车驱动（构造时就断言 kind=simulated）；话术据此点明「模拟车读数」。"""
+        binding = getattr(getattr(self.driver, "signer", None), "binding", None)
+        return str(getattr(binding, "kind", "") or "simulated")
 
     # ── 知识库加载 ──────────────────────────────────────────────
 
@@ -242,7 +254,14 @@ class VAL:
             resp_data = {**normalized, "value": new_value}
         elif obj == "battery":
             resp_data = {**normalized, "value": new_value}
+        # CA2-19 S1：读数类查询读不到就如实说，不报缺省值；胎压只有读数明确说「正常」才说正常
+        if obj == "battery" and new_value is None:
+            response_key = "battery_query_unavailable"
+        elif obj == "tire_pressure_monitoring" and operate == "query" and not _tire_pressure_normal(new_value):
+            response_key = "tire_pressure_query_unavailable"
         speech = self._pick_response(response_key, resp_data)
+        if obj == "battery" and new_value is not None:
+            speech += Reading("battery", new_value, source_kind=self.source_kind).spoken_note()
 
         return True, speech
 
@@ -770,8 +789,13 @@ class VAL:
                 return "accompany_home", False
 
         elif obj == "battery":
-            # 查询类：不改状态，回传当前电量供话术回显
-            return None, self.state.get("battery", 0)
+            # 查询类：不改状态，回传当前电量供话术回显。读不到就是 None——不是 0（CA2-19 S1）
+            return None, self.state.get("battery")
+
+        elif obj == "tire_pressure_monitoring" and operate == "query":
+            # 查询类：不改状态（此前落到下面的兜底，写出一个 `tire_pressure_monitoring_query=True`）。
+            # 回传胎压读数；模拟车没有胎压信号 ⇒ None，话术如实说读不到（CA2-19 S1）
+            return None, self.state.get("tire_pressure")
 
         elif obj in ("tire_pressure_monitoring", "dashcam",
                      "front_defogger", "rear_defogger"):

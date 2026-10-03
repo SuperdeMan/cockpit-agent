@@ -662,9 +662,13 @@ async def _ground_one(poi_provider, name: str, near, meta, llm=None) -> POI | No
 
 # ──────────────────────────── solve ────────────────────────────
 
-async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
+async def solve(poi_provider, trip: Trip, start_soc_pct: float | None, meta,
                  *, full_range_km: float = None, day_cap_min: int = None) -> Trip:
-    """确定性：算相邻 stop 车程 → 按日上限顺延 → 沿路线按 SoC 编织充电点 → 递推 SoC。"""
+    """确定性：算相邻 stop 车程 → 按日上限顺延 → 沿路线按 SoC 编织充电点 → 递推 SoC。
+
+    `start_soc_pct` 读不到是 None（CA2-19 S1）：照常算车程，但不按编出来的电量排补电点、不递推 SoC，
+    `trip.ev["start_soc"]` 记 None，话术如实说明（`narrate`）。0 是合法读数。
+    """
     full_range = float(full_range_km or FULL_RANGE_KM)
     cap = int(day_cap_min or DAY_MAX_MIN)
     cache: dict = {}
@@ -739,8 +743,9 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
     # G9 跨天衔接：前一天末站 → 当天首站也建 leg（两端都已接地才建）——多城市行程
     # 全程最长的恰是跨城段，此前它不进 leg，充电编织对它是盲的、SoC 天与天之间断开。
     # 日上限顺延判定（上方 day_minutes）刻意不含跨天 leg：跨城赶路不该挤走景点。
-    running = float(start_soc_pct or 0) or 50.0
-    trip.ev["start_soc"] = round(running)
+    soc_known = start_soc_pct is not None
+    running = float(start_soc_pct) if soc_known else 0.0
+    trip.ev["start_soc"] = round(running) if soc_known else None
     prev_last = None
     for day_index, day in enumerate(trip.itinerary):
         gs = day.grounded_stops()
@@ -757,7 +762,12 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
         for a, b in zip(route_stops, route_stops[1:]):
             dist, drive_min, points = await route(a, b)
             leg = Leg(from_stop_id=a.stop_id, to_stop_id=b.stop_id,
-                      distance_km=dist, drive_min=drive_min, soc_before=round(running))
+                      distance_km=dist, drive_min=drive_min,
+                      soc_before=round(running) if soc_known else None)
+            if not soc_known:
+                leg.soc_after = None
+                day.legs.append(leg)
+                continue
             targets = weave_charging_targets(points, dist, running, full_range)
             for t in targets:
                 st = await _ground_station(poi_provider, t, meta)
@@ -811,6 +821,9 @@ def narrate(trip: Trip) -> tuple[str, dict]:
         if charge_n:
             seg += f"（途中补电{charge_n}次）"
         lines.append(seg)
+    if "start_soc" in trip.ev and trip.ev.get("start_soc") is None:
+        # CA2-19 S1：没读到电量就没排补电点——说清楚，别让用户以为全程不用充电
+        lines.append("没读到当前电量，沿途补电没排，出发前按实际电量再帮你安排")
     theme_tag = f"按《{trip.theme}》主题" if trip.theme else ""
     head = (f"已{theme_tag}结合天气为您规划{trip.destination}{trip.days}天行程："
             if has_weather

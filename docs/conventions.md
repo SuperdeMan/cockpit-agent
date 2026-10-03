@@ -3056,3 +3056,13 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   stdio 同样按总时限读。出口代理（`deploy/egress-proxy.py`）只放行白名单主机的 443。
 - 支付链接一份判据 `runtime/external_url.pay_url_allowed`（https、443、无 userinfo、无空白与控制字符、主机精确在白名单），商户桥两家工作流、
   通用写路径与支付网关共用；主机名归一化 `normalize_hostname` 也在这里（`admission` 只是再导出）。
+
+### 9.58 车况读数不编、带时效与来源（CA2-19 S1，2026-10-04）
+
+- 车况读数一份读法 `runtime/vehicle_reading.py`；Agent 用 `Context.vehicle_reading(key)`（受 `vehicle_state` 读权限约束），主动提醒用车况仓库的 `view()`。
+  `fetch` 只给裸值，要说出口或上卡片的读数不得用它。
+- 没读到就是 `None`：不得补 50%、0 或任何缺省值；0% 是合法读数。读不到时不下「够不够 / 正常不正常」的结论，如实说没读到。
+- 卡片与数据一律带来源（`{prefix}_source`：类型、是否验签、观测时间、年龄）与说明（`{prefix}_note`）；话术只在非实车（模拟车 / 沙箱）或读数超过
+  `STALE_AFTER_S` 时点明。由假设推出的量（续航 = 电量 × 满电续航）写「估算」。
+- 要读车况就在 manifest 声明 `context_scopes: [vehicle_state]`；没声明，权限投影会把车况滤掉（导航至今如此，它的续航提醒在线上拿不到电量）。
+  冻结的旧接口（`additional_parameters: legacy`）上下文范围进 ABI 指纹：改范围前先迁 v2 契约，冻结清单不能为此改写。

@@ -16,6 +16,7 @@ from agents._sdk.http import ProviderError
 from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_location_from_meta,
                                   location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
+from runtime.vehicle_reading import Reading
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
@@ -1742,9 +1743,10 @@ class NavigationAgent(BaseAgent):
         speech += deadline_note
         # 车辆接地 advisory（旅程 B3-2）：续航覆盖不了本程（含 15% 保留余量，与 charging
         # 同款判定）→ 主动提示补能。只加话术不加动作（advisory 不发车控/不改路线），
-        # 用户接一句「沿途帮我找充电站」即进 charging 流程。电量经端侧 meta 注入
-        # （server.py 把 VAL 真实电量写 vehicle_battery），拿不到就不提示（fail-open）。
-        speech += self._range_advisory(distance_km, meta)
+        # 用户接一句「沿途帮我找充电站」即进 charging 流程。电量是编排下发的车况读数（连同来源，
+        # CA2-19 S1）；拿不到就不提示。⚠ 导航 manifest 目前没声明 vehicle_state（它的能力是冻结的旧接口，
+        # 上下文范围进 ABI 指纹，改范围要先迁 v2 契约，见 CA2-19 设计 §5.3），所以线上这条提醒仍拿不到电量。
+        speech += self._range_advisory(distance_km, self._battery_reading(ctx, meta))
         # R7（旅程 A2-4/B5-1⑥）：REMINDABLE_ACTIVE「即插」契约兑现——写 ETA 事件，
         # 「到之前一刻钟提醒我打电话」由 reminder 消费（事件时刻-提前量），不再反问时间。
         # best-effort：无 ctx/无时长/写失败都不影响导航本体。
@@ -2128,20 +2130,30 @@ class NavigationAgent(BaseAgent):
             logger.debug("navigation episodic save skipped: %s", e)
 
     @staticmethod
-    def _range_advisory(distance_km, meta) -> str:
-        """里程 vs 电量续航的补能提示；不适用/数据缺失返回空串。"""
+    def _battery_reading(ctx, meta) -> Reading:
+        """当前电量读数（连同来源）；裸 `vehicle_battery` 只是测试 / 旧通道兜底，读不到 ⇒ value None。"""
+        reading = (ctx.vehicle_reading("battery")
+                   if ctx is not None and hasattr(ctx, "vehicle_reading") else Reading("battery"))
+        if reading.known:
+            return reading
+        raw = str((meta or {}).get("vehicle_battery", "") or "").strip()
+        return Reading("battery", raw) if raw else reading
+
+    @staticmethod
+    def _range_advisory(distance_km, battery: Reading) -> str:
+        """里程 vs 电量续航的补能提示；不适用 / 读不到电量返回空串。0% 是合法读数（照样提醒）。"""
+        pct = battery.percent() if isinstance(battery, Reading) else None
         try:
-            pct = float(str((meta or {}).get("vehicle_battery", "")).replace("%", ""))
             dist = float(distance_km or 0)
         except (TypeError, ValueError):
             return ""
-        if not (0 < pct <= 100) or dist <= 0:
+        if pct is None or dist <= 0:
             return ""
         full_range = float(os.getenv("CHARGING_FULL_RANGE_KM", "500") or 500)
         usable = pct / 100.0 * full_range
         if dist <= usable * 0.85:
             return ""
-        return (f"提醒一下：当前电量约{round(pct)}%（续航约{round(usable)}公里），"
+        return (f"提醒一下：当前电量约{pct}%{battery.spoken_note()}（估算续航约{round(usable)}公里），"
                 f"本程约{round(dist)}公里，建议途中补能，可以说「沿途帮我找充电站」。")
 
     @staticmethod

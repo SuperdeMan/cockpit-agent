@@ -421,6 +421,8 @@ export type ChargingRouteCard = {
   destination_loc?: { lat: number; lng: number }
   path?: Array<[number, number]>
   soc?: string
+  // CA2-19 S1：电量说明由服务端给（「模拟车读数」「约2分钟前的读数」；读不到时 soc 为空、这里是「没读到」）
+  soc_note?: string
 }
 
 // 行程卡（P0 重构）：结构化多日行程——按天列停靠点（接地真实 POI）+ 段间驾驶/充电

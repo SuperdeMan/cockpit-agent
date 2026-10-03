@@ -93,20 +93,14 @@ class AmapChargingProvider(ChargingProvider):
         # 高德基础 POI 不提供实时枪数；返回占位（不编造空闲数）
         return ChargingStation(id=station_id)
 
-    async def plan_route(self, destination: str, soc: str = "",
-                         meta=None) -> ChargingPlan:
+    async def plan_route(self, destination: str, soc: int | None = None,
+                         meta=None, *, soc_note: str = "") -> ChargingPlan:
         """出发地 → 沿途途经充电点 → 目的地。
 
         起点取本轮已授权定位（无定位无法规划路线，诚实说明，不编造）；用高德真实路线几何
         按电量续航在**路线上**放补电途经点（不是目的地附近）。
         """
-        soc_pct = 50
-        if soc:
-            try:
-                soc_pct = int(str(soc).replace("%", "").strip())
-            except ValueError:
-                soc_pct = 50
-
+        soc_pct = soc        # 读不到是 None：不判断够不够（CA2-19 S1），0 是合法读数
         origin = current_location_from_meta(meta)
         if not origin:
             return ChargingPlan(
@@ -133,15 +127,34 @@ class AmapChargingProvider(ChargingProvider):
                                           if "lat" in p and "lng" in p],
             "origin_loc": {"lat": origin.lat, "lng": origin.lng},
         }
-        usable = soc_pct / 100.0 * self._full_range
         dur = self._fmt_dur(duration_min)
         head = f"前往{destination}，全程约{distance_km}公里" + (f"、约{dur}" if dur else "")
+
+        if soc_pct is None:
+            # CA2-19 S1：没读到电量 ⇒ 不说够不够、不建议补几次；只列沿途充电站作参考，间隔按一段舒适续航
+            leg = self._full_range * 0.65
+            targets, d = [], leg
+            while d < distance_km - 20 and len(targets) < 4:
+                targets.append(d)
+                d += leg
+            stops = await self._stations_at(targets, points, meta, charge_to="")
+            if stops:
+                line = "；".join(f"约{s['at_km']}公里处·{s['name']}" for s in stops)
+                summary = f"{head}。没读到当前电量，没法判断够不够直达；沿途充电站供参考：{line}。"
+            else:
+                summary = (f"{head}。没读到当前电量，没法判断够不够直达；出发前看一下仪表盘电量，"
+                           f"需要的话我再帮你找沿途的充电站。")
+            return ChargingPlan(summary=summary, stops=stops,
+                                total_duration_min=int(duration_min), distance_km=distance_km, **geo)
+
+        usable = soc_pct / 100.0 * self._full_range
+        soc_said = f"当前电量{soc_pct}%{soc_note}，估算约{round(usable)}公里续航"
 
         # 续航足够 → 直达。带 15% 保留余量（Q2，旅程 A1-2 抓到：10%→50km 对 47.7km
         # 判「足够直达」只剩 2.3km 余量，真车是抛锚风险）——到达时至少留 15% 可用续航。
         if distance_km <= usable * 0.85 or not points:
             return ChargingPlan(
-                summary=f"{head}。当前电量{soc_pct}%（约{round(usable)}公里续航）足够直达，无需途中补电。",
+                summary=f"{head}。{soc_said}，足够直达，无需途中补电。",
                 stops=[], total_duration_min=int(duration_min), distance_km=distance_km, **geo)
 
         # 续航不够 → 沿途按里程放补电途经点：首段用到 ~85% 续航，之后每段约 65% 满电续航
@@ -152,6 +165,22 @@ class AmapChargingProvider(ChargingProvider):
         if not targets:
             # 短途但余量不足（首目标落进尾缓冲）→ 至少一个补电点，否则空集等同直达（Q2）
             targets.append(max(1.0, min(usable * 0.85, distance_km - 20)))
+        stops = await self._stations_at(targets, points, meta, charge_to="80%")
+
+        if not stops:
+            return ChargingPlan(
+                summary=f"{head}。{soc_said}，长途需中途补电；"
+                        f"沿途充电站暂未取到，到达附近时我再为你推荐。",
+                stops=[], total_duration_min=int(duration_min), distance_km=distance_km, **geo)
+
+        plan_line = "；".join(f"约{s['at_km']}公里处·{s['name']}" for s in stops)
+        summary = (f"{head}。{soc_said}，"
+                   f"建议途中补电 {len(stops)} 次：{plan_line}；补电后抵达{destination}。")
+        return ChargingPlan(summary=summary, stops=stops,
+                            total_duration_min=int(duration_min), distance_km=distance_km, **geo)
+
+    async def _stations_at(self, targets, points, meta, *, charge_to: str) -> list[dict]:
+        """沿路线在各目标里程处取最近的一个真实充电站；取不到的点跳过（不编）。"""
         stops = []
         for t in targets:
             pt = next((p for p in points if p["cum_km"] >= t), None)
@@ -164,18 +193,9 @@ class AmapChargingProvider(ChargingProvider):
                 near = []
             if near:
                 st = near[0]
-                stops.append({"name": st.name, "address": st.address,
-                              "at_km": round(t), "charge_to": "80%",
-                              "lat": st.lat, "lng": st.lng})
-
-        if not stops:
-            return ChargingPlan(
-                summary=f"{head}。当前电量{soc_pct}%约{round(usable)}公里续航，长途需中途补电；"
-                        f"沿途充电站暂未取到，到达附近时我再为你推荐。",
-                stops=[], total_duration_min=int(duration_min), distance_km=distance_km, **geo)
-
-        plan_line = "；".join(f"约{s['at_km']}公里处·{s['name']}" for s in stops)
-        summary = (f"{head}。当前电量{soc_pct}%约可行驶{round(usable)}公里，"
-                   f"建议途中补电 {len(stops)} 次：{plan_line}；补电后抵达{destination}。")
-        return ChargingPlan(summary=summary, stops=stops,
-                            total_duration_min=int(duration_min), distance_km=distance_km, **geo)
+                stop = {"name": st.name, "address": st.address, "at_km": round(t),
+                        "lat": st.lat, "lng": st.lng}
+                if charge_to:
+                    stop["charge_to"] = charge_to
+                stops.append(stop)
+        return stops
