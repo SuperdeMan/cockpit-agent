@@ -1,8 +1,11 @@
 # 小舟随行 Android 视觉 v3 · 实施计划（草案）
 
-- **状态**：草案，待批。设计阶段 M0–M6 已完成（2026-10-03）。本文是 [Brief](2026-10-02-android-visual-redesign-brief.md) §14 M6 要求的「实施计划草案」。
+- **状态**：草案。本文是 [Brief](2026-10-02-android-visual-redesign-brief.md) §14 M6 要求的「实施计划草案」。
+  - 设计阶段 M0–M6 已于 2026-10-03 完成。
+  - §5 的五项同日按推荐拍板。
+  - 同日按泓舟意见，卡片设计从 v1 十二张扩到注册表全部 35 个卡型键，并新增车控结果卡（D17–D20）。
 - **设计真相源**：Figma「小舟随行 · Android Visual v3」（`1jdZ6Cwp8pEtQJJUwg6NHS`），按页取用：
-  - 10 Handoff：token ↔ 代码、组件 ↔ 代码文件、实现差异清单 D1–D16；
+  - 10 Handoff：token ↔ 代码、组件 ↔ 代码文件、实现差异清单 D1–D16 与补充差异 D17–D20；
   - 02 Foundations：变量与对比度；03 Components：组件板；
   - 04–08：页面、语音层与在场、卡片、自适应、行车；09 Motion：动效规格。
 - **声明源**：落地后代码 token（`mobile/src/ui/theme.ts`、`tokens.ts`）仍是唯一权威。Figma 变量按代码回写校准，两边不能同时宣称权威（Brief §9.1）。
@@ -54,7 +57,7 @@
 | **P1 原语** | Button、SegmentedButton、ListItem、BottomSheet / Dialog、TextField、Switch 着色；Pill 改成 Plain / Accent / Amber / Floating，`selected` 不再兼 `disabled`；回写补画的 15 个图标 | `ui/Button.tsx` 等（新）、`ui/Pill.tsx`、`ui/icons.local.ts` | `pill.test.ts` 改断言；新原语单测只测分支（禁用、按下、目标高） |
 | **P2 对话主屏** | 主栏去光球（D4）；发送键改交互色实色，尺寸 target（D5）；助手去气泡（D6）；回执和结果折叠热区 48、字号 12；时间分隔、回到最新；胶囊改 Floating；Dock 改 G0 | `ChatScreen.tsx`、`Composer.tsx`、`MessageBubble.tsx`、`ExecutionReceipt.tsx`、`ResultDetailsFold.tsx`、`PresenceCapsule.tsx`、`FocusDock.tsx` | Maestro 01 / 03 / 04 / 06 / 08 / 10；`chatHierarchy`、`composerHint`、`focusDockInteraction` 等单测；对照 04 页 W / R / D 组 |
 | **P3 语音层** | 实色改为 surface/high，真模糊配 `sheetTint`（D7）；顶角 28；内容区上下渐隐；头区与内容区按 05 页；S2S 告知条换 token | `VoiceSheet.tsx`、`ui/layout/sheetHeight.ts` | Maestro 05；`sheetHeight` / `voiceSheetFollow` / `sheetGesture` 单测；05 页 12 态逐张核对，再加行车 DR-2–DR-5 |
-| **P4 卡片** | 卡头图标、来源中文名、时间相对化与本地时区、时长换算小时、置信人话、AQI 色阶、涨跌色变量化、选中规格不再 50%、兜底卡（D10）；按卡型出行车摘要模板（D11） | `features/cards/*`、`core/cards/cardFields.ts` | `cards` / `cardParts` / `cardFields` / `cardGroup` / `merchantCards` 单测；卡片画廊 42 条样本按 06 页逐张核对；行车摘要逐型核对 |
+| **P4 卡片** | 注册表全部 35 个键（D10、D19）：卡头图标、来源中文名、时间相对化与本地时区、时长换算小时、置信人话、AQI 色阶、涨跌色变量化、选中规格不再 50%、原始枚举转人话、兜底卡；按卡型出行车摘要模板（D11）；赛事队伍标识（D18）；车控结果卡与回执中文对象名（D17） | `features/cards/*`、`core/cards/cardFields.ts`、`core/session/receipt.ts`、新增 `ControlResult.tsx` | `cards` / `cardParts` / `cardFields` / `cardGroup` / `merchantCards` / `manualCard` 单测；新增 command → 中文名映射与 `commands.yaml` 的对账测试；卡片画廊样本按 06 页逐张核对；行车摘要逐型核对；Maestro 06（确认后的车控轮） |
 | **P5 支持页** | 设置（D8，含文案确认项）、次级顶栏（D9）、车况（D13）、地图（D12）、隐私栏（D14）、引导页 | `SettingsScreen.tsx`、`app/_layout.tsx`、`VehiclePanel.tsx`、`map.tsx`、`MapLayers.tsx`、`PrivacyRail.tsx`、`app/onboarding.tsx` | Maestro 09 / 11；对照 04 页 S / V / M / O / P 组 |
 | **P6 自适应与行车** | 舞台去内部名；双栏下设置改列表–详情、车况改网格、地图加侧边信息栏；行车档 Size 一致性 | `features/stage/*`、`ui/layout/sizeClass.ts` 及上述支持页 | Maestro 07；`foldPosture` / `drivingMode` 单测；对照 07 / 08 页；OPPO 内屏抽屉与桌面姿态实拍 |
 | **P7 系统面与收尾** | 主题图标单色字形；动效提议项（若批准）；删旧 Palette 键与 glass 系列；Figma 按代码回写 | `assets/images/*`、`ui/theme.ts`、Figma 10 页 | 全量 mobile 门禁 + 01–11 Maestro；release 包真机冒烟 |
@@ -103,11 +106,25 @@
 - **来源中文名**：新增一张 vendor → 中文名映射表（qweather → 和风、amap → 高德、exa → Exa、luckin → 瑞幸）。放在 `core/cards/`，未知 vendor 原样显示。
 - **时间**：搜索来源与数据源时间转本地时区并相对化，复用 `FreshChip` 的规则。
 - **行车摘要**：按卡型取「标题 + 主数值 + ≤2 字段 + 1 主按钮」。主按钮取渲染器合成的那一个（路线的「开始导航」、商户的「去支付」）。扫码支付在行车时不出二维码。
+- **车控结果卡（D17）**：
+  - 数据只读已有字段：`Msg.actions` 与 `resultBundles[].results[].evidence`，不改契约；卡内不放任何按钮，确认仍走全局 Dock。
+  - 状态判据：
+    - 没有 evidence → 已执行（默认）；
+    - `verified` → 已核实；
+    - `satisfied` 且 `unchanged` → 本来就是；
+    - `acknowledged` 且 `state=unknown` → 未核实（证据行用服务端原话）；
+    - `unsatisfied` 或气泡出错 → 没生效；
+    - `pending_edge` → 执行中。
+  - command → 中文对象名的映射表放 `core/cards/`，数据取 `commands.yaml` 的 `display_name`。客户端不复制判据，用测试与 `commands.yaml` 对账。回执「执行」行也改用这张表。
+- **赛事（D18）**：
+  - 队伍用缩写圆加主客色环，不再取名字前两个字。
+  - 有 `home_logo` / `away_logo` 时画 32px 队徽（RN Image，加载失败回落缩写圆）。
+  - 进球用足球图标，不用 emoji。
 
 ### P5 支持页
 
 - **设置**：
-  - 长选项的缩短（「实时 / 整句」「手持 / 支架 / 车载平板」）和说明行属于文案改动，要先过 §5；
+  - 长选项的缩短（「实时 / 整句」「手持 / 支架 / 车载平板」）和说明行已于 2026-10-03 拍板（§5）；
   - 音色改成图标 + 名字的格子，数据源不变。
 - **车况**：未识别键用「未识别字段 · 原键」兜底，并补一张常见键的中文名表。
 - **地图**：
@@ -141,9 +158,11 @@
 
 ---
 
-## 5. 需要拍板的改动（实现前确认）
+## 5. 拍板结果
 
-| 项 | 内容 | 推荐 |
+> **2026-10-03 裁决**：泓舟回复「需要我定的几项都按你的建议来」，五项全部按推荐执行，实现时不再逐项确认。
+
+| 项 | 内容 | 裁决 |
 |---|---|---|
 | 设置长选项缩短 | 「实时（边说边上屏）/ 整句（松手后出字）」改为「实时 / 整句」+ 说明行；设备角色改为「手持 / 支架 / 车载平板」+ 说明行 | 采用。分段按钮放不下长标签，说明行保留了原信息 |
 | 地图「不可用」文案 | 不再给用户显示高德 key / 原生模块状态，改为「地图暂时打不开 · 更新 App 后再试」，细节进开发者页 | 采用 |
@@ -170,7 +189,13 @@
 - 交互语义、在场模型、手势契约、确认与隐私制度（Brief §3.2）。
 - `types.ts` 字段、后端与 proto。
 - 打包品牌字体（Brief §15-6 选的是系统字体 + 表格数字）。
-- v1.1 卡型：v1 十二张之外的卡型，用同一套卡片件在 v1.1 补。
+- 数据侧缺口（D20，另立后端卡）：
+  - 俱乐部 / 球员名只有英文；
+  - 场景步骤缺模板时回落成「{command}（k=v）」；
+  - `news_digest` / `news_list` / `search_answer` / `search_list` 当前没有生产方；
+  - 本地直连车控没有执行证据。
+
+  这些按现有数据设计，不靠客户端补。
 
 ---
 
@@ -183,10 +208,10 @@
 | 02 Foundations `1:3` | 色板深浅、对比度表、数据色对比度、字阶标准对大字、间距、圆角、尺寸四档、材质、层级 |
 | 03 Components `1:4` | 组件板 `7:2`（§7 全部组件与变体；图标 68 + 补画 15） |
 | M1 `1:5` | 方向样张（历史） |
-| 04 Phone `1:6` | 欢迎 3、记录 5、Dock 8、设置 6、车况 + 地图 7、引导 5、浮层 3，各配深浅 |
+| 04 Phone `1:6` | 欢迎 3、记录 6（含车控一轮）、Dock 8、设置 6、车况 + 地图 7、引导 5、浮层 3，各配深浅 |
 | 05 Voice & Presence `1:7` | 语音层 12 态 × 深浅、在场 8 态矩阵、原型流「语音一轮」 |
-| 06 Cards `1:8` | 14 种卡 × 状态 + 行车摘要，深浅两份 |
+| 06 Cards `1:8` | 注册表全部 35 个卡型键 + 车控结果，每型含状态与行车摘要，深浅两份；赛事 / 下跌股票等示例数据已标注 |
 | 07 Adaptive `1:9` | 内屏双栏 / 抽屉 / 桌面、横屏、支持页大屏版式、系统面 |
 | 08 Driving `1:10` | 身份 A / B / C、播报 + 摘要卡、答后回落、行车确认、横屏 40:60 |
 | 09 Motion `1:11` | 光球节律、过场与手势、减少动效规则 |
-| 10 Handoff `1:12` | token ↔ 代码（92 条）、组件 ↔ 代码文件、实现差异 D1–D16 |
+| 10 Handoff `1:12` | token ↔ 代码（92 条）、组件 ↔ 代码文件、实现差异 D1–D16、补充差异 D17–D20 |
