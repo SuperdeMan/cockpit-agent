@@ -1,7 +1,7 @@
 // mobile/test/tokens.test.ts
 // token 层（UX v2.1 §5.9）：数值逐值照 Figma A-1 设计系统；`scale()` 是「大字」档同时放大
 // 文字 / 目标 / 行高的唯一入口——此前 Palette.font() 只放大文字，容器与热区不跟着长（P13）。
-import { GLASS, MOTION, PILL, RADIUS, SPACE, TARGET, TYPE, scale } from '@/ui/tokens'
+import { GLASS, MOTION, PILL, RADIUS, SPACE, TARGET, TEXT, TYPE, scale, textStyle, type TextRole } from '@/ui/tokens'
 
 describe('tokens 数值照 A-1 设计系统', () => {
   test('4px 栅格与圆角阶', () => {
@@ -51,5 +51,60 @@ describe('字阶：最小可读字号', () => {
   test('micro = 12（原 11；10pt 六处提到 11 由 rg 守，见批 C 记录）', () => {
     expect(TYPE.micro).toBe(12)
     expect(TYPE.caption).toBeGreaterThanOrEqual(TYPE.micro)
+  })
+})
+
+// Android Visual v3：按角色的字阶。四档数值逐值照 Figma Size 集合（泊车·标准 / 泊车·大字 / 行车·标准 / 行车·大字），
+// 大字档必须与 scale() 的四舍五入算出来的一致——Figma 变量就是按这条规则填的，两边不能各算各的
+const FIGMA: Record<TextRole, [number, number, number, number, number, number, number, number]> = {
+  // size: PN PL DN DL, line: PN PL DN DL
+  display: [28, 32, 28, 32, 36, 41, 36, 41],
+  headline: [22, 25, 22, 25, 30, 35, 30, 35],
+  titleL: [18, 21, 18, 21, 26, 30, 26, 30],
+  titleM: [16, 18, 16, 18, 24, 28, 24, 28],
+  bodyL: [17, 20, 17, 20, 26, 30, 26, 30],
+  bodyM: [15, 17, 15, 17, 24, 28, 24, 28],
+  transcript: [20, 23, 20, 23, 28, 32, 28, 32],
+  drivingAnswer: [20, 23, 20, 23, 30, 35, 30, 35],
+  voiceAnswer: [17, 20, 20, 23, 26, 30, 30, 35],
+  labelL: [15, 17, 15, 17, 20, 23, 20, 23],
+  labelM: [13, 15, 13, 15, 18, 21, 18, 21],
+  caption: [12, 14, 12, 14, 16, 18, 16, 18],
+  numericXl: [34, 39, 34, 39, 40, 46, 40, 46],
+  numericL: [24, 28, 24, 28, 30, 35, 30, 35],
+  numericM: [15, 17, 15, 17, 20, 23, 20, 23],
+}
+
+describe('v3 字阶 TEXT / textStyle()', () => {
+  test.each(Object.keys(FIGMA) as TextRole[])('%s 四档与 Figma Size 变量一致', (role) => {
+    const [pn, pl, dn, dl, lpn, lpl, ldn, ldl] = FIGMA[role]
+    expect(textStyle(role, 'normal', false)).toMatchObject({ fontSize: pn, lineHeight: lpn })
+    expect(textStyle(role, 'large', false)).toMatchObject({ fontSize: pl, lineHeight: lpl })
+    expect(textStyle(role, 'normal', true)).toMatchObject({ fontSize: dn, lineHeight: ldn })
+    expect(textStyle(role, 'large', true)).toMatchObject({ fontSize: dl, lineHeight: ldl })
+  })
+  test('最小字号 12；行高不小于字号', () => {
+    for (const spec of Object.values(TEXT)) {
+      expect(spec.size).toBeGreaterThanOrEqual(12)
+      expect(spec.line).toBeGreaterThan(spec.size)
+    }
+  })
+  test('数值类一律表格数字，其余不带', () => {
+    for (const [role, spec] of Object.entries(TEXT) as [TextRole, (typeof TEXT)[TextRole]][]) {
+      const style = textStyle(role)
+      if (role.startsWith('numeric')) expect(style.fontVariant).toEqual(['tabular-nums'])
+      else expect(style.fontVariant).toBeUndefined()
+      expect(style.fontWeight).toBe(spec.weight)
+    }
+  })
+  test('只有语音层回答随行车放大', () => {
+    const grows = (Object.keys(TEXT) as TextRole[]).filter((r) => textStyle(r, 'normal', true).fontSize !== textStyle(r).fontSize)
+    expect(grows).toEqual(['voiceAnswer'])
+  })
+})
+
+describe('MOTION.blink：流式光标 1Hz（v3 动效提议，2026-10-03 拍板）', () => {
+  test('半周期 500ms，一亮一灭合 1s', () => {
+    expect(MOTION.blink * 2).toBe(1000)
   })
 })

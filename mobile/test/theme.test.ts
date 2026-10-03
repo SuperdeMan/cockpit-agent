@@ -59,8 +59,10 @@ function softOn(soft: string, bg: string): string {
   return `rgb(${Math.round(c.r)},${Math.round(c.g)},${Math.round(c.b)})`
 }
 describe('P16：fg3 / amber / accent 三对（深浅各一）', () => {
-  test('浅色 fg3 提到 0.66（评审 P16）', () => {
-    expect(LIGHT.fg3).toBe('rgba(10,14,26,0.66)')
+  // P16 把浅色 fg3 从 0.60 提到 0.66，是为了贴 bg 时离 AA 远一点。v3 改成 0.62（给 fg2 0.74 让出层级），
+  // 判据从「钉死数值」换成「压在每一级底色上都 ≥4.5」——见下方 v3 用例；这里留住 P16 的底线：贴 bg 至少 5:1
+  test('浅色 fg3 贴 bg 仍 ≥5:1（评审 P16 的余量）', () => {
+    expect(contrast(LIGHT.fg3, LIGHT.bg)).toBeGreaterThanOrEqual(5)
   })
   test.each([
     ['dark fg3/bg', DARK.fg3, DARK.bg, 4.5],
@@ -71,5 +73,94 @@ describe('P16：fg3 / amber / accent 三对（深浅各一）', () => {
     ['light accent/accentSoft', paletteOf('light', false, 'normal').accent, softOn(LIGHT.accentSoft, LIGHT.bg), 4.5],
   ])('%s ≥ %s', (_name, fg, bg, min) => {
     expect(contrast(fg, bg)).toBeGreaterThanOrEqual(min as number)
+  })
+})
+
+// ── Android Visual v3（方向 B）：色调层级上的对比度。与 Figma 02 Foundations「对比度」「数据色对比度」两表同口径。
+// 色调层级代替了半透明玻璃，文字不再只压在 bg 上——每一级 surface 都要过。
+const THEMES = [
+  ['dark', DARK, paletteOf('dark', true, 'normal')],
+  ['light', LIGHT, paletteOf('light', false, 'normal')],
+] as const
+const surfacesOf = (t: typeof DARK | typeof LIGHT) =>
+  [
+    ['bg', t.bg],
+    ['surfaceLow', t.surfaceLow],
+    ['surface', t.surface],
+    ['surfaceHigh', t.surfaceHigh],
+    ['surfaceHighest', t.surfaceHighest],
+  ] as const
+
+describe('v3：文字三级压在每一级底色上 ≥4.5（深浅）', () => {
+  const cases = THEMES.flatMap(([name, t]) =>
+    surfacesOf(t).flatMap(([s, bg]) =>
+      (['fg1', 'fg2', 'fg3'] as const).map((k) => [`${name} ${k}/${s}`, t[k], bg] as const),
+    ),
+  )
+  test.each(cases)('%s', (_n, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('v3：状态色作文字压在每一级底色上 ≥4.5（深浅）', () => {
+  const cases = THEMES.flatMap(([name, t, p]) =>
+    surfacesOf(t).flatMap(([s, bg]) =>
+      (['accent', 'amber', 'red', 'green', 'teal'] as const).map((k) => [`${name} ${k}/${s}`, p[k], bg] as const),
+    ),
+  )
+  test.each(cases)('%s', (_n, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('v3：on 色压在实色上 ≥4.5（Filled 按钮、确认键、地图标注字）', () => {
+  test.each(THEMES.flatMap(([name, t, p]) => [
+    [`${name} onAccent/accent`, t.onAccent, p.accent],
+    [`${name} onAmber/amber`, t.onAmber, p.amber],
+  ]))('%s', (_n, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('v3：状态色压在各自的 soft 底上 ≥4.5（soft 先合成到所在底色上）', () => {
+  // redSoft 只出现在卡片与弹层里（「没生效」标签、Destructive 按钮），不直接压在页面 bg 上：
+  // 浅色红字压在「bg 上的 redSoft」只有 4.3:1——新组件要把 redSoft 放到 bg 上，先改这里的判据和色值
+  const cases = THEMES.flatMap(([name, t, p]) => [
+    ...(['bg', 'surface', 'surfaceHigh'] as const).flatMap((s) => [
+      [`${name} accent/accentSoft@${s}`, p.accent, softOn(t.accentSoft, t[s])] as const,
+      [`${name} amber/amberSoft@${s}`, p.amber, softOn(t.amberSoft, t[s])] as const,
+    ]),
+    ...(['surface', 'surfaceHigh'] as const).map((s) => [`${name} red/redSoft@${s}`, p.red, softOn(t.redSoft, t[s])] as const),
+  ])
+  test.each(cases)('%s', (_n, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('v3：数据色压在卡底（surface / surfaceHigh）上 ≥4.5', () => {
+  const cases = THEMES.flatMap(([name, t]) =>
+    (['surface', 'surfaceHigh'] as const).flatMap((s) => [
+      [`${name} dataUp@${s}`, t.dataUp, t[s]] as const,
+      [`${name} dataDown@${s}`, t.dataDown, t[s]] as const,
+      ...t.aqi.map((c, i) => [`${name} aqi[${i}]@${s}`, c, t[s]] as const),
+      ...t.series.map((c, i) => [`${name} series[${i}]@${s}`, c, t[s]] as const),
+    ]),
+  )
+  test.each(cases)('%s', (_n, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5)
+  })
+  test('AQI 六档、分组五色，深浅两套同长', () => {
+    expect(DARK.aqi).toHaveLength(6)
+    expect(LIGHT.aqi).toHaveLength(6)
+    expect(DARK.series).toHaveLength(5)
+    expect(LIGHT.series).toHaveLength(5)
+  })
+})
+
+describe('v3：材质与遮罩是半透明、色调层级是实色', () => {
+  test.each(THEMES)('%s', (_n, t) => {
+    expect(parse(t.sheetTint).a).toBeLessThan(1)
+    expect(parse(t.scrim).a).toBeLessThan(1)
+    for (const [, c] of surfacesOf(t)) expect(parse(c).a).toBe(1)
   })
 })
