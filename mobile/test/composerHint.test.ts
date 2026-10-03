@@ -69,7 +69,7 @@ function ptt(over: Partial<PttHandle> = {}): PttHandle {
 }
 function composer(over: Record<string, unknown>) {
   return createElement(Composer, {
-    p, chips: [], busy: false, stoppable: false, ptt: null, orbState: 'idle',
+    p, busy: false, stoppable: false, ptt: null, orbState: 'idle',
     fontScale: 'normal', onSend: jest.fn(), onInterrupt: jest.fn(), onStopPlayback: jest.fn(), onTap: jest.fn(),
     ...over,
   } as never)

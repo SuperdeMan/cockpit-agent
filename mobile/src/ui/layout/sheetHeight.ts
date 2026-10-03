@@ -139,7 +139,8 @@ export function parkedSheetMinDp(detent: SheetDetent, split: boolean, fontScale:
 
 /** 层内大球直径（dp）：行车 120，但容器连 0.4 档最小高都装不下时降到泊车的 88
  *  （缺陷 A 横屏半的**最后一道保险**）。在它之前的 lever：底栏撤掉（B5-12）、driving-landscape
- *  隐藏 chips 且语音层覆盖整列（B5-15）——都做完仍装不下才降球。
+ *  隐藏 chips 且语音层覆盖整列（B5-15；v3 P2b 起 chips 已挪进回答末尾，Composer 本来就不再有 chips 行）
+ *  ——都做完仍装不下才降球。
  *  ⚠ 阈值取 **0.4 档**（最小的那一档）：0.4 都装不下才谈降级，别的档只会更装不下。 */
 export function sheetOrbDp(i: {
   containerH: number

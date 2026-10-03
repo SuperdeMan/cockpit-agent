@@ -1,7 +1,7 @@
 // 对话主屏（M1-3/M1-6/M1-7 装配，Aurora Glass 复刻轮重皮）：
 //  - GatewaySession（下行帧→SessionCore.handleFrame，状态→connStatus）
 //  - 双形态外壳：窗口短边 ≥600dp 平板双栏（右=玻璃舞台：车况+提醒+焦点卡），旋转即时切
-//  - 确认条按台账渲染（isPendingLive），位置征询条只激活最新一条
+//  - 确认只在 Focus Dock（承诺面）；记录里的回答不再描琥珀边（v3 D6，D-1 画板）
 //  - 视觉：Android Visual v3（方向 B）——平底 + 色调层级，顶栏 = 字标 + 状态点 + 两枚圆形入口（不再放光球，一屏一球），
 //    空对话 = 欢迎态大光球
 // AR04：配置、会话和语音控制器由 AssistantProvider 持有；本屏只呈现记录与布局。
@@ -12,10 +12,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { isPendingLive } from '@shared/pendingOps.mjs'
 import type { Msg } from '@shared/types.ts'
 
 import { precedingUserText } from '../../core/session/actionSummary'
+import { emptyCandidates } from '../../core/session/candidates'
 import { followUpChips, MAX_CHIPS } from '../../core/session/followUps'
 import { followOnContentChange, lastUserMessageId, showJumpToLatest, STICK_TO_BOTTOM_THRESHOLD, timeDividers } from '../../core/session/history'
 import { buildReceipt } from '../../core/session/receipt'
@@ -163,13 +163,16 @@ function Welcome({
   )
 }
 
+// 更早的回答算追问 chips 时用的空候选集：候选集只属于最近一轮（chipsOf）
+const NO_CANDIDATES = emptyCandidates()
+
 function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   const { p, cfg, core, state, settings, ptt, hf, snapshot, layout, motionEnv, reduceMotion,
     turn, latestTurnId, busy, stoppable, sessionSummary,
     onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap,
     onStopPlayback, setSheetOverride, privacyOpen, setPrivacyOpen, draft, setDraft,
     dockExpanded, setDockExpanded } = runtime
-  const { messages, pendingOps, vehState, pendingLocationText, uncertainIds, draftUserId,
+  const { messages, vehState, uncertainIds, draftUserId,
     interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, messageAt, resentIds } = state
   const [listHeight, setListHeight] = useState(0)
   const [columnHeight, setColumnHeight] = useState(0)
@@ -244,19 +247,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
 
   // 开录即告知（红线三条件③在交互时刻的落实）：正在上传原始音频、或这一轮就是端到端发起的
   const s2sNotice = snapshot.privacy.mic === 'cloudAudio' || snapshot.turnSource === 's2s'
-  // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
-  const lastConsentId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const m = messages[i]
-      if (m.role === 'assistant' && m.needConfirm && !m.operationId) return m.id
-    }
-    return null
-  }, [messages])
-  const confirmActiveOf = (m: Msg): boolean => {
-    if (!m.needConfirm) return false
-    if (m.operationId) return isPendingLive(pendingOps, m.operationId)
-    return pendingLocationText !== null && m.id === lastConsentId
-  }
 
   // v2 健康点：**在线是灰的**——一个持续亮着的绿点会一直占用注意力，而它什么也没说
   const healthColor =
@@ -329,12 +319,15 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // 承诺面此刻有没有真的画出来（宿主事实）：胶囊「一屏只出现一份」的判据 capsuleVisible 读它（打磨批 A / P28）
   const dockMounted = runtime.facts.route === '/' && runtime.scope.canCapture()
   const dockShown = dockMounted && focusDockVisible(snapshot, state.issues)
-  // Composer 的 chips 行（打磨批 A / P01 / P02）：无消息 ⇒ 空（欢迎态自己有三条推荐）；有消息 ⇒ 最近一条
-  // 助手回答的 follow-up + 候选集（判据 followUps.ts，与语音层同一份）；在飞时不给——催人打断自己。
-  const composerChips =
-    messages.length === 0 || !turn.assistant || turn.assistant.pending || turn.assistant.streaming
+  // 追问 chips（打磨批 A / P01 / P02；v3 P2b 从 Composer 挪进回答末尾，Figma AnswerBlock）：
+  // 最近一条已收完的助手回答 = 它的 follow-up + 候选集（判据 followUps.ts，与语音层同一份）；
+  // 更早的回答只带它自己的 follow-up（原来气泡里「追问链接」的那一条）——候选集只属于最近一轮；
+  // 在飞（思考 / 流式）的不给——催人打断自己。无消息时没有回答，欢迎态自己有三条推荐。
+  const chipMax = snapshot.driving ? 3 : MAX_CHIPS
+  const chipsOf = (m: Msg) =>
+    m.role !== 'assistant' || m.pending || m.streaming
       ? []
-      : followUpChips(turn.assistant.followUp, core.candidates, snapshot.driving ? 3 : MAX_CHIPS)
+      : followUpChips(m.followUp, m.id === turn.assistant?.id ? core.candidates : NO_CANDIDATES, chipMax)
   const focusDockEl = dockMounted ? (
     <FocusDock
       p={p}
@@ -401,10 +394,10 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             }
           }}
           scrollEventThrottle={100}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds]}
+          extraData={[core.candidates, turn.assistant?.id, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
-            <View style={{ paddingHorizontal: 12 }}>
+            <View style={{ paddingHorizontal: 16 }}>
               {dividers[item.id] ? (
                 <Text testID="time-divider" style={[textStyle('caption', settings.fontScale), { color: p.fg3, textAlign: 'center', paddingVertical: 8 }]}>
                   {dividers[item.id]}
@@ -415,7 +408,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                 msg={item}
                 loops={loopsAnimated(motionEnv)}
                 driving={snapshot.driving}
-                confirmActive={confirmActiveOf(item)}
+                fontScale={settings.fontScale}
+                chips={chipsOf(item)}
                 uncertain={uncertainIds.includes(item.id)}
                 draft={item.id === draftUserId}
                 interrupted={interruptedIds.includes(item.id)}
@@ -478,7 +472,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       ) : null}
       <Composer
         p={p}
-        chips={composerChips}
         draft={draft}
         onDraftChange={setDraft}
         busy={busy}
@@ -496,7 +489,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
         driving={snapshot.driving}
         inputMode={composerInputMode(snapshot.identity, snapshot.driving)}
-        hideChips={splitLandscape}
         covered={sheetCoversColumn}
         onTap={onOrbTap}
       />

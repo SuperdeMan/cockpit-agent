@@ -1,7 +1,7 @@
 // 助手气泡（打磨批 A，评审 P04 / P12 / P14）。
 //  · 去头像：气泡里不再有光球（同屏可操作的光球只剩顶栏与 Composer 两颗）；
 //  · 长按 = 复制正文，两种气泡都支持，提示「已复制」；trace 不再是长按的内容；
-//  · 过程区折叠条 / 回执切换 / follow-up 链接三处的触控高度 44。
+//  · 过程区折叠条 / 回执切换 / 追问 chips（v3 P2b 起在回答末尾，替掉原来的 follow-up 链接）三处的触控高度 ≥44。
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { Modal, ScrollView, Text } from 'react-native'
@@ -14,6 +14,7 @@ import type { Msg } from '@shared/types.ts'
 import { MessageBubble } from '@/features/chat/MessageBubble'
 import { ExecutionReceipt } from '@/features/chat/ExecutionReceipt'
 import { AuroraOrb } from '@/ui/aurora'
+import { Pill } from '@/ui/Pill'
 import { paletteOf } from '@/ui/theme'
 
 void [Modal, ScrollView]
@@ -21,7 +22,7 @@ const p = paletteOf('dark', true, 'normal')
 
 function bubble(msg: Msg, over: Record<string, unknown> = {}) {
   return createElement(MessageBubble, {
-    p, msg, confirmActive: false, loops: false, driving: false,
+    p, msg, loops: false, driving: false,
     onSend: jest.fn(), ...over,
   } as never)
 }
@@ -75,16 +76,17 @@ test('P12：用户气泡也能长按复制正文', async () => {
   } finally { await act(async () => { view.unmount() }) }
 })
 
-test('P14：过程区折叠条、follow-up 链接、回执切换的触控高度 ≥44', async () => {
+test('P14：过程区折叠条、追问 chip、回执切换的触控高度 ≥44', async () => {
   const msg = {
     id: 'a', role: 'assistant', text: '好的', followUp: '还要看别的吗？',
     process: [{ phase: 'plan', label: '规划', status: 'done' }],
   } as Msg
-  const view = await mount(bubble(msg))
+  const view = await mount(bubble(msg, { chips: [{ label: '还要看别的吗？', text: '还要看别的吗？' }] }))
   try {
     const fold = view.root.findAllByProps({ testID: 'process-fold-toggle' }).find((n) => typeof n.props.onPress === 'function')!
     expect(minHeightOf(fold)).toBeGreaterThanOrEqual(44)
-    const follow = view.root.findAllByProps({ testID: 'followup-link' }).find((n) => typeof n.props.onPress === 'function')!
+    // chip 是 ui/Pill：testID 与 onPress 也落在 Pill 组件实例上，只量它的外框 Pressable
+    const follow = view.root.findAllByProps({ testID: 'followup-chip' }).find((n) => n.type !== Pill && typeof n.props.onPress === 'function')!
     expect(minHeightOf(follow)).toBeGreaterThanOrEqual(44)
   } finally { await act(async () => { view.unmount() }) }
   const receipt = await mount(createElement(ExecutionReceipt, {
@@ -129,7 +131,7 @@ test('F：error 与 uncertain 气泡给「重发」，按下回调宿主；resen
 // 打磨批 E（裁决 J1）：气泡内确认按钮删除——承诺面是唯一的确认入口（同一个待确认不许有两个入口）。
 test('E：待确认的助手气泡不再渲染气泡内确认 / 取消按钮（哪怕调用方硬塞 inlineConfirm）', async () => {
   const msg = { id: 'a', role: 'assistant', text: '要打开后备箱吗？', needConfirm: true, operationId: 'op-1' } as Msg
-  const view = await mount(bubble(msg, { confirmActive: true, inlineConfirm: true, onConfirm: jest.fn() }))
+  const view = await mount(bubble(msg, { inlineConfirm: true, onConfirm: jest.fn() }))
   try {
     expect(view.root.findAllByProps({ testID: 'confirm-accept' })).toHaveLength(0)
     expect(view.root.findAllByProps({ testID: 'confirm-cancel' })).toHaveLength(0)

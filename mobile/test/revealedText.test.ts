@@ -20,7 +20,7 @@ void [Modal, ScrollView]
 const p = paletteOf('dark', true, 'normal')
 
 function bubble(msg: Msg) {
-  return createElement(MessageBubble, { p, msg, confirmActive: false, loops: false, driving: false, onSend: jest.fn() } as never)
+  return createElement(MessageBubble, { p, msg, loops: false, driving: false, onSend: jest.fn() } as never)
 }
 const shownText = (view: ReactTestRenderer): string => {
   const node = view.root.findAllByProps({ testID: 'bubble-text' }).find((n) => n.type === Text)!

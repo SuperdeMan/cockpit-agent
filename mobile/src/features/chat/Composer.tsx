@@ -8,16 +8,14 @@
 // 「轻点到底做什么」的判据不在这里——Composer 只报告手势，ChatScreen 的 onTap 决定走免唤醒的
 // 手动唤醒还是 PTT 的 tap 会话（哪个引擎持有麦是 ChatScreen 知道的事实）。
 import { useRef, useState } from 'react'
-import { ScrollView, Text, TextInput, View, Pressable } from 'react-native'
+import { Text, TextInput, View, Pressable } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 
 import type { ComposerInputMode } from '../../core/presence/drivingMode'
-import type { FollowUpChip } from '../../core/session/followUps'
 import type { FontScalePref } from '../../core/settings/store'
 import { AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
-import { Pill } from '../../ui/Pill'
 import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET, scale } from '../../ui/tokens'
 import { composerHolding, composerPlaceholder } from './composerHint'
@@ -32,10 +30,6 @@ export const CANCEL_DY = 60
 
 export interface ComposerProps {
   p: Palette
-  /** chips 行的内容——**由宿主算**（打磨批 A，评审 P01 / P02）：无消息时空（欢迎态自己有三条推荐），
-   *  有消息时是最近一条助手回答的 follow-up + 候选集（判据 core/session/followUps.ts，与语音层同一份）。
-   *  空数组 ⇒ 整行不渲染。组件自己不再持有常驻的 8 条示例。 */
-  chips: FollowUpChip[]
   /** 有在飞轮（pending/streaming/process 任一）→ 显示打断 */
   busy: boolean
   /** 此刻该给停播键吗（判据 `core/voice/stopPlayback.ts::canStopPlayback`，AR03）：
@@ -56,9 +50,6 @@ export interface ComposerProps {
   driving?: boolean
   /** 文本输入形态（判据 drivingMode.ts::composerInputMode）：A 常驻 / B 折叠成键盘键 / C 隐藏 */
   inputMode?: ComposerInputMode
-  /** driving-landscape 下藏掉 chips 行（B5-15 缺陷 A 横屏半的 lever ②）：§6 是「chips ≤3」
-   *  不是「必须显示」，而横屏那 360dp 里 App 自己的 chrome 已经吃掉 261——语音能到达一切 */
-  hideChips?: boolean
   /** 语音层正盖在整列上（driving-landscape，B5-15 lever ②）⇒ 本组件从无障碍树里拿掉。
    *  真机 hierarchy 抓到：被盖住的 `composer-orb` 与层内 `voice-sheet-orb` **说明完全相同**
    *  （都是「小舟，开始说话」），读屏念两遍、其中一个还够不到（暗区把触摸拦住了）。
@@ -76,7 +67,7 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, draft, onDraftChange, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
+export function Composer({ p, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', covered = false, draft, onDraftChange, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
   const [localInput, setLocalInput] = useState('')
   const input = draft ?? localInput
   const setInput = onDraftChange ?? setLocalInput
@@ -181,29 +172,7 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
         backgroundColor: p.surfaceLow,
       }}
     >
-      {hideChips || !chips.length ? null : (
-      <ScrollView testID="composer-chips" horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
-        {/* 行车档 ≤3 条由宿主截（§6「chips ≤3」）；行高与 FollowUpChips 同一表达式——泊车 48 / 行车 56
-            （打磨批 A / P02：原来泊车只有 ~31dp，低于触控目标） */}
-        {/* B5-14（B4 Scanner 出账③「多个项目具有相同的说明」）：chip 的说明加前缀。
-            没有它时 chip 与同文案的用户气泡都以纯文本作说明，读屏念两遍、用户分不出哪个是可点的。
-            前缀只进 accessibilityLabel，视觉文案不变。 */}
-        {/* 2026-09-11 两档制：外框 = 目标高（48 / 56）、视觉药丸 36 / 44，与层内 FollowUpChips 同一个 Pill */}
-        {chips.map((c) => (
-          <Pill
-            key={c.text}
-            p={p}
-            testID="composer-chip"
-            tone="accent"
-            accessibilityLabel={`追问：${c.label}`}
-            driving={driving}
-            fontScale={fontScale}
-            label={c.label}
-            onPress={() => onSend(c.text)}
-          />
-        ))}
-      </ScrollView>
-      )}
+      {/* 追问 chips 行已挪进回答末尾（v3 P2b，Figma AnswerBlock；MessageBubble → FollowUpChips） */}
       <View style={{ flexDirection: 'row', gap: 10, padding: 10, alignItems: 'flex-end' }}>
         {ptt ? (
           <GestureDetector gesture={orbGesture}>
