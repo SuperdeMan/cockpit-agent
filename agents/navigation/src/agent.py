@@ -507,7 +507,12 @@ class NavigationAgent(BaseAgent):
         speech = f"{strategy_note}从{origin_name}到{dest_name}全程约{distance_km}公里"
         if dur:
             speech += f"，开车约{dur}，现在出发预计{self._fmt_clock(eta)}到"
-        speech += "。需要我导航过去吗？"
+        speech += "。"
+        # CA2-19 S4：出发前问「多远 / 多久」正是该提电量的时候——与导航同一个判断。只在从当前位置出发时说：
+        # 「从上海到杭州多远」里车现在的电量跟那段路无关
+        if not origin_text:
+            speech += self._range_advisory(distance_km, self._battery_reading(ctx, meta))
+        speech += "需要我导航过去吗？"
         card = attach({"type": "route_plan", "estimate": True,
                        "origin": origin_name, "destination": dest_name,
                        "waypoints": [], "distance_km": distance_km,
@@ -1744,8 +1749,7 @@ class NavigationAgent(BaseAgent):
         # 车辆接地 advisory（旅程 B3-2）：续航覆盖不了本程（含 15% 保留余量，与 charging
         # 同款判定）→ 主动提示补能。只加话术不加动作（advisory 不发车控/不改路线），
         # 用户接一句「沿途帮我找充电站」即进 charging 流程。电量是编排下发的车况读数（连同来源，
-        # CA2-19 S1）；拿不到就不提示。⚠ 导航 manifest 目前没声明 vehicle_state（它的能力是冻结的旧接口，
-        # 上下文范围进 ABI 指纹，改范围要先迁 v2 契约，见 CA2-19 设计 §5.3），所以线上这条提醒仍拿不到电量。
+        # CA2-19 S1；S4 起导航声明 vehicle_state，线上才真拿得到）；拿不到就不提示。
         speech += self._range_advisory(distance_km, self._battery_reading(ctx, meta))
         # R7（旅程 A2-4/B5-1⑥）：REMINDABLE_ACTIVE「即插」契约兑现——写 ETA 事件，
         # 「到之前一刻钟提醒我打电话」由 reminder 消费（事件时刻-提前量），不再反问时间。

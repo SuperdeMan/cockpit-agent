@@ -280,6 +280,23 @@ def argument_error(contract: dict, slots: dict) -> str:
         return "invalid_contract_arguments"
 
 
+def accepts_parameter(contract: dict, name: str) -> bool:
+    """Whether the receiver takes slot `name` at all (CA2-19 S4).
+
+    Legacy / missing contracts take anything (their handlers ignore unknown keys); a strict
+    contract only its declared parameters. Callers use this to drop values *they* materialised
+    from references; a literal the model wrote is never dropped here - `argument_error` rejects it.
+    A corrupt contract answers True so the dispatch check still sees and rejects it.
+    """
+    if not contract:
+        return True
+    try:
+        contract = normalize(contract)
+    except ContractError:
+        return True
+    return contract["additional_parameters"] != "reject" or name in contract["parameters"]
+
+
 def call_error(manifest, cap, meta: dict, slots: dict) -> str:
     """Final receiver check. The hash proves protocol agreement, never authorization."""
     try:

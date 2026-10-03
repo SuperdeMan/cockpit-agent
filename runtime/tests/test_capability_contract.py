@@ -73,9 +73,13 @@ def test_frozen_production_inventory_and_legacy_roundtrip():
                 strict_migrations.add((restored.agent_id, c.intent))
                 with pytest.raises(cc.ContractError):
                     cc.validate_capability(restored, c)
-    assert count == 152
+    assert count == 143
+    # 迁到严格契约的旧能力（加上下文范围要改 ABI 指纹）：道路安全（CA2-07）、导航（CA2-19 S4）
     assert strict_migrations == {("road-safety", intent) for intent in (
-        "safety.driving_advice", "safety.driver_state", "safety.weather_alert", "safety.road_condition")}
+        "safety.driving_advice", "safety.driver_state", "safety.weather_alert", "safety.road_condition")} | {
+        ("navigation", f"navigation.{name}") for name in (
+            "search_poi", "navigate_to", "estimate", "reroute", "cancel", "set_place",
+            "reverse_geocode", "locate", "poi_detail")}
     assert len(cc.migration_inventory()) == 156  # immutable historical whitelist
 
 
@@ -363,3 +367,13 @@ def test_semantic_compatibility_filters_capabilities_before_max_and_limit():
     store._embed_query_cached = embed
     result = asyncio.run(store.resolve_semantic("lookup", reader_version=0))
     assert result[0][0].manifest.agent_id == "legacy"
+
+
+def test_accepts_parameter_narrows_only_strict_contracts():
+    """CA2-19 S4：编排丢弃引用填出的槽只看这一处判据。"""
+    strict = cc.declaration(["destination"], "read", legacy=False)
+    legacy = cc.declaration(["destination"], "read")
+    assert cc.accepts_parameter(strict, "destination") and not cc.accepts_parameter(strict, "poi_id")
+    assert cc.accepts_parameter(legacy, "poi_id") and cc.accepts_parameter({}, "poi_id")
+    assert cc.accepts_parameter({"version": 2}, "poi_id")      # 坏契约留给 argument_error 拒绝
+

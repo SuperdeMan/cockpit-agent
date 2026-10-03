@@ -5,6 +5,7 @@ or merchant/payment call is issued (edge queries answer with a read-only `*.quer
 - `vehicle` (S1): battery, tire pressure, a charging plan — each in its own session.
 - `alerts` (S2): one session — a tire-warning question, an oil lamp report, then "it went off, can I keep driving".
 - `routes` (S3): a charging plan states its arrival estimate; a destination charger search claims no route change.
+- `navigation` (S4): a long trip estimate from here mentions the battery reading; a short one does not.
 Prints a verdict per turn and writes a JSON evidence file; the release SHA is checked before and after.
 """
 from __future__ import annotations
@@ -44,6 +45,10 @@ SUITES = {
     "routes": (False, (
         ("去厦门火车站路上要不要充电", lambda s: "到达时估算剩余约" in s or "没读到当前电量" in s),
         ("厦门火车站附近有充电站吗", lambda s: "充电站" in s and "已为" not in s and "加入途经" not in s),
+    )),
+    "navigation": (False, (
+        ("去厦门火车站要开多久", lambda s: "提醒一下：当前电量约" in s and "模拟车读数" in s and "估算续航" in s),
+        ("去深圳北站多远", lambda s: "公里" in s and "电量" not in s),
     )),
 }
 

@@ -15,9 +15,10 @@ capabilities:
   # 它只能掷硬币，于是 nearby 的两条 replace 正则被拉来当裁判（M5 P2 双臂裸跑坐实）。
   # 判据换成产出形态：本条**定位一个可导航的目标**，nearby.search **列多个候选让用户挑**。
   - intent: navigation.search_poi
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
         keyword:
@@ -36,7 +37,7 @@ capabilities:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -56,7 +57,7 @@ capabilities:
   - intent: navigation.navigate_to
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: state_change
       parameters:
         destination:
@@ -87,7 +88,7 @@ capabilities:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -112,9 +113,10 @@ capabilities:
   # 公里」并前往）。判据是**用户要的是数还是行程**——这两件事在能力面上必须分开，
   # 否则一个纯查询会产生不可逆的副作用（同 Q8 卡的「就近误执行」形态）。
   - intent: navigation.estimate
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
         destination:
@@ -129,7 +131,7 @@ capabilities:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -149,7 +151,7 @@ capabilities:
   - intent: navigation.reroute
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: state_change
       parameters:
         remove_waypoint:
@@ -172,7 +174,7 @@ capabilities:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -200,10 +202,10 @@ capabilities:
   - intent: navigation.cancel
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: state_change
       parameters: {}
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -222,7 +224,7 @@ capabilities:
   - intent: navigation.set_place
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: state_change
       parameters:
         place:
@@ -233,7 +235,7 @@ capabilities:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -248,9 +250,10 @@ capabilities:
     slots: [place, address]
     examples: ["把家设成上海长宁区某某小区", "我家在深圳南山区科技园", "设置公司地址为北京国贸三期", "公司在杭州西湖区某某大厦"]
   - intent: navigation.reverse_geocode
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
         lng:
@@ -265,7 +268,7 @@ capabilities:
           region: geographic
           minimum: -90
           maximum: 90
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -279,12 +282,13 @@ capabilities:
     slots: [lng, lat]
     examples: ["这个坐标是什么地方", "121.47,31.23是哪里"]
   - intent: navigation.locate
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters: {}
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -298,16 +302,17 @@ capabilities:
     slots: []
     examples: ["我在哪", "我现在在哪里", "我现在在哪", "当前位置", "我在什么地方", "这是哪里"]
   - intent: navigation.poi_detail
+    effect: read
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
         poi_id:
           type: string
           unit: ''
           region: ''
-      additional_parameters: legacy
+      additional_parameters: reject
       applicability:
         status: not_vehicle_specific
         vehicle_models: []
@@ -371,4 +376,6 @@ requires_permissions:
   - location.read
   - navigation.control
 edge_intents: []
-context_scopes: [location]   # 按需下发精确位置（最小化）
+# CA2-19 S4：vehicle_state 让低续航提醒拿到电量（读数连同来源）。上下文范围进 ABI 指纹——
+# 加范围之前 9 项能力先迁严格契约（reject），冻结清单里的旧行留作历史。
+context_scopes: [location, vehicle_state]   # 按需下发精确位置（最小化）+ 电量

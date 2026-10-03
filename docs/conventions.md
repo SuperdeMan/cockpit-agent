@@ -3081,3 +3081,12 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   `orchestrator/cloud/waypoints.merged_waypoints`，不得各写一份。途经点 dict 会原样进导航动作载荷，解释性字段（理由等）放 `data`，不放途经点里。
 - 一步自己不发导航动作，话术不说「已加入路线 / 途经」；路线确实改变由导航动作与卡片体现。
 - 估算量（到站 / 到达电量、续航）写「估算」，读不到原始读数时不估。
+
+### 9.61 旧接口改 ABI 字段先迁严格契约；引用填出的槽由编排收拾（CA2-19 S4，2026-10-04）
+
+- 冻结旧接口的能力要改进 ABI 指纹的字段（上下文范围、槽、权限等）时，先把该 Agent 的能力整体迁严格契约：`revision` 递增、
+  `additional_parameters: reject`、读能力显式 `effect: read`；冻结清单不改写，`runtime/tests/test_capability_contract.py` 的严格迁移台账同步。
+  迁之前逐项核对处理器读的槽、Agent 内部调用、编排补写、步骤构造与注册中心读取方、线上规划里出现过的槽键（清单见 CA2-19 设计 §8.1）。
+- 由引用（`slot_refs`、`${…}` 占位、`$ref.` 别名载体）填出、严格契约不收的槽，执行器在派发前丢掉，判据只有
+  `runtime/capability_contract.accepts_parameter`；模型直接写的未声明字面值不丢，交派发前的契约校验拒绝（可能带着用户说的约束）。
+- 步骤 span 不记拒绝原因：判断线上有没有因契约被拒，看规划记录里的槽键，不能拿拒绝计数当零。

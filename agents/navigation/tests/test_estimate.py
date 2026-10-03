@@ -38,6 +38,7 @@ def _agent(search_results=None, route=None):
 
 _CIVIC = POI(id="o1", name="深圳市民中心", address="福中路", lat=22.5460, lng=114.0590)
 _NORTH = POI(id="d1", name="深圳北站", address="致远中路28号", lat=22.6100, lng=114.0290)
+_XIAMEN = POI(id="x1", name="厦门火车站", address="厦禾路900号", lat=24.4680, lng=118.1170)
 
 
 def _estimate(agent, slots, raw_text, meta=None):
@@ -159,3 +160,36 @@ def test_cancel_without_active_route_is_honest_not_a_fake_ack():
     assert "没有正在进行的导航" in res.speech
     assert not res.actions
     assert "已取消" not in res.speech and "已结束" not in res.speech
+
+
+# ─── CA2-19 S4：出发前问「多远 / 多久」，续航覆盖不了就提电量（与导航同一个判断）───
+
+def _long_trip(reading=None, slots=None, raw_text="去厦门火车站要开多久"):
+    agent, _ = _agent({"厦门火车站": [_XIAMEN], "深圳北站": [_NORTH]},
+                      route={"distance_km": 600.3, "duration_min": 373})
+    ctx = make_context(context_values={"vehicle.battery": reading} if reading is not None else None)
+    return asyncio.run(run_handle(agent, "navigation.estimate", slots=slots or {"destination": "厦门火车站"},
+                                  raw_text=raw_text, ctx=ctx, meta=dict(_HERE)))
+
+
+def test_estimate_from_here_mentions_charging_when_the_reading_cannot_cover_the_trip():
+    res = _long_trip("40")
+    assert "提醒一下：当前电量约40%（模拟车读数）（估算续航约200公里）" in res.speech
+    assert res.speech.endswith("需要我导航过去吗？") and not res.actions
+
+
+def test_estimate_says_nothing_about_battery_without_a_reading_or_on_a_short_trip():
+    assert "电量" not in _long_trip().speech
+    short, _ = _agent({"深圳北站": [_NORTH]})
+    near = asyncio.run(run_handle(short, "navigation.estimate", slots={"destination": "深圳北站"},
+                                  raw_text="去深圳北站多远",
+                                  ctx=make_context(context_values={"vehicle.battery": "40"}), meta=dict(_HERE)))
+    assert "电量" not in near.speech
+
+
+def test_estimate_from_another_origin_ignores_the_current_battery():
+    """「从深圳北站到厦门多远」：车现在的电量跟那段路无关。"""
+    res = _long_trip("40", slots={"origin": "深圳北站", "destination": "厦门火车站"},
+                     raw_text="从深圳北站到厦门火车站多远")
+    assert "电量" not in res.speech
+

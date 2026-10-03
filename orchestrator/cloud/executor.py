@@ -15,6 +15,7 @@ from google.protobuf.json_format import MessageToDict
 
 from . import verify as _verify
 from runtime import effect_evidence as _ev
+from runtime.capability_contract import accepts_parameter
 from runtime import operation as _operation
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan,
                      step_call_context, step_fingerprint, step_raw_text)
@@ -677,6 +678,8 @@ class DagExecutor:
         step.meta.pop("_trusted_slot_refs", None)
         trusted: dict[str, dict[str, str]] = {}
         foreign: dict[str, str] = {}
+        # 由引用填出的槽（`${…}` 占位 / slot_refs / `$ref.` 别名载体）——它们是指针或线格式中间物，不带用户原话
+        from_refs: set[str] = set()
 
         def _record(slot_name: str, ref_path: str) -> None:
             producer = done.get(str(ref_path).split(".", 1)[0])
@@ -709,6 +712,7 @@ class DagExecutor:
             value = self._resolve_ref(match.group(1), done)
             if value is not None:
                 step.slots[slot_name] = str(value)
+                from_refs.add(slot_name)
                 _record(slot_name, match.group(1))
             else:
                 logger.warning(
@@ -730,6 +734,7 @@ class DagExecutor:
                 if (slot_name not in step.slots or
                         str(existing).strip() == str(ref_path).strip()):
                     step.slots[slot_name] = resolved
+                    from_refs.add(slot_name)
                     _record(slot_name, ref_path)
                 elif str(existing) == resolved:
                     # 确认恢复保留了已解析 slots、刻意不持久化 meta。值与当前权威
@@ -752,12 +757,24 @@ class DagExecutor:
             value = step.slots.get(alias)
             if value is not None and value != raw_value:
                 step.slots[slot_name] = str(value)
+                from_refs.update((slot_name, alias))
                 if alias in trusted:
                     trusted[slot_name] = dict(trusted[alias])
                 if alias in foreign:
                     foreign[slot_name] = foreign[alias]
             else:
                 logger.warning("slot alias %s -> %s resolved to None", slot_name, alias)
+
+        # CA2-19 S4：严格契约只收声明的参数。引用填出、接收方收不下的槽（别名载体 `poi_id`、
+        # 指向列表项的 `name` 等）在派发前丢掉——值已进了声明的槽或本来就没人收；整步因此被拒反而丢了
+        # 用户这一轮。模型直接写的未声明字面值不在此列，仍交派发前的契约校验拒绝（可能带着用户说的约束）。
+        for name in sorted(from_refs):
+            if name in step.slots and not accepts_parameter(step.capability_contract, name):
+                step.slots.pop(name)
+                trusted.pop(name, None)
+                foreign.pop(name, None)
+                logger.info("Step %s(%s): 引用填出的槽 %s 不在严格契约里，派发前丢掉",
+                            step.id, step.intent, name)
 
         self._anchor_store_from_focus(step, trusted, ctx, done.keys())
         self._hint_store_from_plan(step, done, ctx)

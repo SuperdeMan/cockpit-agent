@@ -1224,14 +1224,16 @@ def test_search_poi_auto_navigate_also_writes_episodic_trail():
 
 
 def test_range_advisory_reaches_navigation_through_the_real_projection():
-    """CA2-19 S1：电量走真实 `project_meta` 连同来源到得了导航，提醒带「模拟车读数」。
-    ⚠ 导航 manifest 现在只声明 location（冻结旧接口，改范围要先迁 v2 契约，见 CA2-19 设计 §5.3）——
-    这里按声明了 vehicle_state 的范围验证链路本身；没声明就拿不到（最后一条断言）。"""
+    """CA2-19 S1/S4：电量按导航**清单声明的范围**走真实 `project_meta`、连同来源到得了导航，提醒带「模拟车读数」。
+    S4 之前清单只声明 location，这条链路在线上是断的（最后一条断言就是修之前的样子）。"""
     import json
     import time
+    from agents._sdk.manifest import load_manifest
+    from agents.navigation.src.agent import _MANIFEST
     from runtime.context_access import project_meta
 
-    scopes = ["location", "vehicle_state"]
+    scopes = list(load_manifest(_MANIFEST).context_scopes)
+    assert "vehicle_state" in scopes
     ctx = make_context()
     now = time.time() * 1000
     raw = {"vehicle_observation": json.dumps({
@@ -1245,3 +1247,19 @@ def test_range_advisory_reaches_navigation_through_the_real_projection():
     assert "约12%（模拟车读数）" in advice and "补能" in advice
     # 没声明就拿不到（这正是修之前的样子）
     assert "vehicle_observation" not in project_meta(ctx, raw, ["location"])
+
+
+def test_navigation_capabilities_are_strict_contracts():
+    """CA2-19 S4：上下文范围进 ABI 指纹，补 vehicle_state 之前 9 项能力先迁严格契约（同道路安全先例）；
+    冻结清单里的旧行不再匹配，也不许改写。"""
+    from agents._sdk.manifest import load_manifest
+    from agents.navigation.src.agent import _MANIFEST
+    from runtime import capability_contract as cc
+
+    manifest = load_manifest(_MANIFEST)
+    cc.validate_manifest(manifest)
+    for cap in manifest.capabilities:
+        contract = cc.contract_of(cap)
+        assert contract["additional_parameters"] == "reject", cap.intent
+        assert cc.legacy_record(manifest, cap) is None, cap.intent
+        assert cap.effect == ("read" if contract["effect"] == "read" else "write"), cap.intent
