@@ -15,6 +15,7 @@ try:
 except Exception:
     aioredis = None
 
+import revision
 from pg_store import MemoryVectorStore
 
 _MOCK_CONTEXT = {
@@ -546,7 +547,56 @@ class MemoryStore:
         return self._vstore
 
     async def remember(self, items: list[dict]) -> list[str]:
-        return await (await self._vec()).remember(items)
+        """Agent 显式写记忆（Remember RPC）。CA2-15 S3a：偏好走同一套修订；事实类只去掉逐字重复。"""
+        vs = await self._vec()
+        written: list[str] = []
+        for item in items:
+            pred = item.get("predicate") or ""
+            if (item.get("kind") or "semantic") != "semantic" or not pred or not item.get("user_id"):
+                written += await vs.remember([item])
+                continue
+            occ = item.get("occupant_id") or "primary"
+            if revision.is_fact(pred):
+                from extract import predicate_class
+                same = [c for c in await vs.current_in_dimension(
+                            item["user_id"], occ, predicate_class(pred), item.get("subject") or "")
+                        if (c.get("text") or "").strip() == (item.get("text") or "").strip()]
+                if same:
+                    await self._reinforce(vs, same[0], item)
+                    written.append(same[0]["id"])
+                    continue
+                written += await vs.remember([item])
+                continue
+            written += await self._revise(vs, item["user_id"], occ, item) or []
+        return written
+
+    async def _revise(self, vs, user_id: str, occupant_id: str, cand: dict) -> list[str]:
+        """CA2-15 S3a：一个偏好维度只说一个现行的话（判据见 `revision.py`）。返回新写入的 id。"""
+        from extract import normalize_predicate, predicate_class
+        cand = dict(cand)
+        cand["predicate"] = normalize_predicate(cand.get("predicate") or "")
+        subject = str(cand.get("subject") or "").strip()
+        currents = await vs.current_in_dimension(user_id, occupant_id, predicate_class(cand["predicate"]),
+                                                 subject)
+        text = (cand.get("text") or "").strip()
+        if revision.is_multi_valued(cand["predicate"]):
+            same = [c for c in currents if revision.equivalent(c.get("text") or "", text)]
+            if same:
+                await self._reinforce(vs, revision.preference_order(same)[0], cand)
+                return []
+            return await vs.remember([cand])
+        if currents and (currents[0].get("text") or "").strip() == text:
+            await self._reinforce(vs, currents[0], cand)      # 同一句话再说一遍：加强，不新增
+            return []
+        if not revision.explicit(cand) and any(revision.explicit(c) for c in currents):
+            return []                                         # 推断不替换显式
+        victims = currents
+        if victims:
+            cand = self._inherit_evidence(victims[0], cand)
+        ids = await vs.remember([cand])
+        for old in victims:
+            await vs.supersede(old["id"], ids[0])
+        return ids
 
     async def recall(self, user_id: str, occupant_id: str = "", query: str = "",
                      scopes: list[str] | None = None, kinds: list[str] | None = None,
@@ -759,6 +809,9 @@ class MemoryStore:
             if c.get("_relation"):
                 continue
             pred = c.get("predicate") or ""
+            if c.get("kind") == "semantic" and pred and not revision.is_fact(pred):
+                written += await self._revise(vs, user_id, occupant_id, c)
+                continue
             if c.get("kind") == "semantic" and pred:
                 # 冲突查找按谓词等价类（B3-3 M2）：历史条目可能带 LLM 自由造的别名
                 # （hvac.temperature vs climate.temperature），精确匹配失手会让新旧偏好

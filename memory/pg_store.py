@@ -21,6 +21,7 @@ import time
 import uuid
 
 import relation
+import revision
 import voiceprint as vp
 import weighting
 
@@ -412,6 +413,28 @@ class MemoryVectorStore:
                 return _strip(v)
         return None
 
+    async def current_in_dimension(self, user_id: str, occupant_id: str,
+                                   predicates, subject: str = "") -> list[dict]:
+        """CA2-15 S3a：一个维度（谓词等价类 + subject）的**全部**现行条目，较新的在前。"""
+        preds = [p for p in (predicates or ()) if p]
+        if not preds:
+            return []
+        occ = occupant_id or "primary"
+        subj = (subject or "").strip()
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM memory_item
+                    WHERE user_id=$1 AND occupant_id=$2 AND predicate = ANY($3::text[])
+                      AND COALESCE(subject,'')=$4 AND superseded_by IS NULL
+                    ORDER BY valid_from DESC
+                """, user_id, occ, preds, subj)
+            return [_row_to_item(r) for r in rows]
+        found = [_strip(v) for v in self._mem.values()
+                 if v["user_id"] == user_id and v["occupant_id"] == occ and v["predicate"] in preds
+                 and not v["superseded_by"] and str(v.get("subject") or "") == subj]
+        return sorted(found, key=lambda v: v.get("valid_from") or 0, reverse=True)
+
     # ── 召回 ───────────────────────────────────────────────
     async def recall(self, user_id: str, occupant_id: str = "", query: str = "",
                      scopes: list[str] | None = None, kinds: list[str] | None = None,
@@ -494,6 +517,10 @@ class MemoryVectorStore:
                 continue
             results.append((it, score))
         results.sort(key=lambda x: (x[1], x[0]["valid_from"]), reverse=True)
+        if not flt["include_superseded"]:
+            # CA2-15 S3a：一个偏好维度只说一个现行的话（存量重复不迁移数据也立即只剩一条）；在截取 top_k 之前折叠，
+            # 否则同一件事的几种说法会占满名额。
+            results = revision.fold(results)
         top = results[:flt["top_k"]]
         for it, _ in top:
             it["last_used_at"] = now

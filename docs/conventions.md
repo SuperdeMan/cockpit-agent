@@ -2996,3 +2996,12 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 投影由云端按声音证明算出（只有 HMI 声明免唤醒语音没认出时才投影），经服务端自有 meta `memory_projection` 下发；SDK 读记忆一律带上，
   `recall_read` 不允许调用方改写；客户端 prefs 与 step meta 的同名键剔除。
 - 同一判据下的轮次带 `speaker_unverified`：照常进会话历史（归 `primary`），不触发抽取，也不进抽取窗口。
+
+### 9.52 偏好修订：一个维度只说一个现行的话（CA2-15 S3a，2026-10-03）
+
+- 维度 = 谓词等价类（`memory/extract.py::_PRED_CANON`）+ `subject`。基数声明只有一份，紧挨等价表：`MULTI_VALUED`（菜系、不想再去的店）、
+  `FACT_PREFIXES`（人物 / 地点 / 身份 / 健康 / 习惯 / routine / relation）；其余谓词（含 LLM 自造的）按单值。
+- 单值：新的显式陈述替换维度内**全部**现行条目；已有显式条目时推断不写入；读取时只给一条（显式优先、较新优先）。
+- 多值：近似复述（字面二元组 Dice ≥ 0.75，`memory/revision.py::equivalent`）按等价加强、不新增；读取时同义只留一条。
+- 事实类：写入维持原规则（巩固替换最新一条，Agent 写入只去逐字重复），读取只合并逐字重复。
+- 巩固与 Agent `remember` 走同一套修订；读取折叠在 `pg_store._score` 截取 top_k 之前，历史视图（`include_superseded`）不折叠。

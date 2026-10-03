@@ -38,6 +38,7 @@ JV08 仅对通过原抽取/OwnerKey/隐私过滤的候选做异步 review，不�
 | `ResolvePersonPlace` | 人称 → 常去地一跳解析（`family` 边找实体 → `place_of ∪ works_at ∪ lives_at` 找地点）。**查不到或有歧义一律返回 not found，调用方须诚实追问**——导航到错地方比查不到更糟。⚠ **匿名占位与具名是同一个人**（2026-08-20）：`女儿--family-->女儿` 是「无名的人」的表示法，用户后来说「我女儿叫小雨」再存 `小雨--family-->女儿` ⇒ 两个 subject 指向同一个人，旧判据数成两个人判歧义、**一跳解析对该称谓永久失效**。现按「占位不算独立的人、**具名主体 ≥2 才是真歧义**」分组，地点在合并后的实体上取并集；**「地点必须唯一否则返回 not found」那道闸没动**——放宽识别不等于放宽授权 |
 | `ForgetUser` / `ExportUser` | 合规：被遗忘权（硬删）/ 数据导出 |
 | `GetMemoryEpoch` | owner 代际（CA2-15 S1b）：写入方在读记忆之前取一次，`AppendTurn` / `Remember` / `UpsertProfile` 原样带回 `memory_epoch` |
+| 偏好修订 | CA2-15 S3a：一个维度（谓词等价类 + subject）只说一个现行的话——单值维度新的显式陈述替换全部现行条目、推断不替换显式；多值维度（`extract.MULTI_VALUED`）复述按等价加强；事实类只去逐字重复；召回在截取 top_k 前折叠存量重复（`revision.py`） |
 | 读取投影 | CA2-15 S2：`GetContext` / `Recall` / `ResolvePersonPlace` / `QueryRelations` 的 `projection="normal_only"` ⇒ 只给普通偏好（`runtime/memory_projection.py`，定向读与召回同一判据），人称地点与关系为空；`AppendTurn.speaker_unverified` 的轮次进会话、不进抽取 |
 
 ## 存储与 embedding

@@ -85,6 +85,13 @@ _PRED_CANON: dict[str, tuple[str, ...]] = {
 }
 _PRED_ALIAS = {a: canon for canon, aliases in _PRED_CANON.items() for a in aliases}
 
+# CA2-15 S3a：维度的基数（`memory/revision.py` 消费）。一个维度 = 谓词等价类 + subject。
+# 多值维度：不同的值并存（喜欢的菜系、不想再去的店），近似复述按等价加强。
+MULTI_VALUED = frozenset({"taste.cuisine", "taste.dislike_place"})
+# 事实类：关于人 / 地点 / 身份的事实可以有好几条，读取时只合并逐字重复，写入维持原有规则。
+FACT_PREFIXES = ("person.", "place.", "identity.", "health.", "habit.", "routine.", "relation.")
+# 其余谓词（含 LLM 自造、表里没有的）按单值：一个维度只说一个现行的话，新的显式陈述胜出。
+
 
 def normalize_predicate(pred: str) -> str:
     """已知别名 → canonical；未知原样返回。"""
