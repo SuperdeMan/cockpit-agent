@@ -30,7 +30,7 @@ import { Pill } from '../../ui/Pill'
 import type { Palette } from '../../ui/theme'
 import { TARGET } from '../../ui/tokens'
 import { isPlaceholderOrderId, orderStatusLabel } from '../../core/cards/cardMeta'
-import { CardButtons, CardShell, Chip, KV, ProvBadge, cardText, type SendFn } from './parts'
+import { Badge, CardButtons, CardShell, Chip, KV, ProvBadge, cardText, type SendFn } from './parts'
 
  
 
@@ -64,6 +64,23 @@ function DemoBadge({ p, card }: { p: Palette; card: any }) {
   return <Chip p={p} tone="amber" text={card.demo_label || '演示商户'} />
 }
 
+/** 共享服务账号（CA2-17 S1，`ab576883`）：桥按 servers.yaml 的 `account: service` 给麦当劳 / 瑞幸的商户卡统一打
+ *  `account_label`（保留键，商户 JSON 伪造不了）；前端原样显示，不自己判断。与 HMI 同一位置：卡头标题行 */
+function AccountBadge({ p, card }: { p: Palette; card: any }) {
+  const label = typeof card?.account_label === 'string' ? card.account_label.trim() : ''
+  return label ? <Badge p={p} tone="neutral" text={label} /> : null
+}
+
+/** 卡头右槽：共享账号角标 + 数据真实性角标 */
+function HeadRight({ p, card }: { p: Palette; card: any }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <AccountBadge p={p} card={card} />
+      <ProvBadge p={p} prov={card?._prov} />
+    </View>
+  )
+}
+
 /** 品牌胶囊 + 标题 + 角标的公共头 */
 function MerchantHead({
   p,
@@ -81,6 +98,7 @@ function MerchantHead({
       <Chip p={p} tone="accent" text={brand} />
       <Text style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '700' }}>{title}</Text>
       <DemoBadge p={p} card={card} />
+      <AccountBadge p={p} card={card} />
       <View style={{ flex: 1 }} />
       <ProvBadge p={p} prov={card?._prov} />
     </View>
@@ -200,7 +218,7 @@ export function PaymentQr({ p, card, onSend }: { p: Palette; card: any; onSend: 
   }
 
   return (
-    <CardShell p={p} icon="square" title={presentation.title} right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="square" title={presentation.title} right={<HeadRight p={p} card={card} />}>
       <Text style={{ color: p.fg1, fontSize: p.font(20), fontWeight: '800' }}>{card.amount}</Text>
 
       {svg ? (
@@ -495,7 +513,7 @@ export function MerchantCheckout({ p, card, onSend }: { p: Palette; card: any; o
       : centsLabel(card.discount_cents)
 
   return (
-    <CardShell p={p} icon="dining" title={title} right={<ProvBadge p={p} prov={card._prov} />}>
+    <CardShell p={p} icon="dining" title={title} right={<HeadRight p={p} card={card} />}>
       {isChoices ? (
         <View style={{ gap: 8 }}>
           {typeof card.total === 'number' && card.total > optionButtons.length ? (

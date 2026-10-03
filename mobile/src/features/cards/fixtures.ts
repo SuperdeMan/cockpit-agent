@@ -335,6 +335,8 @@ export function cardFixtures(): Fixture[] {
     label: 'merchant_checkout（order 态 · 已创建未支付）',
     card: {
       type: 'merchant_checkout', stage: 'order', brand: '瑞幸',
+      // CA2-17 S1：瑞幸 / 麦当劳是车上共享的商户服务账号，桥统一打标
+      account: 'service', account_label: '共享商户账号',
       store_name: '瑞幸咖啡(富通城三期店)', order_id: 'LK20260827000456',
       status: 'unpaid', fulfillment: '到店自提',
       items: [{ name: '生椰拿铁', quantity: 1, specs: '大杯 / 少冰' }],
