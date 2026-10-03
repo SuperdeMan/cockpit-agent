@@ -2,6 +2,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { Stack } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useEffect } from 'react'
+import { StatusBar } from 'react-native'
 import { useStore } from 'zustand'
 
 import { hydrateSettings, settingsStore } from '@/core/settings/store'
@@ -33,6 +34,9 @@ export default function RootLayout() {
     // RNGH 的 `GestureDetector`（B2 语音层下拉收起）在 Android 上必须在这个根容器之内，
     // 而 expo-router 不包根、App 此前也没有任何 RNGH 手势 ⇒ B2 T3 在这里补上（零依赖、不重建）
     <GestureHandlerRootView style={{ flex: 1 }}>
+      {/* 状态栏图标跟 App 主题走，不跟系统（app.config 的 userInterfaceStyle=automatic 只认系统）：
+          系统深色而 App 选浅色时，白色图标压在浅底上读不出（v3 P2 真机浅色轮） */}
+      <StatusBar barStyle={p.dark ? 'light-content' : 'dark-content'} />
       <AssistantProvider>
       <AssistantFrame>
       <CrossPageVoiceLayer>

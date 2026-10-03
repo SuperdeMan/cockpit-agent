@@ -106,9 +106,22 @@ function Commitments(props: FocusDockProps & {
   const expanded = props.expanded ?? localExpanded
   const setExpanded = props.onExpandedChange ?? setLocalExpanded
   const { p, fontScale, snapshot, pinned } = props
+  const h = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
   return (
     <>
-      <CommitmentCard {...props} item={pinned.item} others={pinned.others} onOthers={() => setExpanded(true)} />
+      <CommitmentCard {...props} item={pinned.item} />
+      {pinned.others > 0 ? (
+        // Figma D-1：「另有 N 个待处理」在卡片外、下方靠右，不撑高钉住的那张卡
+        <Pressable
+          testID="dock-others"
+          onPress={() => setExpanded(true)}
+          accessibilityRole="button"
+          style={{ minHeight: h, flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', paddingHorizontal: 4 }}
+        >
+          <Text style={[textStyle('caption', fontScale), { color: p.fg3 }]}>另有 {pinned.others} 个待处理{iconRuntimeAvailable() ? '' : ' ›'}</Text>
+          {iconRuntimeAvailable() ? <Icon name="chevron-right" size={14} color={p.fg3} /> : null}
+        </Pressable>
+      ) : null}
       {expanded ? (
         <Modal transparent animationType="fade" onRequestClose={() => setExpanded(false)}>
           <SafeAreaView edges={['top']} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: p.scrim }}>
@@ -124,7 +137,7 @@ function Commitments(props: FocusDockProps & {
               >
                 <ScrollView testID="dock-list" contentContainerStyle={{ gap: 10, paddingBottom: 8 }}>
                   {snapshot.commitment.map((item) => (
-                    <CommitmentCard {...props} key={`${item.kind}:${item.id}`} item={item} others={0} testIdPrefix={`dock-list-${item.id}`} />
+                    <CommitmentCard {...props} key={`${item.kind}:${item.id}`} item={item} testIdPrefix={`dock-list-${item.id}`} />
                   ))}
                 </ScrollView>
               </SheetPanel>
@@ -141,14 +154,12 @@ function CommitmentCard({
   fontScale,
   snapshot,
   item,
-  others,
   solid,
   onConfirm,
   onSlotReply,
   onCancelTurn,
-  onOthers,
   testIdPrefix = 'dock',
-}: FocusDockProps & { item: DockItem; others: number; solid: string; onOthers?(): void; testIdPrefix?: string }) {
+}: FocusDockProps & { item: DockItem; solid: string; testIdPrefix?: string }) {
   // **时钟只有一个**：`usePresence` 已经在每秒 tick，`snapshot.now` 是那一份的读数。
   // 这里曾经自己起过一份 `setInterval`，而它在生产路径上是冻的——`derivePresence` 每秒现造
   // 新的 `DockItem`，`useEffect(…, [item])` 依赖的是对象引用 ⇒ 每秒 cleanup + 重建，本地
@@ -331,12 +342,6 @@ function CommitmentCard({
           )}
         </View>
       )}
-      {others > 0 ? (
-        <Pressable testID="dock-others" onPress={onOthers} accessibilityRole="button" style={{ minHeight: h, flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end' }}>
-          <Text style={[textStyle('caption', fontScale), { color: p.fg3 }]}>另有 {others} 个待处理{iconRuntimeAvailable() ? '' : ' ›'}</Text>
-          {iconRuntimeAvailable() ? <Icon name="chevron-right" size={14} color={p.fg3} /> : null}
-        </Pressable>
-      ) : null}
     </View>
   )
 }

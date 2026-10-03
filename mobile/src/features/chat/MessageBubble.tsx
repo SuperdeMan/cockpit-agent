@@ -237,8 +237,9 @@ export function MessageBubble({ p, msg, uncertain, draft, interrupted, s2s, visi
         <ProcessFold p={p} msg={msg} driving={driving} fontScale={fontScale} />
         {msg.rejected ? <Text style={[caption, { color: p.fg3 }]}>已忽略疑似环境人声（点错了可重说一遍）</Text> : null}
         {msg.error ? (
-          // 出错：警示图标 + 红字原话 + 重发，同一行（Figma AnswerStatus · Error）
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          // 出错：警示图标 + 红字原话 + 重发，同一行（Figma AnswerStatus · Error）。不折行容器：长原话在中间一栏
+          // 自己换行，图标与重发键留在两侧（真机 360dp 上 flexWrap 会让图标独占一行、键再掉一行）
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {icons ? <Icon name="warning" size={16} color={p.red} /> : null}
             {msg.text ? (
               <Text testID="bubble-text" style={{ ...textStyle('bodyM', fontScale), color: p.red, flexShrink: 1 }}>
@@ -256,8 +257,8 @@ export function MessageBubble({ p, msg, uncertain, draft, interrupted, s2s, visi
         ) : null}
         {uncertain && !msg.error ? (
           // 断网未收完：正文原样在上，这一行说明 + 重发（Figma AnswerStatus · LinkLost）
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Text testID="bubble-link-lost" style={[caption, { color: p.fg3 }]}>网络断开，回答没有收完</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text testID="bubble-link-lost" style={[caption, { color: p.fg3, flexShrink: 1 }]}>网络断开，回答没有收完</Text>
             {resend}
           </View>
         ) : null}
