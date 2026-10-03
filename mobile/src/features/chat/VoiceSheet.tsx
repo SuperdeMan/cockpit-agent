@@ -4,7 +4,8 @@
 // 转写读当前用户气泡、回答读当前助手气泡、卡片读 final.ui_card；收起、切后台、折叠展开都不会丢，
 // 因为根本没有「等收起再写」这一步。升不升起、升多高由 derivePresence 定（`snapshot.input` /
 // `snapshot.sheetDetent`），这里只渲染与转发手势。
-// 材质：外壳 G1（Glass）；零新依赖——手势用随 expo-router 在场的 react-native-gesture-handler
+// 材质（Android Visual v3 / D7，Figma VoiceSheet）：顶角 28 的实色 surfaceHigh 壳，真模糊在场时 BlurView + sheetTint；
+// 三级投影；背后记录盖统一 scrim。零新依赖——手势用随 expo-router 在场的 react-native-gesture-handler
 // （PackageList.java:73 已注册），高度用 reanimated。
 // 性能纪律（方案 §11.4）：层开着时它的 88dp 大球是**唯一**跑循环动画的光球，Composer 主球转静态。
 //
@@ -41,12 +42,14 @@ import { CardRenderer } from '@/features/cards/CardRenderer'
 import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 
 import { FollowUpChips } from './FollowUpChips'
+import { ORB_A11Y_ACTIONS, orbTap, useHoldToTalk } from './useHoldToTalk'
+import type { PttHandle } from './usePtt'
 import { useRevealedText } from './useRevealedText'
-import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
+import { AuroraOrb, EdgeGlow, StreamCursor, ThinkDots } from '@/ui/aurora'
 import { ORB_A11Y } from '@/ui/aurora/AuroraOrb'
 import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 import { SHEET_BOTTOM_FADE_DP, sheetHeightDp, sheetOrbDp } from '@/ui/layout/sheetHeight'
-import { GLASS, RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import { RADIUS, TARGET, scale, textStyle } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
 /** 层底缘渐隐高度：判据搬到了 `ui/layout/sheetHeight.ts`（它是层高下限的一项），这里只转出口 */
@@ -87,20 +90,20 @@ export interface VoiceSheetProps {
   /** 只停播（AR03 / 评审 R06）：停当前出声，不取消在飞请求、不开麦 */
   onStopPlayback?(): void
   onCollapse(): void
-  /** 轻点层内大球 = 开始说话（§5.1.1「轻点始终能说」）——宿主只在 Composer 光球够不到时给：
-   *  driving-landscape 下层覆盖整列、Composer 的光球被盖住（B5-15）；欢迎态 Composer 本来就无球、
-   *  欢迎页大球又在层的暗区下面（v3 P2c）。给了就画成按钮，不给就是纯展示 */
+  /** 轻点层内大球（§5.1.1「轻点始终能说」）。v3 一屏一球（P3b，Figma 05 / 08）：层开着时 Composer 无球，
+   *  层内大球就是麦克风——轻点 / 按住说话 / 上滑取消与 Composer 光球同一份契约（useHoldToTalk）。给了就是按钮 */
   onOrbTap?: () => void
+  /** 语音输入把手（按住说话用）；null / 缺省 = 只有轻点 */
+  ptt?: PttHandle | null
   onSend(text: string): void
 }
 
-/** 层壳底（第 3 批附加项①，**§5.11 G1 的 tint 落地，不是新裁决**）：`Glass` 的 `glassBg` 在暗色下
- *  只有 5.6%（那是**卡壳**用的），语音层套上它之后记录里的气泡会透过层与层内文字重叠、两边都难读
- *  （第 2 批真机 `b2-03-capsule-attention.png`）。这里在 Glass 内垫一层 `p.bg` 同色系实色，
- *  不透明度取 G1 的 `GLASS.frosted.tint`；Glass 自己的白色薄膜与光照边框仍叠在它上面。
- *  方案 §5.2「记录变暗 40%、**仍可见**」保留——身后暗区一字未动。 */
-function shellTint(bg: string, alpha: number): string {
-  const n = parseInt(bg.replace('#', ''), 16)
+/** 同一颜色换不透明度（`#RRGGBB` 或 `rgba(r,g,b,a)`）：底缘 / 顶缘渐隐的起点要与壳同一 rgb、alpha 0——
+ *  用 `transparent`（黑色 alpha 0）在浅色壳上会先经过一段灰。 */
+function withAlpha(color: string, alpha: number): string {
+  const m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
+  if (m) return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`
+  const n = parseInt(color.replace('#', ''), 16)
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
 }
 /** 收起动画时长（ms） */
@@ -244,11 +247,12 @@ export function VoiceSheet(props: VoiceSheetProps) {
   // 回答区匀速上屏（2026-09-18，判据 core/session/streamReveal.ts）：与记录列表的助手气泡同一份 hook。
   // 层升起时已流出的部分直出、之后长出来的按节拍追。hook 必须在下面的早返回之前（rules of hooks）
   const shownAnswer = useRevealedText(turn.assistant?.id ?? '', turn.assistant?.text ?? '')
+  // 层内大球的按住说话（与 Composer 光球同一份实现；行车档禁用上滑取消在 useHoldToTalk 里）。hook 也必须在早返回之前
+  const makeHold = useHoldToTalk(props.ptt ?? null, driving)
   if (!mounted) return null
 
   const user = turn.user
   const assistant = turn.assistant
-  const body = scale(TYPE.body, 'text', fontScale)
   // B4-11 §6「目标 ≥56dp」：层内按钮 / chips 行车 56、泊车 48。
   // B5-12 之后层内唯一的目标演员是顶缘把手带（底栏撤了），它照旧用这个值。
   const targetBtn = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
@@ -264,32 +268,41 @@ export function VoiceSheet(props: VoiceSheetProps) {
         : snapshot.capsule?.tone === 'accent'
           ? p.accent
           : p.fg2
-  // 壳底色只算一次：壳本身与底缘渐隐遮罩同源（solid=实色 p.bg；真模糊=更薄的 tint；否则 G1 tint）。
+  // 壳底色只算一次：壳本身与底缘渐隐遮罩同源。v3（D7，Figma VoiceSheet Material）：
+  // Blur = BlurView + sheetTint（未行车、未开减少透明度、非省电、BlurTargetView 就绪）；其余一律 Solid = surfaceHigh 实色。
   // 行车档由 ChatScreen 传 `solid`（打磨批 A / P08 / V3）：G0 实色，记录不再透过层与层内文字叠字。
   const blurred = !!props.blurTarget && !props.solid
-  const shellColor = props.solid ? p.bg : shellTint(p.bg, blurred ? GLASS.frosted.tintOverBlur : GLASS.frosted.tint)
-  // 渐隐的起点用同一 rgb、alpha 0——用 `transparent`（黑色 alpha 0）在浅色壳上会先经过一段灰
-  const fadeFrom = shellTint(p.bg, 0)
-  const answerSize = scale(driving ? TYPE.h2 : TYPE.body + 1, 'text', fontScale)
+  const shellColor = blurred ? p.sheetTint : p.surfaceHigh
+  const fadeFrom = withAlpha(shellColor, 0)
+  // 回答字阶 voiceAnswer：泊车 17 / 26，行车 20 / 30（层高下限 sheetHeight.ts 读同一份 token）
+  const answerStyle = textStyle('voiceAnswer', fontScale, driving)
 
   // ── 固定头区：大球 + 胶囊（不进滚动区）──
   // 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内。行车档 120dp（§6），泊车 88。
-  // B5-15：split 时层覆盖整列 ⇒ Composer 的光球被盖住，大球接替「轻点即说」（§5.1.1「轻点始终能说」；行车条款：只轻点，无长按上滑）。
+  // B5-15 起 split 时大球接替「轻点即说」；v3 P3b 起层开着一律由它当麦克风（Composer 无球），按住说话也在它身上
+  // （行车条款：上滑取消禁用，按住—松开照旧；整层下拉收起的 Pan 在 12dp 位移才激活，长按先成立就归按住说话）。
   const header = (
     <View
       testID="voice-sheet-header"
       style={props.split ? { width: '40%', gap: GAP, alignItems: 'center' } : { paddingTop: PAD, paddingHorizontal: PAD, gap: GAP, alignItems: 'center' }}
     >
       {props.onOrbTap ? (
-        <Pressable
-          testID="voice-sheet-orb"
-          accessibilityRole="button"
-          accessibilityLabel={`${ORB_A11Y[snapshot.primary]}，开始说话`}
-          onPress={props.onOrbTap}
-          style={{ width: orbDp, height: orbDp, borderRadius: orbDp / 2, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <AuroraOrb size={orbDp} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
-        </Pressable>
+        <GestureDetector gesture={Gesture.Exclusive(makeHold(), orbTap(props.onOrbTap))}>
+          <View
+            testID="voice-sheet-orb"
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={props.ptt?.state === 'recording' ? '小舟，结束并发送' : `${ORB_A11Y[snapshot.primary]}，开始说话`}
+            accessibilityHint={props.ptt ? '轻点开始说话，说完自动发送；长按可按住说话，上滑取消' : undefined}
+            accessibilityActions={ORB_A11Y_ACTIONS}
+            onAccessibilityAction={(e) => {
+              if (e.nativeEvent.actionName === 'activate') props.onOrbTap?.()
+            }}
+            style={{ width: orbDp, height: orbDp, borderRadius: orbDp / 2, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <AuroraOrb size={orbDp} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
+          </View>
+        </GestureDetector>
       ) : (
         <AuroraOrb size={orbDp} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
       )}
@@ -299,7 +312,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
           {snapshot.capsule?.live ? (
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
           ) : null}
-          <Text style={{ color: capsuleColor, fontSize: body }}>{capsuleText}</Text>
+          <Text style={[textStyle('labelL', fontScale), { color: capsuleColor }]}>{capsuleText}</Text>
         </View>
       ) : null}
     </View>
@@ -315,15 +328,18 @@ export function VoiceSheet(props: VoiceSheetProps) {
         <Text
           testID="voice-sheet-transcript"
           accessibilityLiveRegion="polite"
-          style={{
-            color: p.fg1,
-            fontSize: scale(20, 'text', fontScale),
-            lineHeight: scale(28, 'line', fontScale),
-            textAlign: props.split ? 'left' : 'center',
-            alignSelf: 'stretch',
-          }}
+          // v3（Figma VoiceSheet/Body）：识别中的草稿 = transcript 20 / 28 主色、竖屏居中（跟着说话长）；
+          // 定稿后退成上下文 = bodyM 次级色、左对齐，把视线让给下面的回答
+          style={[
+            user.id === props.draftUserId ? textStyle('transcript', fontScale) : textStyle('bodyM', fontScale),
+            {
+              color: user.id === props.draftUserId ? p.fg1 : p.fg2,
+              textAlign: user.id === props.draftUserId && !props.split ? 'center' : 'left',
+              alignSelf: 'stretch',
+            },
+          ]}
         >
-          {props.visionIds.includes(user.id) ? (iconRuntimeAvailable() ? <Icon name="camera" size={18} color={p.fg3} /> : '看图 ') : null}
+          {props.visionIds.includes(user.id) ? (iconRuntimeAvailable() ? <Icon name="camera" size={20} color={p.fg3} /> : '看图 ') : null}
           {props.visionIds.includes(user.id) ? ' ' : ''}
           {user.text}
           {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
@@ -335,19 +351,16 @@ export function VoiceSheet(props: VoiceSheetProps) {
         <Text
           testID="voice-sheet-answer"
           accessibilityLiveRegion="polite"
-          style={{
-            color: assistant.error ? p.red : p.fg1,
-            fontSize: answerSize,
-            lineHeight: scale(driving ? 28 : 24, 'line', fontScale),
-            alignSelf: 'stretch',
-          }}
+          style={[answerStyle, { color: assistant.error ? p.red : p.fg1, alignSelf: 'stretch' }]}
         >
           {shownAnswer}
-          {assistant.streaming || shownAnswer.length < assistant.text.length ? <StreamCursor h={answerSize} animated={props.motion.loops} /> : null}
+          {assistant.streaming || shownAnswer.length < assistant.text.length ? (
+            <StreamCursor h={Number(answerStyle.fontSize)} animated={props.motion.loops} />
+          ) : null}
         </Text>
       ) : null}
       {assistant && props.interruptedIds.includes(assistant.id) ? (
-        <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text>
+        <Text style={[textStyle('caption', fontScale), { color: p.fg3 }]}>已打断</Text>
       ) : null}
       {/* follow-up chips（方案 §5.2 图）：答完了才给——流式/思考中给等于催人打断自己。
           行车档 ≤3 条、行高 56（§6） */}
@@ -386,7 +399,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
           contentContainerStyle={
             props.split
               ? { paddingBottom: PAD + SHEET_BOTTOM_FADE_DP, gap: GAP, alignItems: 'stretch' }
-              : { paddingTop: GAP, paddingHorizontal: PAD, paddingBottom: PAD + SHEET_BOTTOM_FADE_DP, gap: GAP, alignItems: 'center' }
+              : { paddingTop: GAP, paddingHorizontal: 20, paddingBottom: PAD + SHEET_BOTTOM_FADE_DP, gap: GAP, alignItems: 'stretch' }
           }
           keyboardShouldPersistTaps="handled"
           onScroll={(e) => {
@@ -439,9 +452,8 @@ export function VoiceSheet(props: VoiceSheetProps) {
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
       {/* overflow hidden：升起 / 收起时层从记录区底缘之外滑入滑出，不许画到 Composer 上 */}
       {/* 记录变暗、仍可见（§5.2）：点暗区 = 收起。
-          40% → 60% 是第 3 批附加项①授权的升级档：58% 的壳底之后记录仍以未压暗的 ~45% 强度
-          透过来（真机同帧两条同类文字带：层外幅度 41.9 / 层内 18.8），层内答案与记录里的
-          同一段话叠在一起两边都难读。60% 之后透出降到 ~30%。「仍可见」保留 */}
+          40% → 60% 是第 3 批附加项①授权的升级档（玻璃壳底让记录透过来与层内文字叠字）；
+          v3 起壳是实色 / 真模糊，暗区统一取 Palette.scrim（深色 60%、浅色 40% 墨色）。「仍可见」保留 */}
       {/* ⚠ B5-12 真机抓到：暗区原来也叫「收起语音层」，与新的把手带**说明重复**——读屏念两遍
           （B4 Scanner 出账③「多个项目具有相同的说明」的同一形态，只是这次是本批自己造的）。
           暗区从无障碍树里拿掉：同一个动作读屏侧已由把手带提供（role=button + hint），
@@ -450,19 +462,20 @@ export function VoiceSheet(props: VoiceSheetProps) {
         importantForAccessibility="no-hide-descendants"
         accessibilityElementsHidden
         onPress={props.onCollapse}
-        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }}
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: p.scrim }}
       />
       <Animated.View testID="voice-sheet" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, sheetStyle]}>
         {/* 整层 Pan 挂在这一层：把手带、通知条、头区、滚动区都在它之内（2026-09-11） */}
         <GestureDetector gesture={pan}>
-        <View ref={dragRef} testID="voice-sheet-drag" style={{ flex: 1 }}>
-        <Glass
-          p={p}
-          r={RADIUS['2xl']}
-          style={{ flex: 1, overflow: 'hidden', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}
+        <View
+          ref={dragRef}
+          testID="voice-sheet-drag"
+          // v3：顶角 28、三级投影挂在外层（内层 overflow hidden 会把投影一起裁掉）
+          style={{ flex: 1, borderTopLeftRadius: RADIUS['3xl'], borderTopRightRadius: RADIUS['3xl'], boxShadow: p.elev3 }}
         >
-          {/* 壳底（§5.11 G1 frosted）：真模糊在场 = BlurView + 更薄的 tint；否则 = B2 附加①的 tint（.58）。
-              同屏只有这一个 BlurView（§5.11 禁「同屏多个动态 Blur」）——顶栏与舞台压在静态深空底上，糊了没收益 */}
+        <View style={{ flex: 1, overflow: 'hidden', borderTopLeftRadius: RADIUS['3xl'], borderTopRightRadius: RADIUS['3xl'] }}>
+          {/* 壳底：真模糊在场 = BlurView + sheetTint；否则 = surfaceHigh 实色。
+              同屏只有这一个 BlurView（§5.11 禁「同屏多个动态 Blur」） */}
           {blurred ? (
             <>
               <BlurView
@@ -502,7 +515,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
               onPress={props.onCollapse}
               style={{ minHeight: targetBtn, alignItems: 'center', justifyContent: 'center' }}
             >
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2 }} />
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: p.lineStrong }} />
             </Pressable>
             {/* 层内停止键（AR03 / 评审 R06 + R09 横屏）：**只在真的有声音时挂载**。
                 driving-landscape 下层覆盖整个记录区 + Composer，合一键够不到 ⇒ 不给这一枚就只能
@@ -518,18 +531,16 @@ export function VoiceSheet(props: VoiceSheetProps) {
                 onPress={props.onStopPlayback}
                 style={{
                   position: 'absolute',
-                  right: 8,
+                  right: 0,
                   top: 0,
                   bottom: 0,
                   minWidth: targetBtn,
-                  paddingHorizontal: 10,
+                  paddingHorizontal: 16,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <Text style={{ color: p.amber, fontSize: scale(TYPE.body - 1, 'text', fontScale), fontWeight: '600' }}>
-                  停止播报
-                </Text>
+                <Text style={[textStyle('labelL', fontScale), { color: p.amber }]}>停止播报</Text>
               </Pressable>
             ) : null}
           </View>
@@ -537,9 +548,10 @@ export function VoiceSheet(props: VoiceSheetProps) {
             <View
               testID="s2s-notice"
               accessibilityLiveRegion="polite"
-              style={{ backgroundColor: p.dark ? '#3B2A0A' : '#FFF4DB', paddingVertical: 6, paddingHorizontal: 12, marginTop: 8 }}
+              // Figma VoiceSheet/S2SNotice：amberSoft 底、圆角 12、内边距 8 / 12，左右与内容区对齐
+              style={{ backgroundColor: p.amberSoft, borderRadius: RADIUS.md, paddingVertical: 8, paddingHorizontal: 12, marginTop: 8, marginHorizontal: 20 }}
             >
-              <Text style={{ color: p.amber, fontSize: scale(TYPE.caption, 'text', fontScale), textAlign: 'center' }}>
+              <Text style={[textStyle('caption', fontScale), { color: p.amber, textAlign: 'center' }]}>
                 端到端语音 · 原始音频将在本轮上传
               </Text>
             </View>
@@ -557,7 +569,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
               {scrollRegion}
             </>
           )}
-        </Glass>
+        </View>
         </View>
         </GestureDetector>
       </Animated.View>

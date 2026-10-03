@@ -20,7 +20,7 @@ import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
 import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET, scale } from '../../ui/tokens'
 import { composerHolding, composerPlaceholder } from './composerHint'
-import { HOLD_MS, orbTap, useHoldToTalk } from './useHoldToTalk'
+import { HOLD_MS, ORB_A11Y_ACTIONS, orbTap, useHoldToTalk } from './useHoldToTalk'
 import type { PttHandle } from './usePtt'
 
 export interface ComposerProps {
@@ -32,8 +32,10 @@ export interface ComposerProps {
   stoppable?: boolean
   /** 语音输入把手；null=服务器未配置（没有 audioUrl 就没有语音） */
   ptt: PttHandle | null
-  /** 画不画光球（v3 D4 一屏一球，Figma Composer Layout=NoOrb）：欢迎态由页面上的大球当麦克风 ⇒ false。
-   *  缺省 true。无光球时空输入框的「按住说话」背板照旧在 */
+  /** 想不想画光球（v3 D4 一屏一球，Figma Composer Layout=NoOrb）：欢迎态由页面大球、语音层开着由层内大球当麦克风
+   *  ⇒ 宿主给 false。缺省 true。无光球时空输入框的「按住说话」背板照旧在。
+   *  **按住说话进行中，已经画着的光球留到松手**（见下方锁存）：光球被按住时层才升起来，此刻卸掉手指下的光球，
+   *  RNGH 随即 onFinalize ⇒ pressUp，录音在用户还按着时就被提交 */
   orb?: boolean
   /** 光球主态由调用方给（v2=snapshot.primary，v1=ChatScreen 里的旧推导）——
    *  Composer 自己不再推导：同一个「此刻是什么态」的判据抄两份就会给出两个答案 */
@@ -91,6 +93,12 @@ export function Composer({ p, busy, stoppable = false, ptt, orb = true, orbState
   // 按住期间输入框本身也要变（描边 + 底色 accent，与光球同款），不只光球变
   const hint = { voice: !!ptt, state: ptt?.state ?? ('idle' as const), mode: ptt?.mode ?? ('' as const), driving }
   const holding = composerHolding(hint)
+  // 光球锁存（v3 P3b）：按住说话进行中只**留住**已经画着的光球，不把没画的那颗带回来——从层内大球按下时
+  // Composer 本来就无球，此时凭空冒出第二颗球、输入框跟着挪位就是新的错。渲染期调整（React 官方
+  // "adjusting state when a prop changes"），不是 effect：effect 晚一帧，球会先卸再挂、手势已经断了
+  const [orbOn, setOrbOn] = useState(orb)
+  const orbWanted = orb || (holding && orbOn)
+  if (orbWanted !== orbOn) setOrbOn(orbWanted)
   const placeholder = composerPlaceholder(hint)
   // B4-11 §6「目标 ≥56dp」：行车 56 / 泊车 48。光球热区本来就是 TARGET.driving，不受影响
   const target = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
@@ -141,7 +149,7 @@ export function Composer({ p, busy, stoppable = false, ptt, orb = true, orbState
       {/* 追问 chips 行已挪进回答末尾（v3 P2b，Figma AnswerBlock；MessageBubble → FollowUpChips） */}
       {/* Figma Composer：左右 12、上下 8、间距 8（TextFirst 高 72 = 8 + 光球位 56 + 8） */}
       <View style={{ flexDirection: 'row', gap: 8, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'flex-end' }}>
-        {ptt && orb ? (
+        {ptt && orbWanted ? (
           <GestureDetector gesture={orbGesture}>
             <View
               testID="composer-orb"
@@ -149,6 +157,11 @@ export function Composer({ p, busy, stoppable = false, ptt, orb = true, orbState
               accessibilityRole="button"
               accessibilityLabel={a11yLabel}
               accessibilityHint="轻点开始说话，说完自动发送；长按可按住说话，上滑取消"
+              // TalkBack 双击 = activate = 轻点（不依赖读屏把双击注入成触摸，RNGH 的 Tap 不一定收得到）
+              accessibilityActions={ORB_A11Y_ACTIONS}
+              onAccessibilityAction={(e) => {
+                if (e.nativeEvent.actionName === 'activate') onTap()
+              }}
               style={{
                 width: scale(TARGET.driving, 'target', fontScale),
                 height: scale(TARGET.driving, 'target', fontScale),

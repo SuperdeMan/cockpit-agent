@@ -242,8 +242,10 @@ test('横屏 split：头区（含可点大球）在左、滚动区在右，转�
     expect(hasAncestor(header, 'voice-sheet-scroll')).toBe(false)
     expect(hasAncestor(one(view, 'voice-sheet-transcript'), 'voice-sheet-scroll')).toBe(true)
     expect(hasAncestor(one(view, 'voice-sheet-answer'), 'voice-sheet-scroll')).toBe(true)
-    const orb = view.root.findAllByProps({ testID: 'voice-sheet-orb' }).find((n) => typeof n.props.onPress === 'function')!
-    await act(async () => { orb.props.onPress() })
+    // v3 P3b：大球是 RNGH 手势（轻点 / 按住说话，jest 里手势不触发）；读屏的 activate 动作与轻点走同一个回调
+    const orb = view.root.findAllByProps({ testID: 'voice-sheet-orb' }).find((n) => typeof n.props.onAccessibilityAction === 'function')!
+    expect(orb.props.accessibilityRole).toBe('button')
+    await act(async () => { orb.props.onAccessibilityAction({ nativeEvent: { actionName: 'activate' } }) })
     expect(onOrbTap).toHaveBeenCalledTimes(1)
   } finally { await act(async () => { view.unmount() }) }
 })

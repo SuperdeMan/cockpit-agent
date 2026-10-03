@@ -113,6 +113,25 @@ test('Composer：按住中 ⇒ 占位符「松开发送 · 上滑取消」，描
   } finally { await act(async () => { driving.unmount() }) }
 })
 
+test('P3b：按住说话中只留住已经画着的光球（层升起、宿主给 orb=false 也留到松手），不把没画的那颗带回来', async () => {
+  const orbShown = (v: ReactTestRenderer) => v.root.findAllByProps({ testID: 'composer-orb' }).length > 0
+  // 从 Composer 光球按下：层随即升起、宿主改给 orb=false ⇒ 手指下的光球留着；松手（定稿中）才收
+  const fromComposer = await mount(composer({ ptt: ptt(), orb: true }))
+  try {
+    expect(orbShown(fromComposer)).toBe(true)
+    await act(async () => { fromComposer.update(composer({ ptt: ptt({ state: 'recording', mode: 'hold' }), orb: false })) })
+    expect(orbShown(fromComposer)).toBe(true)
+    await act(async () => { fromComposer.update(composer({ ptt: ptt({ state: 'finalizing', mode: 'hold' }), orb: false })) })
+    expect(orbShown(fromComposer)).toBe(false)
+  } finally { await act(async () => { fromComposer.unmount() }) }
+  // 从层内大球按下：Composer 本来无球 ⇒ 按住期间也不冒出第二颗
+  const fromSheet = await mount(composer({ ptt: ptt(), orb: false }))
+  try {
+    await act(async () => { fromSheet.update(composer({ ptt: ptt({ state: 'recording', mode: 'hold' }), orb: false })) })
+    expect(orbShown(fromSheet)).toBe(false)
+  } finally { await act(async () => { fromSheet.unmount() }) }
+})
+
 test('Composer：轻点录音中「正在听…」、识别中「识别中…」，都不算按住中（外观不变）', async () => {
   const tap = await mount(composer({ ptt: ptt({ state: 'recording', mode: 'tap' }) }))
   try {

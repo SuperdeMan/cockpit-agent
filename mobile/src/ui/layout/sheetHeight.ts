@@ -41,7 +41,7 @@
 // 写进 core 就得在 core 里复制一份 tokens，那正是「声明源只留一份」要避免的。判据仍只有这一份，`VoiceSheet` 只读结果。
 import type { FontScalePref } from '../../core/settings/store'
 import type { SheetDetent } from '../../core/presence/presence'
-import { TARGET, scale } from '../tokens'
+import { TARGET, TEXT, scale } from '../tokens'
 
 /** 层内大球直径：行车 120 / 泊车 88（§6）。**VoiceSheet 从这里读**，不再各写一份字面量 */
 export const SHEET_ORB = { driving: 120, parked: 88 } as const
@@ -56,8 +56,13 @@ const SCROLL_PAD_DP = 32 // ScrollView contentContainerStyle padding 16（上 + 
 const GAP_DP = 12 // 组内 / 组间 gap（头区与内容区之间、内容区各项之间都是 12）
 /** 思考三点一行：6dp 点 + paddingVertical 4×2（`ThinkDots`），固定 dp 不跟字号 */
 const THINK_ROW_DP = 14
-/** 转写行高（20pt / lineHeight 28，行车泊车同一档） */
-const TRANSCRIPT_LINE_DP = 28
+/** 转写行高（字阶 transcript 20 / 28，行车泊车同一档） */
+const TRANSCRIPT_LINE_DP = TEXT.transcript.line
+/** 回答行高（字阶 voiceAnswer：泊车 17 / 26、行车 20 / 30；v3 2026-10-03 起，之前是 16 / 24、18 / 28）。
+ *  读 token 而不是抄数：回答换字阶时这里跟着变，「下限高度下最后一行在渐隐之上」不会悄悄失效 */
+const ANSWER_LINE_DP = { parked: TEXT.voiceAnswer.line, driving: TEXT.voiceAnswer.driving?.line ?? TEXT.voiceAnswer.line }
+/** 头区状态行（字阶 labelL 15 / 20） */
+const STATUS_LINE_DP = TEXT.labelL.line
 
 /** 压缩卡（`DrivingCardSummary` + `CardShell`）的最小高 */
 function cardMinDp(fontScale: FontScalePref): number {
@@ -79,9 +84,9 @@ function chromeDp(target: number, fontScale: FontScalePref): number {
   return scale(target, 'target', fontScale) + SCROLL_PAD_DP + SHEET_BOTTOM_FADE_DP
 }
 
-/** 头区：球 + gap + 胶囊一行（body 15pt） */
+/** 头区：球 + gap + 状态行一行（labelL 15pt / 20） */
 function orbColDp(orb: number, fontScale: FontScalePref): number {
-  return orb + GAP_DP + scale(20, 'line', fontScale)
+  return orb + GAP_DP + scale(STATUS_LINE_DP, 'line', fontScale)
 }
 
 /** 0.4 档主体（识别 / 思考）：转写 2 行 + 思考三点行 */
@@ -89,7 +94,7 @@ function captureBodyDp(fontScale: FontScalePref): number {
   return 2 * scale(TRANSCRIPT_LINE_DP, 'line', fontScale) + GAP_DP + THINK_ROW_DP
 }
 
-/** 0.62 档主体（有回答）：转写 1 行 + 回答 3 行（行车 18pt / 28；泊车 16pt / 24） */
+/** 0.62 档主体（有回答）：转写 1 行 + 回答 3 行（行车 20 / 30；泊车 17 / 26，见 ANSWER_LINE_DP） */
 function answerBodyDp(answerLine: number, fontScale: FontScalePref): number {
   return scale(TRANSCRIPT_LINE_DP, 'line', fontScale) + GAP_DP + 3 * scale(answerLine, 'line', fontScale)
 }
@@ -116,17 +121,17 @@ export function drivingSheetMinDp(
     : detent === 0.78
       ? cardMinDp(fontScale)
       : detent === 0.62
-        ? answerBodyDp(28, fontScale)
+        ? answerBodyDp(ANSWER_LINE_DP.driving, fontScale)
         : captureBodyDp(fontScale)
   return assemble(chrome, orbCol, body, split)
 }
 
 /** 泊车档「必须一眼看得见」的内容之和（dp）。结构与行车档同一条，常量取泊车的：
- *  把手带 48、球 88、回答 16pt / lineHeight 24；0.78 档的主体 = 0.62 主体 + 卡头。 */
+ *  把手带 48、球 88、回答 17 / 26；0.78 档的主体 = 0.62 主体 + 卡头。 */
 export function parkedSheetMinDp(detent: SheetDetent, split: boolean, fontScale: FontScalePref, terse = false): number {
   const chrome = chromeDp(TARGET.parked, fontScale)
   const orbCol = orbColDp(SHEET_ORB.parked, fontScale)
-  const answer = answerBodyDp(24, fontScale)
+  const answer = answerBodyDp(ANSWER_LINE_DP.parked, fontScale)
   const body = terse
     ? 0
     : detent === 0.78

@@ -36,7 +36,7 @@ import { RADIUS, TARGET, scale, textStyle } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { Composer } from './Composer'
-import { orbTap, useHoldToTalk } from './useHoldToTalk'
+import { ORB_A11Y_ACTIONS, orbTap, useHoldToTalk } from './useHoldToTalk'
 import type { PttHandle } from './usePtt'
 import { visibleQuickCommands } from '@/core/session/quickCommands'
 
@@ -168,6 +168,10 @@ function Welcome({
               accessibilityRole="button"
               accessibilityLabel={ptt.state === 'recording' ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`}
               accessibilityHint="轻点开始说话，说完自动发送；长按可按住说话，上滑取消"
+              accessibilityActions={ORB_A11Y_ACTIONS}
+              onAccessibilityAction={(e) => {
+                if (e.nativeEvent.actionName === 'activate') onOrbTap()
+              }}
               style={{ width: slot, height: slot, alignItems: 'center', justifyContent: 'center' }}
             >
               {orb}
@@ -355,9 +359,10 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       stoppable={stoppable}
       onStopPlayback={onStopPlayback}
       onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
-      // 层内大球接替「轻点即说」：横屏 split 时 Composer 被层盖住（B5-15）；欢迎态 Composer 本来就无球、
-      // 而欢迎页大球在层的暗区下面够不到（v3 P2c）。其余时候 Composer 光球在外面，层内大球不重复给入口
-      onOrbTap={splitLandscape || welcome ? onOrbTap : undefined}
+      // v3 一屏一球（P3b，Figma 05 / 08）：层开着时层内大球就是麦克风——轻点与按住说话都在它身上，
+      // Composer 同时退成无球（下方 orb）。读屏不会遇到两个同名按钮
+      onOrbTap={onOrbTap}
+      ptt={voicePtt}
       onSend={(t) => onSend(t)}
     />
   ) : null
@@ -533,7 +538,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         busy={busy}
         stoppable={stoppable}
         ptt={voicePtt}
-        orb={!welcome}
+        // 欢迎态（页面大球是麦克风）与语音层开着（层内大球是麦克风）时无球；按住说话中已画着的那颗留到松手（Composer 内锁存）
+        orb={!welcome && snapshot.input !== 'voice-sheet'}
         orbState={snapshot.primary}
         orbDim={snapshot.dim}
         fontScale={settings.fontScale}

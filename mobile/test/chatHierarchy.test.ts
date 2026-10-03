@@ -290,21 +290,38 @@ test('P03：键盘弹起时欢迎态大球缩小、三条推荐仍在、外层�
 
 // ── ⑤ 一屏一球（v3 P2c）──────────────────────────────────────
 
-test('P2c：欢迎态大球就是麦克风、Composer 不画光球；层内大球接替轻点；进入对话后光球回到 Composer', async () => {
+test('P2c：欢迎态大球就是麦克风、Composer 不画光球；进入对话后光球回到 Composer', async () => {
   const view = await mount()
   try {
     const orb = view.root.findAllByProps({ testID: 'welcome-orb' }).find((n) => typeof n.type === 'string')!
     expect(orb.props.accessibilityRole).toBe('button')
     expect(orb.props.accessibilityLabel).toMatch(/开始说话$/)
+    // 读屏双击 = activate = 轻点（与 Composer / 层内大球同一个回调）
+    expect(orb.props.accessibilityActions).toEqual([{ name: 'activate' }])
     expect(composerOf(view).props.orb).toBe(false)
     expect(has(view, 'composer-orb')).toBe(false)
-    // 欢迎页大球在层的暗区下面够不到 ⇒ 层内大球给轻点入口
-    expect(typeof view.root.findByType(VoiceSheet).props.onOrbTap).toBe('function')
     await answered()
     expect(has(view, 'welcome-orb')).toBe(false)
     expect(has(view, 'composer-orb')).toBe(true)
-    // 竖屏有了 Composer 光球，层内大球不再重复给入口（读屏不念两个同名按钮）
-    expect(view.root.findByType(VoiceSheet).props.onOrbTap).toBeUndefined()
+  } finally { await unmount(view) }
+})
+
+test('P3b：语音层开着时层内大球是麦克风（轻点 + 按住说话），Composer 无球；层收起后光球回到 Composer', async () => {
+  const view = await mount()
+  try {
+    await answered()
+    expect(composerOf(view).props.orb).toBe(true)
+    await act(async () => { runtime!.setSheetOverride({ turnId: runtime!.latestTurnId, mode: 'open' }) })
+    expect(runtime!.snapshot.input).toBe('voice-sheet')
+    expect(composerOf(view).props.orb).toBe(false)
+    expect(has(view, 'composer-orb')).toBe(false)
+    const sheet = view.root.findByType(VoiceSheet)
+    expect(typeof sheet.props.onOrbTap).toBe('function')
+    expect(sheet.props.ptt).toBeTruthy()
+    expect(has(view, 'voice-sheet-orb')).toBe(true)
+    await act(async () => { runtime!.setSheetOverride({ turnId: runtime!.latestTurnId, mode: 'dismissed' }) })
+    expect(composerOf(view).props.orb).toBe(true)
+    expect(has(view, 'composer-orb')).toBe(true)
   } finally { await unmount(view) }
 })
 

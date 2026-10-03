@@ -40,7 +40,7 @@ const CAPSULE = 20 // 胶囊一行（body 15pt）
 const GAP = 12 // 组内 / 组间 gap
 const TRANSCRIPT_L = 28 // 转写一行（20pt / lineHeight 28）
 const THINK = 14 // 思考三点一行：6dp 点 + paddingVertical 4×2（固定 dp）
-const ANSWER_L = 28 // 回答一行（行车 18pt / lineHeight 28）
+const ANSWER_L = 30 // 回答一行（v3 voiceAnswer 行车 20 / 30；2026-10-03 前是 18pt / 28）
 const CARD_SHELL = 2 + 24 + 4 * 8 // CardShell：边框 1×2 + padding 12×2 + 五个孩子之间四个 gap 8
 const CARD = CARD_SHELL + 16 + 25 + 40 + BTN // 压缩卡：壳 + 类型行 + 标题 + ≤2 字段 + 主按钮 = 195
 
@@ -105,7 +105,8 @@ test('外屏竖（实测 578.67dp）行车档：三档都由下限托住（120 �
   // 真机 A/B（2026-09-03，角色 C）：行车档 ON 时容器 578.67 与 544.67 两种情况下层高**都是 269.0dp**
   // ——容器差 34dp 而层高不动，纯比例做不到这件事 ⇒ 绑的是下限。
   // 换锚记录：B4 chrome 117 ⇒ 269；B5-12 撤底栏 ⇒ 240；**2026-09-17 头区 + 转写 2 行 + 思考行 + 渐隐 ⇒ 358**。
-  // 0.62 / 0.78 原来走比例（359 / 451），现在下限 400 / 471 压过比例。下一轮真机量到的应是 358 / 400 / 471。
+  // 0.62 / 0.78 原来走比例（359 / 451），现在下限压过比例。下一轮真机量到的应是 358 / 406 / 471
+  // （v3 2026-10-03 回答换 20 / 30：0.62 下限 400 → 406；0.4 与 0.78 不含回答，不变）。
   expect(call(OUTER_PORTRAIT, 0.4)).toBe(need(0.4, false))
   expect(call(OUTER_PORTRAIT, 0.4)).toBeGreaterThan(ratio(OUTER_PORTRAIT, 0.4))
   expect(call(OUTER_PORTRAIT, 0.62)).toBe(need(0.62, false))
@@ -114,13 +115,13 @@ test('外屏竖（实测 578.67dp）行车档：三档都由下限托住（120 �
   expect(call(OUTER_PORTRAIT, 0.78)).toBeGreaterThan(ratio(OUTER_PORTRAIT, 0.78))
 })
 
-test('设计 §2 的主力机读数表（normal 字号）：泊车 318 / 359 / 451，行车 358 / 400 / 471', () => {
+test('设计 §2 的主力机读数表（normal 字号）：泊车 318 / 359 / 451，行车 358 / 406 / 471', () => {
   // 泊车只有 0.4 档变（231 → 318：识别 / 思考态要装下转写两行 + 思考行 + 渐隐），0.62 / 0.78 仍走比例逐 dp 不变
   expect(call(OUTER_PORTRAIT, 0.4, { driving: false })).toBe(318)
   expect(call(OUTER_PORTRAIT, 0.62, { driving: false })).toBe(359)
   expect(call(OUTER_PORTRAIT, 0.78, { driving: false })).toBe(451)
   expect(call(OUTER_PORTRAIT, 0.4)).toBe(358)
-  expect(call(OUTER_PORTRAIT, 0.62)).toBe(400)
+  expect(call(OUTER_PORTRAIT, 0.62)).toBe(406) // 换锚：v3 回答 20 / 30（原 18pt / 28 时是 400）
   expect(call(OUTER_PORTRAIT, 0.78)).toBe(471)
 })
 
@@ -131,18 +132,21 @@ test('容器变了而下限没变时，层高不跟着容器动——真机 A/B 
   expect(ratio(578.67, 0.4)).not.toBe(ratio(544.67, 0.4)) // 纯比例两者必然不同
 })
 
-test('泊车阴性：比例高过下限的档逐 dp 走比例（真机 568.33dp / 0.62 ⇒ 352）', () => {
-  // 换锚记录：09-11 这条钉的是 0.4 档 227（那时泊车 0.4 下限 200 < 227）；现在 0.4 下限 318 压过比例，
-  // 换 0.62 档做阴性：比例 352 > 下限 348 ⇒ 走比例
-  expect(call(568.33, 0.62, { driving: false })).toBe(352)
+test('泊车阴性：比例高过下限的档逐 dp 走比例（外屏竖 578.67dp / 0.62 ⇒ 359）', () => {
+  // 换锚记录：09-11 这条钉的是 0.4 档 227（那时泊车 0.4 下限 200 < 227）；09-17 换成 568.33dp 的 0.62 档
+  // （比例 352 > 下限 348）。v3 2026-10-03 回答换 17 / 26 后泊车 0.62 下限 348 → 354，568.33 那台的 0.62 档
+  // 改由下限托住（352 → 354）⇒ 阴性换到外屏竖 578.67：比例 359 > 下限 354 ⇒ 走比例
+  expect(ratio(OUTER_PORTRAIT, 0.62)).toBe(359)
+  expect(call(OUTER_PORTRAIT, 0.62, { driving: false })).toBe(359)
   expect(ratio(568.33, 0.62)).toBe(352)
+  expect(call(568.33, 0.62, { driving: false })).toBe(354)
 })
 
 // ── 泊车档下限（2026-09-11 起有；2026-09-17 改构成）────────────────────────────
 // 泊车原来是纯比例：矮容器上 0.4 × 容器装不下「把手带 48 + padding 32 + 球 88 + 胶囊」，球被层底裁掉。
 // 与行车档同一条式子 `min(容器, max(比例, 下限))`，常量取泊车的。下面的清单同样独立于实现列一遍。
 const BTN_PARKED = 48 // TARGET.parked：把手带 minHeight
-const ANSWER_L_PARKED = 24 // 回答一行（泊车 16pt / lineHeight 24）
+const ANSWER_L_PARKED = 26 // 回答一行（v3 voiceAnswer 泊车 17 / 26；2026-10-03 前是 16pt / 24）
 const CARD_HEAD = 2 + 24 + 16 // 0.78 档：CardShell 边框 + padding + 类型行（看得见卡头 = 知道下面还有卡）
 const needParked = (detent: SheetDetent, split: boolean, large = false, terse = false): number => {
   const chrome = (large ? T(BTN_PARKED) : BTN_PARKED) + SCROLL_PAD + FADE
@@ -154,14 +158,14 @@ const needParked = (detent: SheetDetent, split: boolean, large = false, terse = 
   return chrome + (split ? Math.max(orbCol, body) : body ? orbCol + GAP + body : orbCol)
 }
 
-test('泊车档下限的数：0.4 = 318 / 0.62 = 348 / 0.78 = 402（normal 字号，竖排；09-11 是 200 / 260 / 314）', () => {
+test('泊车档下限的数：0.4 = 318 / 0.62 = 354 / 0.78 = 408（normal 字号，竖排；09-17 是 318 / 348 / 402，09-11 是 200 / 260 / 314）', () => {
   const base = BTN_PARKED + SCROLL_PAD + FADE + ORB_PARKED + GAP + CAPSULE // chrome + 头区 = 224
   expect(parkedSheetMinDp(0.4, false, 'normal')).toBe(base + GAP + 2 * TRANSCRIPT_L + GAP + THINK)
   expect(parkedSheetMinDp(0.4, false, 'normal')).toBe(318)
   expect(parkedSheetMinDp(0.62, false, 'normal')).toBe(base + GAP + TRANSCRIPT_L + GAP + 3 * ANSWER_L_PARKED)
-  expect(parkedSheetMinDp(0.62, false, 'normal')).toBe(348)
-  expect(parkedSheetMinDp(0.78, false, 'normal')).toBe(348 + GAP + CARD_HEAD)
-  expect(parkedSheetMinDp(0.78, false, 'normal')).toBe(402)
+  expect(parkedSheetMinDp(0.62, false, 'normal')).toBe(354)
+  expect(parkedSheetMinDp(0.78, false, 'normal')).toBe(354 + GAP + CARD_HEAD)
+  expect(parkedSheetMinDp(0.78, false, 'normal')).toBe(408)
 })
 
 test('泊车档：主力机（外屏竖实测 578.67）0.62 / 0.78 比例高于下限 ⇒ 读数逐 dp 不变；0.4 由下限托住', () => {
@@ -179,7 +183,7 @@ test('泊车档：矮容器由下限托住——400dp 记录区 0.4 档给 318 �
   expect(call(400, 0.4, { driving: false })).toBeGreaterThan(ratio(400, 0.4))
   // 外屏横实测记录区 98.67：连下限都装不下 ⇒ 占满记录区，不许超出
   expect(call(98.67, 0.4, { driving: false, split: true })).toBe(98.67)
-  // 老的推导容器 192 上 0.62 档：比例 119 < 下限 348 ⇒ 占满 192
+  // 老的推导容器 192 上 0.62 档：比例 119 < 下限 354 ⇒ 占满 192
   expect(call(OUTER_LANDSCAPE, 0.62, { driving: false })).toBe(OUTER_LANDSCAPE)
 })
 

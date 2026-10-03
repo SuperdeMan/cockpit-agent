@@ -53,6 +53,10 @@ export function useHoldToTalk(ptt: PttHandle | null, driving: boolean): () => Re
       })
 }
 
+/** 光球的无障碍动作：TalkBack 双击 = `activate` = 轻点。三颗光球（Composer / 欢迎态 / 语音层）同一份，
+ *  读屏用户不依赖「把双击注入成触摸」这条路（RNGH 的 Tap 不一定收得到） */
+export const ORB_A11Y_ACTIONS = [{ name: 'activate' as const }]
+
 /** 轻点手势（与按住说话组成 Exclusive）：长按判定之前抬手才算轻点 */
 export function orbTap(onTap: () => void) {
   return Gesture.Tap()
