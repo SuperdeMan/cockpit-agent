@@ -49,7 +49,7 @@ import { AuroraOrb, EdgeGlow, StreamCursor, ThinkDots } from '@/ui/aurora'
 import { ORB_A11Y } from '@/ui/aurora/AuroraOrb'
 import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 import { SHEET_BOTTOM_FADE_DP, sheetHeightDp, sheetOrbDp } from '@/ui/layout/sheetHeight'
-import { RADIUS, TARGET, scale, textStyle } from '@/ui/tokens'
+import { RADIUS, TARGET, TEXT, scale, textStyle } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
 /** 层底缘渐隐高度：判据搬到了 `ui/layout/sheetHeight.ts`（它是层高下限的一项），这里只转出口 */
@@ -101,11 +101,26 @@ export interface VoiceSheetProps {
 /** 同一颜色换不透明度（`#RRGGBB` 或 `rgba(r,g,b,a)`）：底缘 / 顶缘渐隐的起点要与壳同一 rgb、alpha 0——
  *  用 `transparent`（黑色 alpha 0）在浅色壳上会先经过一段灰。 */
 function withAlpha(color: string, alpha: number): string {
-  const m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
-  if (m) return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`
-  const n = parseInt(color.replace('#', ''), 16)
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
+  const [r, g, b] = rgbaOf(color)
+  return `rgba(${r},${g},${b},${alpha})`
 }
+
+/** `#RRGGBB` / `rgb()` / `rgba()` → [r, g, b, a] */
+function rgbaOf(color: string): [number, number, number, number] {
+  const m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)/)
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])]
+  const n = parseInt(color.replace('#', ''), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1]
+}
+
+/** 把（可能半透明的）top 叠到 bottom 上，得到眼睛里看到的那个不透明色（`rgb()`） */
+function composite(top: string, bottom: string): string {
+  const [tr, tg, tb, ta] = rgbaOf(top)
+  const [br, bg, bb] = rgbaOf(bottom)
+  const mix = (t: number, u: number) => Math.round(t * ta + u * (1 - ta))
+  return `rgb(${mix(tr, br)},${mix(tg, bg)},${mix(tb, bb)})`
+}
+
 /** 收起动画时长（ms） */
 const COLLAPSE_MS = 180
 /** 升起（整层从记录区底缘滑入）与档位变化（高度短动画）的时长（ms） */
@@ -273,7 +288,11 @@ export function VoiceSheet(props: VoiceSheetProps) {
   // 行车档由 ChatScreen 传 `solid`（打磨批 A / P08 / V3）：G0 实色，记录不再透过层与层内文字叠字。
   const blurred = !!props.blurTarget && !props.solid
   const shellColor = blurred ? p.sheetTint : p.surfaceHigh
-  const fadeFrom = withAlpha(shellColor, 0)
+  // 渐隐要接上壳**在眼睛里**的颜色。真模糊壳 = sheetTint 叠在「scrim 压过的页面底」上（背后记录被模糊、又被暗区压过，
+  // 近似均匀）；直接拿半透明的 sheetTint 当渐隐色，在模糊壳上等于再叠一层，内容区顶缘出现一条色带、把头区光晕切出一道硬边
+  // （v3 P3 真机 `b6288305` 深浅两色都有）。实色壳本来就不透明，原样用
+  const fadeTo = blurred ? composite(p.sheetTint, composite(p.scrim, p.bg)) : shellColor
+  const fadeFrom = withAlpha(fadeTo, 0)
   // 回答字阶 voiceAnswer：泊车 17 / 26，行车 20 / 30（层高下限 sheetHeight.ts 读同一份 token）
   const answerStyle = textStyle('voiceAnswer', fontScale, driving)
 
@@ -306,15 +325,19 @@ export function VoiceSheet(props: VoiceSheetProps) {
       ) : (
         <AuroraOrb size={orbDp} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
       )}
-      {/* 胶囊文案（同 §4.3，此处放大）；识别中不复读转写（判据 presence.ts::sheetCapsuleText） */}
-      {capsuleText ? (
-        <View testID="voice-sheet-capsule" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {snapshot.capsule?.live ? (
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
-          ) : null}
-          <Text style={[textStyle('labelL', fontScale), { color: capsuleColor }]}>{capsuleText}</Text>
-        </View>
-      ) : null}
+      {/* 胶囊文案（同 §4.3，此处放大）；识别中不复读转写（判据 presence.ts::sheetCapsuleText）。
+          这一行**没字也占位**（labelL 行高）：层高下限 sheetHeight.ts::orbColDp 本来就预留了它；不占位时头区变矮、
+          内容区顶到球底，球环与光晕被内容区切出一道硬边（v3 P3 真机），文案出现 / 消失时头区还会跳 */}
+      <View style={{ minHeight: scale(TEXT.labelL.line, 'line', fontScale), justifyContent: 'center' }}>
+        {capsuleText ? (
+          <View testID="voice-sheet-capsule" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {snapshot.capsule?.live ? (
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
+            ) : null}
+            <Text style={[textStyle('labelL', fontScale), { color: capsuleColor }]}>{capsuleText}</Text>
+          </View>
+        ) : null}
+      </View>
     </View>
   )
 
@@ -428,7 +451,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
           right: 0,
           bottom: 0,
           height: SHEET_BOTTOM_FADE_DP,
-          experimental_backgroundImage: `linear-gradient(to bottom, ${fadeFrom}, ${shellColor})`,
+          experimental_backgroundImage: `linear-gradient(to bottom, ${fadeFrom}, ${fadeTo})`,
         }}
       />
       {scrolledAway ? (
@@ -441,7 +464,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
             right: 0,
             top: 0,
             height: SHEET_BOTTOM_FADE_DP,
-            experimental_backgroundImage: `linear-gradient(to bottom, ${shellColor}, ${fadeFrom})`,
+            experimental_backgroundImage: `linear-gradient(to bottom, ${fadeTo}, ${fadeFrom})`,
           }}
         />
       ) : null}
