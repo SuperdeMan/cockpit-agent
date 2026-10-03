@@ -3,6 +3,7 @@
 // 全仓原来 22 / 26 / 30 / 36 / 38 / 44 六种胶囊高，现在只能从这一个组件长出来。
 // 数值独立于实现列一遍（不 import PILL 来断言 PILL）。
 import { createElement } from 'react'
+import { Text } from 'react-native'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 
 import { Pill } from '@/ui/Pill'
@@ -60,13 +61,51 @@ test('选中态进无障碍 selected，并换成 accent 描边（单选项从此
   } finally { await act(async () => { view.unmount() }) }
 })
 
-test('solid：底色换实色 panel（压在地图瓦片上）；tone 的描边与字色不变', async () => {
+test('solid：soft 底换实色 surfaceHigh 并补一圈 line（压在地图瓦片上）；字色仍随 tone', async () => {
   const view = await mount(createElement(Pill, { p, testID: 'x', label: 'a', tone: 'amber', solid: true, onPress: () => {} }))
   try {
     const s = flat(pillOf(view, 'x')!.props.style)
-    expect(s.backgroundColor).toBe(p.panel)
-    expect(s.borderColor).toBe('rgba(245,158,11,0.38)')
+    expect(s.backgroundColor).toBe(p.surfaceHigh)
+    expect(s.borderColor).toBe(p.line)
+    expect(flat(view.root.findByType(Text).props.style).color).toBe(p.amber)
   } finally { await act(async () => { view.unmount() }) }
+})
+
+// ── Android Visual v3（方向 B）：Figma Pill 组件四档
+test('v3：floating = surfaceHigh 实色 + line 描边 + 二级投影；glass 是它的别名', async () => {
+  for (const tone of ['floating', 'glass'] as const) {
+    const view = await mount(createElement(Pill, { p, testID: 'x', label: 'a', tone, onPress: () => {} }))
+    try {
+      const s = flat(pillOf(view, 'x')!.props.style)
+      expect(s.backgroundColor).toBe(p.surfaceHigh)
+      expect(s.borderColor).toBe(p.line)
+      expect(s.borderWidth).toBe(1)
+      expect(s.boxShadow).toBe(p.elev2)
+    } finally { await act(async () => { view.unmount() }) }
+  }
+})
+
+test('v3：plain / accent / amber 是 soft 底、不描边', async () => {
+  for (const [tone, bg] of [['plain', p.surfaceHighest], ['accent', p.accentSoft], ['amber', p.amberSoft]] as const) {
+    const view = await mount(createElement(Pill, { p, testID: 'x', label: 'a', tone, onPress: () => {} }))
+    try {
+      const s = flat(pillOf(view, 'x')!.props.style)
+      expect(s.backgroundColor).toBe(bg)
+      expect(s.borderWidth).toBe(0)
+    } finally { await act(async () => { view.unmount() }) }
+  }
+})
+
+test('v3：禁用淡到 38%；已选中但不可再点的单选项不淡出（商户规格选中项原来被画成半透明）', async () => {
+  const off = await mount(createElement(Pill, { p, testID: 'x', label: 'a', disabled: true, onPress: () => {} }))
+  try {
+    expect(flat(pillOf(off, 'x')!.props.style).opacity).toBe(0.38)
+  } finally { await act(async () => { off.unmount() }) }
+  const picked = await mount(createElement(Pill, { p, testID: 'y', label: 'a', selected: true, disabled: true, onPress: () => {} }))
+  try {
+    expect(flat(pillOf(picked, 'y')!.props.style).opacity).toBe(1)
+    expect(frameOf(picked, 'y')!.props.accessibilityState).toEqual({ selected: true, disabled: true })
+  } finally { await act(async () => { picked.unmount() }) }
 })
 
 test('disabled 或没接 onPress ⇒ 外框 disabled，按了不触发', async () => {
