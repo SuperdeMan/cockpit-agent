@@ -195,6 +195,8 @@ class Context:
                 "vehicle_id": vehicle_id, "memory_level": memory_level,
                 "expires_at": expires_at, "review_status": review_status,
                 "source_turn_ids": source_turn_ids,
+                # 证据按场合（会话）计：同一会话里重复写不加分，换了会话再写才算又一次（CA2-15 遗留）。
+                "source_session": self.session_id,
                 "value_json": json.dumps(value, ensure_ascii=False) if value is not None else ""}
         ids = await self._memory.remember([item], memory_epoch=self.memory_epoch)
         return bool(ids)

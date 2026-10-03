@@ -70,6 +70,27 @@ def normalize_kinship(obj: str) -> str:
     return t
 
 
+#: 指用户本人的写法：作为记忆的 subject 时归空（空 = 本人）。
+SELF_WORDS = ("用户", "我", "本人", "自己")
+
+
+def normalize_subject(subject: str) -> str:
+    """记忆条目「关于谁」的归一：亲属称谓 → canonical，本人 → 空串，名字原样。"""
+    s = normalize_kinship(str(subject or "").strip())
+    return "" if s in SELF_WORDS else s
+
+
+def is_kinship_word(word: str) -> bool:
+    return normalize_kinship(word) in _KINSHIP_SYNONYMS
+
+
+def kinship_spellings(canon: str) -> tuple[str, ...]:
+    """归一到 `canon` 的全部称谓写法（「老婆」→ 老婆/妻子/太太/媳妇/爱人）；非称谓 → 空元组。"""
+    if canon not in _KINSHIP_SYNONYMS:
+        return ()
+    return tuple(sorted(w for w in _PERSON_WORDS if normalize_kinship(w) == canon))
+
+
 def normalize_rel(rel: str) -> str:
     """已知别名 → canonical；词表内原样；**词表外返回空串（调用方丢弃）**。"""
     r = (rel or "").strip().lower()

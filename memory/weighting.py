@@ -122,10 +122,22 @@ def merge_evidence(old: str, new: str, cap: int = 32) -> str:
     return ",".join(out[-cap:])
 
 
-def evidence_count(source_turn_ids: str, fallback: int = 1) -> int:
-    """从证据轮次串数出独立证据数。空串 → fallback（存量条目至少算 1 次）。"""
-    n = len(list(_split(source_turn_ids)))
-    return n if n > 0 else max(1, fallback)
+def next_evidence(cur: dict, cand: dict) -> tuple[int, str]:
+    """同一偏好又被观测到一次：证据数按**场合**（会话）计——同一会话里窗口重叠造成的重复抽取不加分，
+    换了会话再次出现才 +1。返回 `(新的证据数, 记在条目上的会话)`。
+
+    修前证据数是抽取窗口里的轮次 id 个数（一写入就是 8～12），条目一落库权重就到上限：
+    「每周三次点川菜」与「说过一次爱吃辣」分不出来，强度词全成了「常用」（CA2-15 遗留，2026-10-03 线上实测）。
+    """
+    try:
+        count = max(1, int(cur.get("evidence_count") or 1))
+    except (TypeError, ValueError):
+        count = 1
+    old = str(cur.get("source_session") or "")
+    new = str(cand.get("source_session") or "")
+    if new and new != old:
+        return count + 1, new
+    return count, old or new
 
 
 def _split(s: str):

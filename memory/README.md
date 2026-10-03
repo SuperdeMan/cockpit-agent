@@ -39,6 +39,7 @@ JV08 仅对通过原抽取/OwnerKey/隐私过滤的候选做异步 review，不�
 | `ForgetUser` / `ExportUser` | 合规：被遗忘权（硬删）/ 数据导出 |
 | `GetMemoryEpoch` | owner 代际（CA2-15 S1b）：写入方在读记忆之前取一次，`AppendTurn` / `Remember` / `UpsertProfile` 原样带回 `memory_epoch` |
 | 偏好修订 | CA2-15 S3a：一个维度（谓词等价类 + subject）只说一个现行的话——单值维度新的显式陈述替换全部现行条目、推断不替换显式；多值维度（`extract.MULTI_VALUED`）复述按等价加强；事实类只去逐字重复；召回在截取 top_k 前折叠存量重复（`revision.py`） |
+| 偏好证据 | CA2-15 遗留：证据数按会话计（`weighting.next_evidence`），weight 存未衰减值、召回时衰减一次；同一个人的称谓、同义写法与（无歧义的）名字算一个主体（`revision.subject_group`）；存量改写用 `scripts/memory_evidence_recount.py`（默认 dry-run） |
 | 读取投影 | CA2-15 S2：`GetContext` / `Recall` / `ResolvePersonPlace` / `QueryRelations` 的 `projection="normal_only"` ⇒ 只给普通偏好（`runtime/memory_projection.py`，定向读与召回同一判据），人称地点与关系为空；`AppendTurn.speaker_unverified` 的轮次进会话、不进抽取 |
 
 ## 存储与 embedding

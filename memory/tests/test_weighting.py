@@ -150,7 +150,8 @@ def test_merge_evidence_caps_and_drops_oldest():
     assert len(parts) == 5 and parts[-1] == "tnew"     # 保最新，丢最旧
 
 
-def test_evidence_count_from_ids():
-    assert W.evidence_count("t1,t2,t3") == 3
-    assert W.evidence_count("") == 1                   # 存量无证据串 → 至少算 1 次
-    assert W.evidence_count("", fallback=4) == 4
+def test_evidence_counts_occasions_not_turns():
+    # 同一会话里窗口重叠的重复抽取不加分；换了会话才 +1；没有会话的观测不加分
+    assert W.next_evidence({"evidence_count": 3, "source_session": "a"}, {"source_session": "a"}) == (3, "a")
+    assert W.next_evidence({"evidence_count": 3, "source_session": "a"}, {"source_session": "b"}) == (4, "b")
+    assert W.next_evidence({"evidence_count": 0}, {"source_session": ""}) == (1, "")

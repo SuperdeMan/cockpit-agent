@@ -3005,3 +3005,12 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 多值：近似复述（字面二元组 Dice ≥ 0.75，`memory/revision.py::equivalent`）按等价加强、不新增；读取时同义只留一条。
 - 事实类：写入维持原规则（巩固替换最新一条，Agent 写入只去逐字重复），读取只合并逐字重复。
 - 巩固与 Agent `remember` 走同一套修订；读取折叠在 `pg_store._score` 截取 top_k 之前，历史视图（`include_superseded`）不折叠。
+
+### 9.53 偏好证据按场合计；同一个人一个主体（CA2-15 遗留，2026-10-03）
+
+- 证据数 = 观测到这条偏好的会话数（`memory/weighting.py::next_evidence`）：新条目 1；在新的会话里再出现（加强或取代时继承）才 +1；
+  同一会话里重复抽取不加分。证据轮次（`source_turn_ids`）只作溯源、不计数。weight 存未衰减值，衰减只在召回时按 valid_from 算一次。
+- 记忆的 subject 先归一（`memory/relation.py::normalize_subject`：称谓 → canonical，本人 → 空）；名字与称谓只在亲属关系边无歧义时
+  算同一个人（`memory/revision.py::aliases_from_family`）。写入找现行条目、召回过滤、读取折叠用同一组写法（`subject_group`），
+  不另写判据；泛称（孩子）不归到具体称谓。
+- 存量证据数的改写走 `scripts/memory_evidence_recount.py`（默认 dry-run；`--apply` 是生产数据修改，单独授权）。

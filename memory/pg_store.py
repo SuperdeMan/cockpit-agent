@@ -87,8 +87,8 @@ def _normalize_item(item: dict) -> dict:
     out["created_at"] = int(out.get("created_at") or _now())
     # M2 P0 偏好加权：仅 semantic 参与（情景/程序记忆维持既有 confidence 打分）。
     # 未显式给 weight 时按 provenance/证据数算一次；weight=0 → 召回回退 confidence（存量兼容）。
-    out["evidence_count"] = int(out.get("evidence_count")
-                                or weighting.evidence_count(out["source_turn_ids"]))
+    # 证据数按场合计（`weighting.next_evidence`）：新条目就是 1 次，不按抽取窗口里的轮次数算。
+    out["evidence_count"] = int(out.get("evidence_count") or 1)
     hl = out.get("half_life_days")
     out["half_life_days"] = float(
         hl if hl not in (None, "") else
@@ -358,7 +358,8 @@ class MemoryVectorStore:
             self._mem[old_id]["valid_to"] = vt
 
     async def reinforce(self, item_id: str, *, weight: float, evidence_count: int,
-                        source_turn_ids: str = "", half_life_days: float = 0.0) -> bool:
+                        source_turn_ids: str = "", half_life_days: float = 0.0,
+                        source_session: str = "") -> bool:
         """同一偏好复现时**就地加强**（M2 P0）：只更新强度与证据，不动 text/valid_from。
 
         刻意不刷新 `valid_from`——它是衰减基准，刷新等于把陈年偏好洗成新的。
@@ -371,9 +372,10 @@ class MemoryVectorStore:
                     "UPDATE memory_item SET weight=$2, evidence_count=$3, "
                     "half_life_days=$4, "
                     "source_turn_ids=CASE WHEN $5='' THEN source_turn_ids ELSE $5 END, "
-                    "last_used_at=$6 WHERE id=$1",
+                    "last_used_at=$6, "
+                    "source_session=CASE WHEN $7='' THEN source_session ELSE $7 END WHERE id=$1",
                     item_id, float(weight), int(evidence_count), float(half_life_days),
-                    source_turn_ids or "", _now())
+                    source_turn_ids or "", _now(), source_session or "")
             return str(tag).endswith("1")
         it = self._mem.get(item_id)
         if not it:
@@ -383,6 +385,8 @@ class MemoryVectorStore:
         it["half_life_days"] = float(half_life_days)
         if source_turn_ids:
             it["source_turn_ids"] = source_turn_ids
+        if source_session:
+            it["source_session"] = source_session
         return True
 
     async def current_by_predicate(self, user_id: str, occupant_id: str,
@@ -413,26 +417,31 @@ class MemoryVectorStore:
                 return _strip(v)
         return None
 
+    async def subject_aliases(self, user_id: str, occupant_id: str = "primary") -> dict[str, str]:
+        """同一个人的名字 → 称谓（判据见 `revision.aliases_from_family`）。"""
+        return revision.aliases_from_family(await self.query_relations(
+            user_id, occupant_id=occupant_id or "primary", rel=relation.REL_FAMILY, limit=500))
+
     async def current_in_dimension(self, user_id: str, occupant_id: str,
-                                   predicates, subject: str = "") -> list[dict]:
-        """CA2-15 S3a：一个维度（谓词等价类 + subject）的**全部**现行条目，较新的在前。"""
+                                   predicates, subjects=("",)) -> list[dict]:
+        """CA2-15 S3a：一个维度（谓词等价类 + 同一个人的全部主体写法）的**全部**现行条目，较新的在前。"""
         preds = [p for p in (predicates or ()) if p]
         if not preds:
             return []
         occ = occupant_id or "primary"
-        subj = (subject or "").strip()
+        subjs = sorted({(s or "").strip() for s in ((subjects,) if isinstance(subjects, str) else subjects)})
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch("""
                     SELECT * FROM memory_item
                     WHERE user_id=$1 AND occupant_id=$2 AND predicate = ANY($3::text[])
-                      AND COALESCE(subject,'')=$4 AND superseded_by IS NULL
+                      AND COALESCE(subject,'') = ANY($4::text[]) AND superseded_by IS NULL
                     ORDER BY valid_from DESC
-                """, user_id, occ, preds, subj)
+                """, user_id, occ, preds, subjs)
             return [_row_to_item(r) for r in rows]
         found = [_strip(v) for v in self._mem.values()
                  if v["user_id"] == user_id and v["occupant_id"] == occ and v["predicate"] in preds
-                 and not v["superseded_by"] and str(v.get("subject") or "") == subj]
+                 and not v["superseded_by"] and str(v.get("subject") or "") in subjs]
         return sorted(found, key=lambda v: v.get("valid_from") or 0, reverse=True)
 
     # ── 召回 ───────────────────────────────────────────────
@@ -448,15 +457,18 @@ class MemoryVectorStore:
         occ = occupant_id or "primary"
         scopes = list(scopes or [])
         kinds = list(kinds or [])
+        aliases = await self.subject_aliases(user_id, occ)
         flt = dict(occ=occ, scopes=scopes, kinds=kinds, predicate_prefix=predicate_prefix,
                    include_superseded=include_superseded, min_confidence=min_confidence,
                    max_age_days=max_age_days, query=query, min_score=min_score, top_k=top_k,
-                   subject=(subject or "").strip())
+                   subject=(subject or "").strip(), aliases=aliases,
+                   # 同一个人的全部写法一起查（「女儿」与她的名字是同一个人）
+                   subjects=revision.subject_group(subject, aliases) if (subject or "").strip() else [])
         # 语义向量路径仅当有真实模型 + PG；否则一律走候选过滤 + lexical（诚实）。
         if self._pg_ok and query and self.semantic_available:
             rows = await self._fetch_pg_semantic(user_id, occ, query, scopes, kinds,
                                                  predicate_prefix, include_superseded, top_k,
-                                                 subject=flt["subject"])
+                                                 subjects=flt["subjects"])
             cands = [_row_to_item(r) for r in rows]
             sims = {id(c): float(r["sim"]) for c, r in zip(cands, rows)}
             return self._score(cands, flt, vector_sims=sims)
@@ -464,7 +476,7 @@ class MemoryVectorStore:
         if self._pg_ok:
             rows = await self._fetch_pg_candidates(user_id, occ, scopes, kinds,
                                                    predicate_prefix, include_superseded,
-                                                   subject=flt["subject"])
+                                                   subjects=flt["subjects"])
             cands = [_row_to_item(r) for r in rows]
         else:
             cands = [c for c in self._mem.values() if c["user_id"] == user_id]
@@ -485,8 +497,9 @@ class MemoryVectorStore:
                 continue
             if flt["predicate_prefix"] and not it["predicate"].startswith(flt["predicate_prefix"]):
                 continue
-            # G6：subject 过滤（关于谁）。要「老婆的偏好」时本人条目（subject 空）不混入。
-            if flt.get("subject") and str(it.get("subject") or "") != flt["subject"]:
+            # G6：subject 过滤（关于谁）。要「老婆的偏好」时本人条目（subject 空）不混入；
+            # 同一个人的称谓与名字算同一个主体。
+            if flt.get("subject") and str(it.get("subject") or "") not in flt["subjects"]:
                 continue
             # 隐私：高敏默认不参与泛化召回，除非显式定向（scope/predicate）
             if it.get("privacy_level") == "highly_sensitive" and not explicitly_targeted:
@@ -520,7 +533,7 @@ class MemoryVectorStore:
         if not flt["include_superseded"]:
             # CA2-15 S3a：一个偏好维度只说一个现行的话（存量重复不迁移数据也立即只剩一条）；在截取 top_k 之前折叠，
             # 否则同一件事的几种说法会占满名额。
-            results = revision.fold(results)
+            results = revision.fold(results, flt.get("aliases"))
         top = results[:flt["top_k"]]
         for it, _ in top:
             it["last_used_at"] = now
@@ -529,7 +542,7 @@ class MemoryVectorStore:
 
     async def _fetch_pg_semantic(self, user_id, occ, query, scopes, kinds,
                                  predicate_prefix, include_superseded, top_k,
-                                 subject: str = ""):
+                                 subjects=()):
         emb = await self._embed(query)
         async with self._pool.acquire() as conn:
             return await conn.fetch("""
@@ -539,14 +552,14 @@ class MemoryVectorStore:
                   AND (cardinality($5::text[])=0 OR kind = ANY($5))
                   AND (cardinality($6::text[])=0 OR scope = ANY($6))
                   AND ($7='' OR predicate LIKE $7 || '%')
-                  AND ($9='' OR COALESCE(subject,'')=$9)
+                  AND (cardinality($9::text[])=0 OR COALESCE(subject,'') = ANY($9::text[]))
                 ORDER BY embedding <=> $1::vector LIMIT $8
             """, str(emb), user_id, occ, include_superseded, kinds, scopes,
-                 predicate_prefix, top_k * 4, subject or "")
+                 predicate_prefix, top_k * 4, list(subjects or []))
 
     async def _fetch_pg_candidates(self, user_id, occ, scopes, kinds,
                                    predicate_prefix, include_superseded,
-                                   subject: str = ""):
+                                   subjects=()):
         async with self._pool.acquire() as conn:
             return await conn.fetch("""
                 SELECT *, confidence AS sim FROM memory_item
@@ -555,10 +568,10 @@ class MemoryVectorStore:
                   AND (cardinality($4::text[])=0 OR kind = ANY($4))
                   AND (cardinality($5::text[])=0 OR scope = ANY($5))
                   AND ($6='' OR predicate LIKE $6 || '%')
-                  AND ($7='' OR COALESCE(subject,'')=$7)
+                  AND (cardinality($7::text[])=0 OR COALESCE(subject,'') = ANY($7::text[]))
                 ORDER BY valid_from DESC LIMIT 200
             """, user_id, occ, include_superseded, kinds, scopes, predicate_prefix,
-                 subject or "")
+                 list(subjects or []))
 
     async def get_places(self, user_id: str, occupant_id: str = "primary") -> dict:
         """从 place.* 现行条目重建 profile.places 字典（家/公司）。

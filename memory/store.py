@@ -15,6 +15,7 @@ try:
 except Exception:
     aioredis = None
 
+import relation
 import revision
 from pg_store import MemoryVectorStore
 
@@ -556,10 +557,13 @@ class MemoryStore:
                 written += await vs.remember([item])
                 continue
             occ = item.get("occupant_id") or "primary"
+            item = dict(item, subject=relation.normalize_subject(item.get("subject") or ""))
             if revision.is_fact(pred):
                 from extract import predicate_class
+                aliases = await vs.subject_aliases(item["user_id"], occ)
                 same = [c for c in await vs.current_in_dimension(
-                            item["user_id"], occ, predicate_class(pred), item.get("subject") or "")
+                            item["user_id"], occ, predicate_class(pred),
+                            revision.subject_group(item["subject"], aliases))
                         if (c.get("text") or "").strip() == (item.get("text") or "").strip()]
                 if same:
                     await self._reinforce(vs, same[0], item)
@@ -576,8 +580,9 @@ class MemoryStore:
         cand = dict(cand)
         cand["predicate"] = normalize_predicate(cand.get("predicate") or "")
         subject = str(cand.get("subject") or "").strip()
+        aliases = await vs.subject_aliases(user_id, occupant_id)
         currents = await vs.current_in_dimension(user_id, occupant_id, predicate_class(cand["predicate"]),
-                                                 subject)
+                                                 revision.subject_group(subject, aliases))
         text = (cand.get("text") or "").strip()
         if revision.is_multi_valued(cand["predicate"]):
             same = [c for c in currents if revision.equivalent(c.get("text") or "", text)]
@@ -850,12 +855,11 @@ class MemoryStore:
         merged = weighting.merge_evidence(cur.get("source_turn_ids") or "",
                                           out.get("source_turn_ids") or "")
         out["source_turn_ids"] = merged
-        out["evidence_count"] = weighting.evidence_count(
-            merged, fallback=int(cur.get("evidence_count") or 1))
+        out["evidence_count"], out["source_session"] = weighting.next_evidence(cur, out)
         return out
 
     async def _reinforce(self, vs, cur: dict, cand: dict) -> None:
-        """同一偏好复现 → 证据 +1、重算 weight 就地更新（不新增条目、不改 text）。
+        """同一偏好在新的场合复现 → 证据 +1、重算 weight 就地更新（不新增条目、不改 text）。
 
         **只动强度不动内容**：文本相同才走这条路，重写一遍没意义还会刷新 valid_from
         （那会让衰减基准漂移，等于把旧偏好洗成新的）。
@@ -863,19 +867,17 @@ class MemoryStore:
         import weighting
         merged = weighting.merge_evidence(cur.get("source_turn_ids") or "",
                                           cand.get("source_turn_ids") or "")
-        count = weighting.evidence_count(
-            merged, fallback=int(cur.get("evidence_count") or 1) + 1)
-        # 证据串为空（存量条目没记轮次）时至少把计数往前推一格，否则永远加不上权
-        if not merged:
-            count = int(cur.get("evidence_count") or 1) + 1
+        count, session = weighting.next_evidence(cur, cand)
         provenance = cur.get("provenance") or "user_stated"
         half_life = float(cur.get("half_life_days") or 0) or weighting.default_half_life(
             provenance, cur.get("review_status") or "")
-        age = max(0, int(time.time()) - int(cur.get("valid_from") or 0))
+        # 存未衰减的强度：召回时 `effective_confidence` 按 valid_from 再衰减一次，这里也衰减就是两次
+        # （90 天前的推断再被观测到一次，强度反而从 0.3 掉到 0.15 再掉到 0.075）。
         weight = weighting.compute_weight(provenance=provenance, evidence_count=count,
-                                          age_seconds=age, half_life_days=half_life)
+                                          age_seconds=0.0, half_life_days=half_life)
         await vs.reinforce(cur["id"], weight=weight, evidence_count=count,
-                           source_turn_ids=merged, half_life_days=half_life)
+                           source_turn_ids=merged, half_life_days=half_life,
+                           source_session=session)
 
     async def future_events(self, user_id: str, occupant_id: str = "primary",
                             only_ids: list[str] | None = None) -> list[dict]:

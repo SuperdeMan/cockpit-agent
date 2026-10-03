@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 
 from extract import FACT_PREFIXES, MULTI_VALUED, normalize_predicate
+from relation import (REL_FAMILY, SELF_WORDS, is_kinship_word, kinship_spellings, normalize_kinship,
+                      normalize_subject)
 
 NEAR_DUPLICATE = 0.75
 _NOISE = re.compile(r"[\s，。,.!！?？、;；:：/\\()（）\"'“”‘’\-]+")
@@ -56,17 +58,50 @@ def preference_order(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda it: (explicit(it), it.get("valid_from") or 0), reverse=True)
 
 
-def dimension(item) -> tuple:
+def aliases_from_family(edges) -> dict[str, str]:
+    """同一个人的名字 → 称谓（亲属关系边「名字 —family→ 称谓」）。只在没有歧义时归一：一个称谓只对应一个具名的人、
+    这个名字也只对应一个称谓。两个女儿各有名字就不合并（宁可分开存，也不能把一个人的偏好记到另一个人头上）。"""
+    named: dict[str, set[str]] = {}     # 称谓 → 具名的人
+    kins: dict[str, set[str]] = {}      # 名字 → 称谓
+    for edge in edges or ():
+        if (edge.get("rel") or REL_FAMILY) != REL_FAMILY:
+            continue
+        kin = normalize_kinship(str(edge.get("object") or "").strip())
+        who = str(edge.get("subject") or "").strip()
+        if is_kinship_word(kin) and who and not is_kinship_word(who) and normalize_subject(who):
+            named.setdefault(kin, set()).add(who)
+            kins.setdefault(who, set()).add(kin)
+    return {next(iter(people)): kin for kin, people in named.items()
+            if len(people) == 1 and len(kins[next(iter(people))]) == 1}
+
+
+def canonical_subject(subject, aliases: dict | None = None) -> str:
+    """同一个人的称谓与名字归成一个主体（`pg_store.subject_aliases`：一个称谓只对应一个具名的人时才归一）。"""
+    s = normalize_subject(subject)
+    return (aliases or {}).get(s, s) if s else ""
+
+
+def subject_group(subject, aliases: dict | None = None) -> list[str]:
+    """与 `subject` 指同一个人的全部写法：库里按写入时的原样存（存量与 Agent 写入未必归一过），查的时候要一起查。"""
+    canon = canonical_subject(subject, aliases)
+    if not canon:
+        return ["", *SELF_WORDS]
+    group = {canon, str(subject or "").strip(), *kinship_spellings(canon)}
+    group |= {name for name, kin in (aliases or {}).items() if kin == canon}
+    return sorted(s for s in group if s)
+
+
+def dimension(item, aliases: dict | None = None) -> tuple:
     return (item.get("occupant_id") or "primary", normalize_predicate(item.get("predicate") or ""),
-            str(item.get("subject") or "").strip())
+            canonical_subject(item.get("subject"), aliases))
 
 
-def fold(scored: list[tuple[dict, float]]) -> list[tuple[dict, float]]:
+def fold(scored: list[tuple[dict, float]], aliases: dict | None = None) -> list[tuple[dict, float]]:
     """读取折叠：每个维度留下该留的那几条，其余条目从结果里去掉；保持原来的相关性次序。"""
     groups: dict[tuple, list[dict]] = {}
     for item, _score in scored:
         if item.get("kind") == "semantic" and item.get("predicate"):
-            groups.setdefault(dimension(item), []).append(item)
+            groups.setdefault(dimension(item, aliases), []).append(item)
     keep: set[int] = set()
     for (_occ, predicate, _subject), members in groups.items():
         ordered = preference_order(members)

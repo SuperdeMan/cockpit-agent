@@ -262,8 +262,8 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
         "vehicle_id": vehicle_id, "kind": kind, "predicate": predicate,
         "text": text, "scope": scope, "review_status": "auto_extracted",
         "source_session": session_id, "source_ts": _now(), "valid_from": _now(),
-        # 真实证据轮次（M-B）。此前这里是空的、关系边填的是 session_id——于是
-        # `weighting.evidence_count` 永远数出 1，「说过一次 vs 每周三次」分不出来。
+        # 证据轮次（M-B）只作溯源：证据数按场合（会话）计，见 `weighting.next_evidence`——
+        # 按窗口轮次数计会让条目一写入强度就到上限（CA2-15 遗留）。
         "source_turn_ids": source_turn_ids,
     }
     if category == "explicit_preference":
@@ -287,9 +287,7 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
 
     # ── G6（EVA 二轮）：关于谁 + 偏好极性 ─────────────────────────────
     # subject 经亲属称谓归一（爸→爸爸）；「用户/我/本人」即本人 → 归空；polarity 闭集。
-    subj = relation.normalize_kinship(str(c.get("subject") or "").strip())
-    if subj in ("用户", "我", "本人", "自己"):
-        subj = ""
+    subj = relation.normalize_subject(c.get("subject") or "")
     if subj and len(subj) <= 20:
         item["subject"] = subj
     pol = str(c.get("polarity") or "").strip().lower()
