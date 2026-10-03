@@ -217,6 +217,8 @@ export type PaymentQrCard = {
   pay_url?: string
   expires_at_ms?: number
   merchant_note?: string  // merchant_hosted：「订单状态以商家为准」类说明
+  account?: string
+  account_label?: string
   buttons?: CardButton[]
   _prov?: Provenance
 }
@@ -269,6 +271,9 @@ export type McpOrderCard = {
   duplicate?: boolean
   demo?: boolean
   demo_label?: string
+  // CA2-17：共享服务账号的标注（桥按 servers.yaml 的 account: service 统一打，前端只渲染）
+  account?: string
+  account_label?: string
   _prov?: Provenance
 }
 
@@ -291,6 +296,9 @@ export type McpResultCard = {
   buttons?: CardButton[]
   demo?: boolean
   demo_label?: string
+  // CA2-17：共享服务账号的标注（桥按 servers.yaml 的 account: service 统一打，前端只渲染）
+  account?: string
+  account_label?: string
   _prov?: Provenance
   [key: string]: unknown
 }
@@ -322,6 +330,8 @@ export type MerchantLineItem = {
 export type MerchantCheckoutCard = {
   type: 'merchant_checkout' | 'merchant_choices' | 'merchant_order_preview'
   stage?: 'choices' | 'preview' | 'order' | 'cancel'
+  account?: string
+  account_label?: string
   confirmation_context?: string
   merchant?: string
   merchant_name?: string

@@ -140,7 +140,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
             return self.refused("当前会话身份不完整，暂时不能创建真实订单。")
 
         now = self._clock()
-        store, store_code, refusal = await self._resolve_store(slots, now=now)
+        store, store_code, refusal = await self._resolve_store(slots, now=now, user_id=user_id)
         if refusal is not None:
             return refusal
 
@@ -267,7 +267,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
         )
         if not await self.drafts.put(draft):
             return self.refused("订单预览暂时无法安全保存，请稍后重新下单。")
-        speech = self.preview_speech(draft, unpaid_expiry=True)
+        speech = self.preview_speech(draft, unpaid_expiry=True, shared_account=self.shared_account)
         speech += f"取餐方式：{draft.fulfillment}。"
         return AgentResult(
             status=NEED_CONFIRM,
@@ -345,7 +345,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 return AgentResult(
                     speech="商家信息有变化，但新预览无法安全保存，没有创建订单。"
                            "请稍后重新下单。")
-            speech = self.preview_speech(refreshed, unpaid_expiry=True)
+            speech = self.preview_speech(refreshed, unpaid_expiry=True,
+                                         shared_account=self.shared_account)
             speech += f"取餐方式：{refreshed.fulfillment}。"
             speech = "商家价格、商品信息或取餐方式有变化，请重新确认。" + speech
             return AgentResult(
@@ -779,7 +780,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
                     return True
         return False
 
-    async def _resolve_store(self, slots: dict, *, now):
+    async def _resolve_store(self, slots: dict, *, now, user_id: str = ""):
         """把 store_hint/city 解析成一家可下单的官方门店。
 
         返回 `(store, store_code, refusal)`——`refusal` 非 None 时调用方原样返回。
@@ -797,8 +798,13 @@ class McDonaldsWorkflow(MerchantWorkflow):
         # （收藏列表，行为=修复前），仍由本地 `_matching_stores` 与诚实查无兜底。
         if store_hint and city:
             search_args = {"searchType": 2, "keyword": store_hint, "city": city}
-        else:
+        elif self.account_data_visible(user_id):
             search_args = {"searchType": 1}
+        else:
+            # CA2-17：收藏门店是共享服务账号持有人的个人数据，别人不给看
+            return None, "", self._reselect_store(
+                "这个麦当劳账号是车上共享的，收藏的门店只给账号持有人用。"
+                "说一下想去的门店和所在城市，我按位置帮您找。")
         try:
             stores_data = await self._read(
                 "query-nearby-stores",
@@ -867,7 +873,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
         """
         slots = dict(getattr(intent, "slots", {}) or {})
         now = self._clock()
-        store, store_code, refusal = await self._resolve_store(slots, now=now)
+        store, store_code, refusal = await self._resolve_store(
+            slots, now=now, user_id=self._owner(ctx)[0])
         if refusal is not None:
             return refusal
         try:

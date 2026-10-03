@@ -3,8 +3,9 @@
 - parking-payment 与 mcp-bridge 共用；Agent 侧只发支付**意图**（金额来自业务
   事实源），渠道凭证/二维码生成/查单全部在 payment-gateway。
 - trace 经 gRPC metadata `x-trace-id` 透传（contextvar 由 SDK server 在 Execute
-  入口设置）；granted_scopes 编排层校验后不随 meta 下发，网关侧走 PoC fail-open
-  留痕契约（server 端 `_check_scope`），权限单轨完整版是显式后置项。
+  入口设置）；同一入口把本次请求的主体与编排层下发的 granted_scopes 绑定进来，随
+  `x-user-id` / `x-granted-scopes` 带给网关——网关缺任一即拒，并按主体校验支付单归属（CA2-17）。
+  Agent 不能替别的用户支付或查单：主体来自请求上下文，不来自 Agent 传的参数。
 - 调用失败（网关没起/网络）返回 None——Agent 按 R9 诚实降级出话术（OK 态），
   不假装支付在进行。
 """
@@ -17,6 +18,8 @@ import grpc
 
 from runtime.grpcio import aio_channel
 
+from .caller import caller_metadata
+
 from cockpit.payment.v1 import payment_pb2, payment_pb2_grpc
 
 logger = logging.getLogger("sdk.payment")
@@ -25,7 +28,7 @@ _TIMEOUT_S = 8
 
 
 def _metadata() -> list[tuple[str, str]]:
-    md: list[tuple[str, str]] = []
+    md: list[tuple[str, str]] = caller_metadata()
     try:
         from observability.tracing import get_trace_id
         tid = get_trace_id()

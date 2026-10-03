@@ -141,6 +141,8 @@ class OrderRef:
     from_session: bool = False
     created_at: float = 0.0
     scope: str = NEUTRAL
+    # CA2-17：用户报了单号，但这是共享服务账号下别人的单（不在本人下单记录里、本人也不是账号持有人）
+    foreign: bool = False
 
     @property
     def needs_honest_declination(self) -> bool:

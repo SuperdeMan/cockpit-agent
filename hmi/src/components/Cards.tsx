@@ -212,6 +212,17 @@ function ProvBadge({ prov }: { prov?: Provenance }) {
   )
 }
 
+// CA2-17：共享服务账号如实标注。标签由桥按 servers.yaml 的 `account: service` 打，前端不自己判断。
+function AccountBadge({ label }: { label?: string }) {
+  if (!label) return null
+  return (
+    <span title="车上所有用户共用这一个商户账号" style={{
+      fontSize: 10, padding: '1px 6px', borderRadius: 6, whiteSpace: 'nowrap', flexShrink: 0,
+      background: 'rgba(148,163,184,0.16)', color: 'var(--au-text-2)', fontWeight: 700,
+    }}>{label}</span>
+  )
+}
+
 function ManualCardView({ card }: { card: ManualCard }) {
   const images = manualImages(card) as ManualImage[]
   const chunks = (card.chunks || []).slice(0, 2)
@@ -1685,6 +1696,7 @@ function PaymentQrCardView({ card, onAction }: { card: PaymentQrCard; onAction?:
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>{presentation.title}</span>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>
+        <AccountBadge label={card.account_label} />
         <span style={{ flex: 1 }} />
         <ProvBadge prov={card._prov} />
       </div>
@@ -1802,6 +1814,7 @@ function McpOrderCardView({ card, onAction }: {
             background: 'rgba(245,158,11,0.16)', color: 'var(--au-warn)', fontWeight: 700,
           }}>{card.demo_label || '演示商户'}</span>
         )}
+        <AccountBadge label={card.account_label} />
         <span style={{ flex: 1 }} />
         <ProvBadge prov={card._prov} />
       </div>
@@ -1871,6 +1884,7 @@ function McpInfoCardView({ card }: { card: McpResultCard }) {
             background: 'rgba(245,158,11,0.16)', color: 'var(--au-warn)', fontWeight: 700,
           }}>{card.demo_label || '演示商户'}</span>
         )}
+        <AccountBadge label={card.account_label} />
         <span style={{ flex: 1 }} />
         <ProvBadge prov={card._prov} />
       </div>
@@ -1915,6 +1929,7 @@ function MerchantCheckoutCardView({ card, onAction }: {
           background: 'var(--au-primary)', boxShadow: '0 0 10px rgba(70,214,224,0.55)',
         }} />
         <span style={{ fontSize: 14.5, fontWeight: 750, color: 'var(--au-text)' }}>{title}</span>
+        <AccountBadge label={card.account_label} />
         <span style={{ flex: 1 }} />
         <ProvBadge prov={card._prov} />
       </div>

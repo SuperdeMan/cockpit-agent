@@ -36,8 +36,8 @@ from runtime.capability_contract import declaration, to_proto as contract_proto,
 
 from . import candidate_ref
 from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
-                        check_version, load_local_capabilities, load_servers,
-                        normalize_hostname)
+                        check_account, check_version, load_local_capabilities,
+                        load_servers, normalize_hostname)
 from .mcp_client import McpError, StdioMcpClient
 from .order_ref import (HISTORY, NEUTRAL, OrderRef, allows_history_fallback,
                         is_deictic_placeholder, reference_scope)
@@ -61,6 +61,14 @@ _SLOT_PROMPTS = {
 _NO_ORDER_THIS_SESSION = (
     "这次对话里我没有帮您下过单。要查以前的订单，说个订单号，"
     "或者说「查一下我之前的订单」。")
+# CA2-17：共享服务账号的卡片角标（判据在 servers.yaml 的 account: service）
+SHARED_ACCOUNT_LABEL = "共享商户账号"
+# CA2-17：共享服务账号下别人的单——不出站、不确认这个单号是否存在
+_FOREIGN_ORDER = (
+    "这个订单号不在您的下单记录里。这个商户用的是车上共享的服务账号，"
+    "账号下的其他订单只有账号持有人能查。")
+# 归属核对看本人在账本里的全部商户订单，不只是「最近」那几条
+_OWNERSHIP_WINDOW = 500
 
 
 def _history_prefix(created_at: float) -> str:
@@ -130,6 +138,7 @@ class McpBridgeAgent(BaseAgent):
         self._local_capabilities_by_intent = {
             spec.intent: spec for spec in self._local_capabilities if spec.expose}
         self._bindings: dict[str, _Binding] = {}
+        self._servers_by_id: dict = {}
         self._workflow_bindings: dict[str, _WorkflowBinding] = {}
         self._clients: list = []
         self.rejections: list[str] = []
@@ -168,6 +177,12 @@ class McpBridgeAgent(BaseAgent):
                 self.rejections.append(f"{spec.id}: {spec.env_error}")
                 logger.warning("[mcp:%s] **拒载**：%s", spec.id, spec.env_error)
                 continue
+            account_error = check_account(spec)
+            if account_error:
+                self.rejections.append(f"{spec.id}: {account_error}")
+                logger.warning("[mcp:%s] **拒载**：%s", spec.id, account_error)
+                continue
+            self._servers_by_id[spec.id] = spec
             client = self._make_client(spec)
             try:
                 await client.start()
@@ -314,6 +329,21 @@ class McpBridgeAgent(BaseAgent):
 
     # ── 请求处理 ─────────────────────────────────────────────────────
     async def handle(self, intent, ctx, meta) -> AgentResult:
+        return self._label_shared_account(await self._dispatch(intent, ctx, meta))
+
+    def _label_shared_account(self, result):
+        """CA2-17：共享服务账号的商户卡一律标「共享商户账号」——在桥的唯一出口按卡片所属商户打标，
+        判据只认 `servers.yaml` 的 `account: service`，不让各条商户流程各自记得。"""
+        card = getattr(result, "ui_card", None)
+        if not isinstance(card, dict):
+            return result
+        server = self._servers_by_id.get(str(card.get("merchant") or card.get("server") or ""))
+        if getattr(server, "account", "") == "service":
+            card["account"] = "service"
+            card["account_label"] = SHARED_ACCOUNT_LABEL
+        return result
+
+    async def _dispatch(self, intent, ctx, meta) -> AgentResult:
         local = self._local_capabilities_by_intent.get(intent.name)
         if local is not None:
             if local.handler == "session_preview_discard":
@@ -747,6 +777,8 @@ class McpBridgeAgent(BaseAgent):
                     b, args, user_id,
                     session_id=str(getattr(ctx, "session_id", "") or "").strip(),
                     scope=scope)
+                if order_ref.foreign:
+                    return AgentResult(speech=_FOREIGN_ORDER)
                 if order_ref.needs_honest_declination:
                     # **不出站**：没有可查的引用就不该打商户请求。也不退回泛泛的
                     # 「要操作哪一单」——那会让用户以为系统没听清，而真相是
@@ -1112,6 +1144,34 @@ class McpBridgeAgent(BaseAgent):
             return {}, OrderRef(scope=scope)
         return fallback or ({}, OrderRef(scope=scope))
 
+    async def _may_read_reference(self, b, user_id: str, order_id, idempotency_key) -> bool:
+        """CA2-17：报出的订单引用能不能查。非共享账号（如 demo，按用户隔离）由商户自己校验归属。"""
+        server = b.server
+        if getattr(server, "account", "") != "service":
+            return True
+        holder = str(getattr(server, "account_holder", "") or "")
+        if holder and user_id == holder:
+            return True
+        if not user_id or not self.ledger:
+            return False
+        try:
+            rows = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=_OWNERSHIP_WINDOW)
+        except Exception as e:
+            logger.debug("[mcp] 核对订单归属时读账本失败（按不属于本人处理）：%s", e)
+            return False
+        order_id, idempotency_key = str(order_id or ""), str(idempotency_key or "")
+        for task in rows or []:
+            if str(getattr(task, "user_id", "") or "") != user_id:
+                continue
+            ref = getattr(task, "result_ref", {}) or {}
+            if not isinstance(ref, dict) or (ref.get("server") or "demo-coffee") != server.id:
+                continue
+            if order_id and str(ref.get("order_id") or "") == order_id:
+                return True
+            if idempotency_key and str(getattr(task, "idempotency_key", "") or "") == idempotency_key:
+                return True
+        return False
+
     async def _resolve_order_ref(self, b, args: dict, user_id: str, *,
                                  session_id: str = "",
                                  scope: str = NEUTRAL) -> tuple[dict, OrderRef]:
@@ -1142,6 +1202,11 @@ class McpBridgeAgent(BaseAgent):
         idem_key_name = b.tool.arg_map.get("idempotency_key", "idempotency_key")
         if args.get(oid_key) or args.get(idem_key_name):
             # 用户自己报了引用——范围判据不许拦它，否则历史订单再也查不了。
+            # 但共享服务账号（CA2-17）下只有账号持有人能凭单号查账号里的任何订单；
+            # 其他人报的单号必须在自己的下单记录里，否则不出站。
+            if not await self._may_read_reference(
+                    b, user_id, args.get(oid_key), args.get(idem_key_name)):
+                return args, OrderRef(scope=scope, foreign=True)
             return args, OrderRef(found=True, from_session=True, scope=scope)
         if not self.ledger:
             return args, OrderRef(scope=scope)
@@ -1542,7 +1607,8 @@ class McpBridgeAgent(BaseAgent):
 
     def _card(self, b, card_type: str, payload: dict) -> dict:
         reserved = {"_prov", "type", "server", "tool", "merchant",
-                    "buttons", "actions", "demo_label", "readonly"}
+                    "buttons", "actions", "demo_label", "readonly",
+                    "account", "account_label"}
         card = {k: v for k, v in (payload or {}).items()
                 if k != "demo" and k not in reserved}
         card.update({"type": card_type, "server": b.server.id,

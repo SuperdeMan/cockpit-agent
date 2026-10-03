@@ -19,6 +19,11 @@ logger = logging.getLogger("agent.mcp_bridge.client")
 
 PROTOCOL_VERSION = "2025-06-18"
 CLIENT_INFO = {"name": "cockpit-mcp-bridge", "version": "0.1.0"}
+# stdio 子进程只继承运行 Python 所需的系统变量（CA2-17）；server 需要的配置在 servers.yaml 里显式给
+_CHILD_ENV_KEYS = frozenset({
+    "PATH", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+    "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+})
 
 
 def parse_tool_result(result: dict) -> dict:
@@ -95,7 +100,9 @@ class StdioMcpClient:
     async def start(self) -> None:
         # PYTHONIOENCODING 钉死子进程 stdio 编码：MCP 帧是 UTF-8 JSON，
         # 让 server 去撞平台默认编码是自找的解码错（Windows cp936 首跑即中招）。
-        env = {**os.environ, **(self._env or {}), "PYTHONIOENCODING": "utf-8"}
+        # CA2-17：只给运行所需的系统变量，不继承桥的整份环境（商户 token、数据库 DSN、管理密钥）。
+        env = {**{k: v for k, v in os.environ.items() if k in _CHILD_ENV_KEYS},
+               **(self._env or {}), "PYTHONIOENCODING": "utf-8"}
         self._proc = await asyncio.create_subprocess_exec(
             *self._command, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,

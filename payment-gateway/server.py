@@ -4,8 +4,9 @@
 - **Authorize 本地建单不碰渠道**；Capture=确认后亮码（调渠道 precreate），
   `captured`（钱已到账）由轮询 worker 推进——本文件不做任何「同步扣款」。
 - **执行层再校验**（ws8 §1.3 不信任上游）：metadata `x-granted-scopes` 含
-  `payment.invoke` 才放行；metadata 缺失走 PoC fail-open（audit.fail_open_scopes
-  留痕，与 orchestrator context 的 _POC_DEFAULT_SCOPES 同一契约）。
+  `payment.invoke` 才放行，缺失即拒（CA2-17：SDK 每次支付请求都带上编排层下发的授权）；
+  metadata `x-user-id` 是请求主体——建单必须为它本人，其余调用只认它本人的支付单
+  （别人的单按不存在处理，不暴露是否存在）。
 - **PAYMENT_REAL_SCENES 白名单**（fail-closed）：scene 不在名单强制 mock provider
   ——防 mock 数据算出的金额走真渠道收真钱（设计 2.7）。
 - MERCHANT_HOSTED 单段：Authorize 直接登记落 pending_pay（确认已由 MCP 写工具闸
@@ -14,6 +15,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import time
@@ -131,14 +133,8 @@ class PaymentGatewayServicer(
 
     def _check_scope(self, context, *, user_id: str, vehicle_id: str,
                      agent_id: str, trace_id: str) -> bool:
-        """执行层 scope 校验。metadata 缺失=PoC fail-open（audit 留痕）；
-        带了但没有 payment.invoke=硬拒。"""
-        raw = self._meta(context).get("x-granted-scopes")
-        if raw is None:
-            if self._audit:
-                self._audit.fail_open_scopes(vehicle_id=vehicle_id, user_id=user_id,
-                                             trace_id=trace_id, scopes=[_SCOPE])
-            return True
+        """执行层 scope 校验：没有 `payment.invoke`（含 metadata 缺失）一律拒。"""
+        raw = self._meta(context).get("x-granted-scopes") or ""
         granted = {s.strip() for s in raw.split(",") if s.strip()}
         if _SCOPE in granted:
             return True
@@ -148,6 +144,25 @@ class PaymentGatewayServicer(
 
     def _trace_id(self, context) -> str:
         return self._meta(context).get("x-trace-id", "")
+
+    def _caller_owns(self, context, user_id: str) -> bool:
+        """请求主体（metadata `x-user-id`）就是这笔支付的用户。"""
+        caller = (self._meta(context).get("x-user-id") or "").strip()
+        return bool(caller) and bool(user_id) and hmac.compare_digest(
+            caller.encode("utf-8"), str(user_id).encode("utf-8"))
+
+    async def _owned_order(self, context, payment_id: str):
+        """本人的支付单；别人的单与不存在一样处理（不做存在性预言）。"""
+        order = await self.store.get(payment_id)
+        if order is None or not self._caller_owns(context, order.user_id):
+            return None
+        return order
+
+    async def _require_scope(self, context, trace_id: str) -> None:
+        if not self._check_scope(context, user_id="", vehicle_id="", agent_id="",
+                                 trace_id=trace_id):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED,
+                                f"missing scope {_SCOPE}")
 
     async def _span(self, trace_id: str, node: str, status: str = "ok",
                     attrs: dict | None = None) -> None:
@@ -176,6 +191,9 @@ class PaymentGatewayServicer(
                                  agent_id=request.agent_id, trace_id=trace_id):
             await context.abort(grpc.StatusCode.PERMISSION_DENIED,
                                 f"missing scope {_SCOPE}")
+        if not self._caller_owns(context, request.user_id):
+            # 只能为本次请求的主体建单：Agent 传的 user_id 不是授权来源
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "payer is not the caller")
 
         is_merchant = request.channel == 3   # MERCHANT_HOSTED
         if is_merchant:
@@ -244,6 +262,9 @@ class PaymentGatewayServicer(
 
     async def Capture(self, request, context):
         trace_id = self._trace_id(context)
+        await self._require_scope(context, trace_id)
+        if await self._owned_order(context, request.payment_id) is None:
+            return payment_pb2.CaptureResponse(ok=False, error="订单不存在")
         order, err = await self.store.get_for_capture(
             request.payment_id, request.confirm_token)
         if err:
@@ -289,7 +310,8 @@ class PaymentGatewayServicer(
             qr_svg=_qr_svg_data_uri(order.qr_content))
 
     async def Cancel(self, request, context):
-        order = await self.store.get(request.payment_id)
+        await self._require_scope(context, self._trace_id(context))
+        order = await self._owned_order(context, request.payment_id)
         if not order:
             return payment_pb2.CancelResponse(ok=False)
         if order.status == "pending_pay" and order.channel != "merchant_hosted":
@@ -303,7 +325,8 @@ class PaymentGatewayServicer(
         return payment_pb2.CancelResponse(ok=cancelled is not None)
 
     async def GetStatus(self, request, context):
-        order = await self.store.get(request.payment_id)
+        await self._require_scope(context, self._trace_id(context))
+        order = await self._owned_order(context, request.payment_id)
         if not order:
             await context.abort(grpc.StatusCode.NOT_FOUND,
                                 f"payment {request.payment_id} 不存在")
@@ -319,7 +342,8 @@ class PaymentGatewayServicer(
 
     async def Refund(self, request, context):
         trace_id = self._trace_id(context)
-        order = await self.store.get(request.payment_id)
+        await self._require_scope(context, trace_id)
+        order = await self._owned_order(context, request.payment_id)
         if not order:
             return payment_pb2.RefundResponse(ok=False, error="订单不存在")
         if order.status != "captured":

@@ -172,8 +172,21 @@ class MerchantWorkflow(ABC):
             "buttons": [],
         }
 
+    @property
+    def shared_account(self) -> bool:
+        """CA2-17：这家商户用的是车上所有用户共用的服务账号（`servers.yaml` 的 `account: service`）。"""
+        return getattr(getattr(self, "server", None), "account", "") == "service"
+
+    def account_data_visible(self, user_id: str) -> bool:
+        """共享账号里的个人数据（收藏门店、账号下的任意订单）只给账号持有人；非共享账号按用户隔离。"""
+        if not self.shared_account:
+            return True
+        holder = str(getattr(self.server, "account_holder", "") or "")
+        return bool(holder) and user_id == holder
+
     @staticmethod
-    def preview_speech(draft: MerchantDraft, *, unpaid_expiry: bool = False) -> str:
+    def preview_speech(draft: MerchantDraft, *, unpaid_expiry: bool = False,
+                       shared_account: bool = False) -> str:
         item_text = "、".join(
             f"{item.name}×{item.quantity}"
             + (f"（{'/'.join(item.specifications)}）" if item.specifications else "")
@@ -183,6 +196,8 @@ class MerchantWorkflow(ABC):
         text = f"请确认：{store}，{item_text}，应付 {amount}。确认后只创建未支付订单。"
         if unpaid_expiry:
             text += "不支付会由商户自动失效。"
+        if shared_account:
+            text += "下单用的是车上共享的商户账号。"
         return text
 
     @staticmethod

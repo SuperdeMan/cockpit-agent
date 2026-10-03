@@ -24,6 +24,7 @@ REJECT_SCHEMA = "schema_mismatch"
 REJECT_NOT_ALLOWED = "not_in_allowlist"
 REJECT_MISSING = "tool_missing_on_server"
 REJECT_ENV = "env_var_missing"
+REJECT_ACCOUNT = "account_undeclared"
 REJECT_COMPENSATE = "compensate_invalid"
 
 _ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
@@ -181,6 +182,10 @@ class ServerSpec:
     image_hosts: list = field(default_factory=list)
     env_error: str = ""          # ${VAR} 展开失败的具名原因——bootstrap 据此整台拒载
     workflows: list[WorkflowSpec] = field(default_factory=list)
+    # CA2-17：`service` = 所有车上用户共用这一个商户账号（服务级凭据）。卡片与确认话术据此如实标注；
+    # `account_holder` 是这个商户账号的持有人——只有 TA 能凭单号查账号下任何订单、用账号收藏的门店。
+    account: str = ""
+    account_holder: str = ""
 
 
 def admit_workflow(spec: WorkflowSpec, admitted_by_name: dict) -> str:
@@ -474,8 +479,22 @@ def load_servers(path: str) -> list:
                            for h in (s.get("pay_url_hosts") or [])],
             image_hosts=[normalize_hostname(h)
                          for h in (s.get("image_hosts") or [])],
-            env_error=env_error, workflows=workflows))
+            env_error=env_error, workflows=workflows,
+            account=str(s.get("account", "") or "").strip(),
+            account_holder=str(s.get("account_holder", "") or "").strip()))
     return out
+
+
+def check_account(spec: ServerSpec) -> str:
+    """CA2-17：带静态凭据的远端商户必须声明共享服务账号，否则整台拒载（旧服务级账号边界如实标注）。"""
+    if spec.account not in ("", "service"):
+        return f"{REJECT_ACCOUNT}: account 只能是 service 或留空，实际 {spec.account!r}"
+    if spec.account_holder and spec.account != "service":
+        return f"{REJECT_ACCOUNT}: account_holder 只能配在 account: service 的服务器上"
+    if not spec.demo and spec.headers and spec.account != "service":
+        return (f"{REJECT_ACCOUNT}: 带静态凭据的远端商户是所有用户共用的服务账号，"
+                "必须声明 account: service")
+    return ""
 
 
 def check_version(spec: ServerSpec, server_info: dict) -> str:

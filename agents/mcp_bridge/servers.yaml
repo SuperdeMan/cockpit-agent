@@ -129,6 +129,10 @@ servers:
   - id: mcdonalds
     demo: false
     trust: third_party
+    # CA2-17：一个平台 token = 一个麦当劳账号，车上所有用户共用（服务级凭据）。卡片与确认话术标「共享商户账号」；
+    # 只有持有人能凭单号查账号下任何订单、用账号收藏的门店，其他人只查自己在车上下过的单。
+    account: service
+    account_holder: u1
     transport: streamable_http
     url: https://mcp.mcd.cn
     headers:
@@ -199,7 +203,7 @@ servers:
         schema_sha: "235a50ac3f94"
         # searchType **不写死**（2026-08-14 真机 schema 取证）：1=搜索**收藏餐厅**、
         # 2=按位置搜索（city+keyword 必填）。此前写死 1，「附近的麦当劳」永远只会
-        # 查到测试账号收藏的碧海君庭一家——workflow 按有无位置线索动态选档。
+        # 查到共享服务账号收藏的碧海君庭一家——workflow 按有无位置线索动态选档；收藏档只给账号持有人（CA2-17）。
         const_args: {beType: 1}
         timeout_ms: 15000
       - name: query-meals
@@ -307,6 +311,9 @@ servers:
   - id: luckin
     demo: false
     trust: third_party
+    # CA2-17：token 绑一个瑞幸账号会话，车上所有用户共用（服务级凭据）；口径同麦当劳。
+    account: service
+    account_holder: u1
     transport: streamable_http
     url: https://gwmcp.lkcoffee.com/order/user/mcp
     headers:

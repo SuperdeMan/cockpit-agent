@@ -916,7 +916,7 @@ cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」�
 | 能力合成 | capability 由 `bootstrap()` 在 `serve()` **之前**从准入清单合成（注册在 serve 里发生，晚一步注册中心就看到空能力表）；manifest.yaml 的 `capabilities` 故意留空 |
 | bridge-owned 本地能力 | 与外部 MCP binding 分栏登记在 `servers.yaml.local_capabilities`，只允许代码内具名 handler + scope 白名单；`shop.preview_discard` 只清认证 owner/session 的临时草稿，`drafts_after=0` 才算成功。外部卡丢帧也不能成为“不清理”的前提 |
 | 权限 | 一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）+ `network.external`；涉钱走 payment-gateway，Agent 不持凭证 |
-| **账号与 owner 边界** | 官方麦当劳/瑞幸 token 当前是服务级全局账号，不是乘员凭证。只有网关权威身份与 scope 可开启写 workflow；`user_id`、声纹 `occupant_id` 或 Planner meta 均不能自行授予商户写权。owner 只用于本地草稿/账本隔离，不作为未知参数发给远程 MCP。多乘员独立商户账号与 token 自动刷新均未产品化，缺 token 时能力诚实缺席。 |
+| **账号与 owner 边界** | 官方麦当劳/瑞幸 token 当前是服务级全局账号，不是乘员凭证。只有网关权威身份与 scope 可开启写 workflow；`user_id`、声纹 `occupant_id` 或 Planner meta 均不能自行授予商户写权。owner 只用于本地草稿/账本隔离，不作为未知参数发给远程 MCP。多乘员独立商户账号与 token 自动刷新均未产品化，缺 token 时能力诚实缺席。**CA2-17**：带静态凭据的远端商户必须声明 `account: service`（否则拒载）与 `account_holder`；桥出口给它的卡打「共享商户账号」、确认话术如实说明；账号范围的数据（凭单号查任意订单、收藏门店）只给持有人，其他人只认自己账本里的单。stdio 子进程只继承运行所需的系统变量。 |
 | 故障隔离 | 一台 server 起不来/版本不符 → **只让它自己的工具缺席**，桥照常服务其余；绝不静默降级成假数据 |
 | **查单**（M-D） | `order.get` 按**订单号或幂等键**查。幂等键那条是关键的一半：**下单超时那一单根本没有订单号**（响应没回来），但幂等键是我们自己生成的、商户按它索引——「到底下没下成」由此第一次可以核对。用户不带订单号时从 Task Ledger 取最近一单的引用；owner 由已验证 Context 派生，**不是 planner 槽位**（让 LLM 能指定查谁的订单＝把越权做成可填字段） |
 | **取消与补偿**（M-D） | `order.cancel` 从一开始就在商户侧存在、也被 `order.create` 声明为 `compensate_tool`，但**从没进过准入清单**——补偿因此只在准入期被校验存在性，运行期零调用、用户零入口。放进清单它才是能力：**声明存在 ≠ 能用**。取消仍是写操作走确认闸；**不做未经用户确认的自动补偿**。回填订单号时**只认确定完成那一单**——`outcome=uncertain` 那单连订单号都没有，拿它去取消等于对着一个不知道存不存在的单执行写操作 |
@@ -3023,3 +3023,11 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 取令牌只走一处：e2e 子进程用运行器传下的 `E2E_COLLECTOR_TOKEN`（不得持有密钥），测试经 `support.e2e.collector_headers`，
   其余工具经 `scripts/obs_token.py`（`python scripts/obs_token.py` 打印一枚给云上 dashboard 粘贴）。凭据只发给 collector。
 - 新增 collector 路由默认要凭据；确需开放的只能是不带用户内容、不改状态的接口，并改 `OPEN_PATHS` 与它的测试。
+
+### 9.55 支付网关按请求主体执行（CA2-17，2026-10-03）
+
+- SDK 在 Execute 入口把请求主体与编排层下发的 granted_scopes 绑定（`agents/_sdk/caller.py`），支付客户端随
+  `x-user-id` / `x-granted-scopes` 带给网关；Agent 传的 `user_id` 不是授权来源。
+- 网关：没有 `payment.invoke`（含 metadata 缺失）一律拒；Authorize 只能为请求主体本人建单；Capture / Cancel / GetStatus / Refund
+  只认本人的支付单，别人的单按不存在处理（不做存在性预言）。不再有 fail-open 分支。
+- 只在 Agent 请求处理过程中调网关：请求之外（后台任务）没有绑定主体，网关会拒。

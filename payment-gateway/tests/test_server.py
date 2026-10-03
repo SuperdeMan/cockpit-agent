@@ -28,8 +28,12 @@ class _Abort(Exception):
         self.code, self.details = code, details
 
 
+# CA2-17：SDK 每次支付请求都带请求主体与授权；缺省就是车主 u1 的一次正常请求
+CALLER = (("x-granted-scopes", "payment.invoke"), ("x-user-id", "u1"))
+
+
 class FakeContext:
-    def __init__(self, metadata: tuple = ()):
+    def __init__(self, metadata: tuple = CALLER):
         self._md = metadata
 
     def invocation_metadata(self):
@@ -115,13 +119,50 @@ def test_authorize_amount_cap_aborts(servicer, env):
     assert e.value.code == grpc.StatusCode.INVALID_ARGUMENT
 
 
-def test_authorize_scope_fail_open_when_metadata_absent(servicer):
-    _do(servicer.Authorize(_authorize_req(), FakeContext()))
-    assert servicer._audit.named("fail_open_scopes")     # PoC fail-open 必留痕
+def test_authorize_denied_when_metadata_absent(servicer):
+    # CA2-17：没有授权与主体的请求不是 SDK 的 Agent 请求——拒，并留审计
+    with pytest.raises(_Abort) as e:
+        _do(servicer.Authorize(_authorize_req(), FakeContext(metadata=())))
+    assert e.value.code == grpc.StatusCode.PERMISSION_DENIED
+    assert servicer._audit.named("permission_denied")
+
+
+def test_authorize_only_for_the_calling_user(servicer):
+    ctx = FakeContext(metadata=(("x-granted-scopes", "payment.invoke"), ("x-user-id", "u2")))
+    with pytest.raises(_Abort) as e:
+        _do(servicer.Authorize(_authorize_req(user_id="u1"), ctx))
+    assert e.value.code == grpc.StatusCode.PERMISSION_DENIED
+
+
+def test_another_users_payment_reads_as_absent(servicer):
+    auth = _do(servicer.Authorize(_authorize_req(), FakeContext()))
+    other = FakeContext(metadata=(("x-granted-scopes", "payment.invoke"), ("x-user-id", "u2")))
+    with pytest.raises(_Abort) as e:
+        _do(servicer.GetStatus(payment_pb2.GetStatusRequest(payment_id=auth.payment_id), other))
+    assert e.value.code == grpc.StatusCode.NOT_FOUND
+    assert not _do(servicer.Cancel(payment_pb2.CancelRequest(payment_id=auth.payment_id), other)).ok
+    captured = _do(servicer.Capture(payment_pb2.CaptureRequest(
+        payment_id=auth.payment_id, confirm_token=auth.confirm_token), other))
+    assert not captured.ok and captured.error == "订单不存在"
+    refund = _do(servicer.Refund(payment_pb2.RefundRequest(payment_id=auth.payment_id), other))
+    assert not refund.ok and refund.error == "订单不存在"
+    # 本人仍然可以
+    assert _do(servicer.GetStatus(payment_pb2.GetStatusRequest(payment_id=auth.payment_id),
+                                  FakeContext())).payment_id == auth.payment_id
+
+
+def test_reads_and_cancels_need_the_grant_too(servicer):
+    auth = _do(servicer.Authorize(_authorize_req(), FakeContext()))
+    no_grant = FakeContext(metadata=(("x-user-id", "u1"),))
+    with pytest.raises(_Abort) as e:
+        _do(servicer.GetStatus(payment_pb2.GetStatusRequest(payment_id=auth.payment_id), no_grant))
+    assert e.value.code == grpc.StatusCode.PERMISSION_DENIED
+    with pytest.raises(_Abort):
+        _do(servicer.Cancel(payment_pb2.CancelRequest(payment_id=auth.payment_id), no_grant))
 
 
 def test_authorize_scope_denied_when_scope_missing(servicer):
-    ctx = FakeContext(metadata=(("x-granted-scopes", "vehicle.control"),))
+    ctx = FakeContext(metadata=(("x-granted-scopes", "vehicle.control"), ("x-user-id", "u1")))
     with pytest.raises(_Abort) as e:
         _do(servicer.Authorize(_authorize_req(), ctx))
     assert e.value.code == grpc.StatusCode.PERMISSION_DENIED
@@ -129,7 +170,7 @@ def test_authorize_scope_denied_when_scope_missing(servicer):
 
 
 def test_authorize_scope_granted_passes(servicer):
-    ctx = FakeContext(metadata=(("x-granted-scopes", "payment.invoke,media.control"),))
+    ctx = FakeContext(metadata=(("x-granted-scopes", "payment.invoke,media.control"), ("x-user-id", "u1")))
     resp = _do(servicer.Authorize(_authorize_req(), ctx))
     assert resp.payment_id
     assert not servicer._audit.named("fail_open_scopes")
@@ -217,7 +258,7 @@ def test_pay_url_denied_audit_redacts_url_credentials_and_location(env, caplog):
                 external_pay_url=denied_url,
                 idempotency_key="idem-audit-redaction"), FakeContext()))
 
-    assert len(audit.events) == 2  # scope fail-open + pay_url_denied
+    assert len(audit.events) == 1  # pay_url_denied（CA2-17 起请求都带授权，不再有 fail-open 留痕）
     event = audit.events[-1]
     assert event.event == "pay_url_denied"
     assert event.extra == {

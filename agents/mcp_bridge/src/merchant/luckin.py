@@ -336,7 +336,7 @@ class LuckinWorkflow(MerchantWorkflow):
 
         if not await self.drafts.put(draft):
             return self.refused("订单预览暂时无法安全保存，请稍后重新下单。")
-        speech = self.preview_speech(draft)
+        speech = self.preview_speech(draft, shared_account=self.shared_account)
         card = self.preview_card(draft)
         # 规格可改性外露（demo-3ukshz #3）：官方 productAttrs 里可选的组（杯型/温度/
         # 糖度…）随预览卡下发，HMI 渲染成 chip、点非当前项发确定句式重出预览。
@@ -483,7 +483,8 @@ class LuckinWorkflow(MerchantWorkflow):
                 return AgentResult(
                     speech="价格或优惠已变化，但新预览无法安全保存，"
                            "没有提交订单。")
-            speech = "价格或优惠已变化，" + self.preview_speech(fresh)
+            speech = "价格或优惠已变化，" + self.preview_speech(
+                fresh, shared_account=self.shared_account)
             return AgentResult(
                 status=NEED_CONFIRM, speech=speech,
                 ui_card=self.preview_card(fresh),
