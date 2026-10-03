@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 更新：2026-10-02。状态：**目标态分期实施；CA2-02–07/12 已有首版；CA2-08–11 首版已部署；CA2-15 S1 / S2 / S3a 已部署；其他身份与运行时边界按实施方案推进**。
+> 更新：2026-10-02。状态：**目标态分期实施；CA2-02–07/12 已有首版；CA2-08–11 首版已部署；CA2-15 S1 / S2 / S3a 与记忆质量遗留已部署；其他身份与运行时边界按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
