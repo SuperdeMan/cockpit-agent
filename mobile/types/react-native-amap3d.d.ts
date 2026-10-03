@@ -61,6 +61,8 @@ declare module 'react-native-amap3d' {
     onPress?: (event: NativeSyntheticEvent<LatLng>) => void
     /** 相机停下（`map-view.tsx:143`）——本项目用它跟踪当前 zoom */
     onCameraIdle?: (event: NativeSyntheticEvent<CameraEvent>) => void
+    /** 地图加载完成（`map-view.tsx:148`，Android `setOnMapLoadedListener`）——在它之前调 `moveCamera` 会被原生侧丢掉 */
+    onLoad?: (event: NativeSyntheticEvent<void>) => void
     /** MapViewProps extends ViewProps（`map-view.tsx:16`），布局回调随之而来；
      *  本项目用它拿真实视口尺寸算「装进画面」的 zoom */
     onLayout?: (event: LayoutChangeEvent) => void

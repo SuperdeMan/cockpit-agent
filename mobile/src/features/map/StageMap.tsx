@@ -35,15 +35,17 @@ function StageMapBody({ p, geometry, height }: { p: Palette; geometry: MapGeomet
     () => fitCamera(fitPts, viewport, { padding: FIT_PADDING, singleZoom: SINGLE_ZOOM }),
     [fitPts, viewport],
   )
-  // 视口量到 / 几何变了 ⇒ 重新装进画面（舞台会随折叠、旋转换宽）
+  // 视口量到 / 几何变了 ⇒ 重新装进画面（舞台会随折叠、旋转换宽）。
+  // 地图加载完（onLoad）之前不调 moveCamera——原生侧会丢掉，停在默认位置（同 map.tsx，v3 P7 真机）
+  const [mapLoaded, setMapLoaded] = useState(false)
   const lastKey = useRef('')
   useEffect(() => {
-    if (!camera || viewport.width <= 0) return
+    if (!camera || viewport.width <= 0 || !mapLoaded) return
     const key = `${fitPts.length}:${Math.round(viewport.width / 40)}x${Math.round(viewport.height / 40)}`
     if (key === lastKey.current) return
     lastKey.current = key
     mapRef.current?.moveCamera(camera, 0)
-  }, [camera, fitPts.length, viewport])
+  }, [camera, fitPts.length, viewport, mapLoaded])
   const open = useCallback(() => router.push({ pathname: '/map', params: geometryParams(geometry) }), [geometry])
   return (
     <View testID="stage-map" style={{ height, borderRadius: RADIUS.lg, overflow: 'hidden', backgroundColor: p.surfaceHigh }}>
@@ -56,6 +58,7 @@ function StageMapBody({ p, geometry, height }: { p: Palette; geometry: MapGeomet
         compassEnabled={false}
         scaleControlsEnabled={false}
         zoomControlsEnabled={false}
+        onLoad={() => setMapLoaded(true)}
         onLayout={(e) => {
           const { width, height: h } = e.nativeEvent.layout
           setViewport((v) => (Math.abs(v.width - width) < 1 && Math.abs(v.height - h) < 1 ? v : { width, height: h }))

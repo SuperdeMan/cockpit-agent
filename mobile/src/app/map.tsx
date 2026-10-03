@@ -70,11 +70,13 @@ export default function MapScreen() {
   // 视口：首帧还没 layout，先用窗口尺寸估一个（地图是 flex:1 全屏，误差只有 header 那点），
   // onLayout 拿到真值后再 fit 一次。**两步都要有**：只靠 onLayout 首帧会闪一下世界地图，
   // 只靠估算则在折叠屏展开/旋转后算错。
+  // 大屏时地图只占窗口减去右侧栏的那一块（v3 P7 真机：按整窗估出来的 zoom 在 500dp 宽的地图上只装得下一个点）
   const win = Dimensions.get('window')
-  const [viewport, setViewport] = useState<Viewport>({ width: win.width, height: win.height })
+  const estimate = { width: wide ? win.width - SUPPORT_SIDE_WIDTH : win.width, height: win.height }
+  const [viewport, setViewport] = useState<Viewport>(estimate)
   const initialCamera: Camera = useMemo(
     () =>
-      fitCamera(fitPts, { width: win.width, height: win.height }, {
+      fitCamera(fitPts, estimate, {
         padding: fitPadding,
         singleZoom: SINGLE_ZOOM,
       }) ?? { target: FALLBACK_CENTER, zoom: FALLBACK_ZOOM },
@@ -109,14 +111,17 @@ export default function MapScreen() {
   // 何时自动全览：① 首次拿到真实视口；② 视口尺寸变化超过 10%（折叠屏展开/旋转——
   // 版面都重排了，把点重新装进画面是对的）；③ 点集变了。用户手动拖动后的位置在这三种
   // 情况之外都保留。
+  // **地图加载完（onLoad）之前不调 moveCamera**：原生侧会把它丢掉（v3 P7 内屏真机：onLayout 那一次被丢，
+  // 停在按估算算的相机上；窄屏估算与实测几乎相等才一直没露）。
+  const [mapLoaded, setMapLoaded] = useState(false)
   const lastFitKey = useRef<string>('')
   useEffect(() => {
-    if (!MAP_AVAILABLE || !fitPts.length) return
+    if (!MAP_AVAILABLE || !fitPts.length || !mapLoaded) return
     const key = `${fitPts.length}:${Math.round(viewport.width / 40)}x${Math.round(viewport.height / 40)}`
     if (key === lastFitKey.current) return
     lastFitKey.current = key
     fitToPoints(0)
-  }, [fitPts, viewport, fitToPoints])
+  }, [fitPts, viewport, fitToPoints, mapLoaded])
 
   const selectPoint = useCallback(
     (i: number) => {
@@ -194,6 +199,7 @@ export default function MapScreen() {
         mapType={p.dark ? MapType.Night : MapType.Standard}
         zoomControlsEnabled={false}
         scaleControlsEnabled={false}
+        onLoad={() => setMapLoaded(true)}
         onLayout={(e) => {
           const { width, height } = e.nativeEvent.layout
           setViewport((v) =>
