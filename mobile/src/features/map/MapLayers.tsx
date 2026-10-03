@@ -8,20 +8,22 @@ import { Marker, Polyline } from 'react-native-amap3d'
 import type { MapPoint, MapRole } from '@/core/map/available'
 import type { MapLatLng } from '@/core/map/geometry'
 import type { Palette } from '@/ui/theme'
+import { textStyle } from '@/ui/tokens'
 
-/** 角色 → 标注字样与颜色。起点绿 / 终点主色 / 途经与补电琥珀 / 普通地点按序号 */
-export function roleGlyph(p: Palette, role: MapRole | undefined, index: number): { text: string; color: string } {
+/** 角色 → 标注字样、底色与压在底色上的字色。起点绿 / 终点主色 / 途经与补电琥珀 / 普通地点按序号。
+ *  字色用 on 色（v3 P5b，Figma Map/Marker：主色与绿底 = accent/on、琥珀底 = warning/on）——白字压在青 / 琥珀上读不清 */
+export function roleGlyph(p: Palette, role: MapRole | undefined, index: number): { text: string; color: string; on: string } {
   switch (role) {
     case 'origin':
-      return { text: '起', color: p.green }
+      return { text: '起', color: p.green, on: p.onAccent }
     case 'dest':
-      return { text: '终', color: p.accent }
+      return { text: '终', color: p.accent, on: p.onAccent }
     case 'waypoint':
-      return { text: '经', color: p.amber }
+      return { text: '经', color: p.amber, on: p.onAmber }
     case 'stop':
-      return { text: '电', color: p.amber }
+      return { text: '电', color: p.amber, on: p.onAmber }
     default:
-      return { text: String(index + 1), color: p.accent }
+      return { text: String(index + 1), color: p.accent, on: p.onAccent }
   }
 }
 
@@ -56,7 +58,7 @@ export function MapLayers({
             zIndex={2}
             onPress={onPressPoint ? () => onPressPoint(i) : undefined}
           >
-            {/* 自定义标注：amap3d 在 onLayout 时把这棵子树画成位图。实色底 + 白字，压在任何瓦片上都读得出 */}
+            {/* 自定义标注：amap3d 在 onLayout 时把这棵子树画成位图。实色底 + 白描边 + on 色字，压在任何瓦片上都读得出 */}
             <View
               style={{
                 width: 28,
@@ -70,7 +72,7 @@ export function MapLayers({
                 boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
               }}
             >
-              <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>{g.text}</Text>
+              <Text style={[textStyle('labelM'), { color: g.on }]}>{g.text}</Text>
             </View>
           </Marker>
         )

@@ -68,6 +68,14 @@ test('① 真栈样本里出现的每个键都有中文标签（不许英文键�
   expect(english).toEqual([])
 })
 
+test('① VAL 模拟车态会写的每个键都有中文标签（读 val.py 的 self.state[...]，VAL 加键而这里没跟就红）', () => {
+  const val = readFileSync(resolve(__dirname, '../../orchestrator/edge/val.py'), 'utf8')
+  const keys = [...new Set([...val.matchAll(/self\.state\[\s*"([a-z_0-9]+)"\s*\]/g)].map((m) => m[1]))]
+  expect(keys.length).toBeGreaterThan(20) // 先证声明源读到了
+  const english = keys.filter((k) => !/^(battery|soc|range_km|gear)$/.test(k) && !labelOf(k))
+  expect(english).toEqual([])
+})
+
 test('② 值枚举全部中文；布尔 / on-off 仍是 开 / 关', () => {
   for (const v of ['locked', 'unlocked', 'open', 'closed', 'folded', 'unfolded', 'playing', 'paused', 'stopped']) {
     expect(VALUE_LABEL[v]).toBeDefined()
@@ -95,7 +103,9 @@ test('②③ 渲染：null 行不渲染、值是中文、未知键只在折叠�
     expect(texts).not.toContain('weird_key')
     const toggle = view.root.findAllByProps({ testID: 'vehicle-others-toggle' }).find((n) => typeof n.props.onPress === 'function')!
     await act(async () => { toggle.props.onPress() })
-    expect(textsOf(view)).toContain('weird_key')
+    // v3 P5b：展开后写「未识别字段 · 原键」，不再以裸英文键名当标签
+    expect(textsOf(view)).toContain('未识别字段 · weird_key')
+    expect(textsOf(view)).not.toContain('weird_key')
   } finally { await act(async () => { view.unmount() }) }
 })
 

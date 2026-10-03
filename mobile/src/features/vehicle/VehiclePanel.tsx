@@ -7,14 +7,18 @@
 // 是那份表的中文展示映射，由 `test/vehiclePanel.test.ts` 逐 id 对账 display_name（漂了当场红）；
 // 声明源之外的键只收 VAL 模拟车态真的会推的那几个（真栈帧样本同一测试入库）。
 // `null` / `undefined` 行不渲染；认不出的键收进折叠的「其他」，不再以英文键名直出。
+// v3 P5b（Figma 04 页 V 组）：指标块 = surface 圆角 16、数值左对齐；明细 = 「明细」分区 + 分组卡（行高 44）；
+// 「其他」展开后每行写「未识别字段 · 原键」——原键留给排障，前缀说清这不是我们认得的东西。
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import { stageMetrics } from '@shared/vehicleStage.mjs'
 
+import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
+import { ListGroup, ListSectionHeader } from '../../ui/ListItem'
 import type { Palette } from '../../ui/theme'
-import { TARGET } from '../../ui/tokens'
+import { RADIUS, SPACE, TARGET, textStyle } from '../../ui/tokens'
 
 /** 对象 id → 中文（与 commands.yaml 的 display_name 逐 id 一致，测试对账） */
 export const KEY_LABEL: Record<string, string> = {
@@ -117,6 +121,18 @@ export const KEY_LABEL: Record<string, string> = {
   lights: '灯光',
   mirror: '后视镜',
   location: '位置',
+  // ── VAL 模拟车态 `self.state[...]` 会写的子功能键（v3 P5b「常见键的中文名表」；test/vehiclePanel.test.ts 读 val.py 对账）──
+  ambient_light_brightness: '氛围灯亮度',
+  ambient_light_color: '氛围灯颜色',
+  fragrance_level: '香氛浓度',
+  hvac_wind_speed: '空调风量',
+  rear_view_mirror_heating: '后视镜加热',
+  screen_brightness: '屏幕亮度',
+  seat_recline: '座椅靠背',
+  steering_wheel_heating: '方向盘加热',
+  steering_wheel_height: '方向盘高度',
+  volume_muted: '静音',
+  wiper_speed: '雨刮速度',
 }
 
 /** 值枚举 → 中文（评审 P20：locked/unlocked/open/closed/folded/unfolded/playing/paused/stopped） */
@@ -147,7 +163,8 @@ export function displayValue(v: unknown): string {
   return String(v)
 }
 
-/** 三格指标条（电量 / 续航 / 挡位）。`compact` 供平板右面板用（不占整屏） */
+/** 三格指标条（电量 / 续航 / 挡位；Figma Vehicle/MetricTile：surface 圆角 16、数值 numeric/l 左对齐 + 单位、标签 caption）。
+ *  `compact` 供平板右面板用（不占整屏） */
 export function VehicleMetrics({
   p,
   vehState,
@@ -165,50 +182,43 @@ export function VehicleMetrics({
           key={m.label}
           style={{
             flex: 1,
-            backgroundColor: p.card,
-            borderColor: p.line,
-            borderWidth: 1,
-            borderRadius: 14,
-            paddingVertical: compact ? 10 : 14,
-            alignItems: 'center',
+            backgroundColor: p.surface,
+            borderRadius: RADIUS.lg,
+            paddingVertical: compact ? 10 : 12,
+            paddingHorizontal: 14,
+            gap: 4,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-            <Text style={{ color: p.fg1, fontSize: p.font(compact ? 20 : 26), fontWeight: '700' }}>
-              {m.value}
-            </Text>
-            {m.unit ? (
-              <Text style={{ color: p.fg2, fontSize: p.font(12), marginLeft: 2 }}>{m.unit}</Text>
-            ) : null}
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 2 }}>
+            <Text style={[textStyle(compact ? 'numericM' : 'numericL', p.fontScale), { color: p.fg1 }]}>{m.value}</Text>
+            {m.unit ? <Text style={[textStyle('caption', p.fontScale), { color: p.fg2 }]}>{m.unit}</Text> : null}
           </View>
-          <Text style={{ color: p.fg3, fontSize: p.font(11), marginTop: 3 }}>{m.label}</Text>
+          <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>{m.label}</Text>
         </View>
       ))}
     </View>
   )
 }
 
-function Row({ p, label, value, last }: { p: Palette; label: string; value: string; last: boolean }) {
+/** 明细行（Figma Vehicle/DetailRow：高 44，键 body/m 次级色、值 body/m 主色右对齐） */
+function Row({ p, label, value }: { p: Palette; label: string; value: string }) {
   return (
-    <View
-      style={{
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        paddingVertical: 7,
-        borderBottomWidth: last ? 0 : 1,
-        borderColor: p.line,
-      }}
-    >
-      <Text style={{ color: p.fg2, fontSize: p.font(13) }}>{label}</Text>
-      <Text style={{ color: p.fg1, fontSize: p.font(13), flex: 1, textAlign: 'right' }} numberOfLines={1}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 44, paddingHorizontal: SPACE[3] }}>
+      <Text style={[textStyle('bodyM', p.fontScale), { color: p.fg2 }]}>{label}</Text>
+      <Text style={[textStyle('bodyM', p.fontScale), { color: p.fg1, flex: 1, textAlign: 'right' }]} numberOfLines={1}>
         {value}
       </Text>
     </View>
   )
 }
 
+/** 认不出的键怎么叫（计划 P5b）：前缀说清「这不是我们认得的字段」，原键留给排障 */
+export function unknownKeyLabel(key: string): string {
+  return `未识别字段 · ${key}`
+}
+
 /** 明细镜像列表（三格指标已单列，这里不再重复电量/续航/挡位）。
- *  已知键中文直出；`null` / `undefined` 不渲染；未知键折叠进「其他」（默认收起）。 */
+ *  已知键中文直出；`null` / `undefined` 不渲染；未知键折叠进「其他」（默认收起），展开后写「未识别字段 · 原键」。 */
 export function VehicleDetails({ p, vehState }: { p: Palette; vehState: Record<string, unknown> }) {
   const [othersOpen, setOthersOpen] = useState(false)
   const rest = Object.entries(vehState).filter(([k, v]) => !/^(battery|soc|range_km|gear)$/i.test(k) && v !== null && v !== undefined)
@@ -216,37 +226,31 @@ export function VehicleDetails({ p, vehState }: { p: Palette; vehState: Record<s
   const others = rest.filter(([k]) => !KEY_LABEL[k])
   if (!known.length && !others.length) return null
   return (
-    <View
-      style={{
-        backgroundColor: p.card,
-        borderColor: p.line,
-        borderWidth: 1,
-        borderRadius: 14,
-        paddingHorizontal: 14,
-        paddingVertical: 4,
-      }}
-    >
-      {known.map(([k, v], i) => (
-        <Row key={k} p={p} label={KEY_LABEL[k]} value={displayValue(v)} last={i === known.length - 1 && !others.length} />
-      ))}
-      {others.length ? (
-        <>
+    <View>
+      <ListSectionHeader p={p} title="明细" fontScale={p.fontScale} />
+      <ListGroup p={p}>
+        {known.map(([k, v]) => (
+          <Row key={k} p={p} label={KEY_LABEL[k]} value={displayValue(v)} />
+        ))}
+        {others.length ? (
           <Pressable
+            key="others"
             testID="vehicle-others-toggle"
             accessibilityRole="button"
             accessibilityState={{ expanded: othersOpen }}
             onPress={() => setOthersOpen((o) => !o)}
-            style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}
+            style={{ minHeight: p.target(TARGET.parked), flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: SPACE[3] }}
           >
-            <Text style={{ color: p.fg3, fontSize: p.font(12) }}>
-              其他 {others.length} 项 {othersOpen ? '▾' : '▸'}
-            </Text>
+            <Text style={[textStyle('bodyM', p.fontScale), { color: p.fg2, flex: 1 }]}>其他 {others.length} 项</Text>
+            {iconRuntimeAvailable() ? (
+              <Icon name={othersOpen ? 'chevron-up' : 'chevron-down'} size={18} color={p.fg3} />
+            ) : (
+              <Text style={[textStyle('bodyM', p.fontScale), { color: p.fg3 }]}>{othersOpen ? '▾' : '▸'}</Text>
+            )}
           </Pressable>
-          {othersOpen
-            ? others.map(([k, v], i) => <Row key={k} p={p} label={k} value={displayValue(v)} last={i === others.length - 1} />)
-            : null}
-        </>
-      ) : null}
+        ) : null}
+        {othersOpen ? others.map(([k, v]) => <Row key={'other:' + k} p={p} label={unknownKeyLabel(k)} value={displayValue(v)} />) : null}
+      </ListGroup>
     </View>
   )
 }
@@ -255,10 +259,10 @@ export function VehicleDetails({ p, vehState }: { p: Palette; vehState: Record<s
 export function VehicleSection({ p, vehState }: { p: Palette; vehState: Record<string, unknown> }) {
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ color: p.fg3, fontSize: p.font(12) }}>车况</Text>
+      <Text style={[textStyle('labelM', p.fontScale), { color: p.accent }]}>车况</Text>
       <VehicleMetrics p={p} vehState={vehState} compact />
       {!Object.keys(vehState).length ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>还没收到车况</Text>
+        <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>还没收到车况</Text>
       ) : null}
     </View>
   )
@@ -268,16 +272,16 @@ export function VehicleSection({ p, vehState }: { p: Palette; vehState: Record<s
 export function VehiclePanel({ p, vehState, stateLabel }: { p: Palette; vehState: Record<string, unknown>; stateLabel?: string }) {
   const empty = !Object.keys(vehState).length
   return (
-    <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 14 + PRESENCE_LANE_DP, gap: 10 }}>
+    <ScrollView contentContainerStyle={{ paddingHorizontal: SPACE[3], paddingTop: SPACE[1], paddingBottom: SPACE[3] + PRESENCE_LANE_DP, gap: 12 }}>
       <VehicleMetrics p={p} vehState={vehState} />
       {/* 打磨批 B（评审 P21）：页脚与空态是用户话术，不再是开发者话术 */}
       {empty ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(13) }}>
-          还没收到车况，连上座舱后会自动显示
-        </Text>
+        <Text style={[textStyle('bodyM', p.fontScale), { color: p.fg2 }]}>还没收到车况，连上座舱后会自动显示</Text>
       ) : null}
       <VehicleDetails p={p} vehState={vehState} />
-      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>{stateLabel || '车辆状态'}</Text>
+      {/* 页脚就是共享投影给的来源口径（模拟车况 / 包含模拟数据 / 部分状态待更新 / 更新时效未知），原样显示；
+          画板上的「· 12:51 更新」没加：投影里没有帧时刻，客户端收到的时刻不是数据时刻 */}
+      <Text style={[textStyle('caption', p.fontScale), { color: p.fg3 }]}>{stateLabel || '车辆状态'}</Text>
     </ScrollView>
   )
 }

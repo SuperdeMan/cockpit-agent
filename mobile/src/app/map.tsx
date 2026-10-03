@@ -12,7 +12,7 @@ import { Dimensions, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
-import { AMAP_KEY, MAP_AVAILABLE, MAP_DIAG } from '@/core/map/available'
+import { AMAP_KEY, MAP_AVAILABLE } from '@/core/map/available'
 import { fitCamera, type Camera, type Viewport } from '@/core/map/fit'
 import { fitPointsOf, parseGeometryParams } from '@/core/map/geometry'
 import { settingsStore } from '@/core/settings/store'
@@ -21,6 +21,7 @@ import { MapLayers, roleGlyph } from '@/features/map/MapLayers'
 import { reportBottomChrome } from '@/ui/layout/bottomChrome'
 import { Pill } from '@/ui/Pill'
 import { usePalette } from '@/ui/theme'
+import { RADIUS, textStyle } from '@/ui/tokens'
 
 // ⚠ 静态 import 是安全的：amap3d 的 JS 侧在原生缺席时也能加载，只有**渲染**才会炸
 //（同 react-native-svg 那次的形态）。所以守卫放在渲染分支上，不放在 import 上。
@@ -118,17 +119,27 @@ export default function MapScreen() {
   )
 
   if (!MAP_AVAILABLE) {
-    // 正常路径下走不到这里（入口在不可用时就不渲染）；直接深链进来时给个诚实说明，
-    // 而不是一片白。两个条件分开报——「不可用」查不出是哪一半最耗时。
+    // 正常路径下走不到这里（入口在不可用时就不渲染）；直接深链进来时给个诚实说明，而不是一片白。
+    // 拍板（计划 §5）：用户语言——不再给用户看高德 key / 原生模块的状态；那两项排障读数在
+    // 设置 › 开发者 › 原生状态（native-spike 的 `map` 行），两个条件仍分开报
     return (
-      <View style={{ flex: 1, backgroundColor: p.bg, padding: 20, gap: 8 }}>
-        <Text style={{ color: p.fg1, fontSize: p.font(15), fontWeight: '700' }}>地图不可用</Text>
-        <Text style={{ color: p.fg2, fontSize: p.font(13) }}>
-          高德 key：{MAP_DIAG.keyPresent ? '已注入' : '缺失（构建时没有 AMAP_ANDROID_KEY）'}
-        </Text>
-        <Text style={{ color: p.fg2, fontSize: p.font(13) }}>
-          原生模块：{MAP_DIAG.nativePresent ? '在场' : '缺席（APK 需重新构建）'}
-        </Text>
+      <View style={{ flex: 1, backgroundColor: p.bg, justifyContent: 'center', paddingHorizontal: 16 }}>
+        <View
+          testID="map-unavailable"
+          style={{
+            backgroundColor: p.surfaceHigh,
+            borderRadius: RADIUS.lg,
+            borderWidth: 1,
+            borderColor: p.line,
+            boxShadow: p.elev2,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            gap: 2,
+          }}
+        >
+          <Text style={[textStyle('titleM', settings.fontScale), { color: p.fg1 }]}>地图暂时打不开</Text>
+          <Text style={[textStyle('caption', settings.fontScale), { color: p.fg2 }]}>更新 App 后再试；问题详情在设置 › 开发者里</Text>
+        </View>
       </View>
     )
   }
@@ -167,49 +178,45 @@ export default function MapScreen() {
           深空渐变上才成立（RN 无 backdrop-filter，M3-V 记录里写死了这条前提）。
           地图页底下是**地图瓦片**——亮度不可控、内容不可预测，半透明底直接变成
           「白字压在浅色路网上」。2026-08-27 真机实证：换 Glass 后这条信息条几乎读不出来。
-          ⇒ 压在不可控内容上的浮层一律用不透明底，玻璃质感只保留边框与投影。 */}
+          ⇒ 压在不可控内容上的浮层一律用不透明底（v3 P5b，Figma Map/InfoStrip：surface/high 实色、圆角 16、
+          二级投影）。离底 28：高德 logo 在地图左下，必须露出来（Figma 04 页「高德 logo 留在左下可见」） */}
       <View
         testID="map-info-bar"
-        onLayout={(e) => reportBottomChrome(pathname, e.nativeEvent.layout.height + 12)}
+        onLayout={(e) => reportBottomChrome(pathname, e.nativeEvent.layout.height + 28)}
         style={{
           position: 'absolute',
-          left: 12,
-          right: 12,
-          bottom: 12 + insets.bottom,
-          paddingHorizontal: 14,
-          paddingVertical: 8,
+          left: 16,
+          right: 16,
+          bottom: 28 + insets.bottom,
+          paddingLeft: 16,
+          paddingRight: 12,
+          paddingVertical: 12,
           gap: 8,
-          backgroundColor: p.panel,
-          borderRadius: 16,
+          backgroundColor: p.surfaceHigh,
+          borderRadius: RADIUS.lg,
           borderWidth: 1,
           borderColor: p.line,
-          boxShadow: p.glassShadow,
+          boxShadow: p.elev2,
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flex: 1, gap: 2 }}>
             {sel ? (
               <>
-                <Text
-                  style={{ color: p.fg1, fontSize: p.font(14), fontWeight: '700' }}
-                  numberOfLines={1}
-                >
+                <Text style={[textStyle('titleM', settings.fontScale), { color: p.fg1 }]} numberOfLines={1}>
                   {selGlyph ? `${selGlyph.text} · ` : ''}
                   {sel.name}
                 </Text>
-                <Text style={{ color: p.fg2, fontSize: p.font(12) }} numberOfLines={2}>
+                <Text style={[textStyle('caption', settings.fontScale), { color: p.fg2 }]} numberOfLines={2}>
                   {sel.address || `${sel.lat.toFixed(5)}, ${sel.lng.toFixed(5)}`}
                 </Text>
               </>
             ) : (
               <>
-                <Text
-                  style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '600' }}
-                  numberOfLines={1}
-                >
+                <Text style={[textStyle('titleM', settings.fontScale), { color: p.fg1 }]} numberOfLines={1}>
                   {geometry.title || '地图'}
                 </Text>
-                <Text style={{ color: p.fg3, fontSize: p.font(11) }} numberOfLines={1}>
+                <Text style={[textStyle('caption', settings.fontScale), { color: p.fg2 }]} numberOfLines={1}>
                   {geometry.subtitle
                     ? `${geometry.subtitle}${pts.length ? ' · 点标注看详情' : ''}`
                     : pts.length

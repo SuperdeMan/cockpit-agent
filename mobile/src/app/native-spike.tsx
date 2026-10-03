@@ -8,6 +8,7 @@ import { PixelRatio, Pressable, ScrollView, Text, useWindowDimensions } from 're
 import { useStore } from 'zustand'
 
 import { HAPTIC_KINDS, performHaptic } from '@/core/haptics'
+import { MAP_DIAG } from '@/core/map/available'
 import { developmentDiagnosticsEnabled } from '@/core/diagnostics'
 import { lowPower } from '@/core/power/lowPower'
 import { BATTERY_NATIVE_AVAILABLE, usePowerFacts } from '@/core/power/usePowerFacts'
@@ -69,6 +70,8 @@ export default function NativeSpikeScreen() {
     ['layout', `${layout.mode} · ${layout.widthClass}×${layout.heightClass}`],
     ['dp', `${Math.round(width)}×${Math.round(height)} @${PixelRatio.get()}x`],
     ['hinge(dp)', layout.hinge ? JSON.stringify(layout.hinge) : '—'],
+    // v3 P5b：地图页「不可用」改成用户语言后，排障读数搬到这里（两个条件分开报——查不出是哪一半最耗时）
+    ['map', `高德 key=${MAP_DIAG.keyPresent ? '已注入' : '缺失（构建时没有 AMAP_ANDROID_KEY）'} 原生模块=${MAP_DIAG.nativePresent ? '在场' : '缺席（APK 需重新构建）'}`],
   ]
 
   return (
