@@ -74,7 +74,8 @@ function AssistantPresence({ runtime }: { runtime: AssistantRuntime }) {
   // 闲置静帧（judgement 在 orbPolicy）：FAB 不是主角，也别让每个支持页都常驻一份循环动画
   const tempo = presenceOrbTempo(snapshot, motionEnv)
   const captureColor = capture?.tone === 'amber' ? p.amber : capture?.tone === 'camera' ? p.fg1 : p.teal
-  const disc = { backgroundColor: p.panel, borderWidth: 1, borderColor: p.glassBdTop, boxShadow: p.glassShadow } as const
+  // v3 P5c（Figma AssistantSurface/Floating）：光球底盘换方向 B 的实色 surfaceHigh + line 描边 + 二级投影（原来是玻璃三件套）
+  const disc = { backgroundColor: p.surfaceHigh, borderWidth: 1, borderColor: p.line, boxShadow: p.elev2 } as const
   return <View testID="assistant-presence" pointerEvents="box-none"
     style={{ position: 'absolute', left: 12, right: 12, bottom: 12 + insets.bottom + chrome, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
     {capture ? <Pressable testID="assistant-capture-dot" accessibilityRole="button" accessibilityLabel={`${capture.text}；打开隐私栏`}

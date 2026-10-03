@@ -6,10 +6,12 @@
 // 和进去之后的极光座舱是两个产品。上品牌只动渲染层：Aurora 底 + 玻璃分区 + 光球 + 色板 token
 // + 安全区；**`onTest` / `onSave` / `derived` / `presets` 与全部 state 一行不改**。
 // 顺带补上权限用途文案的落点（app.config.ts:99-101 的注释点名要它：manifest 里写了字不算合规）。
+// v3 P5c（Figma 04 页 O 组）：去掉极光底与玻璃分区，换方向 B 的实色分组卡 + TextField + 底栏两键；
+// 逻辑（onTest / onSave / derived / presets / state）仍一行不改。
 import Constants from 'expo-constants'
 import { useRouter } from 'expo-router'
 import React, { useEffect, useState } from 'react'
-import { KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { KeyboardAvoidingView, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
@@ -18,10 +20,12 @@ import { cloudEndpoints, isValidTailnetFqdn } from '@/core/config/endpoints'
 import { loadServerConfig, saveServerConfig } from '@/core/config/storage'
 import type { ServerConfig, ServerPreset } from '@/core/config/types'
 import { settingsStore } from '@/core/settings/store'
-import { AuroraBackground, AuroraOrb, Glass } from '@/ui/aurora'
-import { Pill } from '@/ui/Pill'
-import { AURORA, usePalette } from '@/ui/theme'
-import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import { AuroraOrb } from '@/ui/aurora'
+import { Button } from '@/ui/Button'
+import { Segmented } from '@/ui/Segmented'
+import { TextField } from '@/ui/TextField'
+import { usePalette } from '@/ui/theme'
+import { RADIUS, textStyle } from '@/ui/tokens'
 
 const ALLOW_CUSTOM =
   (Constants.expoConfig?.extra as { allowCustomServer?: boolean } | undefined)
@@ -99,184 +103,162 @@ export default function Onboarding() {
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
   const fs = settings.fontScale
-  const label = (t: string) => (
-    <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fs), marginTop: 6 }}>{t}</Text>
+  const caption = textStyle('caption', fs)
+  const body = textStyle('bodyM', fs)
+  const group = (title: string, children: React.ReactNode) => (
+    <View style={{ backgroundColor: p.surface, borderRadius: RADIUS.lg, padding: 16, gap: 12 }}>
+      <Text style={[textStyle('titleM', fs), { color: p.fg1 }]}>{title}</Text>
+      {children}
+    </View>
   )
-  const input = (props: React.ComponentProps<typeof TextInput>) => (
-    <TextInput
-      placeholderTextColor={p.fg3}
-      {...props}
-      style={{
-        backgroundColor: p.fill,
-        borderWidth: 1,
-        borderColor: p.fill2,
-        borderRadius: RADIUS.md,
-        paddingHorizontal: 12,
-        minHeight: scale(TARGET.parked, 'target', fs),
-        color: p.fg1,
-        fontSize: scale(TYPE.body, 'text', fs),
-      }}
-    />
-  )
-  const button = (text: string, run: () => void, primary: boolean, disabled: boolean) => (
-    <Pressable
-      onPress={run}
-      disabled={disabled}
-      accessibilityRole="button"
-      style={{
-        minHeight: scale(TARGET.parked, 'target', fs),
-        borderRadius: RADIUS.lg,
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: disabled ? 0.4 : 1,
-        ...(primary
-          ? { experimental_backgroundImage: AURORA.gradient, boxShadow: '0 4px 22px rgba(91,140,255,0.45)' }
-          : { backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2 }),
-      }}
-    >
-      <Text style={{ color: primary ? '#fff' : p.fg1, fontSize: scale(TYPE.body, 'text', fs), fontWeight: '600' }}>
-        {text}
-      </Text>
-    </Pressable>
-  )
+  const fqdnError = fqdn.trim().length > 0 && !derived ? '域名格式不对（须形如 xxx.ts.net，全小写）' : undefined
+  // 权限用途（合规落点，app.config.ts:99-101）：三条照旧逐字说清——画板上的短版丢了「默认关 / 不持久化 / 不落盘」，不采用
+  const permissions: [string, string][] = [
+    ['麦克风', '按住光球说话时才开；免唤醒与端到端默认关，要你在设置里显式打开。'],
+    ['定位', '只在位置相关请求时取一次坐标，坐标不持久化。'],
+    ['摄像头', '只有开了「看图问答」且说出看图的话时才拍一张，不落盘不进记忆。'],
+  ]
 
   // 键盘避让（B1-12）：Android 上 `behavior=undefined` 等于什么都不做，而 edge-to-edge 下
   // 系统的 adjustResize 也没把内容顶上去 ⇒ 两端都用 `padding`，由 RN 按键盘高度补底。
   // **不改 app.config 的 softwareKeyboardLayoutMode**——那是原生配置，动它要重建，B1 零原生变更。
   // 真机读数：「保存并进入」被键盘完全盖住、页面不上移（`e2e/artifacts/b1-12-onboarding-kbd.png`）。
+  // v3 P5c（Figma 04 页 O 组）：两个动作钉在底栏（滚动区之外），键盘弹起时随避让一起上移、永远看得见。
   return (
     <View style={{ flex: 1, backgroundColor: p.bg }}>
-      <AuroraBackground p={p} />
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-          <ScrollView contentContainerStyle={{ padding: 20, gap: 14 }} keyboardShouldPersistTaps="handled">
-            <View style={{ alignItems: 'center', gap: 8, paddingVertical: 12 }}>
-              <AuroraOrb size={88} state="idle" animated />
-              <Text
-                style={{
-                  color: p.fg1,
-                  fontSize: scale(TYPE.display - 6, 'text', fs),
-                  fontWeight: '600',
-                  marginTop: 8,
-                }}
-              >
-                我是{settings.assistantName}
-              </Text>
-              <Text style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fs) }}>先连上你的座舱服务器</Text>
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 24, paddingBottom: 16, gap: 16 }} keyboardShouldPersistTaps="handled">
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, paddingHorizontal: 4 }}>
+              <AuroraOrb size={56} state="idle" animated />
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={[textStyle('headline', fs), { color: p.fg1 }]}>我是{settings.assistantName}</Text>
+                <Text style={[body, { color: p.fg2 }]}>先连上你的座舱服务器</Text>
+              </View>
             </View>
 
-            <Glass p={p} r={RADIUS['2xl']} style={{ padding: 14, gap: 6 }}>
-              <Text style={{ color: p.fg1, fontSize: scale(TYPE.h2, 'text', fs), fontWeight: '600' }}>服务器</Text>
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                {/* 2026-09-11 两档制：预设单选走 Pill（外框 48、视觉 36），选中态进无障碍 selected */}
-                {presets.map((it) => (
-                  <Pill
-                    key={it.key}
+            {group(
+              '服务器',
+              <>
+                {/* prod 构建只有云栈一个预设 ⇒ 不出选择器（Figma O 组注）；局域网 / 自定义只在允许自定义的构建出现 */}
+                {presets.length > 1 ? (
+                  <Segmented
                     p={p}
-                    selected={preset === it.key}
                     fontScale={fs}
-                    fontSize={TYPE.caption}
-                    label={it.label}
-                    onPress={() => {
-                      setPreset(it.key)
+                    value={preset}
+                    options={presets.map((it) => ({ value: it.key, label: it.label }))}
+                    onChange={(key) => {
+                      setPreset(key)
                       setTest({ kind: 'idle' })
                     }}
                   />
-                ))}
-              </View>
-              {preset === 'cloud' ? (
-                <View>
-                  {label('Tailnet FQDN')}
-                  {input({
-                    value: fqdn,
-                    onChangeText: (v) => {
+                ) : null}
+                {preset === 'cloud' ? (
+                  <TextField
+                    p={p}
+                    fontScale={fs}
+                    label="Tailnet 域名"
+                    value={fqdn}
+                    onChangeText={(v) => {
                       setFqdn(v)
                       setTest({ kind: 'idle' })
-                    },
-                    placeholder: 'your-machine.tailxxxx.ts.net',
-                    autoCapitalize: 'none',
-                    autoCorrect: false,
-                  })}
-                  {fqdn.trim().length > 0 && !derived && (
-                    <Text style={{ color: p.red, fontSize: scale(TYPE.caption, 'text', fs), marginTop: 6 }}>
-                      FQDN 不合法（须形如 xxx.ts.net，全小写）
-                    </Text>
-                  )}
-                  {derived && (
-                    <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fs), marginTop: 6 }}>
-                      主链 {derived.edgeUrl} ｜ 音频 {derived.audioUrl}
-                    </Text>
-                  )}
-                </View>
-              ) : (
-                <View>
-                  {label('主链入口（edge）')}
-                  {input({
-                    value: edgeUrl,
-                    onChangeText: (v) => {
-                      setEdgeUrl(v)
-                      setTest({ kind: 'idle' })
-                    },
-                    placeholder: 'http://192.168.1.10:18000',
-                    autoCapitalize: 'none',
-                    autoCorrect: false,
-                  })}
-                  {label('音频入口（audio）')}
-                  {input({
-                    value: audioUrl,
-                    onChangeText: setAudioUrl,
-                    placeholder: 'http://192.168.1.10:50059',
-                    autoCapitalize: 'none',
-                    autoCorrect: false,
-                  })}
-                </View>
-              )}
-            </Glass>
+                    }}
+                    placeholder="your-machine.tailxxxx.ts.net"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    error={fqdnError}
+                    helper={derived ? `主链 ${derived.edgeUrl} ｜ 音频 ${derived.audioUrl}` : '只填域名，不带 https://'}
+                  />
+                ) : (
+                  <>
+                    <TextField
+                      p={p}
+                      fontScale={fs}
+                      label="主链入口（edge）"
+                      value={edgeUrl}
+                      onChangeText={(v) => {
+                        setEdgeUrl(v)
+                        setTest({ kind: 'idle' })
+                      }}
+                      placeholder="http://192.168.1.10:18000"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <TextField
+                      p={p}
+                      fontScale={fs}
+                      label="音频入口（audio）"
+                      value={audioUrl}
+                      onChangeText={setAudioUrl}
+                      placeholder="http://192.168.1.10:50059"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </>
+                )}
+              </>,
+            )}
 
-            <Glass p={p} r={RADIUS['2xl']} style={{ padding: 14, gap: 6 }}>
-              <Text style={{ color: p.fg1, fontSize: scale(TYPE.h2, 'text', fs), fontWeight: '600' }}>访问 token</Text>
-              {label(savedTokenTail ? `当前 ····${savedTokenTail}；只存本机安全存储，不进日志` : '只存本机安全存储，不进日志')}
-              {input({
-                value: token,
-                onChangeText: (v) => {
+            {group(
+              '访问 token',
+              <TextField
+                p={p}
+                fontScale={fs}
+                label="粘贴服务器给你的访问 token"
+                value={token}
+                onChangeText={(v) => {
                   setToken(v)
                   setTest({ kind: 'idle' })
-                },
-                placeholder: 'AUTH_TOKENS 条目的 token 段',
-                autoCapitalize: 'none',
-                autoCorrect: false,
-                secureTextEntry: true,
-              })}
-            </Glass>
+                }}
+                placeholder="粘贴访问 token"
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+                helper={savedTokenTail ? `当前 ····${savedTokenTail}；只存本机安全存储，不进日志` : '只存本机安全存储，不进日志'}
+              />,
+            )}
 
             {/* 权限用途文案的合规落点（app.config.ts:99-101 的注释点名要它：
                 manifest 里写了字不算合规，用户要在**要权限之前**看到为什么要） */}
-            <Glass p={p} r={RADIUS['2xl']} style={{ padding: 14, gap: 6 }}>
-              <Text style={{ color: p.fg1, fontSize: scale(TYPE.h2, 'text', fs), fontWeight: '600' }}>
-                之后会用到的权限
-              </Text>
-              <Text
-                style={{
-                  color: p.fg2,
-                  fontSize: scale(TYPE.caption, 'text', fs),
-                  lineHeight: scale(18, 'line', fs),
-                }}
-              >
-                麦克风：按住光球说话时才开；免唤醒与端到端默认关，要你在设置里显式打开。{'\n'}
-                定位：只在位置相关请求时取一次坐标，坐标不持久化。{'\n'}
-                摄像头：只有开了「看图问答」且说出看图的话时才拍一张，不落盘不进记忆。
-              </Text>
-            </Glass>
+            {group(
+              '之后会用到的权限',
+              <View style={{ gap: 8 }}>
+                {permissions.map(([k, v]) => (
+                  <Text key={k} style={[body, { color: p.fg2 }]}>
+                    <Text style={{ color: p.fg1 }}>{k}：</Text>
+                    {v}
+                  </Text>
+                ))}
+              </View>,
+            )}
 
-            {button(test.kind === 'testing' ? '连接中…' : '连接测试', onTest, false, !canTest || test.kind === 'testing')}
-            {test.kind === 'ok' && (
-              <Text style={{ color: p.green, fontSize: scale(TYPE.caption, 'text', fs) }}>✓ 连接成功（握手通过）</Text>
-            )}
-            {test.kind === 'fail' && (
-              <Text style={{ color: p.red, fontSize: scale(TYPE.caption, 'text', fs) }}>{test.message}</Text>
-            )}
-            {button('保存并进入', onSave, true, !canSave)}
+            {test.kind === 'testing' ? <Text testID="onboarding-testing" style={[caption, { color: p.fg2 }]}>正在握手…</Text> : null}
+            {test.kind === 'ok' ? <Text style={[caption, { color: p.green }]}>✓ 连接成功（握手通过）</Text> : null}
+            {test.kind === 'fail' ? <Text style={[caption, { color: p.red }]}>{test.message}</Text> : null}
           </ScrollView>
+
+          <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16 }}>
+            <Button
+              p={p}
+              testID="onboarding-test"
+              variant="tonal"
+              fontScale={fs}
+              label="连接测试"
+              disabled={!canTest || test.kind === 'testing'}
+              onPress={onTest}
+              style={{ flex: 1 }}
+            />
+            <Button
+              p={p}
+              testID="onboarding-save"
+              variant="filled"
+              fontScale={fs}
+              label="保存并进入"
+              disabled={!canSave}
+              onPress={onSave}
+              style={{ flex: 1 }}
+            />
+          </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>

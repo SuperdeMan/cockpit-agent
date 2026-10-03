@@ -4,7 +4,8 @@ import type { Msg } from '@shared/types.ts'
 import type { SessionCore } from '@/core/session/store'
 import type { InteractionScope } from '@/core/session/interactionScope'
 import { CardRenderer } from '@/features/cards/CardRenderer'
-import { RADIUS } from '@/ui/tokens'
+import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
+import { RADIUS, textStyle } from '@/ui/tokens'
 import { useAssistant, type AssistantRuntime } from './AssistantProvider'
 
 /** 不把 FlashList 的 render/测量当呈现；只消费当前活跃记录区的 viewability 事件。 */
@@ -61,24 +62,24 @@ function PresentedMessage({ message }: { message: Msg }) {
     return () => { live = false; cancelAnimationFrame(frame) }
   }, [core, message.id, layout, available, runtime.layout.width, runtime.layout.height])
   // G0 实色卡（§5.11：压在任何内容上的提示不许半透明），与承诺面同一材质；不再是通栏。
-  const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
+  // v3 P5c（Figma 04 页 P-2）：surfaceHigh 实色 + 琥珀描边（amberLine）+ 二级投影；卡头时钟图标 +「提醒」琥珀、右侧「收起」
   return <View testID="proactive-presenter" style={{
-    maxHeight: 190, marginHorizontal: 12, marginVertical: 6, padding: 10, gap: 4,
-    backgroundColor: solid, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: 'rgba(245,158,11,0.38)',
-    boxShadow: '0 0 16px rgba(245,158,11,0.12), 0 8px 24px rgba(0,0,0,0.3)',
+    maxHeight: 190, marginHorizontal: 12, marginVertical: 6, paddingHorizontal: 16, paddingVertical: 6, gap: 4,
+    backgroundColor: p.surfaceHigh, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: p.amberLine, boxShadow: p.elev2,
   }}>
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <Text accessibilityRole="header" style={{ color: p.amber, fontSize: p.font(13), flex: 1 }}>提醒</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      {iconRuntimeAvailable() ? <Icon name="clock" size={18} color={p.amber} /> : null}
+      <Text accessibilityRole="header" style={[textStyle('labelL', p.fontScale), { color: p.amber, flex: 1 }]}>提醒</Text>
       <Pressable testID="proactive-dismiss" accessibilityRole="button" accessibilityLabel="收起这条提醒"
         style={{ minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'flex-end' }} onPress={() => {
           if (!available()) return
           core.presentProactive(message.id)
           core.handleProactive(message.id)
-        }}><Text style={{ color: p.accent, fontSize: p.font(13) }}>收起</Text></Pressable>
+        }}><Text style={[textStyle('labelL', p.fontScale), { color: p.accent }]}>收起</Text></Pressable>
     </View>
     <View ref={contentRef} testID="proactive-content" style={{ flexShrink: 1 }} onLayout={(e) => setLayout(e.nativeEvent.layout)}>
     <ScrollView>
-      {message.text ? <Text style={{ color: p.fg1, fontSize: p.font(15) }}>{message.text}</Text> : null}
+      {message.text ? <Text style={[textStyle('bodyM', p.fontScale), { color: p.fg1, paddingBottom: 8 }]}>{message.text}</Text> : null}
       {message.uiCard ? <CardRenderer p={p} card={message.uiCard} onSend={runtime.onSend} /> : null}
     </ScrollView>
     </View>
