@@ -18,6 +18,7 @@ import type {
   TripItineraryCard,
 } from '@shared/types.ts'
 
+import { durationLabel } from '../../core/cards/cardMeta'
 import { MAP_AVAILABLE } from '../../core/map/available'
 import { cardGeometry, geometryParams } from '../../core/map/geometry'
 import { Pill } from '../../ui/Pill'
@@ -236,7 +237,7 @@ export function RoutePlan({ p, card, onSend }: { p: Palette; card: RoutePlanCard
       ) : null}
       <View style={{ flexDirection: 'row', gap: 6 }}>
         {card.distance_km !== undefined ? <Chip p={p} text={`${card.distance_km}km`} /> : null}
-        {card.duration_min !== undefined ? <Chip p={p} text={`约${card.duration_min}分钟`} /> : null}
+        {durationLabel(card.duration_min) ? <Chip p={p} text={`约${durationLabel(card.duration_min)}`} /> : null}
         {card.eta_ts ? (
           <Chip p={p} text={`预计 ${new Date(card.eta_ts * (card.eta_ts > 1e11 ? 1 : 1000)).toTimeString().slice(0, 5)} 到`} />
         ) : null}
@@ -257,10 +258,7 @@ export function RoutePlan({ p, card, onSend }: { p: Palette; card: RoutePlanCard
  *  stops 为空**不是空状态**而是一条结论——「全程无需补电」，照 HMI 同判据渲染；
  *  渲染成「暂无数据」会把一个肯定回答说成查询失败。 */
 export function ChargingRoute({ p, card }: { p: Palette; card: ChargingRouteCard; onSend: SendFn }) {
-  const min = card.duration_min || 0
-  const dur = min
-    ? `${Math.floor(min / 60) ? `${Math.floor(min / 60)}小时` : ''}${min % 60 ? `${min % 60}分钟` : ''}`
-    : ''
+  const dur = durationLabel(card.duration_min)
   const stops = card.stops || []
   return (
     <CardShell

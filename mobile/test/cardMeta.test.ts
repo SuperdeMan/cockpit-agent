@@ -1,6 +1,9 @@
 // 卡片元信息的人话（v3 P4a，D10）：厂商中文名、本地时区时刻、置信档位。
 // 时刻用例一律用**本地时间**构造（new Date(y, m, d, h, mi)），期望也按本地读——CI 在 TZ=UTC0 跑，本机在 CST，两边都得过。
-import { CONF_LABEL, clockLabel, confLevel, vendorName } from '@/core/cards/cardMeta'
+import { PRIMARY_KEYS, fieldLabel } from '@/core/cards/cardFields'
+import {
+  CONF_LABEL, aqiLevel, clockLabel, confLevel, dayLabel, durationLabel, isPlaceholderOrderId, kickoffLabel, orderStatusLabel, teamAbbr, vendorName,
+} from '@/core/cards/cardMeta'
 
 test('厂商 id → 显示名：认识的给中文 / 品牌名，大小写不敏感；不认识的原样（不编名字）', () => {
   expect(vendorName('qweather')).toBe('和风')
@@ -39,4 +42,60 @@ test('置信：契约三档各有人话；契约外的值不认', () => {
   expect(CONF_LABEL[confLevel('low')!]).toBe('未充分核实')
   expect(confLevel('0.8')).toBeNull()
   expect(confLevel(undefined)).toBeNull()
+})
+
+test('时长换算：不满一小时给分钟，满一小时给「H小时M分」，整点省掉分；非正数不画', () => {
+  expect(durationLabel(45)).toBe('45分钟')
+  expect(durationLabel(60)).toBe('1小时')
+  expect(durationLabel(862)).toBe('14小时22分')
+  expect(durationLabel(0)).toBe('')
+  expect(durationLabel(undefined)).toBe('')
+})
+
+test('订单状态与占位单号：枚举转人话（大小写不敏感），未知原样；current 不是单号', () => {
+  expect(orderStatusLabel('UNPAID')).toBe('待支付')
+  expect(orderStatusLabel('canceled')).toBe('已取消')
+  expect(orderStatusLabel('MAKING')).toBe('MAKING')
+  expect(isPlaceholderOrderId('current')).toBe(true)
+  expect(isPlaceholderOrderId('P20261003001')).toBe(false)
+})
+
+test('兜底卡字段名：每个主字段都有中文名，未知键原样', () => {
+  for (const k of PRIMARY_KEYS) expect(fieldLabel(k)).not.toBe(k)
+  expect(fieldLabel('soc')).toBe('电量')
+  expect(fieldLabel('foo_bar')).toBe('foo_bar')
+})
+
+test('AQI 色阶：按 50 / 100 / 150 / 200 / 300 分六档；解析不了不画', () => {
+  expect([0, 50, 51, 100, 101, 150, 151, 200, 201, 300, 301].map((n) => aqiLevel(n))).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5])
+  expect(aqiLevel('42')).toBe(0)
+  expect(aqiLevel('—')).toBeNull()
+})
+
+describe('预报日与开球时刻（本地时区）', () => {
+  const now = new Date(2026, 9, 3, 13, 53).getTime() // 2026-10-03（周六）13:53
+  test('预报日：今天 / 明天 / 周X，一周外给日期', () => {
+    expect(dayLabel('2026-10-03', now)).toBe('今天')
+    expect(dayLabel('2026-10-04', now)).toBe('明天')
+    expect(dayLabel('2026-10-05', now)).toBe('周一')
+    expect(dayLabel('2026-10-12', now)).toBe('10月12日')
+    expect(dayLabel('坏值', now)).toBe('坏值')
+  })
+  test('开球：今天给时刻，明天 / 昨天带前缀，其余带日期；UTC 串按本地读', () => {
+    const at = (d: number, h: number, mi: number) => new Date(2026, 9, d, h, mi).toISOString()
+    expect(kickoffLabel(at(3, 20, 0), now)).toBe('20:00')
+    expect(kickoffLabel(at(4, 3, 0), now)).toBe('明天 03:00')
+    expect(kickoffLabel(at(2, 21, 0), now)).toBe('昨天 21:00')
+    expect(kickoffLabel(at(6, 3, 0), now)).toBe('10月6日 03:00')
+    expect(kickoffLabel(undefined, now)).toBe('')
+  })
+})
+
+test('队名缩写：中文前两字；英文多词取首字母、单词取前三字母，去掉 FC / AC 前后缀', () => {
+  expect(teamAbbr('曼城')).toBe('曼城')
+  expect(teamAbbr('Manchester City')).toBe('MC')
+  expect(teamAbbr('Real Madrid')).toBe('RM')
+  expect(teamAbbr('Arsenal')).toBe('ARS')
+  expect(teamAbbr('FC Barcelona')).toBe('BAR')
+  expect(teamAbbr('')).toBe('?')
 })

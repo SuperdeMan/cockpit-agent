@@ -5,7 +5,8 @@
 import { Component, type ReactNode } from 'react'
 import { Text, View } from 'react-native'
 
-import { cardListRows, cardPrimaryFields } from '../../core/cards/cardFields'
+import { cardListRows, cardPrimaryFields, fieldLabel } from '../../core/cards/cardFields'
+import { orderStatusLabel } from '../../core/cards/cardMeta'
 import type { Palette } from '../../ui/theme'
 import {
   Forecast,
@@ -118,7 +119,7 @@ export function FallbackCard({ p, card, onSend }: CardProps) {
     // v3（Figma 06「其他结果」）：标题不再露卡型 id（原来是「卡片 · charging_list」）；主字段改键值行
     <CardShell p={p} icon="info" title="其他结果" right={<ProvBadge p={p} prov={card?._prov} />}>
       {fields.map(([k, v]) => (
-        <KV key={k} p={p} k={k} v={v} />
+        <KV key={k} p={p} k={fieldLabel(k)} v={k === 'status' ? orderStatusLabel(v) : v} />
       ))}
       {rows.map((r, i) => (
         <View key={i} testID="fallback-row" style={{ flexDirection: 'row', gap: 8, alignItems: 'baseline' }}>

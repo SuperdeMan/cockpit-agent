@@ -21,7 +21,8 @@ export function cardText(p: Palette, role: TextRole): TextStyle {
 }
 
 /** 卡片外壳 + 卡头（Figma Card/Shell：surface + 一级投影、圆角 16、内边距 16、件间 12；
- *  Card/Header：图标 20 + 「类别 · 实体」titleM + 右槽——来源·时效 / _prov 角标 / 置信 / 无）。每种卡都有图标 */
+ *  Card/Header：图标 20 + 「类别 · 实体」titleM（长标题折两行，如「欧冠联赛 · Real Madrid vs Manchester City」）
+ *  + 右槽——来源·时效 / _prov 角标 / 置信 / 无）。每种卡都有图标 */
 export function CardShell({
   p,
   icon,
@@ -53,7 +54,7 @@ export function CardShell({
       {title || right ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {icon ? <CardIcon p={p} name={icon} size={20} color={p.fg2} /> : null}
-          <Text style={[cardText(p, 'titleM'), { color: p.fg1, flex: 1 }]} numberOfLines={1}>
+          <Text style={[cardText(p, 'titleM'), { color: p.fg1, flex: 1 }]} numberOfLines={2}>
             {title ?? ''}
           </Text>
           {right}
@@ -183,7 +184,8 @@ export function FreshChip({ p, iso }: { p: Palette; iso?: string }) {
   )
 }
 
-function Badge({ p, text, tone }: { p: Palette; text: string; tone: 'amber' | 'neutral' }) {
+/** 卡内标签（Figma tag：surface/highest 胶囊 + caption 次级色——点球 / 赛季 / 缓存；amber 档给模拟数据、部分数据） */
+export function Badge({ p, text, tone }: { p: Palette; text: string; tone: 'amber' | 'neutral' }) {
   return (
     <View
       style={{
@@ -201,7 +203,8 @@ function Badge({ p, text, tone }: { p: Palette; text: string; tone: 'amber' | 'n
 }
 
 /** 数据真实性（契约 §9.3 四态；Figma Card/ProvBadge）：mock = 「模拟数据」、degraded = 「部分数据」（琥珀胶囊，必须醒目，坑账 #6）；
- *  cached = 「缓存 · N分钟前」；real 不出胶囊，只在右槽给一行「来源 · 本地时刻」（厂商中文名，例「和风 · 12:51」） */
+ *  cached = 「缓存 · N分钟前」；real 不出胶囊，只在右槽给一行「来源 · 本地时刻」（厂商中文名，例「和风 · 12:51」），
+ *  来源自身带日期的（手册）给「手册版本 2024-04-15」 */
 export function ProvBadge({ p, prov }: { p: Palette; prov?: Provenance }) {
   if (!prov?.mode) return null
   if (prov.mode === 'mock') return <Badge p={p} tone="amber" text="模拟数据" />
@@ -210,7 +213,10 @@ export function ProvBadge({ p, prov }: { p: Palette; prov?: Provenance }) {
     const age = relativeTime(prov.fetched_at) || prov.note || ''
     return <Badge p={p} tone="neutral" text={age ? `缓存 · ${age}` : '缓存'} />
   }
-  const label = [vendorName(prov.vendor), clockLabel(prov.fetched_at)].filter(Boolean).join(' · ')
+  // 来源自身带日期（手册版本等）⇒「手册版本 2024-04-15」：这类来源的 vendor 是文档 id，不是厂商（D19）
+  const label = prov.data_time
+    ? `${prov.data_time_label || '数据日期'} ${prov.data_time}`
+    : [vendorName(prov.vendor), clockLabel(prov.fetched_at)].filter(Boolean).join(' · ')
   return label ? (
     <Text style={[cardText(p, 'caption'), { color: p.fg3 }]} numberOfLines={1}>
       {label}

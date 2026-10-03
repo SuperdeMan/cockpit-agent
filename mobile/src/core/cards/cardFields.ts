@@ -7,6 +7,32 @@ export const PRIMARY_KEYS = [
   'brand', 'store_name', 'order_id', 'amount', 'status', 'city', 'soc',
 ] as const
 
+export type PrimaryKey = (typeof PRIMARY_KEYS)[number]
+
+/** 主字段的中文名（D10「兜底卡不露英文键」：原来兜底卡写「title: 未来卡型」）。按 PrimaryKey 写成完整映射，
+ *  PRIMARY_KEYS 加一个键而这里没跟上，编译就不过 */
+export const FIELD_LABEL: Readonly<Record<PrimaryKey, string>> = {
+  title: '标题',
+  name: '名称',
+  question: '问题',
+  query: '查询',
+  topic: '主题',
+  destination: '目的地',
+  answer: '回答',
+  merchant: '商户',
+  brand: '品牌',
+  store_name: '门店',
+  order_id: '订单号',
+  amount: '金额',
+  status: '状态',
+  city: '城市',
+  soc: '电量',
+}
+
+export function fieldLabel(key: string): string {
+  return (FIELD_LABEL as Record<string, string>)[key] ?? key
+}
+
 export function cardPrimaryFields(card: any, max = 4): [string, string][] {
   if (!card || typeof card !== 'object') return []
   const out: [string, string][] = []

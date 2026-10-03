@@ -29,7 +29,8 @@ import { base64ToBytes } from '../../core/voice/base64'
 import { Pill } from '../../ui/Pill'
 import type { Palette } from '../../ui/theme'
 import { TARGET } from '../../ui/tokens'
-import { CardButtons, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
+import { isPlaceholderOrderId, orderStatusLabel } from '../../core/cards/cardMeta'
+import { CardButtons, CardShell, Chip, KV, ProvBadge, cardText, type SendFn } from './parts'
 
  
 
@@ -317,7 +318,8 @@ export function ParkingFee({ p, card }: { p: Palette; card: any; onSend: SendFn 
     <CardShell p={p} icon="parking" title="当前停车费">
       <Text style={{ color: p.fg1, fontSize: p.font(22), fontWeight: '800' }}>{card.amount}</Text>
       <KV p={p} k="车牌" v={card.plate} />
-      <KV p={p} k="订单" v={card.order_id} />
+      {/* D19：后端没有真单号时填 current（占位），不是给人看的单号 */}
+      <KV p={p} k="订单" v={isPlaceholderOrderId(card.order_id) ? undefined : card.order_id} />
     </CardShell>
   )
 }
@@ -341,7 +343,7 @@ export function McpOrder({ p, card, onSend }: { p: Palette; card: any; onSend: S
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Text style={{ color: p.fg3, fontSize: p.font(11) }}>订单号</Text>
           <View style={{ flex: 1 }} />
-          {order.status ? <Text style={{ color: p.amber, fontSize: p.font(11) }}>{order.status}</Text> : null}
+          {order.status ? <Text style={[cardText(p, 'caption'), { color: p.amber }]}>{orderStatusLabel(order.status)}</Text> : null}
         </View>
         <Text style={{ color: p.fg1, fontSize: p.font(12), fontWeight: '700' }}>
           {order.orderId || '待商户回传'}
@@ -370,7 +372,7 @@ export function McpOrder({ p, card, onSend }: { p: Palette; card: any; onSend: S
           ) : null}
           <View style={{ flex: 1 }} />
           {card.duplicate === true ? (
-            <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已有订单 · 幂等命中</Text>
+            <Text style={[cardText(p, 'caption'), { color: p.fg3 }]}>已有同一订单，未重复下单</Text>
           ) : null}
         </View>
       ) : null}
@@ -387,10 +389,8 @@ export function McpInfo({ p, card }: { p: Palette; card: any; onSend: SendFn }) 
   const order = normalizeMerchantOrder(card)
   return (
     <CardShell p={p}>
+      {/* D19：原来另起一行「来源 · {tool}」直显商户工具 id（不是给人看的）；品牌与数据真实性已在卡头 */}
       <MerchantHead p={p} brand={order.brand} title="商户信息" card={card} />
-      {typeof card.tool === 'string' && card.tool ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>来源 · {card.tool}</Text>
-      ) : null}
     </CardShell>
   )
 }
