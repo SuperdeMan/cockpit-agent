@@ -98,5 +98,6 @@ def wrap_data_section(text: str) -> str:
 
 
 def wrap_reference_section(text: str) -> str:
-    """把检索资料包装为参考区。"""
-    return f"<reference-data>\n{text}\n</reference-data>"
+    """把检索资料包装为参考区。实现只有一份：`runtime.external_text.as_reference`（会压平内容里伪造的区块标记）。"""
+    from runtime.external_text import as_reference
+    return as_reference(text)

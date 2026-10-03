@@ -11,11 +11,13 @@ import secrets
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
+from runtime.external_text import plain_name
 
 from ..admission import normalize_hostname
 from ..candidate_ref import RESERVED_ID_SLOT
@@ -368,7 +370,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
             response = await self.call_tool(
                 "create-order", copy.deepcopy(draft.upstream_args), write=True)
             payload = self._business_data(response, write=True)
-            order_id = str(payload.get("orderId") or "").strip()
+            order_id = self.order_id_text(payload.get("orderId"))
             if not order_id:
                 raise _IncompleteResponse("create-order missing orderId")
         except (_BusinessRejected, DeclaredBusinessRejected):
@@ -954,10 +956,15 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 follow_up="换一家门店试试？",
                 missing_slots=["store_hint"])
 
-        items = [self._menu_item(product) for product in products[:20]]
+        # CA2-17 S2 I2：名字带分句标记 / 句末标点的餐品不进这一页——它进不了按钮话术，留在列表里
+        # 又会让「第 N 个」与看得见的那一页错位；卡片、候选台账（data.items）与话术同用这一份。
+        items = list(islice((item for item in map(self._menu_item, products)
+                             if plain_name(item["name"])), 20))
         listed = "、".join(
             item["name"] + (f"（{item['price']}）" if item.get("price") else "")
             for item in items[:5])
+        # 门店名进不了按钮话术时，按钮只说餐品（门店由本轮上下文确定），分类 chip 不出
+        store_ref = store_name if plain_name(store_name) else ""
         scope = (f"{store_name}的「{asked_category}」" if asked_category
                  else store_name)
         # 默认店诚实化（demo-3ukshz #1）：没有任何门店线索时选出来的是商户接口的
@@ -998,13 +1005,14 @@ class McDonaldsWorkflow(MerchantWorkflow):
                     {"label": label,
                      "send_text": f"看看{store_name}的{label}"}
                     for label in categories[:8]
-                ],
+                ] if store_ref else [],
                 # options 与 items 同序但**各自自带 image_url**：靠下标去另一个数组
                 # 捞图会在任一端裁剪时错位。最多 10 项与云侧候选台账的硬上限一致；
                 # 多渲染第 11/12 个序数按钮却不保留对应候选，会造出一按就丢身份的按钮。
                 "options": [
                     {"label": item["name"], "subtitle": item.get("price", ""),
-                     "send_text": f"在{store_name}点第{index}个：{item['name']}",
+                     "send_text": (f"在{store_ref}点第{index}个：{item['name']}" if store_ref
+                                   else f"点第{index}个：{item['name']}"),
                      **({"image_url": item["image_url"]}
                         if item.get("image_url") else {})}
                     for index, item in enumerate(items[:10], start=1)

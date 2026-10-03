@@ -247,6 +247,9 @@ class StepResult:
     # 结果来源只由 Executor 用当前 Step.intent 盖章。Agent、Planner 与客户端都无权
     # 自报该字段；商户工作流据此校验跨步门店引用来自 nearby.search。
     source_intent: str = ""
+    # CA2-17 S2：产生方 Agent 的可信级别，同样只由 Executor 用权威 Step 盖章。第三方结果不当车端参数、
+    # 进模型提示时标成资料，都按它判。
+    source_trust: str = ""
     # M2 P2 重复副作用防抖：本结果对应的 (intent, slots) 指纹。**只对产生了 actions 的
     # OK 结果写**——T2 放宽后 replan 可能对已完成的副作用步失忆而重复产出（弱模型的
     # 典型失败），指纹随结果走，executor 下一轮撞上即回填不重放。空串=不参与防抖。

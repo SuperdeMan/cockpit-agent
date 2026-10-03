@@ -103,6 +103,19 @@ class MerchantWorkflow(ABC):
         return AgentResult(speech=speech, follow_up=follow_up,
                            data={"_refused": True})
 
+    @staticmethod
+    def order_id_text(value) -> str:
+        """商户返回的订单号是不可信输入：只认字符串 / 整数、非空、≤128 字、不含空白，否则空串。
+
+        它会念进话术、拼进「查询订单 {单号}」按钮、写进本地账本；两家商户共用这一份判据（CA2-17 S2 I4）。
+        """
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            return ""
+        text = str(value).strip()
+        if not text or len(text) > 128 or re.search(r"\s", text):
+            return ""
+        return text
+
     def image_url(self, value) -> str:
         """商品图：**必须 https + 域名在该 server 的 `image_hosts` 精确白名单里**。
 

@@ -11,10 +11,12 @@ import re
 import secrets
 import time
 from dataclasses import replace
+from itertools import islice
 from urllib.parse import urlparse
 
 from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
+from runtime.external_text import plain_name
 
 from ..admission import normalize_hostname
 from ..order_ref import (NEUTRAL, allows_history_fallback,
@@ -1759,7 +1761,10 @@ class LuckinWorkflow(MerchantWorkflow):
                 missing_slots=["item_query"])
 
         store_name = str(store.get("deptName") or "这家瑞幸")
-        items = [self._menu_item(product) for product in products[:20]]
+        # CA2-17 S2 I2：名字进不了按钮话术的商品不进这一页（卡片、候选台账与话术同用这一份）
+        items = list(islice((item for item in map(self._menu_item, products)
+                             if plain_name(item["name"])), 20))
+        store_ref = store_name if plain_name(store_name) else ""
         listed = "、".join(
             item["name"] + (f"（{item['price']}）" if item.get("price") else "")
             for item in items[:5])
@@ -1792,7 +1797,8 @@ class LuckinWorkflow(MerchantWorkflow):
                 # 靠下标去另一个数组捞图会在任一端裁剪时错位。
                 "options": [
                     {"label": item["name"], "subtitle": item.get("price", ""),
-                     "send_text": f"在{store_name}点一杯{item['name']}",
+                     "send_text": (f"在{store_ref}点一杯{item['name']}" if store_ref
+                                   else f"点一杯{item['name']}"),
                      **({"image_url": item["image_url"]}
                         if item.get("image_url") else {})}
                     for item in items[:12]
@@ -2158,11 +2164,9 @@ class LuckinWorkflow(MerchantWorkflow):
     @classmethod
     def _extract_order_id(cls, payload: dict) -> str:
         for path in _ORDER_ID_PATHS:
-            value = cls._dig(payload, path)
-            if isinstance(value, (str, int)) and not isinstance(value, bool):
-                text = str(value).strip()
-                if text and len(text) <= 128 and not re.search(r"\s", text):
-                    return text
+            text = cls.order_id_text(cls._dig(payload, path))
+            if text:
+                return text
         return ""
 
     @classmethod

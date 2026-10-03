@@ -102,7 +102,31 @@ def summarize(result: StepResult, *, intent: str = "",
     # 而 replan 的「同域不再换能力再试」判据读的正是它。
     if (result.data or {}).get("_refused"):
         observation["refused"] = (result.data or {})["_refused"]
+    # CA2-17 S2 I3：第三方结果标 untrusted，字符串值截断——它们进的是再规划提示，不是槽引用
+    # （引用按执行器手里的原始结果解析，与这份观测无关）。
+    if getattr(result, "source_trust", "") == THIRD_PARTY:
+        observation["untrusted"] = True
+        observation["data"] = _cap_strings(observation["data"])
+        observation["speech"] = observation["speech"][:_UNTRUSTED_TEXT_MAX]
     return observation
+
+
+THIRD_PARTY = "third_party"
+#: 第三方观测里单个字符串的上限、递归深度上限。
+_UNTRUSTED_TEXT_MAX = 120
+_UNTRUSTED_DEPTH = 4
+
+
+def _cap_strings(value, depth: int = 0):
+    if isinstance(value, str):
+        return value[:_UNTRUSTED_TEXT_MAX]
+    if depth >= _UNTRUSTED_DEPTH:
+        return value if isinstance(value, (int, float, bool)) or value is None else "…"
+    if isinstance(value, dict):
+        return {str(k)[:_UNTRUSTED_TEXT_MAX]: _cap_strings(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_cap_strings(v, depth + 1) for v in value]
+    return value
 
 
 class LoopController:

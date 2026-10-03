@@ -52,6 +52,16 @@ _STREAM_LOST_FINAL_SAT_SPEECH = (
 _STREAM_LOST_FINAL_UNSAT_SPEECH = "操作指令已发出。"
 _STREAM_LOST_FINAL_SPEECH = "操作指令已发出，结果暂时无法确认，请留意车辆状态。"
 
+# CA2-17 S2 I1：车端步的参数只取第一方结果。可信级别来自产生方 manifest，执行器盖章（`_stamp_source`）。
+FIRST_PARTY = "first_party"
+EXTERNAL_REF_ERROR = "external_ref_to_vehicle"
+_EXTERNAL_REF_SPEECH = "这一步要拿外部服务返回的内容来设置车辆，为安全起见没有执行。需要的话请直接告诉我怎么调。"
+
+
+def _vehicle_side(step: Step) -> bool:
+    """落到车端执行的步（与规划的副作用判定同一口径：deployment=edge 或 kind=edge_fast）。"""
+    return getattr(step, "deployment", "") == "edge" or getattr(step, "kind", "") == "edge_fast"
+
 
 def _recovered(result: StepResult) -> bool:
     record = (result.data or {}).get("_operation") if isinstance(result.data, dict) else None
@@ -210,7 +220,15 @@ class DagExecutor:
     async def _exec_step(self, step: Step, done: dict, ctx: PlanContext) -> StepResult:
         """执行单个 step。尾链：防抖(M2) → dispatch → _to_result → 确认兜底闸(M0a) → 对账(M2)。"""
         # 解析 slot_refs：用前序结果填 slot（**防抖判定必须在此之后**——指纹要含真实槽位）
-        self._resolve_slot_refs(step, done, ctx)
+        foreign = self._resolve_slot_refs(step, done, ctx)
+
+        # CA2-17 S2 I1：车端步的参数不取非第一方结果。规划连的引用把外部服务返回的内容填进车控参数，
+        # 整步不派发——只丢那个参数会让车控按缺省值执行，更糟。
+        if foreign and _vehicle_side(step):
+            logger.warning("Step %s(%s): slots %s come from non-first-party results; not dispatched",
+                           step.id, step.intent, sorted(foreign))
+            return StepResult(step_id=step.id, status=StepStatus.FAILED,
+                              speech=_EXTERNAL_REF_SPEECH, error=EXTERNAL_REF_ERROR)
 
         # CA2-09 执行点复核：确认授权的是用户看到的那一步。按当前请求车辆与**解析后的最终参数**重算，
         # 任何一项不同就不派发（旧记录没有绑定，兼容放行）。
@@ -275,6 +293,7 @@ class DagExecutor:
     def _stamp_source(step: Step, result: StepResult) -> StepResult:
         """用执行中的权威 Step 覆盖结果来源，绝不信任 Agent/Planner 自报。"""
         result.source_intent = str(step.intent or "")
+        result.source_trust = str(getattr(step, "trust_level", "") or "")
         return result
 
     @staticmethod
@@ -646,16 +665,24 @@ class DagExecutor:
             data=result.data,
         )
 
-    def _resolve_slot_refs(self, step: Step, done: dict, ctx=None):
-        """用前序 step 的结果填充 slot_refs。"""
+    def _resolve_slot_refs(self, step: Step, done: dict, ctx=None) -> dict[str, str]:
+        """用前序 step 的结果填充 slot_refs。
+
+        返回「由非第一方结果填上的槽 → 产生方可信级别」（CA2-17 S2 I1）；产生方不在本轮结果里
+        （跨轮焦点等）或级别未知都算非第一方。只有派发路径消费它，其它调用方忽略返回值。
+        """
         # 该键是执行器本轮重建的 provenance；任何陈旧/伪造值先丢弃。meta 不在
         # Planner schema 内，但纵深防御仍不把既有值当真。下发 proto 是 map<string,string>，
         # 因此最终写入确定性 JSON 字符串而不是嵌套对象。
         step.meta.pop("_trusted_slot_refs", None)
         trusted: dict[str, dict[str, str]] = {}
+        foreign: dict[str, str] = {}
 
         def _record(slot_name: str, ref_path: str) -> None:
             producer = done.get(str(ref_path).split(".", 1)[0])
+            producer_trust = str(getattr(producer, "source_trust", "") or "")
+            if producer_trust != FIRST_PARTY:
+                foreign[slot_name] = producer_trust or "unknown"
             producer_intent = str(getattr(producer, "source_intent", "") or "")
             if producer_intent:
                 trusted[slot_name] = {
@@ -727,6 +754,8 @@ class DagExecutor:
                 step.slots[slot_name] = str(value)
                 if alias in trusted:
                     trusted[slot_name] = dict(trusted[alias])
+                if alias in foreign:
+                    foreign[slot_name] = foreign[alias]
             else:
                 logger.warning("slot alias %s -> %s resolved to None", slot_name, alias)
 
@@ -737,6 +766,7 @@ class DagExecutor:
         if trusted:
             step.meta["_trusted_slot_refs"] = json.dumps(
                 trusted, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return foreign
 
     @staticmethod
     def _restore_slot_fidelity(step: Step, ctx, trusted: dict) -> None:

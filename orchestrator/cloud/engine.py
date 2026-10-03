@@ -223,9 +223,9 @@ class _SpokenConfirm:
         self.candidates = list(candidates or [])
         self.named = named
 
-# M2 重复副作用防抖的 fingerprint 和可信来源 source_intent 会由
+# M2 重复副作用防抖的 fingerprint 和可信来源 source_intent / source_trust 会由
 # ``_resume_result`` 显式保留；其它字段默认不进入挂起种子。
-_RESULT_FIELDS = {"step_id", "status", "data", "fingerprint", "source_intent"}
+_RESULT_FIELDS = {"step_id", "status", "data", "fingerprint", "source_intent", "source_trust"}
 _RESUME_OMIT = object()
 _RESUME_URI_RE = re.compile(
     r"(?i)[a-z][a-z0-9+.-]*:(?://)?[^\s，。；,;]+")
@@ -2410,6 +2410,7 @@ class PlannerEngine:
             "data": data,
             "fingerprint": result.fingerprint,
             "source_intent": result.source_intent,
+            "source_trust": result.source_trust,
         }
 
     async def _suspend(self, step_result: StepResult, results: list[StepResult],
@@ -3626,6 +3627,8 @@ class PlannerEngine:
                     ),
                     "fingerprint": str(legacy.get("fingerprint") or ""),
                     "source_intent": str(legacy.get("source_intent") or ""),
+                    # 旧记录没有这一格 ⇒ 空串 ⇒ 车端步按「非第一方」拒（I1 失败即关）
+                    "source_trust": str(legacy.get("source_trust") or ""),
                 }
                 d["status"] = StepStatus(d.get("status", "ok"))
                 if d["status"] in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
