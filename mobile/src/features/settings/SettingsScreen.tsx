@@ -343,8 +343,11 @@ function VoiceGrid({
   const cols = voiceGridColumns(width, voices.map((v) => v.name), textStyle('labelM', p.fontScale).fontSize ?? 13)
   const rows: (typeof voices)[] = []
   for (let i = 0; i < voices.length; i += cols) rows.push(voices.slice(i, i + cols))
+  // 每格定宽（量到宽度之后）：格子带 10 内边距 + 1 描边、补位格没有，都用 flex:1 时 Yoga 先给格子留出内边距再均分，
+  // 末行那一格会比上面宽约 11dp（2026-10-03 真机「男主持」）。没量到宽度时（首帧 / 测试）才退回 flex:1
+  const cell = width > 0 ? { width: (width - (cols - 1) * VOICE_GRID_GAP) / cols } : { flex: 1 }
   return (
-    <View testID="voice-grid" style={{ gap: VOICE_GRID_GAP }} onLayout={(e) => setWidth(Math.round(e.nativeEvent.layout.width))}>
+    <View testID="voice-grid" style={{ gap: VOICE_GRID_GAP }} onLayout={(e) => setWidth(Math.floor(e.nativeEvent.layout.width))}>
       {rows.map((row, r) => (
         <View key={r} style={{ flexDirection: 'row', gap: VOICE_GRID_GAP }}>
           {row.map((v) => {
@@ -359,7 +362,7 @@ function VoiceGrid({
                 accessibilityState={{ selected: on }}
                 onPress={() => onPick(v.voice_id)}
                 style={{
-                  flex: 1,
+                  ...cell,
                   minHeight: p.target(TARGET.parked),
                   flexDirection: 'row',
                   alignItems: 'center',
@@ -383,7 +386,7 @@ function VoiceGrid({
             )
           })}
           {Array.from({ length: cols - row.length }, (_, k) => (
-            <View key={`pad-${k}`} style={{ flex: 1 }} />
+            <View key={`pad-${k}`} style={cell} />
           ))}
         </View>
       ))}
