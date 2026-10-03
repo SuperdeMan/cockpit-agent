@@ -2,7 +2,8 @@
 //  - GatewaySession（下行帧→SessionCore.handleFrame，状态→connStatus）
 //  - 双形态外壳：窗口短边 ≥600dp 平板双栏（右=玻璃舞台：车况+提醒+焦点卡），旋转即时切
 //  - 确认条按台账渲染（isPendingLive），位置征询条只激活最新一条
-//  - 视觉照 hmi shell.css：深空渐变+极光 blob 打底，顶栏=品牌光球+连接 pill，空对话=欢迎态大光球
+//  - 视觉：Android Visual v3（方向 B）——平底 + 色调层级，顶栏 = 字标 + 状态点 + 两枚圆形入口（不再放光球，一屏一球），
+//    空对话 = 欢迎态大光球
 // AR04：配置、会话和语音控制器由 AssistantProvider 持有；本屏只呈现记录与布局。
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
@@ -24,12 +25,12 @@ import { composerInputMode } from '../../core/presence/drivingMode'
 import { captureSummary, capsuleVisible } from '../../core/presence/presence'
 import { lowPower } from '../../core/power/lowPower'
 import { usePowerFacts } from '../../core/power/usePowerFacts'
-import { AuroraBackground, AuroraOrb } from '../../ui/aurora'
+import { AuroraOrb } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
 import { Pill } from '../../ui/Pill'
 import { usePalette } from '../../ui/theme'
-import { TARGET, scale } from '../../ui/tokens'
+import { RADIUS, TARGET, scale, textStyle } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { Composer } from './Composer'
@@ -53,9 +54,9 @@ export function ChatScreen() {
   return <ChatBody runtime={runtime} />
 }
 
-/** 顶栏图标入口（hmi .au-icon-btn 同款：fill 底/圆角 12）；svg 原生缺席回退文字。
- *  B5-14（B4 Scanner 出账①）：热区从写死的 40dp 改成 §6 的目标——泊车 48 / 行车 56，跟字号 scale。
- *  40 是 hmi 的桌面尺寸，搬到手上两态都不达 48；行车档只管了层内与 Composer，**没管顶栏**。 */
+/** 顶栏图标入口；svg 原生缺席回退文字。
+ *  B5-14（B4 Scanner 出账①）：热区 = §6 的目标——泊车 48 / 行车 56，跟字号 scale。
+ *  v3（Figma IconButton · Tonal）：热区不变，视觉是热区里居中的 40dp 圆（surfaceHighest），不再是整块方角填充。 */
 function TopIconLink({
   p,
   href,
@@ -83,18 +84,20 @@ function TopIconLink({
     <Link href={href} asChild>
       <Pressable
         accessibilityLabel={label}
-        style={{
-          width: target,
-          height: target,
-          borderRadius: 12,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: p.fill,
-          borderWidth: 1,
-          borderColor: p.fill2,
-        }}
+        style={{ width: target, height: target, alignItems: 'center', justifyContent: 'center' }}
       >
-        <Icon name={icon} size={20} color={p.fg2} />
+        <View
+          style={{
+            width: target - 8,
+            height: target - 8,
+            borderRadius: RADIUS.full,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: p.surfaceHighest,
+          }}
+        >
+          <Icon name={icon} size={20} color={p.fg2} />
+        </View>
       </Pressable>
     </Link>
   )
@@ -133,14 +136,14 @@ function Welcome({
       contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: keyboardVisible ? 6 : 10, padding: keyboardVisible ? 12 : 24 }}
     >
       <AuroraOrb size={keyboardVisible ? 56 : 88} state="idle" animated={animated} />
-      <Text style={{ color: p.fg1, fontSize: p.font(keyboardVisible ? 22 : 26), fontWeight: '600', marginTop: keyboardVisible ? 6 : 14 }}>
+      <Text style={[textStyle(keyboardVisible ? 'headline' : 'display', fontScale), { color: p.fg1, marginTop: keyboardVisible ? 6 : 14 }]}>
         我是{name}
       </Text>
-      <Text style={{ color: p.fg2, fontSize: p.font(14) }}>
+      <Text style={[textStyle('bodyM', fontScale), { color: p.fg2 }]}>
         {hasVoice ? '点一下光球说话，或点指令试试' : '点下方指令试试，或直接输入'}
       </Text>
       {hasVoice && !keyboardVisible ? (
-        <Text testID="welcome-secondary" style={{ color: p.fg3, fontSize: p.font(12) }}>也可以按住光球边说边放</Text>
+        <Text testID="welcome-secondary" style={[textStyle('caption', fontScale), { color: p.fg3 }]}>也可以按住光球边说边放</Text>
       ) : null}
       {/* 2026-09-11 两档制：推荐 chips 与 Composer / 层内 chips 同一个 Pill（外框 48、视觉 36）；原来 ~38dp 是第三种高 */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: keyboardVisible ? 4 : 8, justifyContent: 'center', marginTop: keyboardVisible ? 0 : 8 }}>
@@ -151,8 +154,6 @@ function Welcome({
             testID="welcome-command"
             accessibilityLabel={`试试：${q}`}
             fontScale={fontScale}
-            textColor={p.fg1}
-            paddingHorizontal={18}
             label={q}
             onPress={() => onSend(q)}
           />
@@ -405,7 +406,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
               {dividers[item.id] ? (
-                <Text testID="time-divider" style={{ color: p.fg3, fontSize: p.font(11), textAlign: 'center', paddingVertical: 8 }}>
+                <Text testID="time-divider" style={[textStyle('caption', settings.fontScale), { color: p.fg3, textAlign: 'center', paddingVertical: 8 }]}>
                   {dividers[item.id]}
                 </Text>
               ) : null}
@@ -442,17 +443,17 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           p={p}
           testID="jump-latest"
           accessibilityLabel="回到最新消息"
-          tone="glass"
-          solid
-          elevated
+          tone="floating"
           driving={snapshot.driving}
           fontScale={settings.fontScale}
           textColor={p.accent}
-          fontSize={12}
-          label="↓ 最新"
+          paddingHorizontal={14}
+          label={iconRuntimeAvailable() ? '最新' : '↓ 最新'}
           onPress={() => listRef.current?.scrollToEnd({ animated: true })}
           style={{ position: 'absolute', bottom: 4, alignSelf: 'center' }}
-        />
+        >
+          {iconRuntimeAvailable() ? <Icon name="arrow-down" size={16} color={p.accent} /> : null}
+        </Pill>
       ) : null}
       {/* 非 driving-landscape：层住在记录区容器里（B4 及以前的形态，逐字节不变） */}
       {splitLandscape ? null : voiceSheetEl}
@@ -513,7 +514,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   return (
     // top 边必须显式包含：真机顶栏会顶进系统状态栏（M1-8 首轮实测，手机态露头的第一个 bug）
     <View style={{ flex: 1, backgroundColor: p.bg }}>
-      <AuroraBackground p={p} />
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         {/* 键盘避让（B1-12，真机读数=遮）：Android 上 `behavior=undefined` 等于什么都不做，
             而 edge-to-edge 下系统的 adjustResize 也没把内容顶上去——实测键盘弹起后输入框
@@ -526,15 +526,16 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 10,
-              paddingHorizontal: 14,
-              paddingVertical: 10,
+              gap: 4,
+              paddingLeft: 16,
+              paddingRight: 4,
+              minHeight: 56,
               borderBottomWidth: 1,
               borderColor: p.line,
             }}
           >
-            <AuroraOrb size={30} state={busy ? 'thinking' : 'idle'} animated={busy && loopsAnimated(motionEnv)} />
-            <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+            {/* v3 一屏一球：顶栏不再放光球（它从来不可点，只是第三颗同屏的球）；忙不忙由在场胶囊与 Composer 光球说 */}
+            <Text style={[textStyle('titleM', settings.fontScale), { color: p.fg1, flexShrink: 1 }]} numberOfLines={1}>
               {settings.assistantName}随行
             </Text>
             {/* 连接：只留一个 7dp 健康点——「在线」这两个字在线时是噪声，它只在**不**在线时

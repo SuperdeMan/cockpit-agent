@@ -18,7 +18,7 @@ import { AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
 import { Pill } from '../../ui/Pill'
-import { AURORA, type Palette } from '../../ui/theme'
+import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET, scale } from '../../ui/tokens'
 import { composerHolding, composerPlaceholder } from './composerHint'
 import type { PttHandle } from './usePtt'
@@ -167,16 +167,18 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
   // 那一刻取消在飞请求换不来任何东西（答案已在交付）。取消在飞请求退到「忙而无音频」与 Dock 的长任务行。
   const keyMode: 'stop-playback' | 'interrupt' | 'send' = stoppable ? 'stop-playback' : busy ? 'interrupt' : 'send'
   const keyActive = keyMode !== 'send'
+  const keyColor = keyMode === 'send' ? p.onAccent : keyMode === 'stop-playback' ? p.amber : p.fg1
 
   return (
     <View
       testID="composer"
       importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}
       accessibilityElementsHidden={covered}
+      // v3：输入区是不透明的 surfaceLow 底（原来是半透明叠在深空渐变上的玻璃）
       style={{
         borderTopWidth: 1,
         borderColor: p.line,
-        backgroundColor: p.dark ? 'rgba(6,8,15,0.55)' : 'rgba(237,241,250,0.72)',
+        backgroundColor: p.surfaceLow,
       }}
     >
       {hideChips || !chips.length ? null : (
@@ -192,10 +194,10 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
             key={c.text}
             p={p}
             testID="composer-chip"
+            tone="accent"
             accessibilityLabel={`追问：${c.label}`}
             driving={driving}
             fontScale={fontScale}
-            fontSize={12}
             label={c.label}
             onPress={() => onSend(c.text)}
           />
@@ -240,9 +242,9 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
                   width: target,
                   height: target,
                   borderRadius: RADIUS.full,
-                  backgroundColor: p.fill,
+                  backgroundColor: p.surfaceHighest,
                   borderWidth: 1,
-                  borderColor: inputOpen ? p.accent : p.fill2,
+                  borderColor: inputOpen ? p.accent : p.surfaceHighest,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -259,13 +261,16 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
                 <TextInput
                   ref={inputRef}
                   testID="composer-input"
+                  // v3（Figma Composer）：闲时 surfaceHighest 实色、描边同色（宽度不变，按住时转 accent 不跳动）；
+                  // 单行高 = 目标高，圆角 24（单行时就是整颗胶囊，多行时是圆角框）
                   style={{
-                    backgroundColor: holding ? p.accentSoft : p.fill,
+                    backgroundColor: holding ? p.accentSoft : p.surfaceHighest,
                     borderWidth: 1,
-                    borderColor: holding ? p.accent : p.fill2,
-                    borderRadius: 14,
-                    paddingHorizontal: 14,
-                    paddingVertical: 10,
+                    borderColor: holding ? p.accent : p.surfaceHighest,
+                    borderRadius: 24,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    minHeight: target,
                     fontSize: p.font(15),
                     color: p.fg1,
                     maxHeight: 120,
@@ -297,7 +302,8 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
             （onStopPlayback，只停声音），忙而未出声时 ■ 停（onInterrupt = cancelCurrentTurn），闲时 ⬆ 发。
             原 pill 已整段删除——忙时要发新话先停再发（市面惯例）。
             testID 仍 composer-send（Maestro 01/02/03/06/08 都在闲时按它点）；§6「目标 ≥56dp」的演员不变。
-            颜色沿用既有语义：发 = 极光渐变（虹彩纪律三处之一），停 = 琥珀（与原 pill 同色）。
+            v3（D5，2026-10-02 拍板）：发 = 交互色实色（极光收回到光球 / 流式光标 / 语音层顶缘 / AI 角标四处），
+            打断 = 中性 surfaceHighest，停播 = 琥珀；三态都是目标高（泊车 48，原来 44）。
             ⚠ C 身份行车档没有输入框 ⇒ **闲时不渲染这枚键**（打磨批 A / P09：B4 §6.3 那枚「永远点不动的键」
             从此不出现），**忙时 / 出声时照旧挂载、可点**。
             svg 原生缺席仍回退文字——iconRuntimeAvailable() 是既有判据（坑账 §9.27） */}
@@ -310,22 +316,20 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
           disabled={false}
           onPress={keyMode === 'stop-playback' ? onStopPlayback : keyMode === 'interrupt' ? onInterrupt : submit}
           style={{
-            experimental_backgroundImage: keyActive ? undefined : AURORA.gradient,
-            backgroundColor: keyActive ? p.amberSoft : undefined,
-            borderWidth: keyActive ? 1 : 0,
-            borderColor: keyActive ? 'rgba(245,158,11,0.3)' : 'transparent',
-            width: driving ? target : scale(44, 'target', fontScale),
-            height: driving ? target : scale(44, 'target', fontScale),
+            backgroundColor: keyMode === 'send' ? p.accent : keyMode === 'stop-playback' ? p.amberSoft : p.surfaceHighest,
+            borderWidth: keyMode === 'stop-playback' ? 1 : 0,
+            borderColor: keyMode === 'stop-playback' ? p.amberLine : 'transparent',
+            width: target,
+            height: target,
             borderRadius: RADIUS.full,
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: keyActive ? undefined : '0 4px 22px rgba(91,140,255,0.45)',
           }}
         >
           {iconRuntimeAvailable() ? (
-            <Icon name={keyActive ? 'stop' : 'arrowUp'} size={22} color={keyActive ? p.amber : '#fff'} />
+            <Icon name={keyActive ? 'stop' : 'arrowUp'} size={22} color={keyColor} />
           ) : (
-            <Text style={{ color: keyActive ? p.amber : '#fff', fontSize: p.font(15), fontWeight: '600' }}>{keyActive ? '停' : '发'}</Text>
+            <Text style={{ color: keyColor, fontSize: p.font(15), fontWeight: '600' }}>{keyActive ? '停' : '发'}</Text>
           )}
         </Pressable>
         )}

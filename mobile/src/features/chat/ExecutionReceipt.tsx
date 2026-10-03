@@ -5,7 +5,9 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { InfoReceipt, Receipt } from '@/core/session/receipt'
 import { KV } from '@/features/cards/parts'
+import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 import type { Palette } from '@/ui/theme'
+import { TARGET } from '@/ui/tokens'
 
 function hhmm(ms: number | null): string {
   if (!ms) return ''
@@ -24,17 +26,18 @@ export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt 
         testID="receipt-toggle"
         accessibilityRole="button"
         onPress={() => setOpen((o) => !o)}
-        // 打磨批 A（评审 P14）：可点文字的触控高度 44，不再是 32
-        hitSlop={2}
-        style={{ minHeight: 44, justifyContent: 'center' }}
+        accessibilityState={{ expanded: open }}
+        // 打磨批 A（评审 P14）44 → v3 补到目标高（48，大字 ×1.1）；字号 11 → 12（最小字号）
+        style={{ minHeight: p.target(TARGET.parked), flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' }}
       >
-        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
+        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>
           {head} · {open ? '收起回执' : '展开回执'}
         </Text>
+        {iconRuntimeAvailable() ? <Icon name={open ? 'chevron-up' : 'chevron-down'} size={14} color={p.fg3} /> : null}
       </Pressable>
       {open ? (
         receipt.kind === 'action' ? (
-          <View style={{ gap: 2 }}>
+          <View style={{ gap: 2, backgroundColor: p.surfaceLow, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
             <KV p={p} k="已理解" v={receipt.understood || receipt.executed.types.join('、')} />
             <KV p={p} k="目标" v={receipt.target} />
             <KV
@@ -49,7 +52,7 @@ export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt 
             />
           </View>
         ) : (
-          <View style={{ gap: 2 }}>
+          <View style={{ gap: 2, backgroundColor: p.surfaceLow, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
             <KV p={p} k="数据源" v={receipt.vendor || '未知'} />
             <KV p={p} k="更新" v={receipt.fetchedAt ? receipt.fetchedAt.slice(11, 16) : ''} />
             <KV p={p} k="定位" v={receipt.located ? '当前位置' : '未使用定位'} />

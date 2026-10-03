@@ -1,13 +1,12 @@
 // mobile/src/features/chat/PresenceCapsule.tsx
 // 状态胶囊（方案 §4.3）：替代 v1 的四条窄条——一次只说一件「此刻」的事；「欠着」的归 Dock。
-// 材质 G1-tint（叠在深空底上）；文字不用极光（虹彩纪律）。
+// 材质：v3 起是 Floating 胶囊（surfaceHigh 实色 + line + 二级投影，Figma PresenceCapsule）；文字不用极光（虹彩纪律）。
 // 2026-09-11 两档制：它是胶囊类 ⇒ 走 `ui/Pill`（外框 = 触控目标 48 / 56、视觉 36 / 44）。原来视觉 26 靠
 // hitSlop 补热区——同一行里它比支持页的动作键 / 光球矮一截，正是用户看到的「胶囊高度不一致」。
 import { View } from 'react-native'
 
 import type { PresenceSnapshot } from '@/core/presence/presence'
 import { Pill } from '@/ui/Pill'
-import { TYPE } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 import type { FontScalePref } from '@/core/settings/store'
 
@@ -35,9 +34,8 @@ export function PresenceCapsule({
       <Pill
         p={p}
         testID="presence-capsule"
-        tone="glass"
+        tone="floating"
         solid={solid}
-        elevated
         driving={snapshot.driving}
         fontScale={fontScale}
         style={{ alignSelf: 'center' }}
@@ -50,7 +48,6 @@ export function PresenceCapsule({
         // 胶囊在识别中闭嘴——两个 live region 同时说会让 TalkBack 不断打断自己（B4-9）
         accessibilityLiveRegion={snapshot.capture === 'recognizing' ? 'none' : 'polite'}
         textColor={fg}
-        fontSize={TYPE.micro + 1}
         paddingHorizontal={12}
         maxTextWidth={260}
         label={c.text}

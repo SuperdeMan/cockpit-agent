@@ -92,8 +92,8 @@ test('Composer：没有 ptt ⇒ 旧占位符；有 ptt 闲时 ⇒ 提到按住�
   try {
     const input = inputOf(idle)
     expect(input.props.placeholder).toBe(PLACEHOLDER_VOICE_IDLE)
-    expect(styleOf(input).borderColor).toBe(p.fill2)
-    expect(styleOf(input).backgroundColor).toBe(p.fill)
+    expect(styleOf(input).borderColor).toBe(p.surfaceHighest)
+    expect(styleOf(input).backgroundColor).toBe(p.surfaceHighest)
     expect(input.props.placeholderTextColor).toBe(p.fg3)
   } finally { await act(async () => { idle.unmount() }) }
 })
@@ -118,12 +118,12 @@ test('Composer：轻点录音中「正在听…」、识别中「识别中…」
   try {
     const input = inputOf(tap)
     expect(input.props.placeholder).toBe(PLACEHOLDER_LISTENING)
-    expect(styleOf(input).borderColor).toBe(p.fill2)
+    expect(styleOf(input).borderColor).toBe(p.surfaceHighest)
   } finally { await act(async () => { tap.unmount() }) }
   const fin = await mount(composer({ ptt: ptt({ state: 'finalizing', mode: 'hold' }) }))
   try {
     const input = inputOf(fin)
     expect(input.props.placeholder).toBe(PLACEHOLDER_FINALIZING)
-    expect(styleOf(input).borderColor).toBe(p.fill2)
+    expect(styleOf(input).borderColor).toBe(p.surfaceHighest)
   } finally { await act(async () => { fin.unmount() }) }
 })

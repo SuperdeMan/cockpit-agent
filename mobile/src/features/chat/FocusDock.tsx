@@ -1,6 +1,8 @@
 // mobile/src/features/chat/FocusDock.tsx
 // 承诺面（方案 §5.3）：读 `commitment[]`（钉一项 + 其余个数）与 `degradation[]`（有出口的降级）。
 // 材质 **G0 实色**（§5.11：确认/错误/隐私说明不许半透明；坑账 §9.36 同判据）。
+// v3（Figma FocusDock/Item）：底 = surfaceHigh，确认类琥珀描边、错误 red 描边、其余 line；按钮是胶囊形的目标高；
+// 确认键改琥珀实色 + onAmber 字（原来 amberSoft 底上的琥珀字），取消键中性 surfaceHighest。
 // 确认按钮比例照 A-6.4：取消 flex1 / 确认 flex2；剩余时间**只读共享 TTL**（commitment.ts）。
 import { useState } from 'react'
 import { Linking, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native'
@@ -13,8 +15,10 @@ import { isMachineIntentName } from '@/core/session/actionSummary'
 import { isRecoveryImplemented, type IssueView, type RecoveryKind } from '@/core/session/contracts'
 import type { Degradation, PresenceSnapshot } from '@/core/presence/presence'
 import type { FontScalePref } from '@/core/settings/store'
+import { Button } from '@/ui/Button'
 import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
-import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import { SheetPanel } from '@/ui/Sheet'
+import { RADIUS, TARGET, TYPE, scale, textStyle } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
 import { dockLabelMode } from './dockLabel'
@@ -61,7 +65,7 @@ export function FocusDock(props: FocusDockProps) {
   const degradations = dockDegradations(snapshot)
   const issues = props.issues ?? []
   if (!pinned && !degradations.length && !issues.length) return null
-  const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
+  const solid = p.surfaceHigh
   return (
     <View testID="focus-dock" style={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}>
       {pinned ? <Commitments {...props} pinned={pinned} solid={solid} /> : null}
@@ -101,29 +105,29 @@ function Commitments(props: FocusDockProps & {
   const [localExpanded, setLocalExpanded] = useState(false)
   const expanded = props.expanded ?? localExpanded
   const setExpanded = props.onExpandedChange ?? setLocalExpanded
-  const { p, fontScale, snapshot, pinned, solid } = props
-  const target = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
+  const { p, fontScale, snapshot, pinned } = props
   return (
     <>
       <CommitmentCard {...props} item={pinned.item} others={pinned.others} onOthers={() => setExpanded(true)} />
       {expanded ? (
         <Modal transparent animationType="fade" onRequestClose={() => setExpanded(false)}>
-          <SafeAreaView style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}>
-            <View accessibilityViewIsModal style={{ maxHeight: '85%', backgroundColor: solid, padding: 12, borderRadius: RADIUS.xl, gap: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <Text accessibilityRole="header" style={{ flex: 1, color: p.fg1, fontSize: scale(TYPE.h2, 'text', fontScale) }}>
-                  待处理事项（{snapshot.commitment.length}）
-                </Text>
-                <Pressable testID="dock-list-close" accessibilityRole="button" accessibilityLabel="关闭待处理列表"
-                  onPress={() => setExpanded(false)} style={{ minWidth: target, minHeight: target, justifyContent: 'center', alignItems: 'center' }}>
-                  <Text style={{ color: p.accent, fontSize: scale(TYPE.body, 'text', fontScale) }}>关闭</Text>
-                </Pressable>
-              </View>
-              <ScrollView testID="dock-list" contentContainerStyle={{ gap: 10 }}>
-                {snapshot.commitment.map((item) => (
-                  <CommitmentCard {...props} key={`${item.kind}:${item.id}`} item={item} others={0} testIdPrefix={`dock-list-${item.id}`} />
-                ))}
-              </ScrollView>
+          <SafeAreaView edges={['top']} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: p.scrim }}>
+            <View accessibilityViewIsModal style={{ maxHeight: '85%' }}>
+              <SheetPanel
+                p={p}
+                fontScale={fontScale}
+                title={`待处理事项（${snapshot.commitment.length}）`}
+                onClose={() => setExpanded(false)}
+                closeLabel="关闭待处理列表"
+                closeTestID="dock-list-close"
+                style={{ maxHeight: '100%' }}
+              >
+                <ScrollView testID="dock-list" contentContainerStyle={{ gap: 10, paddingBottom: 8 }}>
+                  {snapshot.commitment.map((item) => (
+                    <CommitmentCard {...props} key={`${item.kind}:${item.id}`} item={item} others={0} testIdPrefix={`dock-list-${item.id}`} />
+                  ))}
+                </ScrollView>
+              </SheetPanel>
             </View>
           </SafeAreaView>
         </Modal>
@@ -153,7 +157,7 @@ function CommitmentCard({
   const now = snapshot.now
   // B4-11 §6「目标 ≥56dp」：行车 56 / 泊车 48（TARGET 是唯一的一份，不在这里写数）
   const h = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
-  const border = item.kind === 'confirm' ? 'rgba(245,158,11,0.38)' : p.line
+  const border = item.kind === 'confirm' ? p.amberLine : p.line
   // 右侧标签的让位（评审 ❌-1）：200% 字号下它随标题同比放大、把标题挤成「这..」。
   // 隐藏时把分类并进标题的读屏 label，信息不丢，只是不再抢那一行。
   const { fontScale: sysScale } = useWindowDimensions()
@@ -188,26 +192,31 @@ function CommitmentCard({
         borderRadius: RADIUS.lg,
         borderWidth: 1,
         borderColor: border,
-        padding: 10,
-        gap: 8,
-        boxShadow: item.kind === 'confirm' ? '0 0 16px rgba(245,158,11,0.12), 0 8px 24px rgba(0,0,0,0.3)' : '0 8px 24px rgba(0,0,0,0.25)',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        gap: 10,
+        boxShadow: p.elev2,
       }}
     >
       {item.kind === 'confirm' ? (
         <>
           <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {/* 打磨批 C（评审 P15）：线性图标替 emoji；svg 原生缺席回退文字（Icon.tsx 既有判据） */}
-            {iconRuntimeAvailable() ? <Icon name="warning" size={18} color={p.amber} /> : <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>!</Text>}
+            {iconRuntimeAvailable() ? (
+              <Icon name={item.subkind === 'location' ? 'location' : 'warning'} size={20} color={p.amber} />
+            ) : (
+              <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>!</Text>
+            )}
             <Text
               testID="dock-title"
               numberOfLines={2}
               accessibilityLabel={labelMode === 'hidden' ? `${kindLabel}：${title}` : undefined}
-              style={{ color: p.fg1, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600', flex: 1, flexShrink: 1 }}
+              style={[textStyle('titleM', fontScale), { color: p.fg1, flex: 1, flexShrink: 1 }]}
             >
               {title}
             </Text>
             {labelMode === 'full' ? (
-              <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), flexShrink: 0 }}>{kindLabel}</Text>
+              <Text style={[textStyle('caption', fontScale), { color: p.fg3, flexShrink: 0 }]}>{kindLabel}</Text>
             ) : null}
           </View>
           {machineName ? (
@@ -217,10 +226,10 @@ function CommitmentCard({
           ) : null}
           {item.subkind !== 'location' ? (
             <View style={{ gap: 4 }}>
-              <View style={{ height: 2, borderRadius: 1, backgroundColor: p.fill2, overflow: 'hidden' }}>
+              <View style={{ height: 3, borderRadius: 2, backgroundColor: p.lineStrong, overflow: 'hidden' }}>
                 <View
                   style={{
-                    height: 2,
+                    height: 3,
                     // 分母取**服务端窗口**，没有才回落本地 TTL：服务端说 60s 而分母写死
                     // 300s 时，进度条一上来就只剩 1/5，看着像马上要过期
                     width: `${Math.min(100, Math.round((confirmRemainingMs(item, now) / (item.windowMs && item.windowMs > 0 ? item.windowMs : PENDING_TTL_MS)) * 100))}%`,
@@ -228,7 +237,7 @@ function CommitmentCard({
                   }}
                 />
               </View>
-              <Text testID={`${testIdPrefix}-countdown`} style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
+              <Text testID={`${testIdPrefix}-countdown`} style={[textStyle('caption', fontScale), { color: p.fg3 }]}>
                 {fmt(confirmRemainingMs(item, now))} 后过期
               </Text>
             </View>
@@ -238,18 +247,18 @@ function CommitmentCard({
               testID={`${testIdPrefix}-cancel`}
               accessibilityRole="button"
               onPress={() => onConfirm('取消', item.subkind === 'location' ? undefined : item.id)}
-              style={{ flex: 1, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: p.fill2, backgroundColor: p.fill, alignItems: 'center', justifyContent: 'center' }}
+              style={{ flex: 1, minHeight: h, borderRadius: RADIUS.full, backgroundColor: p.surfaceHighest, alignItems: 'center', justifyContent: 'center' }}
             >
-              <Text style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>{item.subkind === 'location' ? '拒绝' : '取消'}</Text>
+              <Text style={[textStyle('labelL', fontScale), { color: p.fg1 }]}>{item.subkind === 'location' ? '拒绝' : '取消'}</Text>
             </Pressable>
             {item.policyBroken ? (
               // 策略缺失/畸形 ⇒ **不给确认入口**（方案 §7.1：不能默认为允许）。
               // 取消与重新发起仍可达——停手不等于把用户困住。
               <View
                 testID={`${testIdPrefix}-policy-broken`}
-                style={{ flex: 2, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: p.line, backgroundColor: p.fill, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 }}
+                style={{ flex: 2, minHeight: h, borderRadius: RADIUS.full, borderWidth: 1, borderStyle: 'dashed', borderColor: p.lineStrong, backgroundColor: p.surfaceLow, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 }}
               >
-                <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), textAlign: 'center' }}>
+                <Text style={[textStyle('caption', fontScale), { color: p.fg2, textAlign: 'center' }]}>
                   确认策略没取到，请重新发起
                 </Text>
               </View>
@@ -258,9 +267,9 @@ function CommitmentCard({
                 testID={`${testIdPrefix}-accept`}
                 accessibilityRole="button"
                 onPress={() => onConfirm('确认', item.subkind === 'location' ? undefined : item.id)}
-                style={{ flex: 2, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(245,158,11,0.38)', backgroundColor: p.amberSoft, alignItems: 'center', justifyContent: 'center' }}
+                style={{ flex: 2, minHeight: h, borderRadius: RADIUS.full, backgroundColor: p.amber, alignItems: 'center', justifyContent: 'center' }}
               >
-                <Text style={{ color: p.amber, fontSize: scale(TYPE.body - 1, 'text', fontScale), fontWeight: '600' }}>{item.subkind === 'location' ? '允许' : '确认'}</Text>
+                <Text style={[textStyle('labelL', fontScale), { color: p.onAmber }]}>{item.subkind === 'location' ? '允许' : '确认'}</Text>
               </Pressable>
             )}
           </View>
@@ -268,31 +277,33 @@ function CommitmentCard({
       ) : item.kind === 'task' ? (
         <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {iconRuntimeAvailable() ? <Icon name="refresh" size={18} color={p.teal} /> : <Text style={{ color: p.teal, fontSize: scale(TYPE.body, 'text', fontScale) }}>…</Text>}
-          <Text numberOfLines={1} style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale), flex: 1 }}>{item.label}…</Text>
+          <Text numberOfLines={1} style={[textStyle('bodyM', fontScale), { color: p.fg1, flex: 1 }]}>{item.label}…</Text>
           <Pressable accessibilityRole="button" onPress={onCancelTurn} style={{ minHeight: h, paddingHorizontal: 12, justifyContent: 'center' }}>
-            <Text style={{ color: p.amber, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>取消</Text>
+            <Text style={[textStyle('labelL', fontScale), { color: p.amber }]}>取消</Text>
           </Pressable>
         </View>
       ) : item.kind === 'queue' ? (
-        <Text accessibilityLiveRegion="assertive" style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>
-          {item.count} 条消息排队中，连上后自动补发
-        </Text>
+        <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {iconRuntimeAvailable() ? <Icon name="clock" size={18} color={p.fg3} /> : null}
+          <Text style={[textStyle('bodyM', fontScale), { color: p.fg2, flex: 1 }]}>{item.count} 条消息排队中，连上后自动补发</Text>
+        </View>
       ) : (
         <View style={{ gap: 8 }}>
           <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {iconRuntimeAvailable() ? <Icon name="info" size={20} color={p.accent} /> : null}
             <Text
               numberOfLines={2}
               accessibilityLabel={labelMode === 'hidden' ? `${kindLabel}：还差一个信息：${item.missing}` : undefined}
-              style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale), flex: 1 }}
+              style={[textStyle('titleM', fontScale), { color: p.fg1, flex: 1 }]}
             >
               还差一个信息：{item.missing}
             </Text>
             {labelMode === 'full' ? (
-              <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), flexShrink: 0 }}>{kindLabel}</Text>
+              <Text style={[textStyle('caption', fontScale), { color: p.fg3, flexShrink: 0 }]}>{kindLabel}</Text>
             ) : null}
           </View>
           {item.expiresAt > 0 ? (
-            <Text testID={`${testIdPrefix}-slot-countdown`} style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
+            <Text testID={`${testIdPrefix}-slot-countdown`} style={[textStyle('caption', fontScale), { color: p.fg3 }]}>
               {fmt(Math.max(0, item.expiresAt - now))} 后过期
             </Text>
           ) : null}
@@ -307,22 +318,23 @@ function CommitmentCard({
                   accessibilityRole="button"
                   accessibilityLabel={`用「${value}」回答${item.missing}`}
                   onPress={() => onSlotReply(item.id, value)}
-                  style={{ minHeight: h, paddingHorizontal: 12, justifyContent: 'center', borderRadius: RADIUS.md, borderWidth: 1, borderColor: p.line, backgroundColor: p.fill }}
+                  style={{ minHeight: h, paddingHorizontal: 16, justifyContent: 'center', borderRadius: RADIUS.full, borderWidth: 1, borderColor: p.line, backgroundColor: p.surfaceHighest }}
                 >
-                  <Text style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>{value}</Text>
+                  <Text style={[textStyle('labelL', fontScale), { color: p.fg1 }]}>{value}</Text>
                 </Pressable>
               ))}
             </View>
           ) : (
-            <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
+            <Text style={[textStyle('caption', fontScale), { color: p.fg2 }]}>
               直接说或输入都可以
             </Text>
           )}
         </View>
       )}
       {others > 0 ? (
-        <Pressable testID="dock-others" onPress={onOthers} accessibilityRole="button" style={{ minHeight: h, justifyContent: 'center' }}>
-          <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>另有 {others} 个待处理 ›</Text>
+        <Pressable testID="dock-others" onPress={onOthers} accessibilityRole="button" style={{ minHeight: h, flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end' }}>
+          <Text style={[textStyle('caption', fontScale), { color: p.fg3 }]}>另有 {others} 个待处理{iconRuntimeAvailable() ? '' : ' ›'}</Text>
+          {iconRuntimeAvailable() ? <Icon name="chevron-right" size={14} color={p.fg3} /> : null}
         </Pressable>
       ) : null}
     </View>
@@ -365,41 +377,34 @@ function IssueRow({
       testID={`dock-issue-${issue.code}`}
       style={{
         backgroundColor: solid,
-        borderRadius: RADIUS.md,
+        borderRadius: RADIUS.lg,
         borderWidth: 1,
-        borderColor: danger ? 'rgba(239,68,68,0.35)' : p.line,
-        padding: 10,
-        gap: 8,
+        borderColor: danger ? p.red : p.line,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        gap: 10,
+        boxShadow: p.elev2,
       }}
     >
-      <Text
-        accessibilityLiveRegion="polite"
-        style={{ color: p.fg1, fontSize: scale(TYPE.caption, 'text', fontScale) }}
-      >
-        {issue.message}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+        {iconRuntimeAvailable() ? <Icon name={danger ? 'warning' : 'info'} size={20} color={danger ? p.red : p.fg2} /> : null}
+        <Text accessibilityLiveRegion="polite" style={[textStyle('bodyM', fontScale), { color: p.fg1, flex: 1 }]}>
+          {issue.message}
+        </Text>
+      </View>
       {actions.length ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
           {actions.map((r) => (
-            <Pressable
+            <Button
               key={r.kind}
+              p={p}
+              variant="outlined"
               testID={`dock-issue-${issue.code}-${r.kind}`}
-              accessibilityRole="button"
+              label={r.label || RECOVERY_FALLBACK_LABEL[r.kind]}
+              driving={driving}
+              fontScale={fontScale}
               onPress={() => onAction?.(r.kind, issue)}
-              style={{
-                minHeight: scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale),
-                paddingHorizontal: 12,
-                justifyContent: 'center',
-                borderRadius: RADIUS.md,
-                borderWidth: 1,
-                borderColor: p.line,
-                backgroundColor: p.fill,
-              }}
-            >
-              <Text style={{ color: p.accent, fontSize: scale(TYPE.caption, 'text', fontScale) }}>
-                {r.label || RECOVERY_FALLBACK_LABEL[r.kind]}
-              </Text>
-            </Pressable>
+            />
           ))}
         </View>
       ) : null}
@@ -444,12 +449,17 @@ function DegradationRow({
   return (
     <View
       testID={`dock-${d.kind}`}
-      style={{ backgroundColor: solid, borderRadius: RADIUS.md, borderWidth: 1, borderColor: d.kind === 'safety_blocked' || d.kind === 'fatal' ? 'rgba(239,68,68,0.35)' : p.line, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+      style={{ backgroundColor: solid, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: d.kind === 'safety_blocked' || d.kind === 'fatal' ? p.red : p.line, paddingHorizontal: 16, paddingVertical: 12, gap: 6, boxShadow: p.elev2 }}
     >
-      <Text style={{ color: p.fg2, fontSize: scale(TYPE.caption, 'text', fontScale), flex: 1 }}>{text}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+        {iconRuntimeAvailable() ? (
+          <Icon name={d.kind === 'permission_denied' ? 'voice-input' : d.kind === 'audio_echo_degraded' ? 'voice-output' : 'info'} size={18} color={p.fg2} />
+        ) : null}
+        <Text style={[textStyle('bodyM', fontScale), { color: p.fg2, flex: 1 }]}>{text}</Text>
+      </View>
       {action ? (
-        <Pressable accessibilityRole="button" onPress={action.run} style={{ minHeight: scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale), justifyContent: 'center', paddingHorizontal: 8 }}>
-          <Text style={{ color: p.accent, fontSize: scale(TYPE.caption, 'text', fontScale) }}>{action.label}</Text>
+        <Pressable accessibilityRole="button" onPress={action.run} style={{ minHeight: scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale), justifyContent: 'center', paddingHorizontal: 8, alignSelf: 'flex-end' }}>
+          <Text style={[textStyle('labelL', fontScale), { color: p.accent }]}>{action.label}</Text>
         </Pressable>
       ) : null}
     </View>

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import type { Msg } from '@shared/types.ts'
 import { resultDetails } from '@shared/resultBundle.mjs'
+import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
 import { TARGET } from '../../ui/tokens'
 import { CardRenderer } from '../cards/CardRenderer'
@@ -12,16 +13,19 @@ export function ResultDetailsFold({ p, msg, driving, onSend }: { p: Palette; msg
   const rows = resultDetails(msg)
   if (driving || msg.driving || msg.pending || !rows.length) return null
   return (
-    <View style={{ borderTopWidth: 1, borderTopColor: p.fill2, marginTop: 4 }}>
+    <View style={{ borderTopWidth: 1, borderTopColor: p.line, marginTop: 4 }}>
       <Pressable
         testID="result-details-toggle"
         accessibilityRole="button"
         accessibilityLabel="查看各项结果"
         accessibilityState={{ expanded: open }}
         onPress={() => setOpen(!open)}
-        style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}
+        style={{ minHeight: p.target(TARGET.parked), flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' }}
       >
-        <Text style={{ color: p.accent, fontSize: p.font(13) }}>查看各项结果 {open ? '−' : '+'}</Text>
+        <Text style={{ color: p.accent, fontSize: p.font(13), fontWeight: '500' }}>
+          {iconRuntimeAvailable() ? '查看各项结果' : `查看各项结果 ${open ? '−' : '+'}`}
+        </Text>
+        {iconRuntimeAvailable() ? <Icon name={open ? 'chevron-up' : 'chevron-down'} size={16} color={p.accent} /> : null}
       </Pressable>
       {open ? <View testID="result-details" style={{ gap: 16, paddingBottom: 4 }}>
         {rows.map((row, index) => <View key={row.key} style={{ gap: 8 }}>
