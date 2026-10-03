@@ -90,7 +90,7 @@ test('P14：过程区折叠条、追问 chip、回执切换的触控高度 ≥44
     expect(minHeightOf(follow)).toBeGreaterThanOrEqual(44)
   } finally { await act(async () => { view.unmount() }) }
   const receipt = await mount(createElement(ExecutionReceipt, {
-    p, receipt: { kind: 'action', understood: '打开后备箱', target: '后备箱', confirm: null, executed: { ok: true, at: null, types: ['trunk.open'] } },
+    p, receipt: { kind: 'action', understood: '打开后备箱', target: '后备箱', confirm: null, executed: { status: 'executed', at: null, names: ['后备箱'] }, items: [] },
   } as never))
   try {
     const toggle = receipt.root.findAllByProps({ testID: 'receipt-toggle' }).find((n) => typeof n.props.onPress === 'function')!
@@ -136,4 +136,19 @@ test('E：待确认的助手气泡不再渲染气泡内确认 / 取消按钮（�
     expect(view.root.findAllByProps({ testID: 'confirm-accept' })).toHaveLength(0)
     expect(view.root.findAllByProps({ testID: 'confirm-cancel' })).toHaveLength(0)
   } finally { await act(async () => { view.unmount() }) }
+})
+
+test('v3 P4c：回执里有车控项就在气泡里出车控结果卡；只有媒体控制不出卡', async () => {
+  const vehicle = { kind: 'vehicle', command: 'trunk.open', object: '后备箱', label: '后备箱', action: '打开', value: '', temperature: false, status: 'executed', note: '' }
+  const media = { ...vehicle, kind: 'media', command: 'media.pause', object: '媒体', label: '媒体', action: '暂停' }
+  const receiptOf = (items: unknown[]) => ({ kind: 'action', understood: '', target: '当前车辆', confirm: null, executed: { status: 'executed', at: null, names: [] }, items })
+  const msg = { id: 'a', role: 'assistant', text: '已打开后备箱' } as Msg
+  const withCar = await mount(bubble(msg, { receipt: receiptOf([vehicle, media]) }))
+  try {
+    expect(withCar.root.findAllByProps({ testID: 'control-result' }).length).toBeGreaterThan(0)
+  } finally { await act(async () => { withCar.unmount() }) }
+  const mediaOnly = await mount(bubble(msg, { receipt: receiptOf([media]) }))
+  try {
+    expect(mediaOnly.root.findAllByProps({ testID: 'control-result' })).toHaveLength(0)
+  } finally { await act(async () => { mediaOnly.unmount() }) }
 })

@@ -30,6 +30,7 @@ export function CardShell({
   right,
   children,
   testID,
+  gap = 12,
 }: {
   p: Palette
   icon?: IconName
@@ -37,6 +38,8 @@ export function CardShell({
   right?: ReactNode
   children: ReactNode
   testID?: string
+  /** 件间距：卡片默认 12；车控结果单卡 10、清单卡 4、行车摘要 8（Figma 各组件自己的 itemSpacing） */
+  gap?: number
 }) {
   return (
     <View
@@ -47,7 +50,7 @@ export function CardShell({
         borderColor: p.line,
         borderRadius: RADIUS.lg,
         padding: 16,
-        gap: 12,
+        gap,
         boxShadow: p.elev1,
       }}
     >

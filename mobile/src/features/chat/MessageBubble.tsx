@@ -24,6 +24,7 @@ import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET, textStyle } from '../../ui/tokens'
 import { CardRenderer } from '../cards/CardRenderer'
+import { ControlResult } from '../cards/ControlResult'
 import type { SendFn } from '../cards/parts'
 import { ExecutionReceipt } from './ExecutionReceipt'
 import { FollowUpChips } from './FollowUpChips'
@@ -264,6 +265,10 @@ export function MessageBubble({ p, msg, uncertain, draft, interrupted, s2s, visi
         ) : null}
         {interrupted ? <Text style={[caption, { color: p.fg3 }]}>已打断</Text> : null}
         {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
+        {/* 车控结果卡（D17）：与回执「执行」行同一份逐项结果；媒体控制不出卡 */}
+        {receipt?.kind === 'action' && receipt.items.some((i) => i.kind === 'vehicle') ? (
+          <ControlResult p={p} items={receipt.items.filter((i) => i.kind === 'vehicle')} at={receipt.executed.at} />
+        ) : null}
         <ResultDetailsFold p={p} msg={msg} driving={driving} onSend={onSend} />
         {chips?.length ? (
           <FollowUpChips p={p} fontScale={fontScale} target={driving ? TARGET.driving : TARGET.parked} chips={chips} onSend={onSend} />

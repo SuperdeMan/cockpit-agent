@@ -14,8 +14,10 @@ import { ScrollView, Text, View } from 'react-native'
 import { useStore } from 'zustand'
 
 import { settingsStore } from '@/core/settings/store'
+import { controlItems } from '@/core/cards/controlResult'
 import { CardRenderer, KNOWN_CARD_TYPES } from '@/features/cards/CardRenderer'
-import { cardFixtures } from '@/features/cards/fixtures'
+import { ControlResult } from '@/features/cards/ControlResult'
+import { cardFixtures, controlFixtures } from '@/features/cards/fixtures'
 import { Chip } from '@/features/cards/parts'
 import { usePalette } from '@/ui/theme'
 
@@ -34,6 +36,11 @@ export default function CardGallery() {
     if (!keys.length) return all
     return all.filter((f) => keys.some((k) => String(f.card?.type || '').includes(k)))
   }, [all, only])
+  // 车控结果卡（D17）不在注册表里，单列一组；`?only=control` 只看它们
+  const controls = useMemo(() => {
+    const keys = (only || '').split(',').map((k) => k.trim()).filter(Boolean)
+    return !keys.length || keys.some((k) => 'control'.includes(k)) ? controlFixtures() : []
+  }, [only])
 
   // 覆盖度自检：注册表里有、但画廊没有样本的卡型 —— 归档时「少了谁」得当场看得见，
   // 不能等到事后数截图（数截图这件事没人会做第二次）。
@@ -72,6 +79,18 @@ export default function CardGallery() {
             // 画廊里点按钮不上行——这屏是取证用的，误触发一次真实下单不值当
             onSend={(text) => setLog((prev) => [`${f.label} → ${text}`, ...prev].slice(0, 8))}
           />
+        </View>
+      ))}
+
+      {controls.map((f, i) => (
+        <View key={`control:${i}`} style={{ gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ color: p.fg3, fontSize: p.font(11), flex: 1 }}>
+              {fixtures.length + i + 1}. {f.label}
+            </Text>
+            <Chip p={p} text="样本" />
+          </View>
+          <ControlResult p={p} items={controlItems(f.msg).filter((it) => it.kind === 'vehicle')} at={f.at} driving={f.driving} />
         </View>
       ))}
 

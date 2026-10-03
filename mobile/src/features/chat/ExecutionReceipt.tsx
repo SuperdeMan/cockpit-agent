@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { clockLabel, vendorName } from '@/core/cards/cardMeta'
+import { STATUS_WORD } from '@/core/cards/controlResult'
 import type { InfoReceipt, Receipt } from '@/core/session/receipt'
 import { KV } from '@/features/cards/parts'
 import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
@@ -15,11 +17,12 @@ function hhmm(ms: number | null): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const MODE_LABEL: Record<InfoReceipt['mode'], string> = { real: '实时', cached: '缓存', degraded: '降级', mock: '模拟' }
+// 与卡头 ProvBadge 同一套人话（部分数据 / 模拟数据），回执里不再另起「降级 / 模拟」
+const MODE_LABEL: Record<InfoReceipt['mode'], string> = { real: '实时', cached: '缓存', degraded: '部分数据', mock: '模拟数据' }
 
 export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt }) {
   const [open, setOpen] = useState(false)
-  const head = receipt.kind === 'action' ? (receipt.executed.ok ? '已执行' : '执行失败') : '数据来源'
+  const head = receipt.kind === 'action' ? STATUS_WORD[receipt.executed.status] : '数据来源'
   return (
     <View style={{ gap: 4 }}>
       <Pressable
@@ -38,23 +41,26 @@ export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt 
       {open ? (
         receipt.kind === 'action' ? (
           <View style={{ gap: 2, backgroundColor: p.surfaceLow, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-            <KV p={p} dense k="已理解" v={receipt.understood || receipt.executed.types.join('、')} />
+            <KV p={p} dense k="已理解" v={receipt.understood || receipt.executed.names.join('、')} />
             <KV p={p} dense k="目标" v={receipt.target} />
             <KV
               p={p}
+              dense
               k="确认"
               v={receipt.confirm ? `你在手机端点了「${receipt.confirm.reply}」 ${hhmm(receipt.confirm.at)}` : '无需确认'}
             />
             <KV
               p={p}
+              dense
               k="执行"
-              v={`${receipt.executed.ok ? '成功' : '失败'}${receipt.executed.at ? ' · ' + hhmm(receipt.executed.at) : ''} · ${receipt.executed.types.join('、')}`}
+              v={[STATUS_WORD[receipt.executed.status], hhmm(receipt.executed.at), receipt.executed.names.join('、')].filter(Boolean).join(' · ')}
             />
           </View>
         ) : (
           <View style={{ gap: 2, backgroundColor: p.surfaceLow, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-            <KV p={p} dense k="数据源" v={receipt.vendor || '未知'} />
-            <KV p={p} dense k="更新" v={receipt.fetchedAt ? receipt.fetchedAt.slice(11, 16) : ''} />
+            <KV p={p} dense k="数据源" v={vendorName(receipt.vendor) || '未知'} />
+            {/* 原来切 ISO 第 11–16 位，那是 UTC 时刻（D10）；按本地时区读 */}
+            <KV p={p} dense k="更新" v={clockLabel(receipt.fetchedAt)} />
             <KV p={p} dense k="定位" v={receipt.located ? '当前位置' : '未使用定位'} />
             <KV p={p} dense k="状态" v={`${MODE_LABEL[receipt.mode]}${receipt.note ? ' · ' + receipt.note : ''}`} />
           </View>

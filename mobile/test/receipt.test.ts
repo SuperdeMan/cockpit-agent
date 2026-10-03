@@ -7,12 +7,12 @@ import { buildReceipt, provOf } from '@/core/session/receipt'
 const u = (id: string, text: string): Msg => ({ id, role: 'user', text })
 const a = (id: string, text: string, extra: Partial<Msg> = {}): Msg => ({ id, role: 'assistant', text, ...extra })
 
-test('车控回执：已理解=紧邻上一条用户原话（跳过「确认」）；目标=vehicle_id；确认来自本端台账；执行=action 类型 + final 时刻', () => {
+test('车控回执：已理解=紧邻上一条用户原话（跳过「确认」）；目标=vehicle_id；确认来自本端台账；执行=总状态 + final 时刻 + 中文对象名', () => {
   const msgs = [
     u('u1', '打开后备箱'),
     a('a1', '这项操作可能影响车辆安全，请确认是否继续。', { needConfirm: true, operationId: 'op1' }),
     u('u2', '确认'),
-    a('a2', '已打开', { actions: [{ type: 'vehicle.control' }] }),
+    a('a2', '已打开', { actions: [{ type: 'vehicle.control', payload: { command: 'trunk.open' } }] }),
   ]
   const r = buildReceipt({
     messages: msgs,
@@ -21,25 +21,34 @@ test('车控回执：已理解=紧邻上一条用户原话（跳过「确认」�
     confirmLog: { op1: { reply: '确认', at: 1_500 } },
     vehicleId: 'V-001',
   })
-  expect(r).toEqual({
+  expect(r).toMatchObject({
     kind: 'action',
     understood: '打开后备箱',
     target: 'V-001',
     confirm: { reply: '确认', at: 1_500 },
-    executed: { ok: true, at: 2_000, types: ['vehicle.control'] },
+    // v3 P4c：不再是 ['vehicle.control']
+    executed: { status: 'executed', at: 2_000, names: ['后备箱'] },
+    items: [{ kind: 'vehicle', command: 'trunk.open', label: '后备箱', status: 'executed' }],
   })
 })
 
-test('没有 vehicle_id → 「当前车辆」；没有确认记录 → confirm=null；error → ok=false；没有 turnMeta → at=null', () => {
-  const msgs = [u('u1', '打开车窗'), a('a1', '出错了', { error: true, actions: [{ type: 'vehicle.control' }] })]
+test('没有 vehicle_id → 「当前车辆」；没有确认记录 → confirm=null；error → 未核实（动作帧已到，不说「执行失败」）；没有 turnMeta → at=null', () => {
+  const msgs = [u('u1', '打开车窗'), a('a1', '出错了', { error: true, actions: [{ type: 'vehicle.control', payload: { command: 'window.open' } }] })]
   const r = buildReceipt({ messages: msgs, assistant: msgs[1], turnMeta: {}, confirmLog: {} })
-  expect(r).toEqual({
+  expect(r).toMatchObject({
     kind: 'action',
     understood: '打开车窗',
     target: '当前车辆',
     confirm: null,
-    executed: { ok: false, at: null, types: ['vehicle.control'] },
+    executed: { status: 'unverified', at: null, names: ['车窗'] },
   })
+})
+
+test('非控制类动作（商户下单）没有逐项结果：执行行只给状态，不列机器名', () => {
+  const r = buildReceipt({
+    messages: [], assistant: a('a1', '已下单', { actions: [{ type: 'merchant.order', payload: {} }] }), turnMeta: {}, confirmLog: {},
+  })
+  expect(r).toMatchObject({ kind: 'action', executed: { status: 'executed', names: [] }, items: [] })
 })
 
 test('信息回执 = _prov 展开；card_group 取主卡的 _prov（与 T8 同一份主卡判据）；无 _prov 无 actions → null', () => {

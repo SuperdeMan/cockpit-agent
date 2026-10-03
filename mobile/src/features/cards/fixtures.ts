@@ -11,6 +11,7 @@
 // ⚠ **样本不是读数**：画廊截图只证明「渲染器对这份数据的输出长这样」，
 // 不证明后端会发这样的数据。哪些卡是真栈验的、哪些是样本验的，实施记录里逐条标注。
 // 字段一律照 `hmi/src/types.ts` 填，不臆造字段名（猜字段名正是 Q2 那个洞的成因）。
+import type { Msg } from '@shared/types.ts'
 
  
 
@@ -393,3 +394,55 @@ export function cardFixtures(): Fixture[] {
 
 /** 覆盖度守卫用的快照（时间敏感字段与它无关，取一次即可） */
 export const CARD_FIXTURES: Fixture[] = cardFixtures()
+
+/** 车控结果卡（v3 P4c，D17）的画廊样本。它不是 uiCard、不在注册表里，所以单列：样本是**一轮的 action 帧 + 结果包**，
+ *  画廊用 `controlItems` 走真实判据得出状态——六种状态各一条，外加一轮多项与行车档。字段照 hmi/src/types.ts 的
+ *  Action / ResultBundle / VerificationEvidence 填；证据值都在 runtime/effect_evidence.py 的词表里。 */
+export interface ControlFixture {
+  label: string
+  msg: Msg
+  /** 这一轮 final 的时刻（证据行的「14:32」）：取样那一刻算，同 cardFixtures 的相对时间 */
+  at: number
+  driving?: boolean
+}
+
+export function controlFixtures(): ControlFixture[] {
+  const at = Date.now()
+  const act = (command: string, extra: Record<string, unknown> = {}) => ({ type: 'vehicle.control', payload: { command, ...extra } })
+  const ev = (state: string, observed: string, ack = 'acknowledged') => ({
+    ack, state, observed, verified: state === 'satisfied' && observed === 'attributed', reasons: [], source_kind: 'simulated', authenticated: false,
+  })
+  const row = (intent: string, extra: Record<string, unknown> = {}) => ({
+    step_id: `s-${intent}`, goal_ids: [], intent, status: 'ok', answer: '好的', answer_state: 'inline', result_ref: `t/${intent}`,
+    verification: 'unknown', ...extra,
+  })
+  const bundle = (results: unknown[]) => [{
+    version: 1, task_id: 'gallery', revision: 1, goals: [], results, coverage_status: 'complete', display_text: '', cards: {},
+  }] as unknown as Msg['resultBundles']
+  const msg = (actions: unknown[], over: Partial<Msg> = {}) => ({ id: 'gallery', role: 'assistant', text: '', actions, ...over }) as Msg
+  const hvac = act('hvac.set', { temp: '24' })
+  const list: Omit<ControlFixture, 'at'>[] = [
+    { label: 'control · 已执行（端侧直接执行，无结果行）', msg: msg([hvac]) },
+    { label: 'control · 已核实', msg: msg([hvac], { resultBundles: bundle([row('hvac.set', { evidence: ev('satisfied', 'attributed') })]) }) },
+    { label: 'control · 本来就是', msg: msg([hvac], { resultBundles: bundle([row('hvac.set', { evidence: ev('satisfied', 'unchanged') })]) }) },
+    {
+      label: 'control · 未核实（pending_edge，服务端原话）',
+      msg: msg([hvac], {
+        resultBundles: bundle([row('hvac.set', {
+          pending_edge: true, status: 'unknown', answer: '该操作已交给车端，尚未核实执行结果。', evidence: ev('unknown', 'unattributed', 'unknown'),
+        })]),
+      }),
+    },
+    { label: 'control · 没生效', msg: msg([hvac], { resultBundles: bundle([row('hvac.set', { evidence: ev('unsatisfied', 'missing') })]) }) },
+    { label: 'control · 执行中（流式中）', msg: msg([hvac], { streaming: true }) },
+    { label: 'control · 无目标值（打开副驾车窗）', msg: msg([act('window.open', { positions: ['副驾'] })]) },
+    {
+      label: 'control · 一轮多项',
+      msg: msg([hvac, act('seat.heating.on', { positions: ['主驾'] }), act('window.close')], {
+        resultBundles: bundle([row('hvac.set', { evidence: ev('satisfied', 'attributed') })]),
+      }),
+    },
+    { label: 'control · 行车档', msg: msg([hvac]), driving: true },
+  ]
+  return list.map((f) => ({ ...f, at }))
+}

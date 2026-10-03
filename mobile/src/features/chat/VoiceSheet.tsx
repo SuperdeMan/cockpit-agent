@@ -38,7 +38,9 @@ import { followUpChips, MAX_CHIPS } from '@/core/session/followUps'
 import { followOnContentChange } from '@/core/session/history'
 import type { TurnView } from '@/core/session/turnView'
 import type { FontScalePref } from '@/core/settings/store'
+import { controlItems } from '@/core/cards/controlResult'
 import { CardRenderer } from '@/features/cards/CardRenderer'
+import { ControlResult } from '@/features/cards/ControlResult'
 import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 
 import { FollowUpChips } from './FollowUpChips'
@@ -268,6 +270,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
 
   const user = turn.user
   const assistant = turn.assistant
+  const controlCard = assistant ? controlItems(assistant).filter((i) => i.kind === 'vehicle') : []
   // B4-11 §6「目标 ≥56dp」：层内按钮 / chips 行车 56、泊车 48。
   // B5-12 之后层内唯一的目标演员是顶缘把手带（底栏撤了），它照旧用这个值。
   const targetBtn = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
@@ -405,6 +408,12 @@ export function VoiceSheet(props: VoiceSheetProps) {
           ) : (
             <CardRenderer p={p} card={assistant.uiCard} onSend={props.onSend} />
           )}
+        </View>
+      ) : null}
+      {/* 车控结果卡（D17）：语音层里不带时刻（就是现在）；行车档压成标题 + 一行结果 */}
+      {controlCard.length ? (
+        <View style={{ alignSelf: 'stretch' }}>
+          <ControlResult p={p} items={controlCard} driving={driving} />
         </View>
       ) : null}
     </>
