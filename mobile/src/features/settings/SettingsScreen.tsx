@@ -5,7 +5,7 @@
 // 持久化 AsyncStorage（settings store）；buildMeta 键集由 settingsMeta.test.ts 钉住。
 import { Link } from 'expo-router'
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Alert, Pressable, ScrollView, Switch, Text, View, useWindowDimensions } from 'react-native'
+import { Pressable, ScrollView, Switch, Text, View, useWindowDimensions } from 'react-native'
 import { useStore } from 'zustand'
 
 import {
@@ -45,6 +45,7 @@ import { TextField } from '../../ui/TextField'
 import { usePalette, type Palette } from '../../ui/theme'
 import { RADIUS, SPACE, TARGET, textStyle } from '../../ui/tokens'
 import { useAssistant } from '../assistant/AssistantProvider'
+import { ClearHistoryDialog } from './ClearHistoryDialog'
 import { S2sConsentSheet } from './S2sConsentSheet'
 import { labelUnits, VOICE_GRID_GAP, voiceGridColumns } from './voiceGrid'
 
@@ -471,6 +472,7 @@ export function SettingsScreen() {
   const [server, setServer] = useState<ServerConfig | null>(null)
   // 清除对话记录的结果（G-04）：本机删除要回读，失败要说出来——「界面清空」不等于「本机记录删掉了」
   const [clearResult, setClearResult] = useState<{ ok: boolean; at: number } | null>(null)
+  const [clearOpen, setClearOpen] = useState(false)
   const [nameDraft, setNameDraft] = useState(settings.assistantName)
   const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
   // ASR 目录先用共享兜底表（离线 / 探测未回也能选），探测回来再换；TTS 保持原样（[] 期间不渲染）
@@ -903,20 +905,7 @@ export function SettingsScreen() {
           title="清除对话记录"
           fontScale={p.fontScale}
           testID="settings-clear-history"
-          onPress={() =>
-            Alert.alert('清除对话记录', '会同时清空当前会话与本机保存的记录，不可恢复。', [
-              { text: '取消', style: 'cancel' },
-              {
-                text: '清除',
-                style: 'destructive',
-                onPress: () => {
-                  const w = getWired()
-                  w?.core.clearMessages()
-                  if (w) void clearHistory(w.historyKey).then((ok) => setClearResult({ ok, at: Date.now() }))
-                },
-              },
-            ])
-          }
+          onPress={() => setClearOpen(true)}
         />
         {clearResult ? (
           <Block>
@@ -1070,6 +1059,21 @@ export function SettingsScreen() {
         onDecline={() => setConsentOpen(false)}
       />
   )
+  // 清除对话记录的二次确认（Figma S-5）：与同意页一样挂在根视图上，盖住整屏
+  const clearDialog = (
+      <ClearHistoryDialog
+        p={p}
+        fontScale={settings.fontScale}
+        visible={clearOpen}
+        onCancel={() => setClearOpen(false)}
+        onConfirm={() => {
+          setClearOpen(false)
+          const w = getWired()
+          w?.core.clearMessages()
+          if (w) void clearHistory(w.historyKey).then((ok) => setClearResult({ ok, at: Date.now() }))
+        }}
+      />
+  )
 
   // 页（v3 P6，Figma 07 页 SP-1）：窄屏依次铺开（同 v3 P5a）；大屏左侧导航列、右侧只放选中的那一页。
   // 判据只有 sizeClass.supportWide 一份；行车档一律单栏。交互上只是把分区变成导航列表，没有新功能
@@ -1095,6 +1099,7 @@ export function SettingsScreen() {
           {buildRow}
         </ScrollView>
         {consentSheet}
+        {clearDialog}
       </View>
     )
   }
@@ -1129,6 +1134,7 @@ export function SettingsScreen() {
         {current.body}
       </ScrollView>
       {consentSheet}
+      {clearDialog}
     </View>
   )
 }

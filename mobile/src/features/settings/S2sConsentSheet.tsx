@@ -1,13 +1,18 @@
 // mobile/src/features/settings/S2sConsentSheet.tsx
 // 端到端挡位的一次性显式同意（方案 §5.2.2「设置里把挡位从三段式切到端到端时弹一次性显式同意（不是只有开关）」）。
 // G0 实色（§5.11：隐私说明不许半透明）。文案逐条对应 CLAUDE.md §5「唯一的受控例外」三条件。
+// 版式照 Figma 04 页 S-6（v3 SheetPanel：surfaceHigh、顶角 28、把手 + 标题；编号 bodyM 三级字、正文一级字；
+// 「仍用三段式」Tonal 占 1 份、「我知道了，切到端到端」Filled 占 2 份）。点遮罩 / 返回键 = 仍用三段式。
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { useLayoutEffect } from 'react'
 import { useAssistant } from '@/features/assistant/AssistantProvider'
 
 import type { FontScalePref } from '@/core/settings/store'
-import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import { Button } from '@/ui/Button'
+import { SheetPanel } from '@/ui/Sheet'
 import type { Palette } from '@/ui/theme'
+import { SPACE, textStyle } from '@/ui/tokens'
 
 export const S2S_CONSENT_TEXT = [
   '端到端语音会把你说话的原始音频上传到服务器上的语音大模型，而三段式只上传识别后的文字。',
@@ -31,76 +36,44 @@ export function S2sConsentSheet({
 }) {
   const scope = useAssistant()?.scope
   useLayoutEffect(() => visible ? scope?.blockPresentation() : undefined, [scope, visible])
-  const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
-  const h = scale(TARGET.parked, 'target', fontScale)
+  const body = textStyle('bodyM', fontScale)
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onDecline}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={onDecline} accessibilityLabel="仍用三段式" />
-      <View
-        testID="s2s-consent"
-        style={{
-          backgroundColor: solid,
-          borderTopLeftRadius: RADIUS['2xl'],
-          borderTopRightRadius: RADIUS['2xl'],
-          padding: 16,
-          gap: 12,
-        }}
-      >
-        <Text style={{ color: p.fg1, fontSize: scale(TYPE.h2, 'text', fontScale), fontWeight: '600' }}>切到端到端语音之前</Text>
-        <ScrollView style={{ maxHeight: 260 }}>
-          {S2S_CONSENT_TEXT.map((line, i) => (
-            <Text
-              key={i}
-              style={{
-                color: p.fg2,
-                fontSize: scale(TYPE.body - 1, 'text', fontScale),
-                lineHeight: scale(22, 'line', fontScale),
-                paddingVertical: 3,
-              }}
-            >
-              {i + 1}. {line}
-            </Text>
-          ))}
-        </ScrollView>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <Pressable
-            testID="s2s-consent-decline"
-            accessibilityRole="button"
-            onPress={onDecline}
-            style={{
-              flex: 1,
-              minHeight: h,
-              borderRadius: RADIUS.md,
-              borderWidth: 1,
-              borderColor: p.lineStrong,
-              backgroundColor: p.surfaceHigh,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
+      <SafeAreaView edges={['top']} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: p.scrim }}>
+        <Pressable style={{ flex: 1 }} onPress={onDecline} accessibilityLabel="仍用三段式" />
+        <View accessibilityViewIsModal style={{ maxHeight: '85%' }}>
+          <SheetPanel
+            p={p}
+            fontScale={fontScale}
+            testID="s2s-consent"
+            title="切到端到端语音之前"
+            style={{ maxHeight: '100%' }}
+            actions={
+              <View style={{ flexDirection: 'row', gap: SPACE[1] }}>
+                <Button p={p} fontScale={fontScale} variant="tonal" label="仍用三段式" testID="s2s-consent-decline" onPress={onDecline} style={{ flex: 1 }} />
+                <Button
+                  p={p}
+                  fontScale={fontScale}
+                  variant="filled"
+                  label="我知道了，切到端到端"
+                  testID="s2s-consent-accept"
+                  onPress={onAccept}
+                  style={{ flex: 2 }}
+                />
+              </View>
+            }
           >
-            <Text style={{ color: p.fg2, fontSize: scale(TYPE.body, 'text', fontScale) }}>仍用三段式</Text>
-          </Pressable>
-          <Pressable
-            testID="s2s-consent-accept"
-            accessibilityRole="button"
-            onPress={onAccept}
-            style={{
-              flex: 2,
-              minHeight: h,
-              borderRadius: RADIUS.md,
-              borderWidth: 1,
-              borderColor: p.amberLine,
-              backgroundColor: p.amberSoft,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600' }}>
-              我知道了，切到端到端
-            </Text>
-          </Pressable>
+            <ScrollView contentContainerStyle={{ gap: 10 }}>
+              {S2S_CONSENT_TEXT.map((line, i) => (
+                <View key={i} style={{ flexDirection: 'row', gap: SPACE[1] }}>
+                  <Text style={[body, { color: p.fg3 }]}>{i + 1}.</Text>
+                  <Text style={[body, { color: p.fg1, flex: 1 }]}>{line}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          </SheetPanel>
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   )
 }

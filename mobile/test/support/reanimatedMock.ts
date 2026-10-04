@@ -52,9 +52,16 @@ export const isSharedValue = (v: any) => !!v && typeof v === 'object' && 'value'
 export const makeMutable = (v: any) => ({ value: v })
 
 // 进出场动画构造器（v3 P7 Dock 进出 180 / 120ms 用到）：可链式调用的空实现，jest 里不跑动画
-const layoutAnimation: any = { duration: () => layoutAnimation, delay: () => layoutAnimation, easing: () => layoutAnimation, reduceMotion: () => layoutAnimation }
+const layoutAnimation: any = {
+  duration: () => layoutAnimation,
+  delay: () => layoutAnimation,
+  easing: () => layoutAnimation,
+  reduceMotion: () => layoutAnimation,
+  withInitialValues: () => layoutAnimation,
+}
 export const FadeInDown = layoutAnimation
 export const FadeOutDown = layoutAnimation
+export const FadeOut = layoutAnimation
 export const ReduceMotion = { System: 'system', Always: 'always', Never: 'never' }
 
 const Animated = { View, Text, ScrollView, createAnimatedComponent: identity }

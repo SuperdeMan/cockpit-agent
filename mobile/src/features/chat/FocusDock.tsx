@@ -6,7 +6,7 @@
 // 确认按钮比例照 A-6.4：取消 flex1 / 确认 flex2；剩余时间**只读共享 TTL**（commitment.ts）。
 import { useState } from 'react'
 import { Linking, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native'
-import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated'
+import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
@@ -73,8 +73,9 @@ export function FocusDock(props: FocusDockProps) {
   return (
     <Animated.View
       testID="focus-dock"
-      entering={animated ? FadeInDown.duration(MOTION.base) : undefined}
-      exiting={animated ? FadeOutDown.duration(MOTION.fast) : undefined}
+      // Figma 09 页「Focus Dock」：淡入 + 上移 8dp（base），只淡出（fast）。FadeInDown 默认从 25dp 下方进、FadeOutDown 会往下滑
+      entering={animated ? FadeInDown.duration(MOTION.base).withInitialValues({ transform: [{ translateY: 8 }] }) : undefined}
+      exiting={animated ? FadeOut.duration(MOTION.fast) : undefined}
       style={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}
     >
       {pinned ? <Commitments {...props} pinned={pinned} solid={solid} /> : null}

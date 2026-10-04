@@ -8,6 +8,8 @@ const mockSessionStart = jest.fn()
 const mockSessionClose = jest.fn()
 const mockSessionSend = jest.fn()
 const mockHandleFrame = jest.fn()
+const mockClearMessages = jest.fn()
+const mockClearHistory = jest.fn(async (_key: string) => true)
 
 jest.mock('@/core/buildInfo', () => ({ readBuildInfo: () => ({ variant: mockVariant }), formatBuildLabel: () => 'test-build' }))
 jest.mock('expo-router', () => ({
@@ -35,12 +37,17 @@ jest.mock('@/core/session/wiring', () => {
   // React 报 "The result of getSnapshot should be cached to avoid an infinite loop"。
   // 那是 mock 在替被测系统注入一个真实 store 不存在的前提，不是实现的毛病。
   const state = { drivingEdge: { trueAt: 0, falseAt: 0 }, drivingDismissedAt: 0 }
-  const wired = { core: {
+  const wired = { historyKey: 'test-history', core: {
     handleFrame: (...args: unknown[]) => mockHandleFrame(...args),
+    clearMessages: (...args: unknown[]) => mockClearMessages(...args),
     store: { getState: () => state, subscribe: () => () => {} },
   } }
   return { getWired: () => wired }
 })
+jest.mock('@/core/session/history', () => ({
+  ...jest.requireActual('@/core/session/history'),
+  clearHistory: (key: string) => mockClearHistory(key),
+}))
 jest.mock('@/core/voice/audioCtx', () => ({
   getPcmPlayerImpl: jest.fn(() => 'queue'), setPcmPlayerImpl: jest.fn(),
   newPcmPlayer: jest.fn(), sharedAudioContext: jest.fn(), peekSharedAudioContext: jest.fn(), playerCtxOf: jest.fn(),
@@ -82,6 +89,7 @@ import VoiceSpikeScreen from '@/app/voice-spike'
 import DebugScreen from '@/app/debug'
 import NativeSpikeScreen from '@/app/native-spike'
 import { SettingsScreen } from '@/features/settings/SettingsScreen'
+import { ClearHistoryDialog } from '@/features/settings/ClearHistoryDialog'
 import TurnTimelineScreen from '@/app/turn-timeline'
 
 // 先冷加载 RN 元素，避免把首次 Jest 转译算进行为用例时限。
@@ -217,6 +225,29 @@ test('B: prod 未解锁 ⇒ 七条工程链接一条都不在树里，操作诊�
     // 打磨批 F：清除对话记录是隐私组里的用户入口
     expect(view.root.findAllByProps({ testID: 'settings-clear-history' }).some((n) => typeof n.props.onPress === 'function')).toBe(true)
     expectNoAudioWork()
+  } finally { await unmount(view) }
+})
+
+test('S-5: 清除对话记录要二次确认——点入口只开对话框，取消不清，点「清除」才清', async () => {
+  mockVariant = 'prod'
+  mockClearMessages.mockClear()
+  mockClearHistory.mockClear()
+  const view = await mount(SettingsScreen)
+  try {
+    const dialog = () => view.root.findByType(ClearHistoryDialog)
+    expect(dialog().props.visible).toBe(false)
+    await act(async () => { handler(view, 'settings-clear-history')() })
+    expect(dialog().props.visible).toBe(true)
+    expect(mockClearMessages).not.toHaveBeenCalled()
+    await act(async () => { handler(view, 'settings-clear-history-cancel')() })
+    expect(dialog().props.visible).toBe(false)
+    expect(mockClearMessages).not.toHaveBeenCalled()
+    expect(mockClearHistory).not.toHaveBeenCalled()
+    await act(async () => { handler(view, 'settings-clear-history')() })
+    await act(async () => { handler(view, 'settings-clear-history-confirm')() })
+    expect(dialog().props.visible).toBe(false)
+    expect(mockClearMessages).toHaveBeenCalledTimes(1)
+    expect(mockClearHistory).toHaveBeenCalledWith('test-history')
   } finally { await unmount(view) }
 })
 
