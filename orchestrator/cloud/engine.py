@@ -36,6 +36,7 @@ from .stream_state import (
 )
 from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
+from .decision_support import ShadowRunner
 from . import candidate_query
 from .reply_position import reply_position
 from .admission import judge_addressed
@@ -474,6 +475,8 @@ class PlannerEngine:
     def __init__(self, clients, planner: PlanBuilder, executor: DagExecutor,
                  aggregator: Aggregator, session: SessionStore, loop=None):
         self.clients = clients
+        # Jev 受话 shadow（JV03）：缺省关闭；开了也只观测、不改结果（decision_support）
+        self._decision_shadow = ShadowRunner(clients)
         self.planner = planner
         self.executor = executor
         self.aggregator = aggregator
@@ -1263,6 +1266,9 @@ class PlannerEngine:
             plan.safety_origin_text = text
             plan.origin_exchange_id = str(ctx.request_id or "")
             ctx.safety_origin_text = text
+            # Jev 受话 shadow：同一句话与规划器的 `addressed` 对照；异步、不等、不改结果
+            self._decision_shadow.schedule_addressed(
+                ctx, text, planner_addressed=bool(plan.addressed), voice=is_voice_input_source(input_source))
             # W16-b：每一步的起点原话也在这里盖（同一权威、同一处）。新计划里它就是本轮原话，
             # 只有这份计划挂起后在续接轮跑到的下游步才会真正用到它（`models.step_raw_text`）。
             for s in plan.steps:

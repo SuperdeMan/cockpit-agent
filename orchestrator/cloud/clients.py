@@ -276,6 +276,15 @@ class Clients:
         self._llm_model_used = str(resp.model_used or "")
         return resp.content
 
+    async def decide(self, request, timeout: float):
+        """Jev 判别（llm-gateway `Decide`，JV01）：只返回可弃权的建议，调用方负责预算与失败回基线。
+        shadow 是事后观测、以原话本身为绑定，不做请求失效检查（`check_current`）。"""
+        from observability.tracing import get_trace_id
+        if get_trace_id():
+            request.meta["trace_id"] = get_trace_id()
+        request.meta["caller_service"] = "cloud-planner"
+        return await self._llm_stub().Decide(request, timeout=timeout)
+
     def llm_served_by_mock(self) -> bool:
         """LLM 网关是不是在用 MockProvider 服务（栈里没配任何 chat key）。
 

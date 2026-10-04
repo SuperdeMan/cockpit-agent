@@ -24,4 +24,25 @@ SMOKE = TaskSpec(
     ),
 )
 
-SPECS = {spec.key(): spec for spec in (SMOKE,)}
+# 受话判定（JV03 首个 shadow 任务）：英文问法——2026-10-04 离线中文评测里受话英文问法 AUC 1.00（47 句），
+# 中文问法漏掉情绪表达（产品定义里算对助手说的）。只做 shadow 对照规划器的 `addressed`，不影响结果。
+ADDRESSED = TaskSpec(
+    task_id="addressed",
+    rubric_version="1",
+    payload_fields={"utterance": "str"},
+    required=frozenset({"utterance"}),
+    questions=(
+        QuestionSpec(
+            id="addressed",
+            type="noul",
+            instructions=("Judge only state.utterance, a sentence heard in a car cabin. Is it spoken to the in-car "
+                          "voice assistant (a request, a question or a feeling the assistant should respond to), rather "
+                          "than talk between passengers, a radio or TV broadcast, a phone call or speech addressed to "
+                          "another person?"),
+            criteria={"true": "The assistant is being addressed and should respond.",
+                      "false": "Someone else is being addressed, or it is a broadcast, phone call or background talk."},
+        ),
+    ),
+)
+
+SPECS = {spec.key(): spec for spec in (SMOKE, ADDRESSED)}

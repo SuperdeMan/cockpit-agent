@@ -10,7 +10,7 @@
 `DECISION_MAX_BUDGET_MS`、`DECISION_BASE_URL`、`TYPESAFE_API_KEY`——**不写进 `.env.example`**（发布闸硬阻断），见开发指南。
 执行计划与需要确认的节点见 [Jev 接入执行计划](../docs/design/2026-10-04-jev-decide-integration.md)。
 
-JV02 / JV03（快照与绑定、actionability shadow）未开始；网络仅在本网关，off 包括 shadow 在内零外呼。已有 Complete/CompleteStream/Embed 保持兼容。
+任务：`smoke`（冒烟）、`addressed` v1（受话，云端 shadow 用，见 `orchestrator/cloud/decision_support.py`）。网络仅在本网关，off 包括 shadow 在内零外呼。已有 Complete/CompleteStream/Embed 保持兼容。
 任务与验收见 [v2 实施方案](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md) §5。
 
 

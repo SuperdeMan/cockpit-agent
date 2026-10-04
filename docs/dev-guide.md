@@ -26,7 +26,7 @@
 ### Jev 判别的配置键（`.env.example` 里刻意没有）
 
 `DECISION_ENABLED`（缺省 false ⇒ 零外呼）、`DECISION_TASKS`、`DECISION_MODEL`、`DECISION_MAX_BUDGET_MS`、`DECISION_BASE_URL`、
-`TYPESAFE_API_KEY` 只由 llm-gateway 读取，原因同下面那条（`.env.example` 在发布闸里硬阻断）。写进根 `.env`、云端 `.env` 与
+`TYPESAFE_API_KEY` 只由 llm-gateway 读取；cloud-planner 读 `DECISION_ADDRESSED_MODE`（off 缺省 | shadow）、`DECISION_SHADOW_SCOPE`（synthetic 缺省 | all）、`DECISION_SHADOW_BUDGET_MS`、`DECISION_SHADOW_MAX_INFLIGHT`。都不进 `.env.example`，原因同下面那条（发布闸硬阻断）。写进根 `.env`、云端 `.env` 与
 `deploy/docker-compose.yaml` 透传都要单独确认，见 [Jev 接入执行计划](design/2026-10-04-jev-decide-integration.md) §5。
 本机真请求冒烟：把凭证读进**这一条命令的进程环境**再跑 `python scripts/smoke_decide.py`（凭证不打印、不落盘到仓库）。
 

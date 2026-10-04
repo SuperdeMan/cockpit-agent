@@ -1,6 +1,6 @@
 # Jev 判别层接入：执行计划（JV01 → JV03）
 
-> 2026-10-04。状态：JV01 已部署 `b84628b5`（缺省全关、零外呼，云端核对确认）；首轮离线中文评测完成（§8）；JV02 起未开始。按用户 2026-10-04「把 jev 接入的计划也排进来」立项，并已提供 API 凭证
+> 2026-10-04。状态：JV01 已部署 `b84628b5`（缺省全关、零外呼，云端核对确认）；首轮离线中文评测完成（§8）；JV02/JV03 首片（受话 shadow）已实现、缺省关闭（§9），开启要过 §5 的确认节点。按用户 2026-10-04「把 jev 接入的计划也排进来」立项，并已提供 API 凭证
 > （仓库外的本地文件，单行令牌；内容不进仓库、文档、日志或提交）。
 > 方案来源：[研究方案](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)（JV00–JV09 拆解、协议草案、失败矩阵、
 > J001–J030 测试矩阵）、[实施方案 §5](2026-09-26-cockpit-agent-v2-implementation-plan.md#5-jev-工作包细化)、[路线图 §3](../roadmap.md)。
@@ -103,4 +103,18 @@
   「附近有什么好玩的帮我安排一下」周边 vs 行程）——不给候选能力就判断不出；误报是依赖上下文的指代（「巴西那场帮我看看详情」）。
   ⇒ 不单独上线，等 JV06 把候选能力放进 state 后再评。
 - 样本很小（47 / 32），只作方向判断，不作阈值冻结；校准与冻结要按研究方案 §11 扩到分组切分的标注集。
+
+## 9. JV02 / JV03 首片：受话 shadow（2026-10-04）
+
+- 网关 allowlist 加 `addressed` v1（§8 里表现最好的英文问法）；云端客户端 `Clients.decide` 复用到 llm-gateway 的现有连接。
+- `orchestrator/cloud/decision_support.py`：规划之后（拿到规划器自己的 `addressed`）异步问一次，结果落 `decision.shadow` span：
+  状态、`p_true`、与规划器是否一致、是否语音来源、token 数——**不带原话**。只观测、不等、不改结果；失败只记一笔。
+- 配置（cloud-planner 读，服务端受控）：`DECISION_ADDRESSED_MODE`（off 缺省 | shadow）、`DECISION_SHADOW_SCOPE`
+  （synthetic 缺省：只对合成 E2E 会话——运行器签发的 E2E 能力或 `e2e-` 合成用户；all 要先定 §5 第 4 项的数据策略）、
+  `DECISION_SHADOW_BUDGET_MS`（1500）、`DECISION_SHADOW_MAX_INFLIGHT`（4，满了丢样本记 dropped，不排队）。
+  网关侧仍要 `DECISION_ENABLED=true`、`DECISION_TASKS=addressed` 与凭证才会真外呼。
+- 测试：缺省关闭与范围外零调用、合成会话对照规划器且 span 不带原话、范围 all、失败只记不抛、并发上限丢样本、超长 / 空文本跳过、
+  引擎在规划后带规划器结论调度（结果照旧由规划器决定）。变异 9 处全部判红。
+- 要在云端开始收集对照数据，需要 §5 第 2、3 项（compose 给 llm-gateway 透传 `TYPESAFE_API_KEY` / `DECISION_ENABLED` / `DECISION_TASKS`、
+  给 cloud-planner 透传 `DECISION_ADDRESSED_MODE` / `DECISION_SHADOW_SCOPE`；云端 `.env` 写入凭证）；范围扩到真实用户另需第 4 项。
 

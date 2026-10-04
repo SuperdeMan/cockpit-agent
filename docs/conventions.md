@@ -3143,3 +3143,4 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 供应商答案按 `runtime.decision_contract.validate_answers` 整批校验（模型 pin、问题 ID 集、类型、有限数与范围、分布容差、Choice 取最大概率项），
   任一项不合格整批不采纳；用量拿不到记 unknown，不用 0 冒充。
 - 在线链零重试；外呼复用长连接；请求头与正文不进日志；`DECISION_ENABLED=false` 时零外呼。新配置键不进 `.env.example`。
+- 云端 shadow（`orchestrator/cloud/decision_support.py`）只观测：异步、不等、不改结果，span 不带原话；数据策略确认前只对合成会话发请求。
