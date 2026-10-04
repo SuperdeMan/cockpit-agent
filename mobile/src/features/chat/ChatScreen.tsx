@@ -576,6 +576,73 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
     </View>
   )
 
+  // 顶栏：单栏 / 抽屉 / 桌面在记录区上方横跨全宽；双栏（Figma A-1）只在对话栏里，舞台从顶上通到底——
+  // 书本姿态的铰链落在两栏空隙里，顶栏不再横跨铰链（10-04 真机：标题在折痕左、设置键在折痕右）
+  const topBar = (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingLeft: 16,
+        paddingRight: 4,
+        minHeight: 56,
+        borderBottomWidth: 1,
+        borderColor: p.line,
+      }}
+    >
+      {/* v3 一屏一球：顶栏不再放光球（它从来不可点，只是第三颗同屏的球）；忙不忙由在场胶囊与 Composer 光球说 */}
+      <Text style={[textStyle('titleM', settings.fontScale), { color: p.fg1, flexShrink: 1 }]} numberOfLines={1}>
+        {settings.assistantName}随行
+      </Text>
+      {/* 连接：只留一个 7dp 健康点——「在线」这两个字在线时是噪声，它只在**不**在线时
+          才是信息，而那时状态胶囊已经在说这件事了（方案 §5.1）。 */}
+      <Pressable
+          testID="health-dot"
+          accessibilityRole="button"
+          accessibilityLabel={`连接${snapshot.transport === 'online' ? '正常' : snapshot.transport === 'reconnecting' ? '重连中' : '已断开'}${captureDot ? '，' + captureDot.label : ''}；打开隐私栏`}
+          onPress={() => setPrivacyOpen(true)}
+          style={{
+            // B5-14（B4 Scanner 出账①）：与顶栏两枚钮同一表达式——泊车 48 / 行车 56
+            minWidth: scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale),
+            height: scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale),
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 5,
+          }}
+        >
+          <View
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 4,
+              backgroundColor: healthColor,
+              boxShadow: snapshot.transport === 'online' ? undefined : `0 0 8px ${healthColor}`,
+            }}
+          />
+          {captureDot ? (
+            <View
+              testID="capture-dot"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: captureDot.color,
+                boxShadow: `0 0 8px ${captureDot.color}`,
+              }}
+            />
+          ) : null}
+        </Pressable>
+      <View style={{ flex: 1 }} />
+      {/* 舞台常驻的两种形态（双栏 / 桌面）里车况已在屏上，不重复给入口；抽屉与单栏保留 */}
+      {layout.mode !== 'two-pane' && layout.mode !== 'tabletop' ? (
+        <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" driving={snapshot.driving} fontScale={settings.fontScale} />
+      ) : null}
+      <TopIconLink p={p} href="/settings" icon="settings" label="设置" driving={snapshot.driving} fontScale={settings.fontScale} />
+    </View>
+  )
+
   return (
     // top 边必须显式包含：真机顶栏会顶进系统状态栏（M1-8 首轮实测，手机态露头的第一个 bug）
     <View style={{ flex: 1, backgroundColor: p.bg }}>
@@ -587,72 +654,14 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             高度补底。**不改 app.config 的 softwareKeyboardLayoutMode**——那是原生配置，
             动它要重建，而 B1 零原生变更。 */}
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              paddingLeft: 16,
-              paddingRight: 4,
-              minHeight: 56,
-              borderBottomWidth: 1,
-              borderColor: p.line,
-            }}
-          >
-            {/* v3 一屏一球：顶栏不再放光球（它从来不可点，只是第三颗同屏的球）；忙不忙由在场胶囊与 Composer 光球说 */}
-            <Text style={[textStyle('titleM', settings.fontScale), { color: p.fg1, flexShrink: 1 }]} numberOfLines={1}>
-              {settings.assistantName}随行
-            </Text>
-            {/* 连接：只留一个 7dp 健康点——「在线」这两个字在线时是噪声，它只在**不**在线时
-                才是信息，而那时状态胶囊已经在说这件事了（方案 §5.1）。 */}
-            <Pressable
-                testID="health-dot"
-                accessibilityRole="button"
-                accessibilityLabel={`连接${snapshot.transport === 'online' ? '正常' : snapshot.transport === 'reconnecting' ? '重连中' : '已断开'}${captureDot ? '，' + captureDot.label : ''}；打开隐私栏`}
-                onPress={() => setPrivacyOpen(true)}
-                style={{
-                  // B5-14（B4 Scanner 出账①）：与顶栏两枚钮同一表达式——泊车 48 / 行车 56
-                  minWidth: scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale),
-                  height: scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale),
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 5,
-                }}
-              >
-                <View
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 4,
-                    backgroundColor: healthColor,
-                    boxShadow: snapshot.transport === 'online' ? undefined : `0 0 8px ${healthColor}`,
-                  }}
-                />
-                {captureDot ? (
-                  <View
-                    testID="capture-dot"
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      backgroundColor: captureDot.color,
-                      boxShadow: `0 0 8px ${captureDot.color}`,
-                    }}
-                  />
-                ) : null}
-              </Pressable>
-            <View style={{ flex: 1 }} />
-            {/* 舞台常驻的两种形态（双栏 / 桌面）里车况已在屏上，不重复给入口；抽屉与单栏保留 */}
-            {layout.mode !== 'two-pane' && layout.mode !== 'tabletop' ? (
-              <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" driving={snapshot.driving} fontScale={settings.fontScale} />
-            ) : null}
-            <TopIconLink p={p} href="/settings" icon="settings" label="设置" driving={snapshot.driving} fontScale={settings.fontScale} />
-          </View>
+          {layout.mode === 'two-pane' ? null : topBar}
           {layout.mode === 'two-pane' ? (
             <View style={{ flex: 1, flexDirection: 'row' }}>
               {/* book：左栏宽 = 铰链左缘 − gap/2，铰链落在 gap 正中（§7.3）；flat 双栏：对话 flex、舞台 stageWidth */}
-              <View style={layout.posture === 'book' ? { width: layout.book.chat } : { flex: 1 }}>{chatColumn}</View>
+              <View style={layout.posture === 'book' ? { width: layout.book.chat } : { flex: 1 }}>
+                {topBar}
+                {chatColumn}
+              </View>
               <View style={{ width: layout.posture === 'book' ? layout.book.gap : PANE_GAP }} />
               <StagePane
                 p={p}
