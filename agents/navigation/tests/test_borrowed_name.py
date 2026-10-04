@@ -147,6 +147,43 @@ def test_no_namesake_probe_when_the_top_result_is_already_far_or_has_no_coordina
     assert agent.poi.calls == []
 
 
+def test_a_city_prefixed_local_name_counts_as_exact():
+    """「欢乐谷」近处第一名是「深圳欢乐谷」：去掉所在城市前缀就是完全同名，这座城的那一个，不去问北京欢乐谷。"""
+    local = POI(id="n1", name="深圳欢乐谷", category="体育休闲服务;度假疗养场所;度假村", lat=22.59, lng=113.98, city="深圳市")
+    agent = _agent([local], [POI(id="w1", name="北京欢乐谷", lat=39.87, lng=116.49, city="北京市")])
+    res = asyncio.run(run_handle(agent, "navigation.navigate_to", slots={"destination": "欢乐谷"},
+                                 raw_text="导航去欢乐谷", meta=dict(SZ)))
+    assert any(a["type"] == "navigate" for a in res.actions)
+    assert ("欢乐谷", False) not in agent.poi.calls
+
+
+def test_a_far_place_must_start_with_the_name():
+    """「东门」近处是借名的食堂，全国搜索里外地只有「颐和园-东门检票处」：原话在中间，不是叫这个名字的地方，不问。
+    外地「北京欢乐谷」去掉城市前缀以原话打头，算本体。"""
+    canteen = POI(id="n1", name="豪方现代东门食堂", category="餐饮服务;中餐厅;中餐厅", lat=22.545, lng=113.947)
+    gate = POI(id="w1", name="颐和园-东门检票处", category="风景名胜;风景名胜相关;旅游景点", lat=39.99, lng=116.28, city="北京市")
+    agent = _agent([canteen], [gate])
+    res = asyncio.run(run_handle(agent, "navigation.navigate_to", slots={"destination": "东门"},
+                                 raw_text="导航去东门", meta=dict(SZ)))
+    assert res.status != "need_slot"
+    parking = POI(id="n2", name="深圳欢乐谷地面停车场", category="交通设施服务;停车场;停车场相关", lat=22.59, lng=113.98, city="深圳市")
+    beijing = POI(id="w2", name="北京欢乐谷", category="体育休闲服务;度假疗养场所;度假村", lat=39.87, lng=116.49, city="北京市")
+    res = asyncio.run(run_handle(_agent([parking], [beijing]), "navigation.navigate_to", slots={"destination": "欢乐谷"},
+                                 raw_text="导航去欢乐谷", meta=dict(SZ)))
+    assert res.status == "need_slot" and res.ui_card["items"][0]["name"] == "北京欢乐谷"
+
+
+def test_a_far_candidate_also_passes_the_category_anchor():
+    """「千岛湖」带「湖」锚词：外地只有以原话打头的酒店（类目不是风景 / 自然地名）⇒ 不算本体，不问（同 R1 二期锚词复核）。"""
+    eatery = POI(id="n1", name="千岛湖鱼头馆", category="餐饮服务;中餐厅;中餐厅", lat=22.55, lng=113.95)
+    hotel = POI(id="w1", name="千岛湖大酒店", category="住宿服务;宾馆酒店;宾馆酒店", lat=29.60, lng=119.03, city="杭州市")
+    agent = _agent([eatery], [hotel])
+    res = asyncio.run(run_handle(agent, "navigation.navigate_to", slots={"destination": "千岛湖"},
+                                 raw_text="导航去千岛湖", meta=dict(SZ)))
+    assert res.status != "need_slot" and not any(it.get("name") == "杭州千岛湖大酒店"
+                                                 for it in (res.ui_card or {}).get("items") or [])
+
+
 def test_estimate_asks_too_and_keeps_the_estimate_on_resume():
     agent, kv = _agent([_LOCAL], [_FAR]), _KV()
     res = asyncio.run(run_handle(agent, "navigation.estimate", slots={"destination": "黄鹤楼"},

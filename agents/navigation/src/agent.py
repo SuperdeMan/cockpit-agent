@@ -2221,16 +2221,28 @@ class NavigationAgent(BaseAgent):
         s = re.sub(r"[（(].*?[)）]", "", name or "")
         return re.sub(r"[\s·,，\-—]", "", s)
 
+    @classmethod
+    def _bare_name(cls, poi) -> str:
+        """POI 归一名再去掉所在城市前缀（「深圳欢乐谷」「北京市欢乐谷」⇒「欢乐谷」）：城市名打头的是这座城的那一个。"""
+        key = cls._place_key(poi.name)
+        city = cls._place_key(getattr(poi, "city", "") or "")
+        for prefix in (city, city.rstrip("市")):
+            if prefix and key.startswith(prefix) and len(key) > len(prefix):
+                return key[len(prefix):]
+        return key
+
     async def _far_namesake(self, description: str, top, near, meta):
         """近处这个地点只是借了名（或名字都对不上）、本地半径外另有名字对得上的本体 ⇒ 那个本体；否则 None。
 
         设计见 docs/design/2026-10-04-destination-borrowed-name.md。类目（加油站 / 充电站…）不问：遍地都是，没有本体；
-        近处完全同名（归一后相等）不问，也不多一次调用；近处本身已在本地半径外的不问（它就是那个远处的）。
+        近处完全同名（归一后相等，或去掉城市前缀后相等：「深圳欢乐谷」）不问，也不多一次调用；近处本身已在本地半径外的不问。
+        外地本体要以原话打头（「东方明珠广播电视塔」「北京欢乐谷」）——只在中间含着原话的（「颐和园-东门检票处」之于「东门」）不算。
         """
-        if (near is None or top is None or not description or not (top.lat and top.lng)
+        q = self._place_key(description)
+        if (near is None or top is None or not q or not (top.lat and top.lng)
                 or self._is_category_search(description)
                 or self._beyond_local_radius(top, near) is not None
-                or self._place_key(description) == self._place_key(top.name)):
+                or q in (self._place_key(top.name), self._bare_name(top))):
             return None
         try:
             wide = await self.poi.search(description, near=None, limit=5, meta=meta)
@@ -2239,7 +2251,8 @@ class NavigationAgent(BaseAgent):
             return None
         # 类目锚词在场时外地候选也要过类目复核（「南山实验小学」的济南同名 POI 是科教文化场所，R1 二期刻意不认它）
         anchor = self._category_anchor(description)
-        return next((r for r in wide if self._dest_matches(description, r.name)
+        return next((r for r in wide
+                     if (self._place_key(r.name).startswith(q) or self._bare_name(r).startswith(q))
                      and self._beyond_local_radius(r, near) is not None
                      and (not anchor or self._category_ok(r, anchor[1]))), None)
 
