@@ -203,9 +203,26 @@ def test_unknown_subject_is_reported_not_silently_covered(tmp_path):
     ("座椅加热在哪里打开", "座椅加热 打开"),
     ("座椅加热是什么", "座椅加热"),
     ("座椅能调多高", "座椅"),                        # 属性壳
+    ("刚才你说空调有哪些模式", "空调 模式"),          # 回忆式开头（固定语料 V201）
+    ("你之前讲的座椅加热有几个档位", "座椅加热 挡位"),
+    ("再告诉我空调有哪些模式", "空调 模式"),          # 次序副词 + 请求开头（前缀组与问句判据同一份）
 ])
 def test_question_shell_is_stripped_from_the_first_variant(tmp_path, query, content):
     assert _provider(tmp_path)._query_variants(query)[0].content == content
+
+
+def test_a_recall_opener_is_not_an_unknown_subject(tmp_path):
+    """「你说」+「空调」切出的「说空」曾被当成手册不认识的实词：词法零命中，只能指望目录路由模型（V201 一遍落空）。"""
+    provider = _provider(tmp_path)
+    assert _pages(provider, "刚才你说空调有哪些模式？")[:1] == [197]
+    assert provider.unknown_subject_terms("刚才你说空调有哪些模式") == []
+    assert _pages(provider, "再告诉我空调有哪些模式")[:1] == [197]
+
+
+def test_a_recall_opener_needs_a_time_word_or_a_person():
+    from agents.manual_rag.src.providers import local_index
+    assert local_index._OPENER_RE.match("说明书在哪") is None
+    assert local_index._OPENER_RE.match("之前设置的座椅记忆怎么恢复") is None
 
 
 def test_question_shell_vocabulary_comes_from_the_single_authority():

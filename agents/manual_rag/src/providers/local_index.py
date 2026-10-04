@@ -218,13 +218,18 @@ _SHELL_PHRASES = tuple(sorted({
     if _normalize(word)
 }, key=lambda word: (-len(word), word)))
 # 请求开头词（请问 / 告诉我 / 介绍一下 / 查一下…）只在句首成立，同问句判据的用法；全句遮罩
-# 会把章节名词吃掉（「车辆介绍 外部介绍」的「介绍」）。
+# 会把章节名词吃掉（「车辆介绍 外部介绍」的「介绍」）。前缀组与问句判据同一份（「再告诉我…」）；
+# 回忆式开头「刚才你说 / 你之前讲的」同样是话语壳——留着它，「你说」+「空调」切出的「说空」被当成手册不认识的实词，
+# 整句零命中，只能指望目录路由模型（固定语料 V201，2026-10-04）。至少带时间词或人称，「说明书」不受影响。
+_RECALL_TIME_ALT = _alternation(_normalize(word) for word in question_shape.RECALL_TIMES)
+_RECALL_OPENER = (f"(?:(?:{_RECALL_TIME_ALT})你?|你(?:{_RECALL_TIME_ALT})?)"
+                  f"(?:{_alternation(_normalize(word) for word in question_shape.RECALL_SPEECH_VERBS)})过?的?")
 _OPENER_RE = re.compile(
-    r"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您)*\s*(?:"
+    r"^(?:" + _alternation(_normalize(word) for word in question_shape.REQUEST_PREFIXES) + r")*\s*(?:"
     + _alternation(_normalize(word) for name in ("ASK_PREFIXES", "EXPLAIN_REQUESTS",
                                                   "LOOKUP_REQUESTS")
                    for word in getattr(question_shape, name))
-    + ")")
+    + "|" + _RECALL_OPENER + ")")
 # 计数 / 属性问的整段壳：头（有 / 能 / 可以 / 最多…）+ 至多两个字的动词 + 几量词 / 多大多高…
 # 同问句判据的计数问结构（「后备箱能放几个行李箱」「座椅能调多高」「最多能装几个」）。
 # 问句判据为了**认出**计数问允许头与「几」之间隔四个字；剥离要的是紧挨着的那一段——

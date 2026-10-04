@@ -110,6 +110,14 @@ INFO_REQUEST_VERBS = ("推荐", "介绍", "讲讲", "说说", "科普", "解释"
 #: 与 `EXPLAIN_REQUESTS` 同一形态（句首动词 + 其后疑问框架），但**只进 `is_information_request`**，不进问句判据：
 #: 「替我查一下路况」这类不带疑问框架的是交给查询能力的指令，规划失败仍报技术失败。
 LOOKUP_REQUESTS = ("查查", "查一下", "查下", "查询一下", "搜搜", "搜一下", "搜下", "搜索一下")
+#: 解释请求动词前可带的礼貌词 / 人称 / 能愿 / 次序副词（「再告诉我…」「能不能说说…」）。词序即正则里的先后，
+#: 手册检索剥句首请求壳用同一组（此前它另抄了一份更窄的，「再告诉我空调有哪些模式」剥不掉、整句零命中）。
+REQUEST_PREFIXES = ("请", "麻烦", "帮我", "帮忙", "给我", "替我", "你", "您", "能", "能不能", "可以", "可不可以",
+                    "先", "再", "只", "仅", "仅仅")
+#: 回忆式开头（2026-10-04 固定语料 V201：「刚才你说空调有哪些模式」）：问的是之前说过的内容，句首「时间词 / 人称 +
+#: 言说动词」是话语壳，不是内容。至少带时间词或人称之一——裸「说」打头的「说明书在哪」不是。
+RECALL_TIMES = ("刚才", "刚刚", "方才", "之前", "上次", "前面")
+RECALL_SPEECH_VERBS = ("说", "讲", "提到", "提过")
 
 # 方法问句中的动作词。它们仍是零领域的句法词，不包含任何车辆对象；“对象在前/动作在前，
 # 中间带怎么/如何”的形态由本模块统一判定，端侧与云侧共用。刻意不含“调高/调低”：
@@ -150,9 +158,10 @@ _BA_FRAME_HOW_TO_RE = re.compile(
 _ASK_PREFIX_ALT = "|".join(sorted(map(re.escape, ASK_PREFIXES), key=len, reverse=True))
 _ASK_PREFIX_RE = re.compile(rf"^(?:{_ASK_PREFIX_ALT})[，,]?\s*")
 _EXPLAIN_ALT = "|".join(sorted(map(re.escape, EXPLAIN_REQUESTS), key=len, reverse=True))
+_REQUEST_PREFIX_ALT = "|".join(map(re.escape, REQUEST_PREFIXES))
 #: 元请求：句首（礼貌前缀 / 人称 / 「能 / 能不能 / 可以」之后）就是解释动词，其后跟着疑问框架。
 _EXPLAIN_REQUEST_RE = re.compile(
-    rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|先|再|只|仅|仅仅)*\s*(?:{_EXPLAIN_ALT})"
+    rf"^(?:{_REQUEST_PREFIX_ALT})*\s*(?:{_EXPLAIN_ALT})"
     r"[，,]?\s*.{0,16}?(?:怎么|怎样|咋|如何|为什么|为啥|什么|哪个|哪种|哪里|哪边|几|多少|多久"
     r"|能不能|可不可以|是不是|有没有|会不会|支不支持)")
 _LOOKUP_ALT = "|".join(sorted(map(re.escape, LOOKUP_REQUESTS), key=len, reverse=True))
