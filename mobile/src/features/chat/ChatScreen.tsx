@@ -29,7 +29,7 @@ import { usePowerFacts } from '../../core/power/usePowerFacts'
 import { AuroraOrb, type OrbState } from '../../ui/aurora'
 import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
-import { PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
+import { CHAT_COLUMN_MAX_WIDTH, PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
 import { Pill } from '../../ui/Pill'
 import { usePalette } from '../../ui/theme'
 import { RADIUS, TARGET, scale, textStyle } from '../../ui/tokens'
@@ -461,10 +461,16 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             }
           }}
           scrollEventThrottle={100}
-          extraData={[core.candidates, turn.assistant?.id, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds]}
+          extraData={[core.candidates, turn.assistant?.id, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds, layout.mode]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
-            <View style={{ paddingHorizontal: 16 }}>
+            // 单栏版式下内容列最宽 560 居中（Figma L-1 手机横屏）；竖屏手机窄于它，原样满宽
+            <View
+              style={[
+                { paddingHorizontal: 16 },
+                layout.mode === 'single' ? { width: '100%', maxWidth: CHAT_COLUMN_MAX_WIDTH + 32, alignSelf: 'center' } : null,
+              ]}
+            >
               {dividers[item.id] ? (
                 <Text testID="time-divider" style={[textStyle('caption', settings.fontScale), { color: p.fg3, textAlign: 'center', paddingVertical: 8 }]}>
                   {dividers[item.id]}

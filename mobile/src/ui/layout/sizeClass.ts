@@ -38,6 +38,9 @@ export const DRAWER_WIDTH = 320
 export const DRAWER_HANDLE = 48
 /** book 姿态：铰链落在两栏 gap 正中（§7.3），gap = 铰链宽 + 16 */
 export const BOOK_GAP_EXTRA = 16
+/** 单栏对话的阅读列上限（Figma 07 页 L-1「手机横屏 · 单栏」：840 宽画板里内容列 560 居中）。
+ *  只给 single 版式用——抽屉、桌面姿态、双栏里的对话栏都是满宽（A-2 / A-3 / A-4）；竖屏手机窄于它，不受影响 */
+export const CHAT_COLUMN_MAX_WIDTH = 560
 
 export interface LayoutInput {
   width: number
