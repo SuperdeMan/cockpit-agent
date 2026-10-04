@@ -1,6 +1,6 @@
 # Jev 判别层接入：执行计划（JV01 → JV03）
 
-> 2026-10-04。状态：JV01 已部署 `b84628b5`（缺省全关、零外呼，云端核对确认）；首轮离线中文评测完成（§8）；JV02/JV03 首片（受话 shadow）已实现、缺省关闭（§9），开启要过 §5 的确认节点。按用户 2026-10-04「把 jev 接入的计划也排进来」立项，并已提供 API 凭证
+> 2026-10-04。状态：JV01 已部署 `b84628b5`（缺省全关、零外呼，云端核对确认）；首轮离线中文评测完成（§8）；JV02/JV03 首片（受话 shadow）已上线 `3f948538`，范围含真实用户（§9、§10）。按用户 2026-10-04「把 jev 接入的计划也排进来」立项，并已提供 API 凭证
 > （仓库外的本地文件，单行令牌；内容不进仓库、文档、日志或提交）。
 > 方案来源：[研究方案](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)（JV00–JV09 拆解、协议草案、失败矩阵、
 > J001–J030 测试矩阵）、[实施方案 §5](2026-09-26-cockpit-agent-v2-implementation-plan.md#5-jev-工作包细化)、[路线图 §3](../roadmap.md)。
@@ -122,4 +122,13 @@
   `DECISION_MAX_BUDGET_MS` / `TYPESAFE_API_KEY`、给 cloud-planner 透传 `DECISION_ADDRESSED_MODE` / `DECISION_SHADOW_SCOPE`（缺省值都是关闭）；
   云端共享 `.env` 写入凭证与 `DECISION_ENABLED=true`、`DECISION_TASKS=addressed`、`DECISION_ADDRESSED_MODE=shadow`、`DECISION_SHADOW_SCOPE=all`。
   云端主机到 Jev 直连实测首个请求 0.56 s、复用连接 0.21 s，不需要代理。
+
+## 10. 受话 shadow 上线（`3f948538`，2026-10-04）
+
+- 验证：`8eb4e892` 精确 SHA 全量 11052 / 35 / 12（1 个 xdist worker 在 YAML 解析时进程崩溃、该文件单独重跑 23/23；另一趟卡死定位为 xdist 启动时 `platform._wmi_query` 挂住，环境问题）、五道门禁、变异 9 条全部判红；CI 全绿；`3f948538`（compose 透传）相关测试 1904 条通过、CI 全绿；部署 `3f948538`：status 5/5，verify `20261004T131707Z-3f94853.json`；云端核对网关判别已启用（任务 addressed、`jev-1.13.0`、凭证已配置）、cloud-planner 为 shadow / all；真栈 shadow 探针（`scripts/probe_decision_shadow.py`，12 句只读：查询 / 情绪 / 乘客对话 / 播报，一半语音来源）PASS：12/12 有 shadow、11 OK + 1 超时，Jev 判对 10/11、规划器判对 9/12（把播报腔、对孩子说的话、乘客对话判成对助手说的），零动作、span 零原文；shadow 时延约 600 ms 为主、另有 1.3–1.4 s 一簇。
+- 观察：规划器在文字输入上倾向判「对助手说的」（打字本来就是对助手说），所以文字轮的分歧不代表规划器错；语音来源的分歧才是拒识判定真正要比的。
+  离线校准与阈值冻结要按语音来源分开统计。
+- 登记：shadow 预算 1500 ms 会丢掉约 1/12 的慢样本（偏向慢请求），下一个发布把 shadow 缺省预算与网关上限放到 3000 ms（shadow 不阻塞主链）；
+  探针最初选的「你昨天看的那部电影叫什么来着」被端侧规则按「电影」本地开播（模拟车 v1 媒体变 playing，未复原）——与「广播」同族的端侧误触，单独立项修；
+  发布闸的基础设施摘要只覆盖 `deploy/cloud/**`，`deploy/docker-compose.yaml` 变更在锚不变时直接放行（本次已获用户明确批准；闸本身的口子另登记，改发布闸属 CI/CD，要单独批准）。
 
