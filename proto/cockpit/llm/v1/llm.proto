@@ -9,6 +9,9 @@ service LLMGateway {
   rpc Complete       (CompleteRequest) returns (CompleteResponse);
   rpc CompleteStream (CompleteRequest) returns (stream CompleteChunk);
   rpc Embed          (EmbedRequest)    returns (EmbedResponse); // 文本向量化（记忆语义检索；唯一 embedding 出口）
+  // Jev 语义判别（v2 JV01）：只给可弃权的建议，不生成执行授权、不进聊天 provider 选择器、不复用聊天降级链。
+  // 全局 off（缺省）时零外呼。设计见 docs/design/2026-10-04-jev-decide-integration.md。
+  rpc Decide         (DecideRequest)   returns (DecideResponse);
 }
 
 message EmbedRequest {
@@ -48,4 +51,88 @@ message CompleteResponse {
 message CompleteChunk {
   string delta = 1;
   bool done = 2;
+}
+
+// ── Decide（JV01）────────────────────────────────────────────────────────────────
+
+// 调用 / 快照绑定，仅内部使用：网关回显 state_fingerprint 供调用方判断建议是否已过期，任何字段都不发给供应商。
+message DecisionBinding {
+  string exchange_id = 1;
+  string state_fingerprint = 2;
+  string scope_fingerprint = 3;
+  string consent_epoch = 4;
+  string original_request_fingerprint = 5;
+}
+
+// 一个判别任务：task_id 必须在网关 allowlist 里；payload 按该任务的 schema 校验，多余字段拒绝。
+// 问法（rubric）由网关按 task_id + rubric_version 渲染，调用方不能传任意问题。
+message DecisionTask {
+  string task_id = 1;
+  string rubric_version = 2;
+  google.protobuf.Struct payload = 3;
+}
+
+message DecideRequest {
+  string request_id = 1;
+  DecisionBinding binding = 2;
+  repeated DecisionTask tasks = 3;
+  uint32 budget_ms = 4;             // 调用方剩余预算；网关再按服务端上限截断，0=用服务端缺省
+  map<string, string> meta = 5;     // trace_id 等观测键；不放原文
+}
+
+enum DecisionStatus {
+  DECISION_STATUS_UNSPECIFIED = 0;
+  DECISION_STATUS_OK = 1;
+  DECISION_STATUS_ABSTAIN = 2;            // 本项目适配层的结论（低置信 / 矛盾），不是供应商原生状态
+  DECISION_STATUS_DISABLED = 3;           // 全局或该任务关闭：没有外呼
+  DECISION_STATUS_UNAVAILABLE = 4;        // 凭证缺失 / 鉴权失败 / 限流 / 过载 / 网络
+  DECISION_STATUS_TIMEOUT = 5;
+  DECISION_STATUS_INVALID_RESPONSE = 6;   // 未知 ID / 缺项 / 非有限数 / 越界 / 模型漂移：整批不采纳
+  DECISION_STATUS_INVALID_REQUEST = 7;    // 任务不在 allowlist / payload 不合 schema
+  DECISION_STATUS_PRIVACY_FILTERED = 8;   // 该任务的数据不允许发第三方
+}
+
+message NoulAnswer { double p_true = 1; }   // 命题为真的概率（供应商不给独立 confidence）
+message ChoiceAnswer {
+  string choice = 1;
+  map<string, double> probabilities = 2;
+  double confidence = 3;
+}
+message ScoreAnswer {
+  double score = 1;                         // 按等级概率加权的期望等级，不是正确率
+  map<string, double> probabilities = 2;
+  double confidence = 3;
+}
+
+message DecisionAnswer {
+  string question_id = 1;
+  oneof value {
+    NoulAnswer noul = 2;
+    ChoiceAnswer choice = 3;
+    ScoreAnswer score = 4;
+  }
+}
+
+message DecisionTaskResult {
+  string task_id = 1;
+  string rubric_version = 2;
+  DecisionStatus status = 3;
+  repeated DecisionAnswer answers = 4;      // 整批校验通过才非空，半批不给
+  string reason_code = 5;                   // 受控短码，供观测
+}
+
+message DecisionUsage {
+  bool known = 1;                           // 供应商没给用量 ⇒ false（不用 0 冒充）
+  uint32 input_tokens = 2;
+  uint32 output_tokens = 3;
+}
+
+message DecideResponse {
+  string request_id = 1;
+  string state_fingerprint = 2;             // 回显 binding.state_fingerprint
+  string model_requested = 3;
+  string model_used = 4;
+  repeated DecisionTaskResult results = 5;  // 与 tasks 一一对应、同序
+  DecisionUsage usage = 6;
+  uint32 latency_ms = 7;
 }

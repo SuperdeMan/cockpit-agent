@@ -3136,3 +3136,10 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 名字对不上先在当前城市里找、再全国；模型地标兜底的候选同样先在城市里找，只认严格对上且在本地半径内的。
 - `_dest_matches` 反方向只认原话以地点名打头、或原话 = 该地点所在城市 + 名字；调用方手里有地点对象时传它的城市。
 - 规划器写进地点槽的「当前位置 / 这里」这类占位值就是没给（`runtime.slots.is_place_placeholder`，城市槽与导航起点共用）。
+
+### 9.68 Jev 判别只经网关 `Decide`，任务 allowlist、整批校验、缺省全关（2026-10-04）
+
+- 调用方只点名 `llm-gateway/decision_specs.py` 里的 (task_id, rubric_version)，payload 按规格校验，多余字段拒绝；问法由网关渲染。
+- 供应商答案按 `runtime.decision_contract.validate_answers` 整批校验（模型 pin、问题 ID 集、类型、有限数与范围、分布容差、Choice 取最大概率项），
+  任一项不合格整批不采纳；用量拿不到记 unknown，不用 0 冒充。
+- 在线链零重试；外呼复用长连接；请求头与正文不进日志；`DECISION_ENABLED=false` 时零外呼。新配置键不进 `.env.example`。

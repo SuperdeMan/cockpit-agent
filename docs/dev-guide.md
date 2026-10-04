@@ -23,6 +23,13 @@
 > `CAR_AGENT_SSH_IDENTITY` 三个环境变量提供，**不进 `.env`、不进 `dev-stack.local`**；
 > 缺任一项时 CLI 返回 `configuration_rejected`（rc=2）而不是去猜。
 
+### Jev 判别的配置键（`.env.example` 里刻意没有）
+
+`DECISION_ENABLED`（缺省 false ⇒ 零外呼）、`DECISION_TASKS`、`DECISION_MODEL`、`DECISION_MAX_BUDGET_MS`、`DECISION_BASE_URL`、
+`TYPESAFE_API_KEY` 只由 llm-gateway 读取，原因同下面那条（`.env.example` 在发布闸里硬阻断）。写进根 `.env`、云端 `.env` 与
+`deploy/docker-compose.yaml` 透传都要单独确认，见 [Jev 接入执行计划](design/2026-10-04-jev-decide-integration.md) §5。
+本机真请求冒烟：把凭证读进**这一条命令的进程环境**再跑 `python scripts/smoke_decide.py`（凭证不打印、不落盘到仓库）。
+
 ### cloud 档需要的两个键（`.env.example` 里刻意没有）
 
 新环境按 `.env.example` 配不出 cloud 档，缺的是这两个——**它们只有 `target=cloud` 时才读**：

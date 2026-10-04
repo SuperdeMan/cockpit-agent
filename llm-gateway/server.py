@@ -25,6 +25,7 @@ _429_WAIT_CAP_S = float(os.getenv("LLM_429_WAIT_CAP_S", "2"))
 from cache import LLMCache
 from ratelimit import RateLimiter
 from metrics import cost_tracker
+from decision_service import DecisionService
 from observability.events import get_emitter
 
 logger = logging.getLogger("llm.server")
@@ -51,6 +52,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         self.cache = LLMCache(max_size=256, ttl_seconds=300)
         self.limiter = RateLimiter(global_rate=20, global_capacity=50)
         self.obs = get_emitter("llm-gateway")
+        # Jev 判别：独立于聊天 provider 与降级链；`DECISION_ENABLED` 缺省 false ⇒ 零外呼
+        self.decision = DecisionService.from_env()
 
     async def _emit_llm(self, request, *, model, latency_ms, cache_hit=False,
                         usage=(0, 0), status="ok", error="", thinking=None,
@@ -410,6 +413,10 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 if isinstance(last_err, httpx.TimeoutException)
                 else grpc.StatusCode.UNAVAILABLE)
         await context.abort(code, str(last_err))
+
+    async def Decide(self, request, context):
+        """Jev 判别（JV01）：只返回可弃权的建议；全局关闭时所有任务 disabled、零外呼。"""
+        return await self.decision.decide(request)
 
     async def Embed(self, request, context):
         """文本向量化（记忆语义检索）。provider 不支持/失败 → UNAVAILABLE，调用方降级。"""

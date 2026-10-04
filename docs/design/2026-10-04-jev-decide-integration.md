@@ -1,6 +1,6 @@
 # Jev 判别层接入：执行计划（JV01 → JV03）
 
-> 2026-10-04。状态：已排期，未开始实现。按用户 2026-10-04「把 jev 接入的计划也排进来」立项，并已提供 API 凭证
+> 2026-10-04。状态：JV01 已实现（缺省全关、零外呼），离线验证与本机真请求冒烟完成，待部署（§7）；JV02 起未开始。按用户 2026-10-04「把 jev 接入的计划也排进来」立项，并已提供 API 凭证
 > （仓库外的本地文件，单行令牌；内容不进仓库、文档、日志或提交）。
 > 方案来源：[研究方案](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)（JV00–JV09 拆解、协议草案、失败矩阵、
 > J001–J030 测试矩阵）、[实施方案 §5](2026-09-26-cockpit-agent-v2-implementation-plan.md#5-jev-工作包细化)、[路线图 §3](../roadmap.md)。
@@ -62,3 +62,24 @@
 - 时延：在线新增阻塞预算研究建议 ≤500 ms；JV01–JV03 期间不进在线阻塞路径。
 - 边界不变：Jev 不注册为业务 Agent、不进 HMI 的聊天模型切换、不生成执行授权、不改原话授权 / VAL / 确认 / 只响应边界；
   网络只在 llm-gateway，actionability 与 runtime 判据保持纯函数。
+
+## 7. JV01 实施记录（2026-10-04）
+
+- 外部事实（当天核对官方文档）：固定版本 `jev-1.13.0`（`jev-latest` / `jev-preview` 目前都指向它，生产不用别名）；
+  `POST https://api.typesafe.ai/v1/systemone`，`Authorization: Bearer`；返回 noul / choice（choice、probabilities、confidence）/
+  score（score、legend、probabilities、confidence）与 usage；错误 401 / 422 / 429 / 529；输入 $0.042 / 百万 token、输出免费；
+  官方限流 100K token/s、80 请求/s；英语是主训练语言，中文需验证。
+- 交付：`llm.proto` 新增 `Decide` 与显式消息（状态枚举、Noul / Choice / Score 的 oneof、用量 known 标记）；
+  `runtime/decision_contract.py`（任务规格、payload 校验、整批答案校验，纯函数）；`llm-gateway/decision_specs.py`（版本化 allowlist，
+  JV01 只有 `smoke` 冒烟任务）、`decision_provider.py`（唯一外呼，零重试，长连接复用，请求头与正文不进日志；确定性假 provider）、
+  `decision_service.py`（总开关、任务 allowlist、payload 拒绝、预算按服务端上限截断、并发外呼与整体截止、用量记账）；网关 `Decide` 接线。
+  SDK / Cloud 的 Decide 客户端随第一个消费方（JV02 / JV03）一起加，不提前放没有调用方的代码。
+- 配置（服务端受控，客户端 meta 无权开启）：`DECISION_ENABLED`（缺省 false，false 时零外呼）、`DECISION_TASKS`（逗号分隔的任务 allowlist，缺省空）、
+  `DECISION_MODEL`（缺省 `jev-1.13.0`）、`DECISION_MAX_BUDGET_MS`（缺省 1500）、`DECISION_BASE_URL`、`TYPESAFE_API_KEY`。
+- 本机真请求冒烟（`scripts/smoke_decide.py`，凭证只注入这一个进程，5 句合成文本）：首轮每次新建连接，经本机代理建连 7–17 s、三条超时；
+  改为长连接复用、直连后首个请求 3.4 s（含跨境 TLS 握手），之后 250–281 ms；每次约 355 个输入 token。
+  判断方向全部合理（「打开空调」0.98、「空调怎么打开？」0.07、「把车窗关上」0.98、「今天深圳天气怎么样」0.05、「别开车窗，只说说怎么开」0.29）。
+  云端主机的网络路径（是否需要代理、建连与稳态时延）在 §5 第 2、3 项获批后单独测。
+- 测试：契约 6 条（规格自检、payload、问题渲染、整批合法、任一项不合格整批作废 12 种、模型漂移与等级写法）；网关 11 条（缺省零外呼、
+  任务闸先于外呼、合法路径的类型化答案与用量、预算截断、慢供应商按预算超时、整批作废与用量未知、错误映射不重试、请求形状、
+  厂商错误分类、无凭证不碰网络、服务端接线）。变异 16 处：15 处判红，1 处为等价变异（非 OK 时答案本就为空，答案守卫是冗余防御）。

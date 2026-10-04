@@ -2,18 +2,23 @@
 
 所有 LLM 调用的唯一出口。屏蔽厂商差异，提供多模型路由与降级。
 
-## v2 / Jev 后续边界（未实现）
+## v2 / Jev 判别 `Decide`（JV01 已实现，缺省全关）
 
-计划在现有进程与 gRPC 服务增加独立 `Decide`，不放进 chat provider 选择器，也不复用聊天降级链。
-JV01–03 先做显式类型/响应校验、模型 pin、Snapshot/预算/失效、actionability shadow；
-网络仅在本网关，off 包括 shadow 在内零外呼。已有 Complete/CompleteStream/Embed 保持兼容。
-任务与验收见 [v2 实施方案](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md) §5；DECISION_* 配置均尚未实现。
+`Decide` 与聊天 provider 选择器、降级链完全分开：调用方只能点名 `decision_specs.py` 里的任务（allowlist）并给合 schema 的 payload，
+问法由网关渲染；答案按 `runtime/decision_contract.py` 整批校验，任一项不合格整批不采纳；外呼只在 `decision_provider.py`（零重试、长连接复用、
+请求头与正文不进日志）。配置：`DECISION_ENABLED`（缺省 false ⇒ 零外呼）、`DECISION_TASKS`、`DECISION_MODEL`（缺省 `jev-1.13.0`）、
+`DECISION_MAX_BUDGET_MS`、`DECISION_BASE_URL`、`TYPESAFE_API_KEY`——**不写进 `.env.example`**（发布闸硬阻断），见开发指南。
+执行计划与需要确认的节点见 [Jev 接入执行计划](../docs/design/2026-10-04-jev-decide-integration.md)。
+
+JV02 / JV03（快照与绑定、actionability shadow）未开始；网络仅在本网关，off 包括 shadow 在内零外呼。已有 Complete/CompleteStream/Embed 保持兼容。
+任务与验收见 [v2 实施方案](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md) §5。
 
 
 ## 接口（见 proto/cockpit/llm/v1/llm.proto）
 - `Complete` 同步补全
 - `CompleteStream` 流式补全
 - `Embed` 文本向量化（独立于 chat provider）
+- `Decide` Jev 语义判别（任务 allowlist + 整批校验，缺省全关；见上节）
 
 ## 多 LLM 源 + 全局运行时切换（`llm_runtime.py`）
 座舱「单一大脑」模型：进程内 provider 注册表持有所有**已配置 key** 的厂商，全局 active 经 HMI 设置页
