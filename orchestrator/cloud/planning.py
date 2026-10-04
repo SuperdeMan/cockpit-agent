@@ -48,7 +48,7 @@ from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import (
     HYPOTHETICAL_FRAMES, carries_operation_cue, is_information_request, is_non_directive_question,
-    is_reference_question, is_definition_only_question,
+    is_reference_question, is_definition_only_question, is_complete_information_question,
 )
 from .step_grounding import opens_as_instruction, step_naming_score
 from .reply_position import reply_position
@@ -1564,6 +1564,13 @@ def _trigger_complete_conditional_clarified(state: PlanAttemptState) -> bool:
                 and _COMPLETE_DEFERRED_CONDITION_RE.search(str(state.text or "")))
 
 
+def _trigger_information_question_clarified(state: PlanAttemptState) -> bool:
+    """完整的信息问题仍被判成澄清（目标标记或澄清对象）——问的对象和要的东西都说清楚了，不是对象不明。"""
+    wants_clarify = bool(state.goal_requires_clarification
+                         or (state.parsed is not None and state.parsed.clarify))
+    return wants_clarify and is_complete_information_question(str(state.text or ""))
+
+
 def _trigger_focused_list_batch_conflict(state: PlanAttemptState) -> bool:
     return _focused_list_batch_plan_conflicts(
         state.text, state.working_set, state.parsed, state.catalog)
@@ -1663,6 +1670,8 @@ _RETRY_PREDICATES = {
         _trigger_plan_only_contract_violated,
     TriggerKind.COMPLETE_CONDITIONAL_CLARIFIED:
         _trigger_complete_conditional_clarified,
+    TriggerKind.INFORMATION_QUESTION_CLARIFIED:
+        _trigger_information_question_clarified,
     TriggerKind.FOCUSED_LIST_BATCH_CONFLICT:
         _trigger_focused_list_batch_conflict,
     TriggerKind.FOCUS_DEPENDENT_CONFLICT: _trigger_focus_dependent_conflict,

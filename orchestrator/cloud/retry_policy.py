@@ -58,6 +58,7 @@ class TriggerKind(Enum):
     CLARIFICATION_CONTRACT_VIOLATED = "clarification_contract_violated"
     PLAN_ONLY_CONTRACT_VIOLATED = "plan_only_contract_violated"
     COMPLETE_CONDITIONAL_CLARIFIED = "complete_conditional_clarified"
+    INFORMATION_QUESTION_CLARIFIED = "information_question_clarified"
     FOCUSED_LIST_BATCH_CONFLICT = "focused_list_batch_conflict"
     FOCUS_DEPENDENT_CONFLICT = "focus_dependent_conflict"
     OPEN_CLOSE_POLARITY_INVERTED = "open_close_polarity_inverted"
@@ -151,6 +152,11 @@ _CLARIFY_CONTRADICTION_HEAD = (
 )
 
 CORRECTION_TEMPLATES = {
+    "information_question": (
+        "\n\n校验反馈：用户原话已经是一个完整的信息问题（问方法、含义、有哪些、在哪、为什么等），"
+        "问的对象和要的东西都说清楚了，不是对象不明。不要向用户反问选哪个动作，也不要执行任何"
+        "改变状态的动作；请只规划本轮 catalog 里能回答这个问题的合法能力，goal 保留用户原问题。"
+    ),
     "complete_conditional": (
         "\n\n校验反馈：用户原话是完整条件句，已经同时给出条件前件和条件"
         "后件。未来条件尚未知不是歧义，而是 adaptive 计划的触发点；不要向"
@@ -253,6 +259,14 @@ RETRY_POLICIES: tuple = (
         trigger=TriggerKind.COMPLETE_CONDITIONAL_CLARIFIED,
         stage=STAGE_GUARD, wire_modes=WIRE_ALL, attempt_limit=2,
         correction_template="complete_conditional",
+        next_wire=NEXT_WIRE_PLAN_ONLY),
+    # 2026-10-04：完整的信息问题被模型判成「需要澄清」（「露营模式是什么意思」「空调有哪些模式」），随后
+    # `clarify_goal_with_steps` 会要它给两个动作选项——排在它之前，下一次只许给计划（同上一条的先例）。
+    RetryPolicy(
+        name="information_question_clarified",
+        trigger=TriggerKind.INFORMATION_QUESTION_CLARIFIED,
+        stage=STAGE_GUARD, wire_modes=WIRE_ALL, attempt_limit=2,
+        correction_template="information_question",
         next_wire=NEXT_WIRE_PLAN_ONLY),
     RetryPolicy(
         name="focused_list_batch_conflict",

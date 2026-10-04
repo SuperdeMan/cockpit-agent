@@ -120,7 +120,8 @@ def test_bare_empty_plan_with_a_safety_signal_also_answers():
 
 @pytest.mark.parametrize("text", [
     "云岚国际中心",                # 裸对象，路由歧义 ⇒ 就该问
-    "没开定位为什么还有距离",
+    # 原例「没开定位为什么还有距离」是完整的信息问题，2026-10-04 起不再被问成选动作（test_information_question_not_clarified）
+    "处理一下停车的事",
     "有点累",                      # **模糊说法不进词表**（safety_signal 纪律：宁可漏接）
     "前面路口右转",
 ])
@@ -163,7 +164,9 @@ def test_without_a_fallback_agent_the_plan_is_left_alone():
 
 # ── 5. 本闸的代价，**钉成可见断言**：交通信号灯的「黄灯」也会被当成车辆告警 ────────
 
-@pytest.mark.parametrize("text", ["前面黄灯了", "刚才那个红灯我是不是闯了"])
+# 原例「刚才那个红灯我是不是闯了」是完整的信息问题，2026-10-04 起先由信息问题那条策略接住（同样落到兜底 Agent，
+# 安全话术照答），见 test_information_question_not_clarified；这里留陈述句，钉的仍是本闸的代价。
+@pytest.mark.parametrize("text", ["前面黄灯了", "刚才闯红灯了"])
 def test_traffic_light_words_also_route_to_the_fallback_agent(text):
     """这一类**会被接管**——它是本闸的代价，不是遗漏，所以钉在这里而不是藏着。
 

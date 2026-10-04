@@ -39,7 +39,9 @@ def _agents():
             MockAgent("navigation", ["navigation.navigate_to"])]
 
 
-def _build(prefs: dict, text: str = "解释定位原理", reply: str = _CLARIFY_AGAIN):
+# 按钮原文「解释定位原理」是完整的信息问题，2026-10-04 起先由信息问题那条策略接住（同样不答「没听清」，
+# 见 test_information_question_not_clarified）；这里用真正对象不明的裸对象，钉的仍是续接轮本身的出口。
+def _build(prefs: dict, text: str = "华润大厦", reply: str = _CLARIFY_AGAIN):
     async def mock_llm(messages):
         return reply
 

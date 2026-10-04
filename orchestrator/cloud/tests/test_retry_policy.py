@@ -77,7 +77,7 @@ def _inventory_rows() -> list[dict]:
 
 def test_inventory_parser_actually_found_the_table():
     """先证明解析器不是在空扫——扫不全的结构断言比没有更糟。"""
-    assert len(_inventory_rows()) == len(RETRY_POLICIES) == 13
+    assert len(_inventory_rows()) == len(RETRY_POLICIES) == 14
 
 
 def test_inventory_matches_the_code_table():
@@ -292,6 +292,11 @@ _MATRIX = [
       _tool({"complexity": "adaptive", "goal": "如果明天下雨就提醒我带伞",
              "addressed": True, "steps": [_step()]})], [],
      ["complete_conditional_clarified"], (2, 0), "toolcall"),
+    # 2026-10-04：完整的信息问题被判成澄清（目标标记 / 澄清对象）——下一次只许给计划
+    ("information_question", "空调有哪些模式？", None, {},
+     [_tool({"addressed": True, "goal": "需要澄清：未指明是查手册还是列场景", "steps": []}),
+      _tool(_args(goal="空调有哪些模式？"))], [],
+     ["information_question_clarified"], (2, 0), "toolcall"),
     ("plan_only_contract_violated", "如果明天下雨就提醒我带伞", None, {},
      [_tool(_CLARIFY), _tool({**_args(goal="带伞"), "extra_key": 1})], [],
      ["complete_conditional_clarified", "plan_only_contract_violated"], (2, 0),

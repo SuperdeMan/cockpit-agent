@@ -341,6 +341,23 @@ def is_information_request(t: str | None) -> bool:
                 or _LOOKUP_REQUEST_RE.match(body))
 
 
+def is_complete_information_question(t: str | None) -> bool:
+    """一个**完整的**信息问题：不是指令，且带着明确的提问动作——问方法 / 释义 / 枚举 / 计数 / 原因 / 规范，或解释元请求，
+    或问属性 / 位置 / 能力（2026-10-04，docs/design/2026-10-04-information-question-not-clarified.md）。
+
+    给规划用：模型把这种句子判成「对象不明、需要澄清」是误判——问的对象和要的东西都说清楚了。光有问号或语气尾词
+    （「空调呢？」「露营模式？」）不算：在上下文里那可能真是对象不明。
+    """
+    body = strip_ask_prefix(t)
+    if not body or not is_non_directive_question(body):
+        return False
+    return bool(_is_how_to_question(body) or is_explanation_request(body) or asks_for_reason(body)
+                or _enumeration_question(body) or _count_question(body) or _definition_question(body)
+                or is_reference_question(body)
+                or any(w in body for w in PROPERTY_ASKS) or any(w in body for w in CHOICE_ASKS)
+                or any(w in body for w in CAPABILITY_ASKS))
+
+
 def is_non_directive_question(t: str) -> bool:
     """这句话是在**问**，而不是在**下指令**。"""
     # 「请问…」的「请」不是祈使标记：先剥掉提问前缀，再按主体判（评审二轮 R9）。

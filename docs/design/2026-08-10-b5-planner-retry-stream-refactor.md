@@ -205,16 +205,17 @@ plan_mode / 计划步骤 / clarify** —— **21/21 逐字一致**。且这 21 �
 | 1 | `clarification_contract_violated` | guard | 上一轮要过澄清专用 schema，本轮没按 `addressed=true/steps=[]/clarify` 交（`planning.py:1215`） | 2 | tool | — | — |
 | 2 | `plan_only_contract_violated` | guard | 上一轮要过计划修正专用 schema，本轮顶层字段越界（`:1228`） | 2 | tool | — | — |
 | 3 | `complete_conditional_clarified` | guard | 完整条件句仍被判成澄清（`:1241`） | 2 | 全部 | `complete_conditional` | `plan_only` |
-| 4 | `focused_list_batch_conflict` | guard | 「换一批」离开了结构焦点的 list 能力（`:1258`） | 1 | 全部 | `focused_list_batch` | — |
-| 5 | `focus_dependent_conflict` | guard | 省略续问跨离了结构焦点命名空间（`:1269`） | 1 | 全部 | `focus_dependent` | — |
-| 6 | `open_close_polarity_inverted` | guard | 选了与原话开/关极性相反的 sibling 能力（`:1280`） | 1 | 全部 | `open_close_polarity` | — |
-| 7 | `clarify_goal_with_steps` | guard | goal 说要澄清却仍出执行 steps；或裸对象被安上动作；或工具标记只给 goal 不给澄清卡（`:1302`） | 2 | 全部 | `clarify_goal_with_steps` | `clarification` |
-| 8 | `multi_action_omitted` | guard | 原话多个肯定动作，simple 计划只出一步（`:1330`） | 1 | 全部 | `multi_action_omitted` | — |
-| 9 | `directive_not_addressed` | guard | 祈使指令被判 `addressed=false`（`:1347`） | 2 | 全部 | `directive_not_addressed` | — |
-| 10 | `explicit_input_not_addressed` | guard | 显式输入（非 hands-free 语音）被判 `addressed=false`（`:1359`） | 1 | 全部 | `explicit_input_not_addressed` | — |
-| 11 | `salvage_wire_accepted` | accept | 计划可用，但它是掉档轮从自由文本里抢救出来的（`:1374`） | 1 | salvage | `toolcall_salvage_retry`（default） | — |
-| 12 | `no_action_unconfirmed` | tail | 模型说「受话了、不该做任何动作」，而输入本身没给出确定性语法证据（`:1389`） | 2 | 全部 | `no_action_unconfirmed`（default） | — |
-| 13 | `schema_validation_failed` | tail | 工具通道的参数没过结构/能力白名单校验，且没有更具体的诊断（`:1402`） | 1 | tool | `schema_validation_failed`（default） | — |
+| 4 | `information_question_clarified` | guard | 完整的信息问题（问方法 / 含义 / 有哪些 / 在哪 / 为什么，且不是指令）仍被判成澄清——目标标记或澄清对象（2026-10-04，`runtime.question_shape.is_complete_information_question`） | 2 | 全部 | `information_question` | `plan_only` |
+| 5 | `focused_list_batch_conflict` | guard | 「换一批」离开了结构焦点的 list 能力（`:1258`） | 1 | 全部 | `focused_list_batch` | — |
+| 6 | `focus_dependent_conflict` | guard | 省略续问跨离了结构焦点命名空间（`:1269`） | 1 | 全部 | `focus_dependent` | — |
+| 7 | `open_close_polarity_inverted` | guard | 选了与原话开/关极性相反的 sibling 能力（`:1280`） | 1 | 全部 | `open_close_polarity` | — |
+| 8 | `clarify_goal_with_steps` | guard | goal 说要澄清却仍出执行 steps；或裸对象被安上动作；或工具标记只给 goal 不给澄清卡（`:1302`） | 2 | 全部 | `clarify_goal_with_steps` | `clarification` |
+| 9 | `multi_action_omitted` | guard | 原话多个肯定动作，simple 计划只出一步（`:1330`） | 1 | 全部 | `multi_action_omitted` | — |
+| 10 | `directive_not_addressed` | guard | 祈使指令被判 `addressed=false`（`:1347`） | 2 | 全部 | `directive_not_addressed` | — |
+| 11 | `explicit_input_not_addressed` | guard | 显式输入（非 hands-free 语音）被判 `addressed=false`（`:1359`） | 1 | 全部 | `explicit_input_not_addressed` | — |
+| 12 | `salvage_wire_accepted` | accept | 计划可用，但它是掉档轮从自由文本里抢救出来的（`:1374`） | 1 | salvage | `toolcall_salvage_retry`（default） | — |
+| 13 | `no_action_unconfirmed` | tail | 模型说「受话了、不该做任何动作」，而输入本身没给出确定性语法证据（`:1389`） | 2 | 全部 | `no_action_unconfirmed`（default） | — |
+| 14 | `schema_validation_failed` | tail | 工具通道的参数没过结构/能力白名单校验，且没有更具体的诊断（`:1402`） | 1 | tool | `schema_validation_failed`（default） | — |
 
 **三段的语义差别**（不是排版，是求值方式）：
 
