@@ -2440,7 +2440,8 @@ class NavigationAgent(BaseAgent):
                         logger.warning("landmark candidate local search failed: %s", e)
                         local = []
                     if (local and self._dest_matches(candidate, local[0].name, local[0].city)
-                            and self._beyond_local_radius(local[0], near) is None):
+                            and self._beyond_local_radius(local[0], near) is None
+                            and self._keeps_dropped_head(description, candidate, local[0])):
                         return candidate, local
                 try:
                     results = await self.poi.search(candidate, limit=limit, meta=meta)
@@ -2564,6 +2565,21 @@ class NavigationAgent(BaseAgent):
             hit = next((r for r in cands if cls._grounds_to(description, r, *anchor)), None)
             return [hit] + [x for x in cands if x is not hit] if hit else None
         return cands if cls._dest_matches(description, cands[0].name, cands[0].city) else None
+
+    @classmethod
+    def _keeps_dropped_head(cls, description: str, candidate: str, poi) -> bool:
+        """模型候选正是原话去掉开头几个字（「上海外滩」→「外滩」）时，去掉的字要落在这个本地结果的城市或地址上。
+
+        模型给的是官方名，城市限定词常被去掉；拿去掉后的名字在本城找，接到的是只同名后半截的本地点
+        （2026-10-04 A/B：「上海外滩」→ 30 km 外的「外滩夜市」，几遍之间来回跳）。「深圳欢乐谷」→「欢乐谷」的「深圳」
+        落在本地结果的城市上，照常本城优先。候选不是原话的后半截（「山姆会员店」→「山姆会员商店」）不受此限。
+        不看名字：名字正是和候选对上的那一段，「橘子洲长沙小炒」名字里的「长沙」是菜系，不是它在长沙（A/B：「长沙橘子洲」）。"""
+        d, c = cls._place_key(description), cls._place_key(candidate)
+        if not c or d == c or not d.endswith(c):
+            return True
+        head = d[:-len(c)]
+        where = cls._place_key(f"{getattr(poi, 'city', '') or ''}{getattr(poi, 'address', '') or ''}")
+        return head in where
 
     @classmethod
     def _bare_category(cls, description: str) -> bool:

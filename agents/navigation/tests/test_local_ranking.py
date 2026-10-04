@@ -285,3 +285,29 @@ def test_the_cross_city_rule_only_binds_category_names():
     assert NavigationAgent._cross_city_ok("儿童医院", _SZ_CHILDREN, HERE) is True      # 本地半径内不受限
     assert NavigationAgent._cross_city_ok("儿童医院", _BJ_CHILDREN, None) is True        # 没定位判不了，不拦
 
+
+# ── 模型猜名去掉了原话开头的城市（2026-10-04 A/B：「上海外滩」→ 30 km 外的「外滩夜市」）────────────────────────
+_NIGHT_MARKET = POI(id="n9", name="外滩夜市", category="餐饮服务;餐饮相关场所", lat=22.70, lng=114.10,
+                    distance_km=30.7, city="东莞市")
+_BUND = POI(id="w9", name="外滩", category="风景名胜;风景名胜;风景名胜", lat=31.2397, lng=121.4998, city="上海市")
+
+
+def test_a_guess_that_drops_the_named_city_does_not_take_a_local_namesake():
+    poi = _KeyedPoi(near={"外滩": [_NIGHT_MARKET]}, wide={"外滩": [_BUND]})
+    _, results = asyncio.run(_guessing_agent(poi, ["外滩"])._find_destination("上海外滩", dict(META), near=HERE))
+    assert results[0].name == "外滩"
+
+
+def test_a_guess_that_drops_the_local_city_still_prefers_the_local_place():
+    happy = POI(id="n8", name="欢乐谷", category="风景名胜;风景名胜;风景名胜", lat=22.54, lng=113.98, city="深圳市")
+    beijing = POI(id="w8", name="欢乐谷", category="风景名胜;风景名胜;风景名胜", lat=39.87, lng=116.49, city="北京市")
+    poi = _KeyedPoi(near={"欢乐谷": [happy]}, wide={"欢乐谷": [beijing]})
+    agent = _guessing_agent(poi, ["欢乐谷"])
+    assert agent._keeps_dropped_head("深圳欢乐谷", "欢乐谷", happy) is True
+    assert agent._keeps_dropped_head("上海外滩", "外滩", _NIGHT_MARKET) is False
+    assert agent._keeps_dropped_head("山姆会员店", "山姆会员商店", _NIGHT_MARKET) is True   # 不是后半截：不受此限
+    assert agent._keeps_dropped_head("上海外滩观光隧道", "外滩", _NIGHT_MARKET) is True  # 只管去掉开头（城市限定词在前）
+    stir_fry = POI(id="n7", name="橘子洲长沙小炒", category="餐饮服务;中餐厅;湖南菜(湘菜)", lat=22.6, lng=113.9,
+                   city="深圳市", address="宝安区新安街道")
+    assert agent._keeps_dropped_head("长沙橘子洲", "橘子洲", stir_fry) is False        # 名字里的「长沙」是菜系，不算
+
