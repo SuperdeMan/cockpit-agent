@@ -21,6 +21,7 @@ from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from runtime import voice_attestation
 from runtime.grpcio import aio_channel
 from runtime.deferred_condition import is_deferred_instruction
+from runtime.choice_answer import answers_offered_choice
 from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, is_negated_write_directive, is_sequence_connector, split_and_classify, split_and_classify_any, structured_to_legacy
 import nlu as edge_nlu          # M5 P3 端侧语义 NLU（默认 shadow：只算不用）
 from val import VAL
@@ -47,6 +48,10 @@ logger = logging.getLogger("edge.orchestrator")
 _HIGH = float(os.getenv("FAST_INTENT_THRESHOLD_HIGH", "0.85"))
 _LOCAL_EXCHANGE_MAX = 256
 _LOCAL_EXCHANGE_TTL_S = 10 * 60
+# 云端正在等用户从候选里选（`slot_request` active）：按会话记下候选，到期以服务端给的为准、最长这么久。
+_SLOT_OFFER_TTL_S = 10 * 60
+_SLOT_OFFER_MAX = 256
+_offer_clock = time.monotonic   # 候选到期用的时钟（测试可替换）
 _LOCAL_ID_MAX_CHARS = 256
 _LOCAL_EXCHANGE_ID_MAX_CHARS = 128
 #: 能力摘要有效期（秒）。过期后客户端标未知/待刷新，不得用缓存授权执行。
@@ -261,6 +266,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         self._last_local_exchange: OrderedDict[
             tuple[str, str, str], tuple[str, float, tuple[str, ...]]
         ] = OrderedDict()
+        # 会话 → (到期 monotonic, 候选名)：只从云端 final 的 `slot_request` 记，客户端带不进来
+        self._slot_offers: OrderedDict[tuple[str, str, str], tuple[float, tuple[str, ...]]] = OrderedDict()
         self._bg: set[asyncio.Task] = set()  # 持有 fire-and-forget 任务引用，防 GC
 
     async def drain_state(self):
@@ -654,6 +661,42 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 break
             self._last_local_exchange.popitem(last=False)
 
+    def _note_slot_offer(self, request, event) -> None:
+        """云端这一轮在等用户从候选里选（`slot_request` active 且带候选）⇒ 按会话记下候选与到期；云端别的 final 清掉旧的。
+
+        本地回合不清：用户插一句「打开空调」时云端那条挂起仍在，下一句说候选名照样是在回答它。"""
+        if event.WhichOneof("event") != "final":
+            return
+        key = self._local_exchange_key(request)
+        if key is None:
+            return
+        self._slot_offers.pop(key, None)
+        if not event.final.HasField("slot_request"):
+            return
+        offer = event.final.slot_request
+        suggestions = tuple(s for s in offer.suggestions if s.strip())
+        if (offer.state or "active") != "active" or not suggestions:
+            return
+        ttl = _SLOT_OFFER_TTL_S
+        if offer.expires_at_ms and offer.server_now_ms:
+            ttl = min(ttl, (offer.expires_at_ms - offer.server_now_ms) / 1000)
+        if ttl <= 0:
+            return
+        self._slot_offers[key] = (_offer_clock() + ttl, suggestions)
+        while len(self._slot_offers) > _SLOT_OFFER_MAX:
+            self._slot_offers.popitem(last=False)
+
+    def _answers_slot_offer(self, request) -> bool:
+        """这一句是在回答云端刚给出的候选 ⇒ 和确认一样回挂起所在的云端，不走本地快路径（判据 `runtime.choice_answer`）。"""
+        key = self._local_exchange_key(request)
+        entry = self._slot_offers.get(key) if key is not None else None
+        if entry is None:
+            return False
+        if entry[0] <= _offer_clock():
+            self._slot_offers.pop(key, None)
+            return False
+        return answers_offered_choice(request.text, entry[1])
+
     def _attach_previous_local_exchange(self, request) -> None:
         """Forward one unconsumed local-turn boundary; client meta cannot forge it."""
         key = self._local_exchange_key(request)
@@ -853,7 +896,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # 延后条件句同理（「如果…就…」「温度低于20度时…」）：后半句做不做取决于前半句，
         # 端侧拆开就地执行等于丢掉条件（CA2-10 真栈探针实测空调被无条件打开）。判据与云端规划器同一份。
         deferred = not request.is_confirmation and is_deferred_instruction(request.text)
-        if request.is_confirmation or deferred:
+        # 补槽续接：云端刚给出候选、这一句说的就是其中一个（点选会把候选名当下一句发来）。候选名里带车控 / 媒体词时
+        # 本地规则会把它当指令执行（2026-10-04 真栈：点选「上海东方明珠广播电视塔」打开了收音机）。
+        answering = (not request.is_confirmation and not deferred
+                     and self._answers_slot_offer(request))
+        if answering:
+            turn["slot_answer"] = True
+        if request.is_confirmation or deferred or answering:
             intent = None
             multi = None
             mixed_intents = None
@@ -1065,6 +1114,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         self.cloud_connected = True
                         event = self._dispatch_cloud_actions(
                             event, answer_length, granted=granted)
+                        self._note_slot_offer(request, event)
                         yield event
                     if not got:
                         yield orchestrator_pb2.HandleEvent(
@@ -1204,7 +1254,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         await self._emit_span(
             trace_id,
             "route.cloud",
-            attrs={"text": request.text[:40]},
+            attrs={"text": request.text[:40], **({"slot_answer": True} if answering else {})},
         )
         # 影子从 `route.cloud` 的属性里搬了出来，落独立的 `nlu.shadow` span：
         # 它现在四条路径都挂（local/multi/mixed/cloud），寄生在某一条路径的 span 上
@@ -1225,6 +1275,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 # 云端回流 action 分发：车控类走 VAL
                 event = self._dispatch_cloud_actions(
                     event, answer_length, granted=granted)
+                self._note_slot_offer(request, event)
                 which = event.WhichOneof("event")
                 if which == "final":
                     # AR05 §5.2 审计：**带结构化终态的失败也算已结算**。只看
@@ -1259,7 +1310,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # （LLM 超时 / 解析失败 / chitchat 空回复），后备箱就会无确认打开——不需要恶意输入。
         # 三道挡板：① 云端已给过任何输出就不兜底（下面的 cloud_had_output）；
         # ② 危险对象不兜底，播降级话术；③ 非危险车控兜底行为不变（这条分支存在的意义）。
-        if not cloud_had_output:
+        # 回答候选的那一句不是指令：云端没接住也不能拿它在本地执行（同上，候选名里的「广播」）
+        if not cloud_had_output and not answering:
             local_structured = classify_structured(request.text)
             if local_structured and self._confirm_required(local_structured):
                 # 挡板 ②：不执行、也不静默。不发 NEED_CONFIRM——端侧确认闭环依赖云端
