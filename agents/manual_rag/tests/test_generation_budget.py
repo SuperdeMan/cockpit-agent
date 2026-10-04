@@ -76,3 +76,32 @@ def test_without_a_declared_budget_the_client_default_applies():
     agent.llm.complete = AsyncMock(return_value="推荐胎压为前后轮 2.4–2.5 bar。")
     asyncio.run(run_handle(agent, "manual.query", raw_text="胎压多少正常"))
     assert agent.llm.complete.await_args.kwargs["timeout"] == manual._LLM_TIMEOUT_S
+
+
+def test_answer_generation_never_inherits_complex_task_thinking():
+    """复杂任务给每一步下发 thinking=on，SDK 客户端会把超时抬到 ≥30 s——预算被整个覆盖（固定语料 V202）。"""
+    agent = ManualRagAgent()
+    agent.llm.complete = AsyncMock(return_value="推荐胎压为前后轮 2.4–2.5 bar。")
+    asyncio.run(run_handle(agent, "manual.query", raw_text="胎压多少正常", meta={"thinking": "on"}))
+    assert agent.llm.complete.await_args.kwargs["thinking"] is False
+
+
+def test_sdk_client_keeps_an_explicit_timeout_only_when_thinking_is_off():
+    """钉住 SDK 行为本身：thinking=None 时跟随请求 meta，开思考就把超时抬到 30 s；显式 thinking=False 才保留调用方的超时。"""
+    from unittest.mock import MagicMock
+    from agents._sdk import clients
+    from agents._sdk._ctx import set_current_meta
+
+    stub = MagicMock()
+    stub.Complete = AsyncMock(return_value=MagicMock(content="ok"))
+    client = clients.LLMClient.__new__(clients.LLMClient)
+    client._stub = lambda: stub
+    set_current_meta({"thinking": "on"})
+    try:
+        asyncio.run(client.complete([{"role": "user", "content": "x"}], timeout=5))
+        assert stub.Complete.await_args.kwargs["timeout"] == clients._THINK_TIMEOUT
+        asyncio.run(client.complete([{"role": "user", "content": "x"}], timeout=5, thinking=False))
+        assert stub.Complete.await_args.kwargs["timeout"] == 5
+    finally:
+        set_current_meta(None)
+

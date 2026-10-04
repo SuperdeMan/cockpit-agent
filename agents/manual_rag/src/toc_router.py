@@ -93,8 +93,9 @@ class ManualTocRouter:
             {"role": "user", "content": f"【目录】\n{self._toc_block}\n\n【问题】{question}"},
         ]
         try:
+            # thinking=False：目录分类不需要思考；复杂任务下发的 thinking=on 会把 8 s 路由超时抬到 30 s（V202 一次路由 6.8 s）
             raw = await llm.complete(
-                messages, temperature=0.0, max_tokens=100, timeout=ROUTER_TIMEOUT_S)
+                messages, temperature=0.0, max_tokens=100, timeout=ROUTER_TIMEOUT_S, thinking=False)
         except RuntimeError as exc:
             # 与答案生成同一口径：LLMClient 把服务商/传输失败归一成 RuntimeError；
             # 编程错误照常抛出，不伪装成“路由没结论”。

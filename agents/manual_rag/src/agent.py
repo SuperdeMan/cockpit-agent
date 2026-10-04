@@ -389,8 +389,10 @@ class ManualRagAgent(BaseAgent):
                     return None, "out_of_budget"
                 timeout = min(timeout, remaining)
             try:
+                # thinking=False：复杂任务会给每一步下发 thinking=on，SDK 客户端据此把超时抬到 ≥30 s、max_tokens 抬到 2048——
+                # 预算超时被整个覆盖（固定语料 V202：生成被切在 15 s，按预算本该 14 s 内降级）。抽取式摘要不需要思考。
                 answer = await self.llm.complete(
-                    messages, temperature=0.2, max_tokens=200, timeout=timeout)
+                    messages, temperature=0.2, max_tokens=200, timeout=timeout, thinking=False)
                 return answer, ("recovered" if attempt == 2 else "")
             except RuntimeError as exc:
                 logger.warning("manual answer generation %s: %s",

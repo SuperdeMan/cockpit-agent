@@ -254,3 +254,16 @@ def test_parse_verdict_failures_are_silence(raw):
 def test_other_vehicle_verdict_carries_no_sections():
     verdict = parse_verdict('{"scope": "other_vehicle", "sections": ["T001"]}', ["T001"])
     assert verdict.sections == () and verdict.scope == SCOPE_OTHER_VEHICLE
+
+
+def test_router_and_answer_never_inherit_complex_task_thinking(tmp_path):
+    """复杂任务给每一步下发 thinking=on，SDK 客户端会把 8 s 路由超时、预算内的生成超时都抬到 30 s（固定语料 V202）。
+    目录分类与抽取式摘要都不需要思考——两次模型调用都显式关掉。"""
+    agent, provider = _agent(tmp_path)
+    sentinel = _entry(provider, "座椅和安全 > 车辆安全 > 哨兵模式")
+    agent.llm.complete = AsyncMock(side_effect=[
+        json.dumps({"scope": SCOPE_THIS_VEHICLE, "sections": [sentinel]}),
+        "可以，开启哨兵模式后车辆停放期间会录制视频。"])
+    asyncio.run(run_handle(agent, "manual.query", raw_text="停车时有人刮车能录下来吗", meta={"thinking": "on"}))
+    calls = agent.llm.complete.await_args_list
+    assert len(calls) == 2 and all(call.kwargs.get("thinking") is False for call in calls)
