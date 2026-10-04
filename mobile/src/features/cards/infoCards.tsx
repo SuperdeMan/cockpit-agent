@@ -364,7 +364,8 @@ export function ResearchReport({ p, card }: { p: Palette; card: ResearchReportCa
 /** 队伍标识（D18，Figma team/*）：36 圆（surface/highest）+ 2px 主客色环里放缩写——原来取名字前两个字，英文队名会变成「Ma」；
  *  有 https 队徽时画 32px 队徽（加载失败回落缩写圆）；国家队有国旗 emoji 时放国旗。主客色取 Palette.series[1] / [2]
  *  （Figma data/series/2 / 3；深色与 HMI Cards.tsx:906-907 同值，浅色换成过对比度的深一档）。
- *  队名在下方：分出胜负的已结束比赛里胜方用 label/m 主色，其余 caption 次级色 */
+ *  队名在下方：分出胜负的已结束比赛里胜方用 label/m 主色，其余 caption 次级色。
+ *  圆与队徽随字号档放大（p.font）：缩写走 label/m 字阶，大字档两个汉字约 32dp，固定 36 圆（2px 环内径 32）会压到环上 */
 function TeamBadge({
   p,
   name,
@@ -382,16 +383,18 @@ function TeamBadge({
 }) {
   const [logoFailed, setLogoFailed] = useState(false)
   const showLogo = !!logo && /^https:\/\//.test(logo) && !logoFailed
+  const d = p.font(36)
+  const logoSize = p.font(32)
   return (
     <View style={{ flex: 1, alignItems: 'center', gap: 6 }}>
       <View
         style={[
-          { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+          { width: d, height: d, borderRadius: d / 2, alignItems: 'center', justifyContent: 'center' },
           showLogo ? null : { borderWidth: 2, borderColor: color, backgroundColor: p.surfaceHighest },
         ]}
       >
         {showLogo ? (
-          <Image source={{ uri: logo }} style={{ width: 32, height: 32 }} resizeMode="contain" onError={() => setLogoFailed(true)} />
+          <Image source={{ uri: logo }} style={{ width: logoSize, height: logoSize }} resizeMode="contain" onError={() => setLogoFailed(true)} />
         ) : (
           <Text style={[cardText(p, flag ? 'titleM' : 'labelM'), { color: p.fg1 }]}>{flag || teamAbbr(name)}</Text>
         )}
