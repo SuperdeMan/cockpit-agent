@@ -392,6 +392,12 @@ maestro hierarchy     # 主屏能不能拿到完整树、testID 有没有落成�
    换内存宽裕的机器，或先重启。
 5. **折叠屏的内屏宽度**：小米内屏原生 741dp，展开即双栏（07 直接过）；OPPO 内屏原生 698dp，走舞台抽屉，
    要看双栏得在系统「显示与亮度 › 显示大小」选「较小」（821dp，`wm density` 在 ColorOS 上没有权限改），测完改回。
+6. **OPPO：开过飞行模式后 Tailscale 被系统封网，03 补发不了**。飞行模式期间 ColorOS 的后台冻结把 Tailscale 加进网络黑名单
+   （`logcat` 里 `OAppNetControlService: Hans update:[<Tailscale 的 uid>=true] blackList`）；Wi-Fi 回来后它**不会**被解封，
+   隧道一直不通，App 就一直「已断开 · 消息会排队」，直到 Tailscale 被切到前台那一刻才解封（2026-10-04 实测：解封后 4 秒隧道通、
+   App 2 秒内补连）。症状像 App 不重连，**先在手机上 `adb shell ping` 隧道对端、再 grep 那行日志**，别急着改重连。
+   跑 03 前给 Tailscale 开「允许后台行为」（是否够用待验），或关飞行模式后把 Tailscale 拉到前台一次。
+   公网连通别用 114.114.114.114 判断：它本来就不回 ICMP，用 223.5.5.5。
 
 ## 判据取舍（写 flow 时的三条）
 
