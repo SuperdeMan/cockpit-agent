@@ -15,6 +15,11 @@ import { textStyle } from '@/ui/tokens'
 /** 常亮标签：固定一个，避免「按组件实例发标签」时漏 deactivate 导致锁泄漏 */
 const KEEP_AWAKE_TAG = 'xiaozhou-companion'
 
+/** 栈锚定对话页：深链冷启动（桌面快捷方式「车况」、`xiaozhou://settings`、进程被杀后从最近任务恢复时系统重放的
+ *  启动 intent）原来只建目的地这一屏 ⇒ 设置 / 车况 / 地图没有返回键，系统返回直接退出 App（泓舟 10-04 真机反馈）。
+ *  anchor = index：冷启动到任何一屏都把对话页垫在下面，返回键与系统返回都回到对话页 */
+export const unstable_settings = { anchor: 'index' }
+
 export default function RootLayout() {
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)

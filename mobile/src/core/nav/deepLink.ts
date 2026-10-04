@@ -106,7 +106,7 @@ export function normalizeIntentHref(url: string): string {
  * 这条 URL 该怎么走。
  *
  * `initial=true`（冷启动的首个 URL）一律 handoff：那时栈还不存在，router 自己建的初始状态
- * 就是对的，我们插手只会把它建歪。
+ * 就是对的（根布局 `unstable_settings.anchor = 'index'` ⇒ 目的地下面垫着对话页），我们插手只会把它建歪。
  */
 export function planIntent(url: string, opts: { initial: boolean }): IntentPlan {
   const parsed = splitAppUrl(url)
