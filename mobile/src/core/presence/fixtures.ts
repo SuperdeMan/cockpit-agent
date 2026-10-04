@@ -68,6 +68,8 @@ export function presenceFixtures(): PresenceFixture[] {
       voice: { turnSource: 'handsfree', override: null, answer: true, card: false },
     }),
     mk('driving-suggest', { drivingSuggest: true, identity: 'trusted-tablet' }),
+    // v3 DR-6（Figma 08 页）：行车档手持身份的危险动作确认——Dock 按钮走行车目标 56。手动开关 + 一句「打开后备箱」就能造
+    mk('driving-confirm-A', { driving: true, identity: 'handheld', pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }] }),
     mk('looking', { visionCapturing: true, visionCameraActive: true }),
     mk('reconnecting', { connStatus: 'connecting', connChangedAt: NOW - 5_000 }),
     // AR01：只展示列表交互，不发业务确认（state-gallery 的 onConfirm 是 no-op）。
