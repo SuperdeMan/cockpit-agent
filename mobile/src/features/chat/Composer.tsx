@@ -254,9 +254,10 @@ export function Composer({ p, busy, stoppable = false, ptt, orb = true, orbState
             v3（D5，2026-10-02 拍板）：发 = 交互色实色（极光收回到光球 / 流式光标 / 语音层顶缘 / AI 角标四处），
             打断 = 中性 surfaceHighest，停播 = 琥珀；三态都是目标高（泊车 48，原来 44）。
             ⚠ C 身份行车档没有输入框 ⇒ **闲时不渲染这枚键**（打磨批 A / P09：B4 §6.3 那枚「永远点不动的键」
-            从此不出现），**忙时 / 出声时照旧挂载、可点**。
+            从此不出现），**忙时 / 出声时照旧挂载、可点**。B 身份输入框折成键盘键、还没展开时同理（Figma 08 页 DR-2
+            只有键盘键）：闲时没有可发的字，展开键盘后再出。
             svg 原生缺席仍回退文字——iconRuntimeAvailable() 是既有判据（坑账 §9.27） */}
-        {inputMode === 'hidden' && !keyActive ? null : (
+        {(inputMode === 'hidden' || (inputMode === 'folded' && !inputOpen)) && !keyActive ? null : (
         <Pressable
           testID="composer-send"
           accessibilityRole="button"

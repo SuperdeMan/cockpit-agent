@@ -83,6 +83,22 @@ test('行车档最多画 3 条是宿主的事：组件不自己 slice（给 4 �
   } finally { await act(async () => { view.unmount() }) }
 })
 
+test('DR-2：B 身份行车档键盘没展开时闲着不渲染发送键；展开键盘、出声 / 忙时都在', async () => {
+  const idle = await mount(composer({ inputMode: 'folded' }))
+  try {
+    expect(idle.root.findAllByProps({ testID: 'composer-send' })).toHaveLength(0)
+    const kb = idle.root.findAllByProps({ testID: 'composer-keyboard' }).find((n) => typeof n.props.onPress === 'function')!
+    await act(async () => { kb.props.onPress() })
+    expect(idle.root.findAllByProps({ testID: 'composer-send' }).length).toBeGreaterThan(0)
+  } finally { await act(async () => { idle.unmount() }) }
+  for (const over of [{ stoppable: true }, { busy: true }]) {
+    const view = await mount(composer({ inputMode: 'folded', ...over }))
+    try {
+      expect(view.root.findAllByProps({ testID: 'composer-send' }).length).toBeGreaterThan(0)
+    } finally { await act(async () => { view.unmount() }) }
+  }
+})
+
 test('P09：C 身份行车档闲时不渲染发送键（不留一枚永远点不动的键）；出声 / 忙时照旧可点', async () => {
   const idle = await mount(composer({ inputMode: 'hidden' }))
   try {
