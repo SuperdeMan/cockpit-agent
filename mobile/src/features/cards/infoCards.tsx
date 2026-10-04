@@ -71,7 +71,8 @@ export function Weather({ p, card }: { p: Palette; card: WeatherCard; onSend: Se
           {tiles.map((t) => (
             <View
               key={t.icon}
-              style={{ flex: 1, backgroundColor: p.surfaceHigh, borderRadius: RADIUS.md, paddingVertical: 10, paddingHorizontal: 12, gap: 2 }}
+              // 卡内嵌块与商户选品行、场景行同一做法：surfaceHigh + line 描边。浅色 surfaceHigh 与卡面同为白，没有描边就看不出块
+              style={{ flex: 1, backgroundColor: p.surfaceHigh, borderWidth: 1, borderColor: p.line, borderRadius: RADIUS.md, paddingVertical: 10, paddingHorizontal: 12, gap: 2 }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <CardIcon p={p} name={t.icon} size={16} color={t.color ?? p.fg2} />
