@@ -110,6 +110,7 @@ export class GatewaySession {
       probe: o.probe ?? httpProbe(this.edgeUrl),
       isOpen: () => this.isOpen,
       onDead: () => this.ws.reconnectNow(),
+      onWake: () => this.ws.wake(),
       ...(o.intervalMs !== undefined ? { intervalMs: o.intervalMs } : {}),
       ...(o.failThreshold !== undefined ? { failThreshold: o.failThreshold } : {}),
       ...(o.timers ? { timers: o.timers } : {}),

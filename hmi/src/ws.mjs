@@ -139,7 +139,7 @@ export class ResilientWebSocket {
 
   close() {
     this._userClosed = true
-    if (this._reconnectTimer) {
+    if (this._reconnectTimer != null) {
       this._timers.clear(this._reconnectTimer)
       this._reconnectTimer = null
     }
@@ -152,13 +152,25 @@ export class ResilientWebSocket {
   reconnectNow() {
     if (this._userClosed) return
     this._detach()
-    if (this._reconnectTimer) {
+    if (this._reconnectTimer != null) {
       this._timers.clear(this._reconnectTimer)
       this._reconnectTimer = null
     }
     this._onStatus('closed')
     this._attempt = 0 // 探活判死是「确知断了」，不该继承之前的退避档位
     this._scheduleReconnect()
+  }
+
+  // 「此刻值得马上再试」的时机（移动端回到前台、重新拿到窗口焦点）：正在退避等待就不等了、立刻连，
+  // 退避档位清零——等待期间攒下的失败不代表现在（2026-10-04 OPPO：熄屏时系统冻结 JS，退避表停着；
+  // 退避封顶 30s + 抖动，回到前台最多还要再干等约 45s）。已连上或正在握手就什么都不做：
+  // 不打断一次可能马上成功的握手。用户主动 close 过同样不自己爬起来。
+  wake() {
+    if (this._userClosed || this.isOpen || this._reconnectTimer == null) return
+    this._timers.clear(this._reconnectTimer)
+    this._reconnectTimer = null
+    this._attempt = 0
+    this._connect()
   }
 
   // 摘掉当前 socket：先摘回调再关——旧 socket 的 onclose 可能迟到（RN 上实测会），
@@ -176,7 +188,7 @@ export class ResilientWebSocket {
   // 已经排了重连表就不再排第二条。
   _abandon() {
     this._detach()
-    if (this._userClosed || this._reconnectTimer) return
+    if (this._userClosed || this._reconnectTimer != null) return
     this._onStatus('closed')
     this._scheduleReconnect()
   }

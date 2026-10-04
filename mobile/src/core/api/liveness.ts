@@ -30,6 +30,10 @@ export interface LivenessOpts {
   isOpen: () => boolean
   /** 连续失败达阈值时调用（接 GatewaySession.reconnectNow） */
   onDead: () => void
+  /** 回到前台 / 重新拿到窗口焦点时连接不在：让重连别再干等退避（接 ResilientWebSocket.wake）。
+   *  熄屏或切后台时 ColorOS 冻结 JS、退避表停着；在通知栏开关飞行模式时 App 一直是 active、只丢过焦点
+   *  （2026-10-04 OPPO：断网恢复后一直「已断开」，切一下窗口才连上） */
+  onWake?: () => void
   intervalMs?: number
   /** 连续失败几次才判死。1 次就判会被一次抖动误杀 */
   failThreshold?: number
@@ -37,7 +41,7 @@ export interface LivenessOpts {
   /** 测试注入：省得在 jest 里摆弄真 AppState */
   appState?: {
     currentState: AppStateStatus
-    addEventListener(type: 'change', h: (s: AppStateStatus) => void): { remove(): void }
+    addEventListener(type: 'change' | 'focus', h: (s: AppStateStatus) => void): { remove(): void }
   }
 }
 
@@ -128,24 +132,36 @@ export function startLiveness(opts: LivenessOpts): () => void {
   }
 
   arm()
-  // 回到前台立刻探一次：锁屏一段时间回来最可能已经断了，等满一个周期太久
+  // 回到前台立刻探一次：锁屏一段时间回来最可能已经断了，等满一个周期太久。
+  // 连接本来就不在（重连正在退避里等）就不探了，让重连马上试（onWake）
   const sub = appState.addEventListener('change', (s: AppStateStatus) => {
     if (s !== 'active' || stopped) return
+    if (!opts.isOpen()) {
+      opts.onWake?.()
+      return
+    }
     if (timer != null) {
       timers.clear(timer)
       timer = null
     }
     tick()
   })
+  // Android 窗口焦点：拉下通知栏开关网络再收起时 App 一直是 active，只有 focus 说明「用户回来了」。
+  // 这里只做 wake、不探活——焦点进出很频繁，探活节奏不跟着它走
+  const focusSub = appState.addEventListener('focus', () => {
+    if (!stopped && !opts.isOpen()) opts.onWake?.()
+  })
 
   return () => {
     if (stopped) return
     stopped = true
     if (timer != null) timers.clear(timer)
-    try {
-      sub.remove()
-    } catch {
-      /* ignore */
+    for (const s of [sub, focusSub]) {
+      try {
+        s.remove()
+      } catch {
+        /* ignore */
+      }
     }
   }
 }

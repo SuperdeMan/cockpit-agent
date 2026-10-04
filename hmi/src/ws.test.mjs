@@ -170,6 +170,44 @@ test('reconnectNow: 旧 socket 的 onclose 迟到不会排出第二条重连链'
   assert.equal(instances.length, 2, '只应有一次重连，不是两次')
 })
 
+// ── wake：回到前台 / 拿回焦点时别再干等退避 ──
+
+test('wake: 正在退避等待 ⇒ 立刻连、退避档位清零，队列照常 flush', () => {
+  const { rws, instances, timers } = harness()
+  rws.start()
+  instances[0].close() // 握手失败 → 排上退避重连
+  rws.send({ q: 1 })
+  assert.equal(timers.live(), 1)
+  rws.wake()
+  assert.equal(timers.live(), 0, '退避表撤掉')
+  assert.equal(instances.length, 2, '当场新建连接，不等定时器')
+  instances[1]._open()
+  assert.deepEqual(instances[1].sent.map((r) => JSON.parse(r)), [{ q: 1 }])
+  instances[1].close() // 再断一次：档位已清零，不继承之前的退避
+  assert.equal(rws._attempt, 1)
+})
+
+test('wake: 已连上或正在握手 ⇒ no-op（不打断一次可能马上成功的握手）', () => {
+  const { rws, instances, timers } = harness()
+  rws.start()
+  rws.wake() // 正在握手
+  assert.equal(instances.length, 1)
+  instances[0]._open()
+  rws.wake() // 已连上
+  assert.equal(instances.length, 1)
+  assert.equal(timers.live(), 0)
+})
+
+test('wake: close() 之后是 no-op', () => {
+  const { rws, instances, timers } = harness()
+  rws.start()
+  instances[0].close()
+  rws.close()
+  rws.wake()
+  timers.fireAll()
+  assert.equal(instances.length, 1)
+})
+
 test('reconnectNow: close() 之后是 no-op（用户主动关了就别自己爬起来）', () => {
   const { rws, instances, timers } = harness()
   rws.start()

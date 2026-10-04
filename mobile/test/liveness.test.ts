@@ -38,17 +38,23 @@ function fakeTimers() {
 }
 
 function fakeAppState(initial: 'active' | 'background' = 'active') {
-  const handlers: ((s: string) => void)[] = []
+  const handlers: Record<string, ((s: string) => void)[]> = { change: [], focus: [] }
   return {
     currentState: initial as never,
-    addEventListener(_t: 'change', h: (s: never) => void) {
-      handlers.push(h as (s: string) => void)
-      return { remove: () => handlers.splice(handlers.indexOf(h as never), 1) }
+    addEventListener(t: 'change' | 'focus', h: (s: never) => void) {
+      const list = handlers[t]
+      list.push(h as (s: string) => void)
+      return { remove: () => list.splice(list.indexOf(h as never), 1) }
     },
     emit(s: string) {
       this.currentState = s as never
-      handlers.slice().forEach((h) => h(s))
+      handlers.change.slice().forEach((h) => h(s))
     },
+    /** Android 窗口焦点回来（收起通知栏等）：AppState 不变 */
+    focus() {
+      handlers.focus.slice().forEach((h) => h(this.currentState as string))
+    },
+    listeners: () => handlers.change.length + handlers.focus.length,
   }
 }
 
@@ -194,6 +200,46 @@ describe('startLiveness', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(onDead).not.toHaveBeenCalled()
+  })
+
+  test('回到前台时连接不在：不探活，直接让重连别等退避（onWake）', async () => {
+    const t = fakeTimers()
+    const probe = jest.fn(async () => true)
+    const onWake = jest.fn()
+    const app = fakeAppState('background')
+    startLiveness({ probe, isOpen: () => false, onDead: jest.fn(), onWake, timers: t.timers, appState: app as never })
+    app.emit('active')
+    await Promise.resolve()
+    expect(onWake).toHaveBeenCalledTimes(1)
+    expect(probe).not.toHaveBeenCalled()
+  })
+
+  test('拿回窗口焦点（AppState 一直 active）：连接不在就 onWake；连接在就什么都不做（不跟着焦点探活）', async () => {
+    const t = fakeTimers()
+    const probe = jest.fn(async () => true)
+    const onWake = jest.fn()
+    let open = false
+    const app = fakeAppState('active')
+    startLiveness({ probe, isOpen: () => open, onDead: jest.fn(), onWake, timers: t.timers, appState: app as never })
+    app.focus()
+    expect(onWake).toHaveBeenCalledTimes(1)
+    open = true
+    app.focus()
+    await Promise.resolve()
+    expect(onWake).toHaveBeenCalledTimes(1)
+    expect(probe).not.toHaveBeenCalled()
+  })
+
+  test('stop 摘掉前后台与焦点两个监听，之后焦点回来也不 onWake', () => {
+    const t = fakeTimers()
+    const onWake = jest.fn()
+    const app = fakeAppState('active')
+    const stop = startLiveness({ probe: async () => true, isOpen: () => false, onDead: jest.fn(), onWake, timers: t.timers, appState: app as never })
+    expect(app.listeners()).toBe(2)
+    stop()
+    expect(app.listeners()).toBe(0)
+    app.focus()
+    expect(onWake).not.toHaveBeenCalled()
   })
 
   test('stop 之后不再探，重复 stop 安全', async () => {
