@@ -206,6 +206,13 @@ services:
       DASHSCOPE_LLM_KEY: ${DASHSCOPE_LLM_KEY:-}
       QWEN_MODEL_PRIMARY: ${QWEN_MODEL_PRIMARY:-qwen3.7-max}
       QWEN_MODEL_FAST: ${QWEN_MODEL_FAST:-qwen3.7-plus}
+      # Jev 语义判别（Decide，v2 JV01/JV03）：缺省全关（DECISION_ENABLED=false ⇒ 零外呼）。键只在本网关读、
+      # 不进 .env.example（发布闸硬阻断），见 docs/design/2026-10-04-jev-decide-integration.md。
+      DECISION_ENABLED: ${DECISION_ENABLED:-false}
+      DECISION_TASKS: ${DECISION_TASKS:-}
+      DECISION_MODEL: ${DECISION_MODEL:-}
+      DECISION_MAX_BUDGET_MS: ${DECISION_MAX_BUDGET_MS:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       # T3.5 e2e_degrade.py 测试钩子：MockProvider 人为延迟（ms），默认 0=零行为变化；
       # 仅该脚本「LLM 超时」用例会用 shell env 临时覆盖调大（不写入 .env，沿用
       # e2e_auth.py 已确立的"临时 env 覆盖，不改 .env"惯例）。
@@ -319,6 +326,9 @@ services:
       REJECT_NON_ADDRESSED: ${REJECT_NON_ADDRESSED:-on}
       CLARIFY_ENABLED: ${CLARIFY_ENABLED:-on}
       CLARIFY_FALLBACK_MIN: ${CLARIFY_FALLBACK_MIN:-0.5}
+      # Jev 受话 shadow（JV03）：off 缺省；只观测、不改结果。scope：synthetic（缺省，只对合成会话）| all。
+      DECISION_ADDRESSED_MODE: ${DECISION_ADDRESSED_MODE:-off}
+      DECISION_SHADOW_SCOPE: ${DECISION_SHADOW_SCOPE:-synthetic}
       # M0b Skill 层：full|canary|shadow|off（默认 full=注入——Full Migration 后中央 base
       # 不含领域知识，shadow/off 仅作研究/debug 档，会缺规划知识）
       SKILLS_MODE: ${SKILLS_MODE:-full}

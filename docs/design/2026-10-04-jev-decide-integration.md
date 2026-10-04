@@ -50,6 +50,9 @@
 
 ## 5. 需要用户确认的节点（到点再问，不提前打包授权）
 
+> **2026-10-04 用户决定**：第 2、3、4 项批准，且第 4 项选「包含真实用户」——真实会话的原话（不带身份标识）也发给 typesafe.ai 做受话对照
+> （`DECISION_SHADOW_SCOPE=all`）。第 1 项不需要（cloud 档不用本地栈；本机评测只在进程内注入凭证）。
+
 1. 本地根 `.env` 写入 `TYPESAFE_API_KEY`（或继续只在进程内注入、不写 `.env`）。
 2. `deploy/docker-compose.yaml` 给 llm-gateway 透传 `TYPESAFE_API_KEY` / `DECISION_*`（基础设施审批）。
 3. 云端 `.env` 写入密钥。
@@ -115,6 +118,8 @@
   网关侧仍要 `DECISION_ENABLED=true`、`DECISION_TASKS=addressed` 与凭证才会真外呼。
 - 测试：缺省关闭与范围外零调用、合成会话对照规划器且 span 不带原话、范围 all、失败只记不抛、并发上限丢样本、超长 / 空文本跳过、
   引擎在规划后带规划器结论调度（结果照旧由规划器决定）。变异 9 处全部判红。
-- 要在云端开始收集对照数据，需要 §5 第 2、3 项（compose 给 llm-gateway 透传 `TYPESAFE_API_KEY` / `DECISION_ENABLED` / `DECISION_TASKS`、
-  给 cloud-planner 透传 `DECISION_ADDRESSED_MODE` / `DECISION_SHADOW_SCOPE`；云端 `.env` 写入凭证）；范围扩到真实用户另需第 4 项。
+- 上云（用户已批准，见 §5）：`deploy/docker-compose.yaml` 给 llm-gateway 透传 `DECISION_ENABLED` / `DECISION_TASKS` / `DECISION_MODEL` /
+  `DECISION_MAX_BUDGET_MS` / `TYPESAFE_API_KEY`、给 cloud-planner 透传 `DECISION_ADDRESSED_MODE` / `DECISION_SHADOW_SCOPE`（缺省值都是关闭）；
+  云端共享 `.env` 写入凭证与 `DECISION_ENABLED=true`、`DECISION_TASKS=addressed`、`DECISION_ADDRESSED_MODE=shadow`、`DECISION_SHADOW_SCOPE=all`。
+  云端主机到 Jev 直连实测首个请求 0.56 s、复用连接 0.21 s，不需要代理。
 
