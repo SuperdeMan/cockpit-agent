@@ -3,14 +3,16 @@
 Read-only: distance-estimate questions only ("去X要开多久"), each in a fresh session of a synthetic signed E2E user on
 vehicle v1; no navigation, confirmation, vehicle command or merchant/payment call. For each destination the estimate
 must name a place containing one of the expected names (docs/design/2026-10-04-local-destination-ranking.md §3 A/B)
-and none of the attachment names it used to land on; 「鼓浪屿」 must offer both places with Xiamen first. The release
-SHA is checked before and after; a JSON evidence file is written.
+and none of the attachment names it used to land on; 「鼓浪屿」 must offer both places with Xiamen first. Category names
+(§7) must also stay within a route distance (they used to go to Beijing). The release SHA is checked before and after;
+a JSON evidence file is written.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -26,7 +28,7 @@ from scripts.e2e_identity import sign_identity  # noqa: E402
 from scripts.render_cloud_env import DEMO_AUTH_SCOPES  # noqa: E402
 
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
-# 目的地 → (话术里应出现的名字之一, 不应再出现的附属地点)
+# 目的地 → (话术里应出现的名字之一，空 = 不限; 不应再出现的附属地点 / 城市)
 CASES = {
     "大梅沙": (("大梅沙海滨",), ("推拿",)),
     "蛇口港": (("蛇口港",), ("公安局",)),
@@ -35,8 +37,17 @@ CASES = {
     "会展中心": (("深圳会展中心",), ("国家会议中心",)),
     "山姆会员店": (("山姆会员商店",), ("北京",)),
     "厦门火车站": (("厦门站", "厦门火车站"), ()),
+    # §7 带类目词的通称：不再去北京，连锁店是近处那家
+    "儿童医院": (("儿童医院",), ("北京", "首都医科大学")),
+    "口腔医院": (("口腔",), ("北京",)),
+    "7-11便利店": (("7-ELEVEn", "7-Eleven", "7-11"), ("北京",)),
+    "华润万家超市": (("华润万家",), ()),
+    "医院": ((), ("北京",)),
 }
 ASK = {"鼓浪屿": "厦门"}          # 应发问：候选第一个带这个城市
+# 话术报的全程公里数上限（「全程约X公里」；话术不报距离时不判）：类目通称该在本城、连锁店该是近处那家
+MAX_KM = {"儿童医院": 60, "口腔医院": 15, "7-11便利店": 15, "华润万家超市": 6, "医院": 15}
+_ROUTE_KM = re.compile(r"全程约\s*([\d.]+)\s*公里")
 
 
 def _card(obs: dict) -> dict:
@@ -72,7 +83,10 @@ async def probe(expected_sha: str) -> dict:
             ok = card.get("purpose") == "dest_choice" and bool(items) and ASK[dest] in items[0]
         else:
             want, avoid = CASES[dest]
-            ok = any(w in speech for w in want) and not any(a in speech for a in avoid)
+            ok = (not want or any(w in speech for w in want)) and not any(a in speech for a in avoid)
+        km = _ROUTE_KM.search(speech)
+        if dest in MAX_KM and km:
+            ok = ok and float(km.group(1)) <= MAX_KM[dest]
         row = {"dest": dest, "ok": ok, "speech": speech[:160], "items": items, "actions": obs.get("actions") or []}
         result["rows"].append(row)
         print(f"{dest:<6} ok={int(ok)} items={items} | {speech[:70]}")
