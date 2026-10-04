@@ -92,3 +92,87 @@ def test_a_retry_that_fails_outright_still_falls_back_to_the_salvage():
                   retry=("", None))
     assert [s.intent for s in plan.steps] == ["navigation.navigate_to"], plan.steps
     assert plan.plan_mode == "toolcall_salvage_kept"
+
+
+# ── 重试丢了抢救计划里的一步（2026-10-04 固定语料 V219）────────────────────────────────────────────
+def _agents_with_manual():
+    return _agents() + [MockAgent("manual", ["manual.query"]), MockAgent("weather", ["info.weather"])]
+
+
+def _tool_call(*pairs):
+    catalog = _assemble_capability_catalog(_agents_with_manual())
+    return ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": {"addressed": True, "steps": [
+        {"id": f"s{i}", "capability_ref": catalog.pair_to_ref[pair], "slots": {}, "depends_on": [], "slot_refs": {}}
+        for i, pair in enumerate(pairs, 1)]}}])
+
+
+def _build_with(text, salvage_pairs, retry_pairs):
+    catalog = _assemble_capability_catalog(_agents_with_manual())
+    salvage = json.dumps({"addressed": True, "steps": [
+        {"id": f"s{i}", "capability_ref": catalog.pair_to_ref[pair], "slots": {}, "depends_on": [], "slot_refs": {}}
+        for i, pair in enumerate(salvage_pairs, 1)]}, ensure_ascii=False)
+    replies = [(salvage, None), _tool_call(*retry_pairs)]
+
+    async def llm_tools(messages, tools):
+        return replies.pop(0)
+
+    async def llm(messages):
+        return "这不是 JSON"
+
+    async def resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=resolve, llm_tool_fn=llm_tools)
+    return asyncio.run(builder.build(text, WorkingSet(catalog=_agents_with_manual()), PlanContext(session_id="t")))
+
+
+_WEATHER = ("weather", "info.weather")
+_MANUAL = ("manual", "manual.query")
+
+
+def test_a_retry_that_drops_a_salvaged_step_of_a_compound_request_keeps_the_salvage():
+    plan = _build_with("深圳今天天气怎么样，再告诉我空调有哪些模式", [_WEATHER, _MANUAL], [_WEATHER])
+    assert [s.intent for s in plan.steps] == ["info.weather", "manual.query"], plan.steps
+    assert plan.plan_mode == "toolcall_salvage_kept"
+
+
+def test_the_retry_wins_when_it_is_not_a_subset_or_the_request_is_not_compound():
+    plan = _build_with("深圳今天天气怎么样，再告诉我空调有哪些模式", [_WEATHER, _MANUAL], [("info", "info.search")])
+    assert [s.intent for s in plan.steps] == ["info.search"]                 # 重试换了别的意图：不替模型拼
+    plan = _build_with("深圳今天天气怎么样", [_WEATHER, _MANUAL], [_WEATHER])
+    assert [s.intent for s in plan.steps] == ["info.weather"]                # 不是复合句：重试那份就是答案
+    plan = _build_with("深圳今天天气怎么样，再告诉我空调有哪些模式", [_WEATHER], [_WEATHER, _MANUAL])
+    assert [s.intent for s in plan.steps] == ["info.weather", "manual.query"]  # 重试更全：用重试
+    plan = _build_with("如果深圳明天下雨，再告诉我空调有哪些模式", [_WEATHER, _MANUAL], [_WEATHER])
+    assert [s.intent for s in plan.steps] == ["info.weather"]                # 条件句有意留后一半：不替模型补
+
+
+def test_an_equally_short_salvage_does_not_replace_the_retry(monkeypatch):
+    """一步的抢救计划平时留不下来（第一轮的多动作守卫就拒了它）；那条守卫被按名关掉时，一样多的步仍用重试那份（槽可能更准）。"""
+    monkeypatch.setenv("PLANNER_RETRY_DISABLE", "multi_action_omitted")
+    plan = _build_with("深圳今天天气怎么样，再告诉我空调有哪些模式", [_WEATHER], [_WEATHER])
+    assert plan.plan_mode != "toolcall_salvage_kept"
+
+
+def test_a_retry_that_says_not_addressed_is_not_overridden_by_the_salvage():
+    replies = [(json.dumps({"addressed": True, "steps": [
+        {"id": f"s{i}", "capability_ref": _assemble_capability_catalog(_agents_with_manual()).pair_to_ref[pair],
+         "slots": {}, "depends_on": [], "slot_refs": {}} for i, pair in enumerate((_WEATHER, _MANUAL), 1)]}), None),
+               ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": {"addressed": False, "steps": []}}])]
+
+    async def llm_tools(messages, tools):
+        return replies.pop(0)
+
+    async def llm(messages):
+        return "这不是 JSON"
+
+    async def resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=resolve, llm_tool_fn=llm_tools)
+    plan = asyncio.run(builder.build("深圳今天天气怎么样，再告诉我空调有哪些模式", WorkingSet(catalog=_agents_with_manual()),
+                                     PlanContext(session_id="t")))
+    # 不受话的重试按既有规则处理（文字输入的信息请求交给闲聊作答），不被抢救计划顶替
+    assert [s.intent for s in plan.steps] != ["info.weather", "manual.query"]
+    assert "salvage_kept" not in plan.plan_mode
+

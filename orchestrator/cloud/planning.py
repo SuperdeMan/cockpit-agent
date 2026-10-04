@@ -1890,6 +1890,7 @@ class PlanBuilder:
         # 按段问表、施加控制流。每条规则可单测、可按名消融、可清点。
         retries = RetryController(_RETRY_PREDICATES, disabled=disabled_policies())
         plan = None
+        plan_data = None     # 被接受那一轮的原始输出（循环后的判据要用它的 goal）
         plan_mode = "json"
         last_raw = ""
         no_action = 0        # 「受话了、但不该做任何动作」连续出现的次数，见循环后
@@ -2026,6 +2027,7 @@ class PlanBuilder:
                     salvage_attempt = attempt
                     continue
                 plan = parsed
+                plan_data = data
                 plan_mode = mode
                 plan_nudged = attempt == nudged_attempt
                 break
@@ -2042,6 +2044,21 @@ class PlanBuilder:
                     # 输入自身已提供确定性证据；不让第二次抽样把正确的空动作翻成执行。
                     no_action = 2
                     break
+
+        # 强制重试不许比不重试更差（续，2026-10-04 固定语料 V219）：「深圳今天天气怎么样，再告诉我空调有哪些模式」第一轮掉档、
+        # 抢救出的计划为走正规工具通道重试一次；第二轮只交了天气一步，而「多动作遗漏」守卫只在第一轮有资格——没有下一轮可纠正，
+        # 更差的那份被接受了。重试计划正是那条守卫要拦的形态（`_simple_goal_omits_multi_action_step`），它的意图都在抢救计划里、
+        # 抢救计划还多出步 ⇒ 用抢救计划。重试交的是空步 / 澄清 / 不受话时不动（那是另一种结论，由既有规则处理）。
+        if (plan is not None and salvage_kept is not None and plan is not salvage_kept
+                and plan.steps and plan.addressed and plan.clarify is None
+                and len(salvage_kept.steps) > len(plan.steps)
+                and {s.intent for s in plan.steps} <= {s.intent for s in salvage_kept.steps}
+                and _simple_goal_omits_multi_action_step(plan_data, plan, text)):
+            logger.info("tool-channel retry dropped step(s) the salvaged plan had; keeping the salvaged plan "
+                        "(retry=%s salvaged=%s)", [s.intent for s in plan.steps],
+                        [s.intent for s in salvage_kept.steps])
+            plan = salvage_kept
+            plan_mode = "toolcall_salvage_kept"
 
         # 追加批 G（G-3，设计 §10）：**被催出来的写操作要原话佐证。** `explicit_input_not_addressed` 的纠正话术断言
         # 「无法完成显式请求」——原话里没有请求时，模型顺着这个前提编一个：真栈 `a59b1621` RS21「可以，已为您执行」
