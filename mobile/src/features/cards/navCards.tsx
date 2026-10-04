@@ -337,8 +337,6 @@ export function ChargingRoute({ p, card }: { p: Palette; card: ChargingRouteCard
   )
 }
 
-// 天色板与 HMI 同源（Cards.tsx:1131），同一份行程在两端不该是两套配色
-const DAY_COLORS = ['#46D6E0', '#5B8CFF', '#9A6BFF', '#FF6BD6', '#34D399']
 // 打磨批 C（评审 P15）：停靠点类型 → 线性图标名（共享台账的 landmark / dining / hotel / pin + 本地 bolt），不再用 emoji
 const TRIP_STOP_ICON: Record<string, IconName> = {
   attraction: 'landmark',
@@ -371,7 +369,9 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
         <Text style={{ color: p.fg3, fontSize: p.font(11) }}>{card.cities.join(' → ')}</Text>
       ) : null}
       {days.map((day, di) => {
-        const color = DAY_COLORS[di % DAY_COLORS.length]
+        // 天色板取 data/series（深色值与 HMI Cards.tsx 的天色板同值；浅色有自己的深色档）。
+        // 原来写死深色值，浅色主题下「D1」是浅青字压浅青底读不出（v3 浅色真机轮）
+        const color = p.series[di % p.series.length]
         const charges = (day.legs || []).flatMap((l) => l.charging_stops || [])
         const isOpen = !closed[day.day_index]
         return (

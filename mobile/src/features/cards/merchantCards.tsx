@@ -244,7 +244,8 @@ export function PaymentQr({ p, card, onSend }: { p: Palette; card: any; onSend: 
                 borderRadius: 8,
               }}
             >
-              <Text style={{ color: '#3A2604', fontSize: p.font(13), fontWeight: '700' }}>已过期</Text>
+              {/* 字色用 onAmber（浅色主题琥珀是深棕 #92400E，写死的深棕字压上去读不出——v3 浅色真机轮） */}
+              <Text style={{ color: p.onAmber, fontSize: p.font(13), fontWeight: '700' }}>已过期</Text>
             </View>
           ) : null}
         </View>

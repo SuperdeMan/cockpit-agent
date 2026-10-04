@@ -415,7 +415,10 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         style={{ flex: 1 }}
         onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}
       >
-      <BlurTargetView ref={blurTargetRef} onLayout={onBlurTargetLayout} style={{ flex: 1 }}>
+      {/* 底色必须画在模糊目标自己身上：expo-blur 先用窗口背景清帧再画目标子树，而窗口背景跟的是**系统**深浅
+          （AppTheme 是 DayNight、没设 windowBackground）。App 浅色 + 系统深色时，目标里只有白卡片、其余透明 ⇒
+          糊出来是深灰，语音层整层发灰（v3 浅色真机轮实测壳 224–233 中性灰）；反过来深色 App 会被提亮 */}
+      <BlurTargetView ref={blurTargetRef} onLayout={onBlurTargetLayout} style={{ flex: 1, backgroundColor: p.bg }}>
       {welcome ? (
         <Welcome
           p={p}
