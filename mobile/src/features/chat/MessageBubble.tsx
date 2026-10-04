@@ -16,7 +16,7 @@ import type { Msg } from '@shared/types.ts'
 
 import type { FollowUpChip } from '../../core/session/followUps'
 import type { Receipt } from '../../core/session/receipt'
-import { isProactive } from '../../core/session/turnView'
+import { hasAnswerText, isProactive } from '../../core/session/turnView'
 import type { FontScalePref } from '../../core/settings/store'
 
 import { StreamCursor, ThinkDots } from '../../ui/aurora'
@@ -250,7 +250,7 @@ export function MessageBubble({ p, msg, uncertain, draft, interrupted, s2s, visi
             ) : null}
             {resend}
           </View>
-        ) : msg.text ? (
+        ) : hasAnswerText(msg, !!interrupted) ? (
           <Text testID="bubble-text" style={{ ...textStyle('bodyM', fontScale), color: p.fg1 }}>
             {shownText}
             {/* 光标跟着「还在长」走：流式中，或 final 已到但显示还没追到尾 */}

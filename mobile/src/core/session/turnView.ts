@@ -9,6 +9,15 @@ export function isProactive(m: Msg): boolean {
   return m.proactiveKind !== undefined || m.text.startsWith('💡 ')
 }
 
+/** 打断留痕的占位正文（方案 §5.2 规则 4）：一个字没出就被打断时，会话层把正文写成它。
+ *  记录与语音层另有灰字「已打断」标记 ⇒ 这条占位不再当正文画，否则同一句话出现两遍（v3 真机 10-04） */
+export const INTERRUPTED_TEXT = '已打断'
+
+/** 这条助手气泡有没有要画的正文：被打断、且正文只是占位时没有 */
+export function hasAnswerText(m: Msg, interrupted: boolean): boolean {
+  return !!m.text && !(interrupted && m.text === INTERRUPTED_TEXT)
+}
+
 /** 旁白：主动播报、到期留痕——它们在记录里，但不是「这一轮的回答」 */
 export function isAside(m: Msg): boolean {
   return isProactive(m) || m.text.startsWith('⏱ ')

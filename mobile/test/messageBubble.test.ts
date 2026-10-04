@@ -154,6 +154,21 @@ test('v3 P4c：回执里有车控项就在气泡里出车控结果卡；只有�
   } finally { await act(async () => { mediaOnly.unmount() }) }
 })
 
+test('打断留痕：一个字没出就被打断只出一次「已打断」（灰字），出了一半的正文保留并加灰字', async () => {
+  const texts = (view: ReactTestRenderer) => view.root.findAllByType(Text).map((t) => [t.props.children].flat().join(''))
+  // 会话层对「一个字没出」写的占位正文就是 INTERRUPTED_TEXT（store.markInterrupted）
+  const empty = await mount(bubble({ id: 'i1', role: 'assistant', text: '已打断' } as Msg, { interrupted: true }))
+  try {
+    expect(texts(empty).filter((t) => t.includes('已打断'))).toHaveLength(1)
+    expect(empty.root.findAllByProps({ testID: 'bubble-text' })).toHaveLength(0)
+  } finally { await act(async () => { empty.unmount() }) }
+  const partial = await mount(bubble({ id: 'i2', role: 'assistant', text: '固态电池就是把' } as Msg, { interrupted: true }))
+  try {
+    expect(partial.root.findAllByProps({ testID: 'bubble-text' }).length).toBeGreaterThan(0)
+    expect(texts(partial).filter((t) => t === '已打断')).toHaveLength(1)
+  } finally { await act(async () => { partial.unmount() }) }
+})
+
 test('v3 DR-1：行车档下记录里的卡是行车摘要（与语音层同一张），泊车是全量卡；车控结果卡同理', async () => {
   const weather = CARD_FIXTURES.find((f) => f.label === 'weather')!.card
   const msg = { id: 'w', role: 'assistant', text: '深圳今天多云', uiCard: weather } as Msg

@@ -40,6 +40,7 @@ import { NO_EDGE_DRIVING, recordEdgeDriving, type DrivingEdgeFact } from '../pre
 import { actionSummary } from './actionSummary'
 import { emptyCandidates, recordCandidates, type CandidateState } from './candidates'
 import { routeSend } from './sendRouter'
+import { INTERRUPTED_TEXT } from './turnView'
 
  
 
@@ -1369,7 +1370,7 @@ export class SessionCore {
     this.store.setState((s) => ({
       messages: s.messages.map((msg) =>
         msg.id === id && (msg.pending || msg.streaming || msg.processActive)
-          ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断' }
+          ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || INTERRUPTED_TEXT }
           : msg,
       ),
       interruptedIds: s.interruptedIds.includes(id) ? s.interruptedIds : [...s.interruptedIds, id],

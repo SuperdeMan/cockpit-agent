@@ -37,7 +37,7 @@ import { sheetCapsuleText, type PresenceSnapshot } from '@/core/presence/presenc
 import type { CandidateState } from '@/core/session/candidates'
 import { followUpChips, MAX_CHIPS } from '@/core/session/followUps'
 import { followOnContentChange } from '@/core/session/history'
-import type { TurnView } from '@/core/session/turnView'
+import { hasAnswerText, type TurnView } from '@/core/session/turnView'
 import type { FontScalePref } from '@/core/settings/store'
 import { controlItems } from '@/core/cards/controlResult'
 import { CardRenderer } from '@/features/cards/CardRenderer'
@@ -350,7 +350,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
       ) : null}
       {/* 回答区：speech_delta 逐字 + StreamCursor；pending 时 ThinkDots。行车档 18pt（§6） */}
       {assistant?.pending ? <ThinkDots color={p.accent} animated={props.motion.loops} /> : null}
-      {assistant?.text ? (
+      {assistant && hasAnswerText(assistant, props.interruptedIds.includes(assistant.id)) ? (
         <Text
           testID="voice-sheet-answer"
           accessibilityLiveRegion="polite"
