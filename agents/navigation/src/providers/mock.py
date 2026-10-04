@@ -7,7 +7,8 @@ class MockPOIProvider(POIProvider):
     async def search(self, keyword: str, near: GeoPoint = None,
                      category: str = "", rating_min: float = 0,
                      limit: int = 5, page: int = 1,
-                     meta: dict | None = None) -> list[POI]:
+                     meta: dict | None = None, *, rank: str = "",
+                     radius_m: int = 0, region: str = "") -> list[POI]:
         items = []
         start = (max(1, page) - 1) * limit  # 翻页：不同 page 给不同示例，便于"换一批"
         for i in range(start + 1, start + limit + 1):

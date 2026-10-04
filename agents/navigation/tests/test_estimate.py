@@ -69,6 +69,17 @@ def test_estimate_defaults_origin_to_current_position():
     assert (round(start.lat, 4), round(start.lng, 4)) == (22.5410, 113.9412)
 
 
+def test_a_placeholder_origin_from_the_planner_is_the_current_position():
+    """2026-10-04 真栈：规划器把「去上海虹桥站要开多久」的起点写成字面「当前位置」，估算拿这四个字去搜地点，
+    搜到一个停车场入口当起点（还因此跳过了续航提醒）。占位值就是没给起点（判据 `runtime.slots`）。"""
+    for placeholder in ("当前位置", "我的位置", "这里"):
+        agent, calls = _agent({"深圳北站": [_NORTH], placeholder: [_CIVIC]})
+        res = _estimate(agent, {"destination": "深圳北站", "origin": placeholder}, "去深圳北站要开多久")
+        assert res.ui_card["origin"] == "当前位置" and placeholder not in calls["search"]
+        start, _end = calls["route"][0]
+        assert (round(start.lat, 4), round(start.lng, 4)) == (22.5410, 113.9412)
+
+
 def test_estimate_without_position_asks_instead_of_guessing():
     """**没有起点就没有路程**——不许拿一个假起点算出一个像模像样的数。"""
     agent, calls = _agent({"深圳北站": [_NORTH]})

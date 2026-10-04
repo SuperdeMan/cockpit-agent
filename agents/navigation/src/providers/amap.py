@@ -146,17 +146,25 @@ class AmapPOIProvider(POIProvider):
 
     async def search(self, keyword: str, near: GeoPoint = None, category: str = "",
                      rating_min: float = 0, limit: int = 5, page: int = 1,
-                     meta: dict | None = None) -> list[POI]:
+                     meta: dict | None = None, *, rank: str = "",
+                     radius_m: int = 0, region: str = "") -> list[POI]:
         loc = await self._resolve_location(near, meta)
         common = {"keywords": keyword,
                   "page_size": str(max(1, min(limit, 25))),
                   "page_num": str(max(1, page)),  # 翻页："换一批"取下一页不同结果
                   "show_fields": "business"}
-        if loc:  # 有位置 → 周边搜索（带 distance）
-            data = await self._get("/v5/place/around", {**common, "location": loc},
-                                   "place_around", meta)
-        else:     # 无位置 → 关键字检索
-            data = await self._get("/v5/place/text", common, "place_text", meta)
+        if loc:  # 有位置 → 周边搜索（带 distance）；缺省半径 5 km、按距离排
+            params = {**common, "location": loc}
+            if rank == "weight":
+                params["sortrule"] = "weight"
+            if radius_m:
+                params["radius"] = str(max(1, min(int(radius_m), 50000)))   # 高德上限 50 km
+            data = await self._get("/v5/place/around", params, "place_around", meta)
+        else:     # 无位置 → 关键字检索；region 限定城市
+            params = dict(common)
+            if region:
+                params.update(region=region, city_limit="true")
+            data = await self._get("/v5/place/text", params, "place_text", meta)
         results: list[POI] = []
         for p in (data.get("pois") or []):
             poi = self._poi_from(p)

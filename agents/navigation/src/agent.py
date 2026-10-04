@@ -17,6 +17,7 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
                                   location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
+from runtime.slots import is_place_placeholder
 from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
 from agents._sdk.dest_choice import resolve_choice, save_choices
 from agents._sdk.landmark import (
@@ -94,6 +95,8 @@ _PICKUP_MAX_KM = float(os.getenv("PICKUP_MAX_KM", "100"))
 
 #: 「本地」半径与「没找到这个地点」的追问：定义在 `agents._sdk.location`（周边检索用同一个数、同一句），这里保留原名。
 _LOCAL_RADIUS_KM = LOCAL_RADIUS_KM
+# 具名目的地的周边搜索半径：城市级（高德上限 50 km）。缺省的 5 km 只够「附近的 X」。
+_CITY_RADIUS_M = 50_000
 _NOT_FOUND_FOLLOW_UP = NOT_FOUND_FOLLOW_UP
 
 
@@ -427,6 +430,12 @@ class NavigationAgent(BaseAgent):
         return payload
 
     # ── 起终点解析（Q8：manifest 新增 origin 槽）────────────────────────
+    @staticmethod
+    def _origin_text(intent) -> str:
+        """起点槽的原话；规划器写的「当前位置 / 这里」这类占位就是没给起点（判据 `runtime.slots`），按当前位置算。"""
+        text = (intent.slots.get("origin") or "").strip()
+        return "" if is_place_placeholder(text) else text
+
     async def _resolve_point(self, text: str, ctx, meta) -> tuple[str, GeoPoint | None]:
         """地点原话 → (显示名, 坐标)。空文本 → ("", None)。
 
@@ -457,7 +466,7 @@ class NavigationAgent(BaseAgent):
             top, ambiguity = items[0], None
             far = await self._far_namesake(t, top, near, meta) if check_namesake else None
             if far is not None:
-                if self._dest_matches(t, top.name):
+                if self._dest_matches(t, top.name, top.city):
                     ambiguity = (top, far, near)
                 else:
                     top = far
@@ -497,7 +506,7 @@ class NavigationAgent(BaseAgent):
             return AgentResult(
                 speech=f"我没找到「{dest_name or dest_text}」这个地方，换个说法再试试？")
 
-        origin_text = (intent.slots.get("origin") or "").strip()
+        origin_text = self._origin_text(intent)
         if origin_text:
             origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
             if origin_pt is None:
@@ -601,7 +610,7 @@ class NavigationAgent(BaseAgent):
             dest_pt = GeoPoint(lat=active["lat"], lng=active["lng"])
             waypoints = [GeoPoint(lat=w["lat"], lng=w["lng"]) for w in active.get("waypoints") or []]
 
-        origin_text = (intent.slots.get("origin") or "").strip()
+        origin_text = self._origin_text(intent)
         if origin_text:
             origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
             if origin_pt is None:
@@ -1183,7 +1192,7 @@ class NavigationAgent(BaseAgent):
         if not is_proximity and not visited and not pickup_word and chosen is None:
             far = await self._far_namesake(dest, results[0], near, meta)
             if far is not None:
-                if self._dest_matches(dest, results[0].name):
+                if self._dest_matches(dest, results[0].name, results[0].city):
                     return await self._ask_namesake(ctx, dest, results[0], far, near)
                 results = [far]
 
@@ -2205,15 +2214,23 @@ class NavigationAgent(BaseAgent):
                 f"本程约{round(dist)}公里，建议途中补能，可以说「沿途帮我找充电站」。")
 
     @staticmethod
-    def _dest_matches(query: str, poi_name: str) -> bool:
+    def _dest_matches(query: str, poi_name: str, city: str = "") -> bool:
         """目的地名与 POI 名强校验（R1，包含式）。
 
         `landmark.name_matches` 的「2 字公共子串」对**用户直报的目的地名**太松——
         「广州塔」和「广州仄仄科技有限公司」共享「广州」也算匹配，带 near 偏置的
         关键词搜索会让就近弱匹配顶掉真地标（旅程 B3-2/A2-4/B1-2 三例同族）。
-        归一（去括号注记/空白/连接符）后任一方向包含才算。"""
+        归一（去括号注记/空白/连接符）后原话含在地点名里才算；反方向（地点名比原话短）只认原话以它打头
+        （「南京南站高铁站」之于「南京南站」），或原话 = 这个地点所在城市 + 它的名字（「上海外滩」之于上海的「外滩」，
+        `city` 是该地点的城市）。地点名只是原话的尾巴不算——「火车站」之于「厦门火车站」缺的正是最有区分度的「厦门」
+        （2026-10-04 A/B：近处搜索半径放大到城市级后，深圳一个就叫「火车站」的点顶掉了厦门站）。"""
         a, b = NavigationAgent._place_key(query), NavigationAgent._place_key(poi_name)
-        return bool(a) and bool(b) and (a in b or b in a)
+        if not (a and b):
+            return False
+        if a in b or a.startswith(b):
+            return True
+        c = NavigationAgent._place_key(city)
+        return bool(c) and a.endswith(b) and a[:len(a) - len(b)] in (c, c.rstrip("市"))
 
     @staticmethod
     def _place_key(name: str) -> str:
@@ -2235,14 +2252,16 @@ class NavigationAgent(BaseAgent):
         """近处这个地点只是借了名（或名字都对不上）、本地半径外另有名字对得上的本体 ⇒ 那个本体；否则 None。
 
         设计见 docs/design/2026-10-04-destination-borrowed-name.md。类目（加油站 / 充电站…）不问：遍地都是，没有本体；
-        近处完全同名（归一后相等，或去掉城市前缀后相等：「深圳欢乐谷」）不问，也不多一次调用；近处本身已在本地半径外的不问。
+        近处完全同名（归一后相等，或去掉城市前缀后相等：「深圳欢乐谷」）且就在城市级搜索半径内的不问，也不多一次调用；
+        城市搜索才找到的远一点的同名（「深圳鼓浪屿」58 km）仍要看外地有没有本体（厦门鼓浪屿）。近处本身已在本地半径外的不问。
         外地本体要以原话打头（「东方明珠广播电视塔」「北京欢乐谷」）——只在中间含着原话的（「颐和园-东门检票处」之于「东门」）不算。
         """
         q = self._place_key(description)
         if (near is None or top is None or not q or not (top.lat and top.lng)
                 or self._is_category_search(description)
                 or self._beyond_local_radius(top, near) is not None
-                or q in (self._place_key(top.name), self._bare_name(top))):
+                or (q in (self._place_key(top.name), self._bare_name(top))
+                    and self._rough_km(near.lat, near.lng, top.lat, top.lng) * 1000 <= _CITY_RADIUS_M)):
             return None
         try:
             wide = await self.poi.search(description, near=None, limit=5, meta=meta)
@@ -2327,10 +2346,10 @@ class NavigationAgent(BaseAgent):
         它的本体名严格包含已够）。"""
         if not cls._category_ok(poi, expect):
             return False
-        if cls._dest_matches(description, poi.name):
+        if cls._dest_matches(description, poi.name, poi.city):
             return True
         stem = description.strip()[:-len(suffix)]
-        return len(stem) >= 2 and cls._dest_matches(stem, poi.name)
+        return len(stem) >= 2 and cls._dest_matches(stem, poi.name, poi.city)
 
     #: 等距圆柱近似的两点距离——实现在 `agents._sdk.location`（周边检索判「本地」用同一份）
     _rough_km = staticmethod(rough_km)
@@ -2386,16 +2405,28 @@ class NavigationAgent(BaseAgent):
         不给就近弱匹配（0.3km 的「惠州出口」）机会。
         limit：类目就近查询给更多候选（5）供用户选目的地；具体地点解析用默认（3）。
         """
-        async def _direct(bias) -> list:
+        async def _direct(bias, **kw) -> list:
             try:
                 return await self.poi.search(description, near=bias, limit=limit,
-                                             page=page, meta=meta)
+                                             page=page, meta=meta, **kw)
             except ProviderError as e:
                 logger.warning("destination POI search failed: %s", e)
                 return []
 
         async def _via_landmark(guess: bool = False) -> tuple[str, list]:
             for candidate in await self._landmark_candidates(description):
+                # 先在城市范围里按名字找：「山姆会员店」→ 模型给「山姆会员商店」，全国第一是北京的店，城市里就有前海店
+                # （2026-10-04 A/B）。只认严格对上的——模糊相近的本地小点不算（「厦门站」不能落到本地的「厦门园(公交站)」）。
+                if near is not None:
+                    try:
+                        local = await self.poi.search(candidate, near=near, limit=limit, meta=meta,
+                                                      rank="weight", radius_m=_CITY_RADIUS_M)
+                    except ProviderError as e:
+                        logger.warning("landmark candidate local search failed: %s", e)
+                        local = []
+                    if (local and self._dest_matches(candidate, local[0].name, local[0].city)
+                            and self._beyond_local_radius(local[0], near) is None):
+                        return candidate, local
                 try:
                     results = await self.poi.search(candidate, limit=limit, meta=meta)
                 except ProviderError as e:
@@ -2409,7 +2440,7 @@ class NavigationAgent(BaseAgent):
                     # `guess`：原话不是地标描述、只是名字没对上才走到这里——候选和原话一个字都不沾，就是模型猜出来的名胜（`a7e664f3`
                     # 真栈：「第二家」→ 苏州的「东方之门」1478 km，它就在解析提示的示例里），同样只在本地半径内采信
                     grounded = not guess or name_matches(description, candidate)
-                    if ((grounded and self._dest_matches(candidate, results[0].name))
+                    if ((grounded and self._dest_matches(candidate, results[0].name, results[0].city))
                             or self._beyond_local_radius(results[0], near) is None):
                         return candidate, results
                     logger.info("loose landmark match beyond the local radius, not taken: %s → %s",
@@ -2454,7 +2485,11 @@ class NavigationAgent(BaseAgent):
                                     lat=lat_f, lng=lng_f)
                     return description, [admin_poi]
 
-        results = await _direct(near)
+        # 具名目的地（不是类目、不是「最近 / 附近」）：综合排序 + 城市级半径。缺省的周边搜索是 5 km、按距离排，5 km 内借了名的
+        # 店天然排第一、真身在 5 km 外根本不在候选里（2026-10-04 真栈：大梅沙→推拿店、蛇口港→公安局、东门→食堂）。
+        # 类目与就近查询要的正是最近的那个，保持按距离。设计：docs/design/2026-10-04-local-destination-ranking.md
+        named = strict and near is not None and not self._is_category_search(description)
+        results = await (_direct(near, rank="weight", radius_m=_CITY_RADIUS_M) if named else _direct(near))
         if results:
             if not strict:
                 return description, results
@@ -2463,7 +2498,7 @@ class NavigationAgent(BaseAgent):
             # 上海的千岛湖鱼头馆，均名字包含放行、距离序顶掉本体，且本体根本不在
             # near 候选集里）。锚词失配视同校验失败，走同一条去偏置重搜救济。
             anchor = self._category_anchor(description)
-            top_named = self._dest_matches(description, results[0].name)
+            top_named = self._dest_matches(description, results[0].name, results[0].city)
             if top_named and (not anchor or self._category_ok(results[0], anchor[1])):
                 return description, results
             if anchor:
@@ -2478,24 +2513,38 @@ class NavigationAgent(BaseAgent):
                 for r in results:
                     if self._grounds_to(description, r, *anchor):
                         return description, [r] + [x for x in results if x is not r]
-            # R1：就近弱匹配/借名 POI 顶上了 top1 → 去偏置全国重搜（真地标全国序靠前）
+            # R1：就近弱匹配/借名 POI 顶上了 top1 → 先在本城按名字找（「会展中心」这类通名，全国第一在别的城市），
+            # 再去偏置全国重搜（真地标全国序靠前）
             if near is not None:
-                wide = await _direct(None)
-                if wide:
-                    if anchor:
-                        # 锚词在场时按名字+类目双匹配选（「滴水湖」全国序 #1 湖本体
-                        # #2 地铁站——只认 top1 会被同名亲戚卡住）；无锚词维持只看 top1。
-                        for r in wide:
-                            if self._grounds_to(description, r, *anchor):
-                                return description, [r] + [x for x in wide if x is not r]
-                    elif self._dest_matches(description, wide[0].name):
-                        return description, wide
+                city = self._nearest_city(results) if named else ""
+                for region in ((city, "") if city else ("",)):
+                    hit = self._named_hit(description, await (_direct(None, region=region) if region
+                                                              else _direct(None)), anchor)
+                    if hit:
+                        return description, hit
             name, lm = await _via_landmark(guess=True)
             if lm:
                 return name, lm
             # 兜底：本地半径内报出实际名让用户纠正；之外的不采信（评审四轮真栈：导去 1940 km 外）
             return description, self._local_only(description, results, near)
         return await _via_landmark(guess=True)
+
+    @classmethod
+    def _named_hit(cls, description: str, cands: list, anchor) -> list | None:
+        """重搜结果里名字对得上的 ⇒ 以它打头的列表；对不上 ⇒ None。
+        锚词在场时按名字+类目双匹配选（「滴水湖」全国序 #1 湖本体 #2 地铁站——只认 top1 会被同名亲戚卡住）；无锚词只看 top1。"""
+        if not cands:
+            return None
+        if anchor:
+            hit = next((r for r in cands if cls._grounds_to(description, r, *anchor)), None)
+            return [hit] + [x for x in cands if x is not hit] if hit else None
+        return cands if cls._dest_matches(description, cands[0].name, cands[0].city) else None
+
+    @staticmethod
+    def _nearest_city(results: list) -> str:
+        """周边结果里离得最近的那个所在的城市（高德 cityname）≈ 当前城市；拿不到 ⇒ ""。"""
+        located = [r for r in results if getattr(r, "city", "")]
+        return min(located, key=lambda r: r.distance_km or float("inf")).city if located else ""
 
     async def _landmark_candidates(self, description: str) -> list[str]:
         """把视觉化地标描述转换为少量地图可检索的正式 POI 候选（共享解析器，导航/充电共用）。"""

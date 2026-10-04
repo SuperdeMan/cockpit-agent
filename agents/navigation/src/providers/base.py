@@ -34,9 +34,12 @@ class POIProvider(ABC):
     async def search(self, keyword: str, near: GeoPoint = None,
                      category: str = "", rating_min: float = 0,
                      limit: int = 5, page: int = 1,
-                     meta: dict | None = None) -> list[POI]:
+                     meta: dict | None = None, *, rank: str = "",
+                     radius_m: int = 0, region: str = "") -> list[POI]:
         """搜索 POI。page 支持翻页（"换一批"取下一页不同结果）。
-        meta 透传 trace_id/span_id 供 provider 调用可观测（可选）。"""
+        meta 透传 trace_id/span_id 供 provider 调用可观测（可选）。
+        带 near 时：rank="weight" 按综合排序（相关度 / 热度 / 距离，缺省按距离），radius_m 是搜索半径（缺省用厂商默认）；
+        不带 near 时：region 限定在这座城市里搜（缺省全国）。"""
         ...
 
     @abstractmethod

@@ -567,8 +567,9 @@ def test_long_haul_without_pickup_is_untouched():
 
     ——「什么情况下我这道闸不会被执行到」和「它判得对不对」一样重要（§4.3）。
     """
+    # 高德结果带所在城市：「上海外滩」= 城市 + 名字（2026-10-04 起名字校验的反方向只认打头或「所在城市 + 名字」）
     bund = _POI(id="b1", name="外滩", category="风景名胜;风景名胜;国家级景点",
-                lat=31.2335, lng=121.4921)
+                lat=31.2335, lng=121.4921, city="上海市")
     agent, _ = _agent_with_search({"上海外滩": [bund], "外滩": [bund]})
     res = asyncio.run(run_handle(
         agent, "navigation.navigate_to", slots={"destination": "上海外滩"},

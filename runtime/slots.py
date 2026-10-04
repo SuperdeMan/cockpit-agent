@@ -19,8 +19,16 @@ _CITY_PLACEHOLDERS = frozenset({
 })
 
 
+def is_place_placeholder(value) -> bool:
+    """槽值只是「当前位置 / 这里 / 未知」这类占位、不是一个真实地点 ⇒ True（城市槽与导航起点槽共用这一份）。
+
+    2026-10-04 真栈：规划器把「去上海虹桥站要开多久」的起点写成字面「当前位置」，估算拿这四个字去搜地点，
+    搜到一个停车场入口当起点。"""
+    return isinstance(value, str) and value.strip().lower() in _CITY_PLACEHOLDERS
+
+
 def _reject_placeholder(city: str) -> str:
-    return "" if city.strip().lower() in _CITY_PLACEHOLDERS else city
+    return "" if is_place_placeholder(city) else city
 
 
 def normalize_city_slot(value) -> str:

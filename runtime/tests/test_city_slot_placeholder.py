@@ -34,3 +34,10 @@ def test_existing_malformed_shapes_still_fail_closed():
     assert normalize_city_slot('{"city":123}') == ""
     assert normalize_city_slot("{oops}") == ""
     assert normalize_city_slot(None) == ""
+
+
+def test_is_place_placeholder_is_the_same_rule_for_navigation_origins():
+    from runtime.slots import is_place_placeholder
+    assert all(is_place_placeholder(v) for v in ("当前位置", " 这里 ", "我的位置", "Current Location"))
+    assert not any(is_place_placeholder(v) for v in ("深圳北站", "本溪", "", None, 123))
+
