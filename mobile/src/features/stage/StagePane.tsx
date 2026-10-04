@@ -9,6 +9,7 @@
 //  · `map` 场景先渲**内嵌地图**（路线折线 + 角色标注，StageMap）再渲卡——「平板 / 展开态要合理利用舞台区域」；
 //    几何判据只有 core/map/geometry.ts 一份，画不了（无坐标 / 地图不可用）就只剩卡，与今天一致；
 //  · 桌面姿态（传了 `orb`）改**横排**：左列光球、右列可滚——上半宽而矮，竖着堆会把车况三格裁掉（sizeClass.tabletopStage）。
+import type { ReactNode } from 'react'
 import { ScrollView, Text, View, type StyleProp, type ViewStyle } from 'react-native'
 
 import type { Msg } from '@shared/types.ts'
@@ -56,7 +57,13 @@ export function StagePane({
   vehState: Record<string, unknown>
   onSend: SendFn
   /** tabletop（B4-7 / §7.3）：上半是舞台 + 一颗大光球；其余形态不传（同屏只跑一个循环动画，§11.4） */
-  orb?: { state: OrbState; animated: boolean; driving: boolean }
+  orb?: {
+    state: OrbState
+    animated: boolean
+    driving: boolean
+    /** 宿主给的可交互球（对话页桌面姿态：MicOrb，轻点 / 按住说话）；不给就只画球。球径由本组件按上半高定 */
+    render?: (sizeDp: number) => ReactNode
+  }
   /** tabletop 上半的高度（dp，`tabletopSplit` 的结果）：决定球径（sizeClass.tabletopStage） */
   topHeight?: number
   style?: StyleProp<ViewStyle>
@@ -87,7 +94,7 @@ export function StagePane({
         <View testID="stage-tabletop" style={{ flex: 1, padding: 16, gap: 16 }}>
           <View style={{ flex: 1, flexDirection: 'row', gap: 16 }}>
             <View testID="stage-orb-column" style={{ width: orbDp + 16, alignItems: 'center', justifyContent: 'center' }}>
-              <AuroraOrb size={orbDp} state={orb.state} animated={orb.animated} driving={orb.driving} />
+              {orb.render ? orb.render(orbDp) : <AuroraOrb size={orbDp} state={orb.state} animated={orb.animated} driving={orb.driving} />}
             </View>
             <ScrollView testID="stage-pane" style={{ flex: 1 }} contentContainerStyle={{ gap: 16, paddingBottom: 4 }}>
               {sections}

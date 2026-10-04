@@ -312,6 +312,23 @@ describe('语音层开合与 detent（B2 T3，方案 §5.2 规则 1/3/4、§4.3�
     expect(derivePresence(base({ ...att, ptt: 'recording', voice: v({ override: 'dismissed' }) })).input).toBe('voice-sheet')
   })
 
+  test('v3 A-4：对话页桌面姿态层不升（球在上半舞台）——收音 / 轮在飞 / 点开都不升，状态交给层外胶囊', () => {
+    const tt = { tabletop: true }
+    const listening = derivePresence(base({ ...tt, ptt: 'recording' }))
+    expect(listening.input).toBe('composer')
+    expect(listening.capsule?.text).toBe('在听…')
+    expect(capsuleVisible(listening, false)).toBe(true)
+    expect(derivePresence(base({ ...tt, ...hfOn, hfFsm: 'LISTENING' })).input).toBe('composer')
+    expect(derivePresence(base({ ...tt, ...thinking, voice: v() })).input).toBe('composer')
+    expect(derivePresence(base({ ...tt, voice: v({ turnSource: 'text', override: 'open', answer: true }) })).input).toBe('composer')
+    expect(derivePresence(base({ ...tt, driving: true, identity: 'mount' })).input).toBe('composer')
+  })
+
+  test('v3 A-4 反例：支持页的桌面姿态照旧升层（那里没有舞台，层是唯一的语音反馈）；非桌面姿态逐字不变', () => {
+    expect(derivePresence(base({ tabletop: true, supportRoute: true, ptt: 'recording' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ tabletop: false, ptt: 'recording' }))).toEqual(derivePresence(base({ ptt: 'recording' })))
+  })
+
   test('点按胶囊 = 打开语音层（override=open），哪怕是文字轮', () => {
     expect(derivePresence(base({ ...thinking, voice: v({ turnSource: 'text', override: 'open' }) })).input).toBe('voice-sheet')
   })

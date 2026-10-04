@@ -52,6 +52,8 @@ export interface UsePresenceOpts {
   /** 此刻在支持页（宿主事实 `facts.route !== '/'`）：只影响行车档的层常驻（判据 derivePresence::supportRoute）。
    *  缺省 false = 对话页 */
   supportRoute?: boolean
+  /** 折叠屏桌面姿态（姿态事实，**不经 layout**，理由同 landscape）：对话页上层不升（判据 derivePresence::tabletop）。缺省 false */
+  tabletop?: boolean
 }
 
 /** 只在这些秒级量变化时才需要重算：倒计时 / 3s 延迟 / 4s error / 8s 长任务 */
@@ -81,7 +83,7 @@ function useChangedAt<T>(value: T): number {
 }
 /* eslint-enable react-hooks/refs, react-hooks/purity */
 
-export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, interactive = true, supportRoute = false }: UsePresenceOpts): PresenceSnapshot {
+export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, interactive = true, supportRoute = false, tabletop = false }: UsePresenceOpts): PresenceSnapshot {
   const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge, drivingDismissedAt, draftUserId } =
     useStore(core.store)
   const { settings } = useStore(settingsStore)
@@ -251,6 +253,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
     voice,
     notice,
     supportRoute,
+    tabletop,
   }
   const snapshot = derivePresence(input)
   // 在场轨迹（B2 T14，§11.5）：轴没变就不记 ⇒ 渲染期调用是幂等的（每秒 tick / StrictMode 双渲都不留痕）

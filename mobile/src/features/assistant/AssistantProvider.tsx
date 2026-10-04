@@ -31,6 +31,8 @@ import { usePresence, type SheetOverride } from '@/features/chat/usePresence'
 import { usePtt } from '@/features/chat/usePtt'
 import { PrivacyRail } from '@/features/chat/PrivacyRail'
 import { VisionCapture } from '@/features/vision/VisionCapture'
+import { foldPosture } from '@/ui/layout/foldPosture'
+import { useFoldState } from '@/ui/layout/useFoldState'
 import { useLayout } from '@/ui/layout/useLayout'
 import { screenSwitch } from '@/ui/layout/sizeClass'
 import { usePalette } from '@/ui/theme'
@@ -203,9 +205,13 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     return () => { alive = false }
   }, [cfg.edgeUrl, cfg.token])
   const serverUserId = sessionSummary?.userId ?? ''
+  // 姿态事实给在场判据（useLayout 内部另订阅一份，原生事件流支持多订阅者，见 useFoldState 头注）
+  const fold = useFoldState()
   const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: serverUserId || cfg.token.slice(-4), sheetOverride, landscape: win.width > win.height, interactive: scope.canPresent(),
     // 行车档的层常驻只在对话页：支持页上它会盖住用户来这一页要用的东西（判据 derivePresence::supportRoute）
-    supportRoute: facts.route !== '/' })
+    supportRoute: facts.route !== '/',
+    // 对话页桌面姿态层不升（Figma 07 A-4 一屏一球）。取姿态事实、不经 layout：layout 读 snapshot.driving
+    tabletop: foldPosture(fold) === 'tabletop' })
   const layout = useLayout(snapshot.driving)
   const reduceMotion = useReduceMotion()
   // 光球空闲静置（2026-09-13，性能评审 §2.1 用户裁决）：ORB_IDLE_STILL_MS 内没人理它就停下来。

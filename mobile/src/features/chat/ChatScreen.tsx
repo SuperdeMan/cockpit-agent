@@ -10,7 +10,6 @@ import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from 'react-native'
-import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 import type { Msg } from '@shared/types.ts'
@@ -26,8 +25,7 @@ import { composerInputMode } from '../../core/presence/drivingMode'
 import { captureSummary, capsuleVisible } from '../../core/presence/presence'
 import { lowPower } from '../../core/power/lowPower'
 import { usePowerFacts } from '../../core/power/usePowerFacts'
-import { AuroraOrb, type OrbState } from '../../ui/aurora'
-import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
+import type { OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { CHAT_COLUMN_MAX_WIDTH, PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
 import { Pill } from '../../ui/Pill'
@@ -36,8 +34,8 @@ import { RADIUS, TARGET, scale, textStyle } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { Composer } from './Composer'
-import { ORB_A11Y_ACTIONS, orbTap, useHoldToTalk } from './useHoldToTalk'
 import type { PttHandle } from './usePtt'
+import { MicOrb } from './MicOrb'
 import { visibleQuickCommands } from '@/core/session/quickCommands'
 
 import { FocusDock, focusDockVisible } from './FocusDock'
@@ -112,11 +110,13 @@ function TopIconLink({
  *  文案（P29）：主手势是轻点即说（B2 起），长按作次要说明。
  *  v3（D4 一屏一球，Figma W-1 / W-2 / W-3）：**大球就是麦克风**——轻点 / 按住说话与 Composer 光球同一份契约
  *  （useHoldToTalk + onOrbTap），这一屏 Composer 不画光球。球 104（位 140），键盘下 64（位 96）。
- *  按住它说话时草稿不卸这一页：何时算欢迎态见 history.ts::welcomeShown。 */
+ *  按住它说话时草稿不卸这一页：何时算欢迎态见 history.ts::welcomeShown。
+ *  桌面姿态（Figma 07 A-4）这一屏的球在上半舞台里（MicOrb 同一份交互），欢迎页不再画第二颗：`orb=false`。 */
 function Welcome({
   p,
   name,
   ptt,
+  orb: showOrb = true,
   quickCommands,
   orbState,
   orbDim,
@@ -132,6 +132,8 @@ function Welcome({
   name: string
   /** 语音输入把手；null = 语音没配置 ⇒ 大球只是装饰、文案改指去设置 */
   ptt: PttHandle | null
+  /** 画不画大球（缺省画）；桌面姿态由舞台里的大球当麦克风 */
+  orb?: boolean
   quickCommands: string[]
   /** 与 Composer 光球同一组事实（snapshot.primary / dim；动不动走 orbPolicy） */
   orbState: OrbState
@@ -147,10 +149,7 @@ function Welcome({
   onOrbTap: () => void
 }) {
   const hasVoice = !!ptt
-  const makeHold = useHoldToTalk(ptt, driving)
-  const orbGesture = Gesture.Exclusive(makeHold(), orbTap(onOrbTap))
   const slot = keyboardVisible ? 96 : 140
-  const orb = <AuroraOrb size={keyboardVisible ? 64 : 104} state={orbState} dim={orbDim} animated={orbAnimated} driving={orbDriving} />
   return (
     // 键盘下的紧凑档（真机 7525784b6 复核：只缩球不够，第三条推荐仍被 Composer 切半——
     // 键盘上方只剩约 276dp）：去掉次要说明、收窄留白，三条推荐整行可见（W-3：位 96 + 问候 + 一行说明 + 两行推荐 ≈ 268）
@@ -160,26 +159,20 @@ function Welcome({
       contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, paddingVertical: keyboardVisible ? 4 : 24 }}
     >
       <View style={{ alignItems: 'center', gap: 8 }}>
-        {hasVoice ? (
-          <GestureDetector gesture={orbGesture}>
-            <View
-              testID="welcome-orb"
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel={ptt.state === 'recording' ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`}
-              accessibilityHint="轻点开始说话，说完自动发送；长按可按住说话，上滑取消"
-              accessibilityActions={ORB_A11Y_ACTIONS}
-              onAccessibilityAction={(e) => {
-                if (e.nativeEvent.actionName === 'activate') onOrbTap()
-              }}
-              style={{ width: slot, height: slot, alignItems: 'center', justifyContent: 'center' }}
-            >
-              {orb}
-            </View>
-          </GestureDetector>
-        ) : (
-          <View style={{ width: slot, height: slot, alignItems: 'center', justifyContent: 'center' }}>{orb}</View>
-        )}
+        {showOrb ? (
+          <MicOrb
+            ptt={ptt}
+            driving={driving}
+            onTap={onOrbTap}
+            size={keyboardVisible ? 64 : 104}
+            slot={slot}
+            state={orbState}
+            dim={orbDim}
+            animated={orbAnimated}
+            orbDriving={orbDriving}
+            testID="welcome-orb"
+          />
+        ) : null}
         <Text style={[textStyle('display', fontScale), { color: p.fg1 }]}>我是{name}</Text>
         <Text style={[textStyle('bodyM', fontScale), { color: p.fg2, textAlign: 'center' }]}>
           {hasVoice ? '点一下光球说话，或试试下面的指令' : '试试下面的指令，或直接输入'}
@@ -426,6 +419,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           p={p}
           name={settings.assistantName}
           ptt={voicePtt}
+          // 桌面姿态的那颗球在上半舞台里（Figma 07 A-4），欢迎页不再画第二颗
+          orb={layout.mode !== 'tabletop'}
           quickCommands={visibleCommands}
           orbState={snapshot.primary}
           orbDim={snapshot.dim}
@@ -551,7 +546,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         stoppable={stoppable}
         ptt={voicePtt}
         // 欢迎态（页面大球是麦克风）与语音层开着（层内大球是麦克风）时无球；按住说话中已画着的那颗留到松手（Composer 内锁存）
-        orb={!welcome && snapshot.input !== 'voice-sheet'}
+        // 桌面姿态输入区退成无球（Figma 07 A-4「桌面态的大球在舞台里，输入区退成无球」）
+        orb={!welcome && snapshot.input !== 'voice-sheet' && layout.mode !== 'tabletop'}
         orbState={snapshot.primary}
         orbDim={snapshot.dim}
         fontScale={settings.fontScale}
@@ -695,6 +691,21 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                     state: snapshot.primary,
                     animated: orbTempo(snapshot, motionEnv) !== 'static',
                     driving: orbTempo(snapshot, motionEnv) === 'slow',
+                    // 这一屏唯一的球，也是麦克风：轻点 / 按住说话与欢迎态大球同一份交互
+                    render: (size) => (
+                      <MicOrb
+                        ptt={voicePtt}
+                        driving={snapshot.driving}
+                        onTap={onOrbTap}
+                        size={size}
+                        slot={size}
+                        state={snapshot.primary}
+                        dim={snapshot.dim}
+                        animated={orbTempo(snapshot, motionEnv) !== 'static'}
+                        orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
+                        testID="stage-orb"
+                      />
+                    ),
                   }}
                   topHeight={tabletopSplit(contentBox.h, layout.hinge?.topDp ?? 0, contentBox.y)}
                   style={{ flex: 1, marginHorizontal: 10, marginTop: 10 }}
