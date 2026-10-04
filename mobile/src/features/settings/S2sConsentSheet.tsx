@@ -89,7 +89,7 @@ export function S2sConsentSheet({
               minHeight: h,
               borderRadius: RADIUS.md,
               borderWidth: 1,
-              borderColor: 'rgba(245,158,11,0.38)',
+              borderColor: p.amberLine,
               backgroundColor: p.amberSoft,
               alignItems: 'center',
               justifyContent: 'center',
