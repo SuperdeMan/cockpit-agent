@@ -25,6 +25,7 @@ import type { Palette } from '../../ui/theme'
 import { RADIUS, TARGET, textStyle } from '../../ui/tokens'
 import { CardRenderer } from '../cards/CardRenderer'
 import { ControlResult } from '../cards/ControlResult'
+import { DrivingCardSummary } from '../cards/DrivingCardSummary'
 import type { SendFn } from '../cards/parts'
 import { ExecutionReceipt } from './ExecutionReceipt'
 import { FollowUpChips } from './FollowUpChips'
@@ -264,10 +265,18 @@ export function MessageBubble({ p, msg, uncertain, draft, interrupted, s2s, visi
           </View>
         ) : null}
         {interrupted ? <Text style={[caption, { color: p.fg3 }]}>已打断</Text> : null}
-        {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
+        {/* 行车档（Figma 08 页 DR-1「一屏一卡」）：记录里的卡与语音层同一张行车摘要——标题 + 主数值 + ≤2 字段 + 1 主按钮；
+            看的是**此刻**的行车档，停车退出后恢复全量卡 */}
+        {msg.uiCard ? (
+          driving ? (
+            <DrivingCardSummary p={p} fontScale={fontScale} card={msg.uiCard} onSend={onSend} />
+          ) : (
+            <CardRenderer p={p} card={msg.uiCard} onSend={onSend} />
+          )
+        ) : null}
         {/* 车控结果卡（D17）：与回执「执行」行同一份逐项结果；媒体控制不出卡 */}
         {receipt?.kind === 'action' && receipt.items.some((i) => i.kind === 'vehicle') ? (
-          <ControlResult p={p} items={receipt.items.filter((i) => i.kind === 'vehicle')} at={receipt.executed.at} />
+          <ControlResult p={p} items={receipt.items.filter((i) => i.kind === 'vehicle')} at={receipt.executed.at} driving={driving} />
         ) : null}
         <ResultDetailsFold p={p} msg={msg} driving={driving} onSend={onSend} />
         {chips?.length ? (

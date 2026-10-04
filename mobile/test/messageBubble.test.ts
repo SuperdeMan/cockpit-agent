@@ -12,6 +12,7 @@ jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockSetSt
 
 import type { Msg } from '@shared/types.ts'
 import { MessageBubble } from '@/features/chat/MessageBubble'
+import { CARD_FIXTURES } from '@/features/cards/fixtures'
 import { ExecutionReceipt } from '@/features/chat/ExecutionReceipt'
 import { AuroraOrb } from '@/ui/aurora'
 import { Pill } from '@/ui/Pill'
@@ -151,4 +152,26 @@ test('v3 P4c：回执里有车控项就在气泡里出车控结果卡；只有�
   try {
     expect(mediaOnly.root.findAllByProps({ testID: 'control-result' })).toHaveLength(0)
   } finally { await act(async () => { mediaOnly.unmount() }) }
+})
+
+test('v3 DR-1：行车档下记录里的卡是行车摘要（与语音层同一张），泊车是全量卡；车控结果卡同理', async () => {
+  const weather = CARD_FIXTURES.find((f) => f.label === 'weather')!.card
+  const msg = { id: 'w', role: 'assistant', text: '深圳今天多云', uiCard: weather } as Msg
+  const texts = (view: ReactTestRenderer) => view.root.findAllByType(Text).map((t) => [t.props.children].flat().join(''))
+  const parked = await mount(bubble(msg))
+  try {
+    expect(parked.root.findAllByProps({ testID: 'driving-card' })).toHaveLength(0)
+    expect(texts(parked)).toContain('湿度') // 全量卡的指标块
+  } finally { await act(async () => { parked.unmount() }) }
+  const driving = await mount(bubble(msg, { driving: true }))
+  try {
+    expect(driving.root.findAllByProps({ testID: 'driving-card' }).length).toBeGreaterThan(0)
+    expect(texts(driving)).not.toContain('湿度')
+  } finally { await act(async () => { driving.unmount() }) }
+  const vehicle = { kind: 'vehicle', command: 'trunk.open', object: '后备箱', label: '后备箱', action: '打开', value: '', temperature: false, status: 'executed', note: '' }
+  const receipt = { kind: 'action', understood: '', target: '当前车辆', confirm: null, executed: { status: 'executed', at: null, names: [] }, items: [vehicle] }
+  const car = await mount(bubble({ id: 'c', role: 'assistant', text: '已打开后备箱' } as Msg, { receipt, driving: true }))
+  try {
+    expect(car.root.findAllByProps({ testID: 'driving-card-title' }).length).toBeGreaterThan(0)
+  } finally { await act(async () => { car.unmount() }) }
 })
