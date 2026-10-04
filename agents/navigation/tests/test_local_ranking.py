@@ -146,12 +146,13 @@ class _KeyedPoi:
     """近处 / 本城 / 全国三种搜索各按关键字返回。"""
 
     def __init__(self, near=None, city=None, wide=None):
-        self.near, self.city, self.wide, self.calls = near or {}, city or {}, wide or {}, []
+        self.near, self.city, self.wide, self.calls, self.limits = near or {}, city or {}, wide or {}, [], []
 
     async def search(self, keyword, near=None, **kw):
         self.calls.append((keyword, near is not None, kw.get("region", "")))
+        self.limits.append(kw.get("limit"))
         table = self.near if near is not None else (self.city if kw.get("region") else self.wide)
-        return list(table.get(keyword, []))
+        return list(table.get(keyword, []))[:kw.get("limit") or None]
 
 
 def _guessing_agent(poi, candidates):
@@ -185,4 +186,102 @@ def test_a_loose_local_lookalike_does_not_take_the_guessed_name():
     poi = _KeyedPoi(near={"厦门火车站": [bus_stop], "厦门站": [bus_stop]}, wide={"厦门站": [xiamen]})
     _, results = asyncio.run(_guessing_agent(poi, ["厦门站"])._find_destination("厦门火车站", dict(META), near=HERE))
     assert results[0].name == "厦门站"
+
+
+# ── 带类目词的通称（医院 / 银行 / 超市…）不悄悄跨城（2026-10-04：「儿童医院」→ 北京儿童医院 1942 km）────────────
+_CLINIC = POI(id="n1", name="知贝医疗深圳门店", category="医疗保健服务;诊所;诊所", lat=22.55, lng=113.95,
+              distance_km=2.3, city="深圳市")
+_SZ_CHILDREN = POI(id="c1", name="深圳市儿童医院", category="医疗保健服务;综合医院;三级甲等医院", lat=22.553, lng=114.046,
+                   city="深圳市")
+_BJ_CHILDREN = POI(id="w1", name="首都医科大学附属北京儿童医院", category="医疗保健服务;专科医院;儿童医院",
+                   lat=39.913, lng=116.353, city="北京市")
+
+
+def _shop(name, category, km):
+    return POI(id=name, name=name, category=category, lat=22.5410 + km / 111, lng=113.9412, distance_km=km, city="深圳市")
+
+
+def test_a_category_name_scans_the_near_results_for_its_kind():
+    """真栈近处候选（2026-10-04）：深圳市儿童医院排第 8，前面是诊所、儿童诊所、妇幼保健院、它自己的科室。"""
+    near = [_CLINIC, _shop("深圳小米熊儿童诊所", "医疗保健服务;医疗保健服务场所;医疗保健服务场所", 3.7),
+            _shop("深圳市南山妇幼保健院", "医疗保健服务;综合医院;三级甲等医院", 6.1),
+            _shop("深圳市福田区妇幼保健院(安托山院区)", "医疗保健服务;专科医院;专科医院", 6.4),
+            _shop("深圳市儿童医院项目部", "公司企业;公司;公司", 11.5),
+            _shop("深圳市儿童医院新生儿科", "医疗保健服务;医疗保健服务场所;医疗保健服务场所", 11.5),
+            _shop("深圳市儿童医院风湿免疫科", "医疗保健服务;医疗保健服务场所;医疗保健服务场所", 11.6),
+            _SZ_CHILDREN, _shop("深圳市儿童医院门诊大厅", "医疗保健服务;专科医院;专科医院", 11.7)]
+    poi = _KeyedPoi(near={"儿童医院": near}, wide={"儿童医院": [_BJ_CHILDREN]})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("儿童医院", dict(META), near=HERE))
+    assert results[0].name == "深圳市儿童医院"
+    assert len(results) == 3                                   # 多取的候选返回前截回 limit：卡片与「等 N 家」不变
+    assert poi.calls == [("儿童医院", True, "")] and poi.limits == [10]
+    poi.limits.clear()
+    asyncio.run(_guessing_agent(poi, [])._find_destination("儿童医院", dict(META), near=HERE, page=2))
+    assert poi.limits[0] == 3                                  # 「换一批」翻页按原每页条数取，偏移不错位
+
+
+def test_a_chain_name_takes_the_nearest_branch():
+    """「华润万家超市」最近那家叫「华润万家标超南区」，包含式够不着；主干 + 超市类目接住它。天虹在高德记作「商场」。"""
+    near = [_shop("华润万家标超南区(科兴科学园店)", "购物服务;超级市场;华润", 0.8),
+            _shop("华润万家(南新店)", "购物服务;超级市场;华润", 2.3)]
+    poi = _KeyedPoi(near={"华润万家超市": near}, city={"华润万家超市": [_shop("华润万家", "购物服务;超级市场;华润", 9.1)]})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("华润万家超市", dict(META), near=HERE))
+    assert results[0].name == "华润万家标超南区(科兴科学园店)" and len(poi.calls) == 1
+    near = [_shop("常兴广场(天虹商场南山店)", "购物服务;服装鞋帽皮具店;服装鞋帽皮具店", 2.2),
+            _shop("天虹商场(深圳南山常兴店)", "购物服务;商场;购物中心|购物服务;商场;普通商场", 2.2)]
+    poi = _KeyedPoi(near={"天虹超市": near})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("天虹超市", dict(META), near=HERE))
+    assert results[0].name == "天虹商场(深圳南山常兴店)"
+
+
+def test_the_kind_check_keeps_other_shops_out_of_a_hospital_name():
+    near = [_shop("禾视眼科·近视防控配镜", "购物服务;专卖店;眼镜店", 1.1),
+            _shop("深圳爱尔西柚眼科", "医疗保健服务;专科医院;眼科医院", 1.2)]
+    poi = _KeyedPoi(near={"眼科医院": near})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("眼科医院", dict(META), near=HERE))
+    assert results[0].name == "深圳爱尔西柚眼科"
+
+
+def test_category_names_skip_the_city_search():
+    """本城重搜按相关度排，会把连锁店带到远处的大店（A/B：华润万家超市 0.8 km → 9.1 km）；类目查询不走它。"""
+    poi = _KeyedPoi(near={"儿童医院": [_CLINIC]}, city={"儿童医院": [_SZ_CHILDREN]}, wide={"儿童医院": [_BJ_CHILDREN]})
+    asyncio.run(_guessing_agent(poi, [])._find_destination("儿童医院", dict(META), near=HERE))
+    assert not [call for call in poi.calls if call[2]]
+
+
+def test_a_bare_category_takes_the_nearest_result_whatever_its_name():
+    """「便利店」最近的那家叫「7-ELEVEn」；「医院」全国第一是北京协和医院（改前真栈：1942 km）。"""
+    seven = _shop("7-ELEVEn(海王银河科技大厦店)", "购物服务;便民商店/便利店;便民商店/便利店", 0.1)
+    far = POI(id="w1", name="便利店", lat=39.9, lng=116.4, city="北京市")
+    poi = _KeyedPoi(near={"便利店": [seven]}, wide={"便利店": [far]})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("便利店", dict(META), near=HERE))
+    assert results[0].name == seven.name and len(poi.calls) == 1
+    station = _shop("南山区医疗集团总部高新社康服务站", "医疗保健服务;综合医院;卫生院", 0.8)
+    poi = _KeyedPoi(near={"医院": [station]}, wide={"医院": [POI(id="w2", name="北京协和医院", lat=39.9, lng=116.4,
+                                                                city="北京市")]})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("医院", dict(META), near=HERE))
+    assert results[0].name == station.name
+
+
+def test_a_category_name_does_not_jump_to_another_city_it_did_not_name():
+    # 全国重搜与模型猜名（「北京儿童医院」）都解析到北京：两处都拦
+    poi = _KeyedPoi(near={"儿童医院": [_CLINIC]}, wide={"儿童医院": [_BJ_CHILDREN], "北京儿童医院": [_BJ_CHILDREN]})
+    _, results = asyncio.run(_guessing_agent(poi, ["北京儿童医院"])._find_destination("儿童医院", dict(META), near=HERE))
+    assert [r.name for r in results] == ["知贝医疗深圳门店"]        # 本地实际结果（话术会报出实际名，用户可纠正）
+    assert ("北京儿童医院", False, "") in poi.calls                 # 猜名确实解析过
+    poi = _KeyedPoi(near={"儿童医院": [_CLINIC]}, wide={"北京儿童医院": [_BJ_CHILDREN]})
+    _, results = asyncio.run(_guessing_agent(poi, ["北京儿童医院"])._find_destination("儿童医院", dict(META), near=HERE))
+    assert [r.name for r in results] == ["知贝医疗深圳门店"]        # 只有猜名到了北京
+    poi = _KeyedPoi(near={"北京儿童医院": [_CLINIC]}, wide={"北京儿童医院": [_BJ_CHILDREN]})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("北京儿童医院", dict(META), near=HERE))
+    assert results[0].name == "首都医科大学附属北京儿童医院"        # 点了城市：照常跨城
+
+
+def test_the_cross_city_rule_only_binds_category_names():
+    far = POI(id="w1", name="黄鹤楼", lat=30.545, lng=114.302, city="武汉市")
+    assert NavigationAgent._cross_city_ok("黄鹤楼", far, HERE) is True
+    assert NavigationAgent._cross_city_ok("儿童医院", _BJ_CHILDREN, HERE) is False
+    assert NavigationAgent._cross_city_ok("北京市儿童医院", _BJ_CHILDREN, HERE) is True
+    assert NavigationAgent._cross_city_ok("儿童医院", _SZ_CHILDREN, HERE) is True      # 本地半径内不受限
+    assert NavigationAgent._cross_city_ok("儿童医院", _BJ_CHILDREN, None) is True        # 没定位判不了，不拦
 

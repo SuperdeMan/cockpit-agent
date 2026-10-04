@@ -97,6 +97,8 @@ _PICKUP_MAX_KM = float(os.getenv("PICKUP_MAX_KM", "100"))
 _LOCAL_RADIUS_KM = LOCAL_RADIUS_KM
 # 具名目的地的周边搜索半径：城市级（高德上限 50 km）。缺省的 5 km 只够「附近的 X」。
 _CITY_RADIUS_M = 50_000
+# 带类目锚词的查询（「华润万家超市」「儿童医院」）就近搜索取的条数：供名字主干 + 类目双匹配扫描，返回前截回 limit。
+_ANCHOR_SCAN = 10
 _NOT_FOUND_FOLLOW_UP = NOT_FOUND_FOLLOW_UP
 
 
@@ -2319,6 +2321,19 @@ class NavigationAgent(BaseAgent):
         ("中学", ("学校", "中学")),
         ("幼儿园", ("学校", "幼儿园")),
         ("学校", ("学校",)),
+        # 类目族（2026-10-04）：「华润万家超市」「儿童医院」「协和医院」。名字常过不了包含式（「华润万家标超南区」「协和深圳医院」），
+        # 主干（「华润万家」「协和」）+ 高德类目复核能接住近处那家；类目复核把眼镜店、诊所、停车场挡在「XX医院」外。
+        # 期望族取自真栈近处候选的类目串：超市连锁里天虹记在「商场」，医院全族带「医院」（卫生院、诊所不带）。
+        ("医院", ("医院",)),
+        ("超市", ("超级市场", "超市", "商场")),
+        ("便利店", ("便利店",)),
+        ("药店", ("药房", "医药")),
+        ("药房", ("药房", "医药")),
+        ("银行", ("银行",)),
+        ("加油站", ("加油站",)),
+        ("充电站", ("充电",)),
+        ("超充", ("充电",)),
+        ("停车场", ("停车场",)),
     )
 
     @classmethod
@@ -2405,9 +2420,9 @@ class NavigationAgent(BaseAgent):
         不给就近弱匹配（0.3km 的「惠州出口」）机会。
         limit：类目就近查询给更多候选（5）供用户选目的地；具体地点解析用默认（3）。
         """
-        async def _direct(bias, **kw) -> list:
+        async def _direct(bias, n: int = 0, **kw) -> list:
             try:
-                return await self.poi.search(description, near=bias, limit=limit,
+                return await self.poi.search(description, near=bias, limit=n or limit,
                                              page=page, meta=meta, **kw)
             except ProviderError as e:
                 logger.warning("destination POI search failed: %s", e)
@@ -2489,15 +2504,23 @@ class NavigationAgent(BaseAgent):
         # 店天然排第一、真身在 5 km 外根本不在候选里（2026-10-04 真栈：大梅沙→推拿店、蛇口港→公安局、东门→食堂）。
         # 类目与就近查询要的正是最近的那个，保持按距离。设计：docs/design/2026-10-04-local-destination-ranking.md
         named = strict and near is not None and not self._is_category_search(description)
-        results = await (_direct(near, rank="weight", radius_m=_CITY_RADIUS_M) if named else _direct(near))
+        anchor = self._category_anchor(description)
+        # 带类目锚词的类目查询（「华润万家超市」「儿童医院」）：同一次就近搜索多取几条供双匹配扫描——最近的分店 / 本城那家
+        # 常在前十却不在前三（2026-10-04 近处候选取证：深圳市儿童医院排第 8）。返回前截回 limit，卡片与话术形状不变；
+        # 只在第 1 页扫——「换一批」翻页时每页条数一变，偏移就错位
+        wide = strict and near is not None and not named and anchor is not None and page == 1
+        scan = await (_direct(near, rank="weight", radius_m=_CITY_RADIUS_M) if named
+                      else _direct(near, n=max(limit, _ANCHOR_SCAN)) if wide else _direct(near))
+        results = scan[:limit]
         if results:
-            if not strict:
+            # 只有类目词的短查询（「超市」「便利店」「医院」）要的是最近的那一家，按距离排的近处结果就是答案——
+            # 名字里不一定带这个词（最近的便利店叫「7-ELEVEn」），拿名字去校验只会把人送到远处一个恰好叫「便利店」的点。
+            if not strict or self._bare_category(description):
                 return description, results
             # R1 二期：包含式名字校验之上叠类目锚词复核——「名字包含 ⇒ 是本体」被
             # 真栈证伪（「虹桥机场」→如家…停车场、「滴水湖」→雅悦酒店、「千岛湖」→
             # 上海的千岛湖鱼头馆，均名字包含放行、距离序顶掉本体，且本体根本不在
             # near 候选集里）。锚词失配视同校验失败，走同一条去偏置重搜救济。
-            anchor = self._category_anchor(description)
             top_named = self._dest_matches(description, results[0].name, results[0].city)
             if top_named and (not anchor or self._category_ok(results[0], anchor[1])):
                 return description, results
@@ -2510,20 +2533,22 @@ class NavigationAgent(BaseAgent):
                 # 后面所有候选都严的判据，而它恰恰是就近序最靠前的那个。
                 # 「南山实验小学 → 鼎太小学」就断在这：正主是 results[0]，
                 # 严格包含够不着它，主干规则够得着，却轮不到它被试。
-                for r in results:
+                for r in scan:
                     if self._grounds_to(description, r, *anchor):
-                        return description, [r] + [x for x in results if x is not r]
+                        return description, ([r] + [x for x in scan if x is not r])[:limit]
             # R1：就近弱匹配/借名 POI 顶上了 top1 → 先在本城按名字找（「会展中心」这类通名，全国第一在别的城市），
-            # 再去偏置全国重搜（真地标全国序靠前）
+            # 再去偏置全国重搜（真地标全国序靠前）。带类目词的查询（医院 / 银行 / 超市…）跨城只认原话点了那座城市的
+            # （2026-10-04：「儿童医院」全国第一是首都医科大学附属北京儿童医院，1942 km）；它们不走本城重搜——
+            # 按相关度排的本城结果会把连锁店带到远处的大店（A/B：华润万家超市 0.8 km → 9.1 km），近处扫描已经接住本城那家。
             if near is not None:
                 city = self._nearest_city(results) if named else ""
                 for region in ((city, "") if city else ("",)):
                     hit = self._named_hit(description, await (_direct(None, region=region) if region
                                                               else _direct(None)), anchor)
-                    if hit:
+                    if hit and self._cross_city_ok(description, hit[0], near):
                         return description, hit
             name, lm = await _via_landmark(guess=True)
-            if lm:
+            if lm and self._cross_city_ok(description, lm[0], near):
                 return name, lm
             # 兜底：本地半径内报出实际名让用户纠正；之外的不采信（评审四轮真栈：导去 1940 km 外）
             return description, self._local_only(description, results, near)
@@ -2539,6 +2564,20 @@ class NavigationAgent(BaseAgent):
             hit = next((r for r in cands if cls._grounds_to(description, r, *anchor)), None)
             return [hit] + [x for x in cands if x is not hit] if hit else None
         return cands if cls._dest_matches(description, cands[0].name, cands[0].city) else None
+
+    @classmethod
+    def _bare_category(cls, description: str) -> bool:
+        """只有类目词的短查询（归一后不超过 3 个字且带类目词：「超市」「便利店」「加油站」「医院」）。"""
+        return cls._is_category_search(description) and len(cls._place_key(description)) <= 3
+
+    @classmethod
+    def _cross_city_ok(cls, description: str, poi, near) -> bool:
+        """带类目词的查询（医院 / 银行 / 超市…）要的是这一类里近的那个：本地半径外的结果只有原话点了它所在城市才采信
+        （「北京儿童医院」去北京，「儿童医院」不去）。不带类目词的具名地点（黄鹤楼）不受此限。"""
+        if not cls._is_category_search(description) or cls._beyond_local_radius(poi, near) is None:
+            return True
+        city = cls._place_key(getattr(poi, "city", "") or "").rstrip("市")
+        return bool(city) and city in cls._place_key(description)
 
     @staticmethod
     def _nearest_city(results: list) -> str:
