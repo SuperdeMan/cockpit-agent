@@ -1,5 +1,6 @@
 """Jev 判别服务（JV01）：缺省零外呼、allowlist、payload 拒绝、错误码映射、请求形状、预算、整批作废、用量。"""
 import asyncio
+import importlib.util
 import json
 import os
 import sys
@@ -180,7 +181,10 @@ def test_no_credential_never_reaches_the_network():
 
 
 def test_the_servicer_routes_decide_to_the_service():
-    from server import LLMGatewayServicer
+    # 不用 `from server import`：裸模块名会和 orchestrator/edge 测试的 `server` 互相劫持（同 test_server_degrade）
+    spec = importlib.util.spec_from_file_location("llm_gateway_server_decide_test", os.path.join(_DIR, "server.py"))
+    srv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(srv)
     fake = FakeDecisionProvider()
-    res = asyncio.run(LLMGatewayServicer.Decide(SimpleNamespace(decision=_service(fake)), _request(), None))
+    res = asyncio.run(srv.LLMGatewayServicer.Decide(SimpleNamespace(decision=_service(fake)), _request(), None))
     assert res.results[0].status == S.DECISION_STATUS_OK and len(fake.calls) == 1
