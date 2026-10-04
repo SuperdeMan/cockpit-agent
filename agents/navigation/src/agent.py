@@ -17,7 +17,8 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
                                   location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
-from agents._sdk.shared_state import REMINDABLE_ACTIVE
+from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
+from agents._sdk.dest_choice import resolve_choice, save_choices
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
 from agents._sdk.timewindow import fmt_clock, parse_clock_time
@@ -432,22 +433,36 @@ class NavigationAgent(BaseAgent):
         **解析不出坐标时返回 (原话, None)，绝不悄悄回落当前位置**——那正是 SL4
         要修的形态：用户明说了出发地，系统却拿当前位置去算（探针四轮 12/13 红）。
         """
+        name, point, _ = await self._resolve_point_checked(text, ctx, meta, check_namesake=False)
+        return name, point
+
+    async def _resolve_point_checked(self, text: str, ctx, meta, *, check_namesake: bool = True):
+        """同 `_resolve_point`，第三项是借名歧义：近处只是借了名、本地半径外另有本体 ⇒ (近处, 外地, 当前位置)，否则 None。
+
+        近处第一名连名字都对不上、外地有对得上的本体 ⇒ 直接用外地本体（不拿一个对不上的近处结果来问）。
+        """
         t = (text or "").strip()
         if not t:
-            return "", None
+            return "", None, None
         key, label = _match_place_alias(t)
         if key:
             stored = await self._get_place(ctx, key)
             if stored and stored.get("lat") is not None:
                 return (stored.get("name") or label,
-                        GeoPoint(lat=float(stored["lat"]), lng=float(stored["lng"])))
-            return label, None
+                        GeoPoint(lat=float(stored["lat"]), lng=float(stored["lng"])), None)
+            return label, None, None
         near = await self._current_position(ctx, meta)
         _, items = await self._find_destination(t, meta, near=near, limit=1)
         if items and items[0].lat is not None:
-            return items[0].name, GeoPoint(lat=float(items[0].lat),
-                                           lng=float(items[0].lng))
-        return t, None
+            top, ambiguity = items[0], None
+            far = await self._far_namesake(t, top, near, meta) if check_namesake else None
+            if far is not None:
+                if self._dest_matches(t, top.name):
+                    ambiguity = (top, far, near)
+                else:
+                    top = far
+            return top.name, GeoPoint(lat=float(top.lat), lng=float(top.lng)), ambiguity
+        return t, None, None
 
     async def _estimate(self, intent, ctx, meta) -> AgentResult:
         """只算不导：两点间的里程/时长/预计到达时刻。**本方法永不产出 navigate 动作。**
@@ -457,7 +472,11 @@ class NavigationAgent(BaseAgent):
         从「规划路线」换成「距离估算」——**卡片类型必须与本轮真实动作一致**
         （同 I-022 那族）。
         """
+        # 借名歧义的续接：「第一个」/ 点选的名字 ⇒ 用户选中的那个具体地点（`agents._sdk.dest_choice`）
         dest_text = (intent.slots.get("destination") or "").strip()
+        choice = await resolve_choice(ctx, NAVIGATION_DEST_CHOICES, dest_text)
+        if choice:
+            dest_text = choice["name"]
         raw_text = (intent.raw_text or "").strip()
         if not dest_text:
             return AgentResult(status=NEED_SLOT, speech="您想算到哪里的路程？",
@@ -467,7 +486,13 @@ class NavigationAgent(BaseAgent):
         origin_only = self._unspoken_destination(dest_text, raw_text, meta)
         if origin_only:
             return self._ask_destination(origin_only, estimate=True)
-        dest_name, dest_pt = await self._resolve_point(dest_text, ctx, meta)
+        if choice and choice.get("lat") is not None:
+            dest_name, namesake = choice["name"], None
+            dest_pt = GeoPoint(lat=float(choice["lat"]), lng=float(choice["lng"]))
+        else:
+            dest_name, dest_pt, namesake = await self._resolve_point_checked(dest_text, ctx, meta)
+        if namesake is not None:
+            return await self._ask_namesake(ctx, dest_text, *namesake, estimate=True)
         if dest_pt is None:
             return AgentResult(
                 speech=f"我没找到「{dest_name or dest_text}」这个地方，换个说法再试试？")
@@ -878,6 +903,14 @@ class NavigationAgent(BaseAgent):
 
     async def _navigate_to(self, intent, ctx, meta) -> AgentResult:
         dest = intent.slots.get("destination", "").strip()
+        # 借名歧义的续接：「第一个」/ 点选的名字 ⇒ 用户选中的那个具体地点（`agents._sdk.dest_choice`），不再重新搜
+        choice = await resolve_choice(ctx, NAVIGATION_DEST_CHOICES, dest)
+        chosen = None
+        if choice:
+            dest = choice["name"]
+            if choice.get("lat") is not None:
+                chosen = POI(id="dest_choice", name=choice["name"], address=choice.get("address", ""),
+                             lat=float(choice["lat"]), lng=float(choice["lng"]))
         raw_text = (intent.raw_text or "").strip()
         # 批 E：只说了从哪出发 ⇒ 目的地必须来自这句话或会话（planner 编的、原话兜底搜回起点的都不算）
         origin_only = self._unspoken_destination(dest, raw_text, meta)
@@ -1068,7 +1101,9 @@ class NavigationAgent(BaseAgent):
                                     "items": items}, self.poi),
                     data={"items": items},
                     follow_up="说『第一个』『第二个』选择目的地")
-        if visited:
+        if chosen is not None:
+            resolved_name, results = chosen.name, [chosen]
+        elif visited:
             resolved_name = visited[0]
             results = [POI(id="episodic_place", name=visited[0],
                            address="您去过的地方", lat=visited[1], lng=visited[2])]
@@ -1142,6 +1177,15 @@ class NavigationAgent(BaseAgent):
                     follow_up="要是就在附近，说个区域或更完整的名字我再找一次；"
                               f"确实要去，就说「导航去{far.name}」。",
                     missing_slots=["destination"])
+
+        # 近处第一名只是借名（或名字都对不上）、本地半径外另有名字对得上的本体（2026-10-04 真栈：「南京南站」→本地
+        # 「南京南站南广场」、「黄鹤楼」→「小黄鹤楼餐馆」）：借名 ⇒ 两个都列出来让用户选；对不上 ⇒ 直接用外地本体。
+        if not is_proximity and not visited and not pickup_word and chosen is None:
+            far = await self._far_namesake(dest, results[0], near, meta)
+            if far is not None:
+                if self._dest_matches(dest, results[0].name):
+                    return await self._ask_namesake(ctx, dest, results[0], far, near)
+                results = [far]
 
         first = results[0]
         items = [{"id": r.id, "name": r.name, "rating": r.rating,
@@ -2168,11 +2212,58 @@ class NavigationAgent(BaseAgent):
         「广州塔」和「广州仄仄科技有限公司」共享「广州」也算匹配，带 near 偏置的
         关键词搜索会让就近弱匹配顶掉真地标（旅程 B3-2/A2-4/B1-2 三例同族）。
         归一（去括号注记/空白/连接符）后任一方向包含才算。"""
-        def norm(s: str) -> str:
-            s = re.sub(r"[（(].*?[)）]", "", s or "")
-            return re.sub(r"[\s·,，\-—]", "", s)
-        a, b = norm(query), norm(poi_name)
+        a, b = NavigationAgent._place_key(query), NavigationAgent._place_key(poi_name)
         return bool(a) and bool(b) and (a in b or b in a)
+
+    @staticmethod
+    def _place_key(name: str) -> str:
+        """地名归一：去括号注记、空白与连接符（「南山书城(深圳湾店)」⇒「南山书城」）。"""
+        s = re.sub(r"[（(].*?[)）]", "", name or "")
+        return re.sub(r"[\s·,，\-—]", "", s)
+
+    async def _far_namesake(self, description: str, top, near, meta):
+        """近处这个地点只是借了名（或名字都对不上）、本地半径外另有名字对得上的本体 ⇒ 那个本体；否则 None。
+
+        设计见 docs/design/2026-10-04-destination-borrowed-name.md。类目（加油站 / 充电站…）不问：遍地都是，没有本体；
+        近处完全同名（归一后相等）不问，也不多一次调用；近处本身已在本地半径外的不问（它就是那个远处的）。
+        """
+        if (near is None or top is None or not description or not (top.lat and top.lng)
+                or self._is_category_search(description)
+                or self._beyond_local_radius(top, near) is not None
+                or self._place_key(description) == self._place_key(top.name)):
+            return None
+        try:
+            wide = await self.poi.search(description, near=None, limit=5, meta=meta)
+        except ProviderError as e:
+            logger.warning("namesake POI search failed: %s", e)
+            return None
+        # 类目锚词在场时外地候选也要过类目复核（「南山实验小学」的济南同名 POI 是科教文化场所，R1 二期刻意不认它）
+        anchor = self._category_anchor(description)
+        return next((r for r in wide if self._dest_matches(description, r.name)
+                     and self._beyond_local_radius(r, near) is not None
+                     and (not anchor or self._category_ok(r, anchor[1]))), None)
+
+    async def _ask_namesake(self, ctx, description: str, local, far, near, *,
+                            estimate: bool = False) -> AgentResult:
+        """借名歧义：外地本体在前（带城市名，选中后重新解析不会再撞同一个歧义）、近处借名在后，挂起等用户选。"""
+        city = (far.city or "").rstrip("市")
+        far_name = far.name if not city or city in far.name else f"{city}{far.name}"
+        far_km = self._beyond_local_radius(far, near)
+        local_km = round(self._rough_km(near.lat, near.lng, local.lat, local.lng), 1)
+        items = [{"id": far.id, "name": far_name, "address": far.address,
+                  "lat": far.lat, "lng": far.lng, "distance_km": far_km},
+                 {"id": local.id, "name": local.name, "address": local.address,
+                  "lat": local.lat, "lng": local.lng, "distance_km": local_km}]
+        await save_choices(ctx, NAVIGATION_DEST_CHOICES, items)
+        ask = "算到哪一个" if estimate else "去哪一个"
+        return AgentResult(
+            status=NEED_SLOT, missing_slots=["destination"],
+            speech=(f"「{description}」我找到两处：{far_name}（约{far_km}公里），"
+                    f"和附近的{local.name}（约{local_km}公里）。您要{ask}？说『第一个』或『第二个』就行。"),
+            # purpose=dest_choice：HMI 把「第N个」回填为目的地槽位续接，而不是另起一次导航
+            ui_card=attach({"type": "poi_list", "purpose": "dest_choice", "display_priority": 1,
+                            "title": f"{description} · 选择目的地", "items": items}, self.poi),
+            follow_up="选择具体目的地")
 
     # R1 二期（接地卡 2026-08-14）：类目锚词 → 期望高德 type 关键词族。
     # 包含式校验的隐含假设「名字包含 ⇒ 是本体」被真栈证伪——酒店/停车场/餐馆借地标

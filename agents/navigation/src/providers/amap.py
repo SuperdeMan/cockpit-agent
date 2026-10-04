@@ -141,6 +141,7 @@ class AmapPOIProvider(POIProvider):
             id=_as_str(p.get("id")), name=_as_str(p.get("name")),
             address=_as_str(p.get("address")), lat=lat, lng=lng,
             rating=rating, distance_km=dist_km, category=_as_str(p.get("type")),
+            city=_as_str(p.get("cityname")),
         )
 
     async def search(self, keyword: str, near: GeoPoint = None, category: str = "",

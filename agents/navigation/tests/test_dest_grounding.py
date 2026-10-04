@@ -85,9 +85,11 @@ def test_borrowed_name_poi_rejected_wide_rescue():
     assert ("虹桥机场", False) in poi.calls  # 确实做了去偏置重搜
 
 
-def test_lake_dual_match_inside_candidates_zero_api():
-    """「东湖」：#2 东湖绿地名字+类目双匹配 → 集内重排，不做全国重搜
-    （全国序 top1 是 500km 外的武汉东湖，就近合理性反而更差）。"""
+def test_lake_dual_match_inside_candidates_then_asks_about_the_far_namesake():
+    """「东湖」：#2 东湖绿地名字+类目双匹配 → 集内重排（R1 二期，不做去偏置救济重搜）。
+
+    2026-10-04 起（docs/design/2026-10-04-destination-borrowed-name.md）：本地半径外还有一个名字、类目都对得上的东湖
+    （武汉东湖生态旅游风景区）⇒ 不替用户选，两个都列出来问。修前按「就近合理性」直接选东湖绿地。"""
     poi = _RecordingPoi(
         near_results=[
             POI(id="n1", name="东湖公寓", category="商务住宅;住宅区;住宅小区",
@@ -104,9 +106,9 @@ def test_lake_dual_match_inside_candidates_zero_api():
     res = asyncio.run(run_handle(
         agent, "navigation.navigate_to", slots={"destination": "东湖"},
         raw_text="导航去东湖", meta=SH))
-    assert res.status == "ok"
-    assert "东湖绿地" in res.speech
-    assert ("东湖", False) not in poi.calls  # 集内命中，零额外 API
+    assert res.status == "need_slot" and not res.actions
+    assert [it["name"] for it in res.ui_card["items"]] == ["东湖生态旅游风景区", "东湖绿地"]
+    assert poi.calls.count(("东湖", False)) == 1   # 只有一次同名探查，没有救济重搜
 
 
 def test_wide_picks_dual_match_not_top1():
@@ -156,7 +158,9 @@ def test_no_anchor_top1_accepted_unchanged():
 
 
 def test_anchor_top1_pass_keeps_distance_order():
-    """守卫：锚词命中且 top1 类目正确（真在湖边）→ 保持距离序，零重搜。"""
+    """守卫：锚词命中且 top1 类目正确（真在湖边）→ 保持距离序，不做救济重搜。
+
+    2026-10-04 起名字不完全相同（「金鸡湖景区」≠「金鸡湖」）时多一次同名探查（本地半径外有没有本体）；探查无果，结果不变。"""
     poi = _RecordingPoi(
         near_results=[
             POI(id="n1", name="金鸡湖景区", category="风景名胜;风景名胜;国家级景点",
@@ -170,7 +174,7 @@ def test_anchor_top1_pass_keeps_distance_order():
         raw_text="导航去金鸡湖", meta=SH))
     assert res.status == "ok"
     assert "金鸡湖景区" in res.speech
-    assert ("金鸡湖", False) not in poi.calls
+    assert poi.calls.count(("金鸡湖", False)) == 1   # 同名探查一次，没有救济重搜
 
 
 class _AdminPoi(_RecordingPoi):

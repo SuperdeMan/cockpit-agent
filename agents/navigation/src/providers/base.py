@@ -25,6 +25,8 @@ class POI:
     distance_km: float = 0.0
     category: str = ""
     price_info: str = ""
+    # 所在城市（高德 cityname）：外地同名本体要带城市名呈现，选中后重新解析才不会再撞同一个歧义
+    city: str = ""
 
 
 class POIProvider(ABC):

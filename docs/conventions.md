@@ -564,6 +564,7 @@ Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供�
 | `REMINDABLE_ACTIVE`（`remindable_active`） | 产"未来事件"的域 opt-in（现 info sports `_save_remindable` + navigation 路线规划后写「到达X」ETA 事件，带 `arrive_by` 时限时另写「出发前往X」反向事件 fire_at=时限-路程；trip/charging 即插） | reminder `_from_remindable`（缺时间路径：「第N场/开赛前」→ 事件时刻-提前量；多未来项先按话里「出发/到达」词形收窄标题再择项，唯一即直取） | `{source,label,ts,items:[{title,fire_at}]}`（items 序=卡片渲染序，含已开赛占位） | 会话内；被覆盖 |
 | `SCENE_ACTIVE`（v1 保留 `scene_active`；其它车辆用 SDK `vehicle_scoped` 键） | scene-orchestrator `_dispatch`（激活写）/ `_deactivate`（退出清）/ `verify`（写 deferred） | `_deactivate` 恢复 solved_actions；`verify` 按用户/车辆单飞并校验代际；`triggers` 分车补做 | `{scene_id,scene_name,activated_at,activation_id,snapshot{},solved_actions[],deferred[]}`；每车一份权威快照，不双写；缺身份或写失败不派发 | 按用户/车辆，覆盖或退出清空；无 schema 迁移 |
 | `SCENE_PENDING`（`scene_pending`） | scene-orchestrator `_create`/`_update`（追问或回读时写草案） | scene-orchestrator 确认轮（取草案落库，**不重跑 LLM**——重编译会产出与用户确认时不一样的动作） | `{name,spec,draft{},overwrite}` | 一轮追问/确认；消费即清 |
+| `NAVIGATION_DEST_CHOICES`（`navigation_dest_choices`） | navigation `_ask_namesake`（近处借名 vs 外地本体时写候选，带坐标） | navigation `_navigate_to` / `_estimate`（续接轮「第N个」或点选名 ⇒ 选中的那个地点，直接用坐标不再重搜；`agents._sdk.dest_choice.resolve_choice`） | `{items:[{name,address[,lat,lng]}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 | `CHARGING_DEST_CHOICES`（`charging_dest_choices`） | charging-planner `_clarify_vague_destination`（泛目的地澄清时写候选） | charging-planner `_resolve_dest_ordinal`（续接轮 destination=「第N个」按序回填真名——引擎补槽灌的是用户字面，旅程 B2-3 真栈拿「第一个」搜 POI 选到无关站） | `{items:[{name,address}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 
 > 底层 profile KV 无独立 TTL（随用户画像存储，无 user_id 时静默跳过）。改 key/换存储只需改
@@ -3107,11 +3108,17 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   有把握就零播报改派 `manual.query`，没把握 / 不可达照常闲聊。判据只有手册的 `_confident`（与跳过目录路由同一条），闲聊不存车辆词表。
 - 指令句、个人记忆回忆问句不问；改派只交原话。内部意图不进清单，规划器看不见。
 - 改派是零播报：流式路径对改派结果一个字都不能吐（空话术也不行）。
+- Agent 内部调用（`self.agents.call`）的结果带回被调方的 `data`；跨 Agent 调用的单测至少一条只换 gRPC 桩、走真实 `AgentClient` 转换——
+  换掉整个客户端的用例验不到传输（2026-10-04：转换一直丢 data，道路安全的拥堵提示与闲聊让手册都因此在线上不生效，单测全绿）。
 
 ### 9.64 完整的信息问题不澄清成「选哪个动作」（2026-10-04）
 
 - 模型要澄清、而原话是完整的信息问题（`runtime.question_shape.is_complete_information_question`）时，重试策略
   `information_question_clarified` 校正并让下一次只给计划；校正措辞不含领域词。光有问号 / 语气尾词的裸对象照常澄清。
 - 用例里拿来当「普通澄清」例子的句子要是真正对象不明的（裸对象、无提问动作的陈述），别用信息问句。
-- Agent 内部调用（`self.agents.call`）的结果带回被调方的 `data`；跨 Agent 调用的单测至少一条只换 gRPC 桩、走真实 `AgentClient` 转换——
-  换掉整个客户端的用例验不到传输（2026-10-04：转换一直丢 data，道路安全的拥堵提示与闲聊让手册都因此在线上不生效，单测全绿）。
+
+### 9.65 两个地方都叫这个名字时问，不替用户选（2026-10-04）
+
+- 导航 / 估算：近处第一名只是借名（名字包含但归一后不相同）、本地半径外另有名字对得上（锚词在场时类目也对得上）的本体 ⇒
+  `dest_choice` 候选卡，外地本体在前带城市名；近处完全同名直接用、不多一次调用；类目查询不问。
+- 目的地候选卡的序数回填只有 `agents._sdk.dest_choice` 一份；候选带坐标存，续接直接用选中的地点，不再重新搜。
