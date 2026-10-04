@@ -3144,3 +3144,8 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   任一项不合格整批不采纳；用量拿不到记 unknown，不用 0 冒充。
 - 在线链零重试；外呼复用长连接；请求头与正文不进日志；`DECISION_ENABLED=false` 时零外呼。新配置键不进 `.env.example`。
 - 云端 shadow（`orchestrator/cloud/decision_support.py`）只观测：异步、不等、不改结果，span 不带原话；数据策略确认前只对合成会话发请求。
+
+### 9.69 回忆式问句不是指令（2026-10-04）
+
+- 句末「来着」（「…叫什么来着」「我都设过啥模式来着」）问的是过去发生过 / 说过的事：`runtime.question_shape.RECALL_TAILS`，
+  `is_non_directive_question` 认它；端侧写操作问句闸因此不再把「你昨天看的那部电影叫什么来着」执行成播放。

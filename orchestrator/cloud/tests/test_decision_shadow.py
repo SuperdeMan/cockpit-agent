@@ -78,7 +78,7 @@ def test_a_synthetic_turn_is_compared_with_the_planner_and_no_text_is_recorded(m
     (request, timeout), = clients.requests
     assert request.tasks[0].task_id == "addressed" and request.tasks[0].rubric_version == "1"
     assert dict(request.tasks[0].payload) == {"utterance": "我跟你说过多少次了"}
-    assert request.budget_ms == 1500 and timeout == 2.0 and request.binding.exchange_id == "r1"
+    assert request.budget_ms == 3000 and timeout == 3.5 and request.binding.exchange_id == "r1"
     (span,) = spans
     assert span["node"] == "decision.shadow" and span["trace_id"] == "t1"
     attrs = span["attrs"]

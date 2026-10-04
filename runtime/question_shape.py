@@ -31,6 +31,9 @@ from runtime.clause_split import split_clauses
 
 #: 疑问尾词。判据是**结尾**（先剥掉标点），不是「句中出现过问号」。
 QUESTION_TAILS = ("吗", "呢", "吗?", "吗？", "呢?", "呢？", "?", "？")
+#: 回忆式问法的句末助词：「你昨天看的那部电影叫什么来着」「我都设过啥模式来着」问的是过去发生过 / 说过的事，不是指令
+#: （2026-10-04 真栈：这句被端侧按「电影」本地开播）。云侧换话题判据（`engine._is_topic_change`）早就把它当问句。
+RECALL_TAILS = ("来着",)
 #: 能力问法：问的是「能不能」，不是让你做。
 CAPABILITY_ASKS = ("能不能", "可不可以", "会不会", "是不是", "支不支持", "行不行", "有没有")
 #: 数量/属性疑问词：问的是**参数本身**，构不成指令 → 无条件否决写操作。
@@ -379,6 +382,8 @@ def is_non_directive_question(t: str) -> bool:
     if _polite_tail_body(t):
         return True
     if t.rstrip("。！!.~ ").endswith(QUESTION_TAILS):
+        return True
+    if t.rstrip("。！!.~？?， ").endswith(RECALL_TAILS):
         return True
     if any(w in t for w in HYPOTHETICAL_FRAMES):
         return True

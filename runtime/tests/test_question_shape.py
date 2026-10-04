@@ -655,3 +655,18 @@ def test_definition_only_guard_keeps_other_speech_acts(text, expected):
 def test_restricted_explanation_and_negative_prelude(text, expected):
     from runtime.question_shape import is_explanation_request
     assert is_explanation_request(text) is expected
+
+
+# ── 回忆式问法（2026-10-04 真栈：「你昨天看的那部电影叫什么来着」被端侧按「电影」本地开播）──────────────────
+@pytest.mark.parametrize("text", ["你昨天看的那部电影叫什么来着", "那首歌叫什么来着？", "我都设过啥模式来着",
+                                  "刚才那家店在哪来着。"])
+def test_a_recall_question_is_not_a_directive(text):
+    from runtime.question_shape import is_non_directive_question
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", ["播放电影", "打开空调", "帮我放首歌"])
+def test_directives_without_the_recall_tail_stay_directives(text):
+    from runtime.question_shape import is_non_directive_question
+    assert is_non_directive_question(text) is False, text
+

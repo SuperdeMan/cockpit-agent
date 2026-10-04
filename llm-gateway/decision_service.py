@@ -22,7 +22,7 @@ from decision_specs import SPECS
 logger = logging.getLogger("llm.decision")
 
 DEFAULT_MODEL = "jev-1.13.0"            # 固定版本；`jev-latest` 是会移动的别名，不用
-DEFAULT_MAX_BUDGET_MS = 1500
+DEFAULT_MAX_BUDGET_MS = 3000           # 服务端上限；shadow 用满，在线建议（JV04 起）各自传更小的预算
 
 _STATUS = {
     dc.OK: llm_pb2.DECISION_STATUS_OK,

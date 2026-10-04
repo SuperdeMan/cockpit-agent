@@ -4,7 +4,7 @@
 与规划器自己的 `addressed` 同一句话对照，供离线校准。不进主链、不阻塞、失败只记一笔。span 里没有原话。
 
 配置（服务端受控）：`DECISION_ADDRESSED_MODE` = off（缺省）| shadow；`DECISION_SHADOW_SCOPE` = synthetic（缺省，只对合成
-E2E 会话发请求——把真实用户的话发给第三方要先定数据策略）| all；`DECISION_SHADOW_BUDGET_MS`（缺省 1500）；
+E2E 会话发请求——把真实用户的话发给第三方要先定数据策略）| all；`DECISION_SHADOW_BUDGET_MS`（缺省 3000：shadow 不阻塞主链，1.5 s 时真栈约 1/12 慢样本超时）；
 `DECISION_SHADOW_MAX_INFLIGHT`（缺省 4，满了丢样本并记 dropped，不排队）。网关侧另有总开关 `DECISION_ENABLED`。
 设计：docs/design/2026-10-04-jev-decide-integration.md。
 """
@@ -89,7 +89,7 @@ class ShadowRunner:
 
     async def _run_addressed(self, ctx, text: str, planner_addressed: bool, voice: bool) -> None:
         started = self._clock()
-        budget_ms = _int_env("DECISION_SHADOW_BUDGET_MS", 1500)
+        budget_ms = _int_env("DECISION_SHADOW_BUDGET_MS", 3000)
         request_id = str(getattr(ctx, "request_id", "") or "")
         payload = Struct()
         payload.update({"utterance": text})
