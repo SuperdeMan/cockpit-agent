@@ -32,6 +32,7 @@ from agents._sdk.clients import DEFAULT_TIMEOUT as _LLM_TIMEOUT_S
 from agents._sdk.provenance import attach
 from runtime.anaphora import has_anaphoric_subject
 from runtime.clause_split import split_clauses
+from runtime.question_shape import strip_recall_opener
 from runtime.safety_signal import alert_advice, alert_level, alert_signal, with_not_resolved
 from .providers import build_knowledge_retriever
 from .providers.base import CONFIDENT_COVERAGE
@@ -517,8 +518,9 @@ class ManualRagAgent(BaseAgent):
         # 检索用的是规划器补全的指代问题时，把用户原话一并给出：答案要回应的是用户说的那句。
         # 按分句取的槽不给整句原话——其余分句是别的步骤的事：「打开后备箱，再告诉我空调有哪些
         # 模式」的手册步给了整句，模型会去答「后备箱的开启方式，手册里没有查到」（真栈 3 次里 2 次）。
-        asked = (f"【用户原话】{raw}\n【问题】{lookup}" if basis == "anaphora" and raw
-                 else f"【问题】{lookup}")
+        # 回忆式开头（「刚才你说…」）不给生成：它看不到对话历史，拿到这句会答「我刚才没有说过」（固定语料 V201）。
+        asked = (f"【用户原话】{strip_recall_opener(raw)}\n【问题】{strip_recall_opener(lookup)}"
+                 if basis == "anaphora" and raw else f"【问题】{strip_recall_opener(lookup)}")
         messages = [                                        # 2) generate
             {"role": "system",
              "content": _SYSTEM_MANUAL if authoritative else _SYSTEM_GENERIC},

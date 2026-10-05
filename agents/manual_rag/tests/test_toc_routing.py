@@ -267,3 +267,13 @@ def test_router_and_answer_never_inherit_complex_task_thinking(tmp_path):
     asyncio.run(run_handle(agent, "manual.query", raw_text="停车时有人刮车能录下来吗", meta={"thinking": "on"}))
     calls = agent.llm.complete.await_args_list
     assert len(calls) == 2 and all(call.kwargs.get("thinking") is False for call in calls)
+
+
+def test_a_recall_opener_is_not_put_to_the_answer_model(tmp_path):
+    """「刚才你说空调有哪些模式？」：生成看不到对话历史，原话的「刚才你说」原样给它，它会答「我刚才没有说过」
+    （固定语料 V201，`8ffc8bff` 三遍里两遍）。给生成的是去掉回忆式开头后的问题。"""
+    agent, _ = _agent(tmp_path, "空调有制冷/制热（A/C）、自动等模式。")
+    asyncio.run(run_handle(agent, "manual.query", slots={"question": "空调有哪些模式"},
+                           raw_text="刚才你说空调有哪些模式？"))
+    prompt = agent.llm.complete.await_args[0][0][1]["content"]
+    assert "【问题】空调有哪些模式？" in prompt and "刚才" not in prompt

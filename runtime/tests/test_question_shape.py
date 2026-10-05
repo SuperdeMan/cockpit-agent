@@ -670,3 +670,19 @@ def test_directives_without_the_recall_tail_stay_directives(text):
     from runtime.question_shape import is_non_directive_question
     assert is_non_directive_question(text) is False, text
 
+
+# ── 句首回忆式开头（2026-10-05 固定语料 V201：手册生成拿到「刚才你说…」答「我刚才没有说过」）──────────────
+@pytest.mark.parametrize("text,content", [
+    ("刚才你说空调有哪些模式？", "空调有哪些模式？"),
+    ("你之前讲的，座椅加热有几档", "座椅加热有几档"),
+    ("刚才说的空调有几种模式", "空调有几种模式"),
+])
+def test_a_recall_opener_is_stripped_down_to_the_question(text, content):
+    from runtime.question_shape import strip_recall_opener
+    assert strip_recall_opener(text) == content
+
+
+@pytest.mark.parametrize("text", ["说明书在哪", "之前设置的座椅记忆怎么恢复", "刚才你说", "空调有哪些模式"])
+def test_text_without_a_recall_opener_is_left_alone(text):
+    from runtime.question_shape import strip_recall_opener
+    assert strip_recall_opener(text) == text

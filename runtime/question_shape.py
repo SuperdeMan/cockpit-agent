@@ -197,6 +197,24 @@ _INFO_REQUEST_RE = re.compile(
     rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|再)*\s*(?:{_INFO_REQUEST_ALT})")
 
 
+#: 回忆式开头的唯一一份正则（手册检索剥句首话语壳也用它）：时间词或人称至少带一个，后接言说动词（+ 过 / 的）。
+_RECALL_TIME_ALT = "|".join(sorted(map(re.escape, RECALL_TIMES), key=len, reverse=True))
+RECALL_OPENER_PATTERN = (
+    rf"(?:(?:{_RECALL_TIME_ALT})你?|你(?:{_RECALL_TIME_ALT})?)"
+    rf"(?:{'|'.join(sorted(map(re.escape, RECALL_SPEECH_VERBS), key=len, reverse=True))})过?的?")
+_RECALL_OPENER_RE = re.compile(rf"^{RECALL_OPENER_PATTERN}[，,：:\s]*")
+
+
+def strip_recall_opener(text: str) -> str:
+    """去掉句首的回忆式开头（「刚才你说空调有哪些模式」→「空调有哪些模式」），后面的内容才是要回答的问题。
+
+    看不到对话历史的回答方（手册生成）拿到「刚才你说…」会去评论「我刚才没有说过」（固定语料 V201，2026-10-05）。
+    没有回忆式开头、或开头之后什么也不剩时原样返回。"""
+    t = (text or "").strip()
+    m = _RECALL_OPENER_RE.match(t)
+    return t[m.end():] if m and m.end() < len(t) else t
+
+
 _POLITE_TAIL_ALT = "|".join(sorted(map(re.escape, POLITE_TAILS), key=len, reverse=True))
 _POLITE_TAIL_RE = re.compile(rf"^(?P<body>.+?)[，,、\s]*(?:{_POLITE_TAIL_ALT})$")
 _IMPERATIVE_VERB_ALT = "|".join(sorted(
