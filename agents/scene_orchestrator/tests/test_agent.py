@@ -702,7 +702,7 @@ def _answer_only(res):
 
 
 def test_describe_tells_what_a_builtin_scene_does_without_doing_it():
-    res = _run(run_handle(_agent(), "scene.describe", slots={"name": "露营模式"},
+    res = _run(run_handle(_agent(), "scene.describe", slots={"scene": "露营模式"},
                           raw_text="露营模式是什么意思？", ctx=_ctx(KV())))
     _answer_only(res)
     assert res.speech.startswith("露营模式会：") and "座椅放平" in res.speech
@@ -728,7 +728,7 @@ def test_describe_covers_the_users_own_scene():
 
 def test_a_mode_that_is_not_a_scene_goes_to_the_manual():
     """「运动模式是什么意思」：部件自带的模式不是场景，零播报改派手册，只交用户原话。"""
-    res = _run(run_handle(_agent(), "scene.describe", slots={"name": "运动模式"},
+    res = _run(run_handle(_agent(), "scene.describe", slots={"scene": "运动模式"},
                           raw_text="运动模式是什么意思", ctx=_ctx(KV())))
     _answer_only(res)
     assert res.speech == ""

@@ -178,10 +178,10 @@ capabilities:
   - intent: scene.describe
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: read
       parameters:
-        name:
+        scene:
           type: string
           unit: ''
           region: ''
@@ -199,7 +199,7 @@ capabilities:
     response_only: true
     description: 讲一个场景模式（回家 / 露营 / 午休 / 自建的）开启后会做什么、哪些步骤要确认；只回答、不执行。
       空调、座椅、驾驶等部件自带的工作模式不是场景，归车型手册问答
-    slots: [name]
+    slots: [scene]
     examples: ["露营模式是什么意思", "回家模式会做哪些事", "午休模式都开了什么", "我的钓鱼模式会干嘛"]
 
 # 确定性路由（R2.1）：弱 LLM 会把「X模式」三字短语漏成 chitchat。

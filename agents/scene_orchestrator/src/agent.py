@@ -693,7 +693,7 @@ class SceneOrchestratorAgent(BaseAgent):
     # ── scene.describe：讲一个场景会做什么（只回答、不执行；设计 2026-10-05-scene-describe.md）──────────
     async def _describe(self, intent, ctx, meta) -> AgentResult:
         raw = str(getattr(intent, "raw_text", "") or "").strip()
-        query = str(intent.slots.get("name") or "").strip() or extract_scene_name(raw)
+        query = str(intent.slots.get("scene") or "").strip() or extract_scene_name(raw)
         if not query:
             # 只响应能力不许挂补槽：没有名字可讲就列出可用场景，一句普通回答
             mine, builtin = await self._all_scenes(ctx)

@@ -263,15 +263,16 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-09-26 +3 → 14012：同一句描述补回一批改写时删掉的「胎压」（放列表中段，一批的开头不动）——
     # 「胎压黄灯亮了，还能继续开吗？应该补到多少？」只规划安全续驾一步的比例 3/27（一批前 collector）→
     # 12/23（一批后真栈）。条数不变。
-    # 2026-10-05 +124 → 14136：新增 `scene.describe`（场景定义问只讲不做，固定语料 V207）。有意新增 +1 条，仍零裁剪。
-    assert catalog.catalog_stats["chars_full"] == 14136
-    assert catalog.catalog_stats["chars_final"] == 14136
+    # 2026-10-05 +125 → 14137：新增 `scene.describe`（场景定义问只讲不做，固定语料 V207；槽名随同 Agent 用 `scene`）。
+    # 有意新增 +1 条，仍零裁剪。
+    assert catalog.catalog_stats["chars_full"] == 14137
+    assert catalog.catalog_stats["chars_final"] == 14137
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（14136 → 1864）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（14137 → 1863）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 1864
+    assert 16000 - catalog.catalog_stats["chars_final"] == 1863
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
