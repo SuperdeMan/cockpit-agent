@@ -157,6 +157,7 @@ class SceneOrchestratorAgent(BaseAgent):
             "scene.update": self._update,
             "scene.delete": self._delete,
             "scene.list": self._list_scenes,
+            "scene.describe": self._describe,
         }
         h = handlers.get(intent.name)
         if not h:
@@ -688,6 +689,33 @@ class SceneOrchestratorAgent(BaseAgent):
                      "mine": [s.to_card_item() for s in mine],
                      "builtin": [s.to_card_item() for s in builtin]},
             data={"scenes": [s.name for s in mine + builtin]})
+
+    # ── scene.describe：讲一个场景会做什么（只回答、不执行；设计 2026-10-05-scene-describe.md）──────────
+    async def _describe(self, intent, ctx, meta) -> AgentResult:
+        raw = str(getattr(intent, "raw_text", "") or "").strip()
+        query = str(intent.slots.get("name") or "").strip() or extract_scene_name(raw)
+        if not query:
+            # 只响应能力不许挂补槽：没有名字可讲就列出可用场景，一句普通回答
+            mine, builtin = await self._all_scenes(ctx)
+            names = "、".join(s.name for s in mine + builtin)
+            return AgentResult(speech=f"你想了解哪个场景？现在有：{names}。" if names else "现在还没有场景。")
+        scene = await self._match(ctx, query)
+        if scene is None:
+            # 名字对不上任何场景：多半是部件自带的模式（「运动模式是什么意思」），零播报改派手册，只交用户原话
+            return AgentResult(speech="", data={"_escalate": {
+                "intent": "manual.query", "slots": {"question": raw or query}, "reason": "not_a_scene"}})
+        descs = [action_desc(a) for a in scene.actions]
+        speech = f"{scene.name}会：{'、'.join(descs)}" if descs else f"{scene.name}现在没有设置任何动作"
+        if scene.description:
+            speech += f"（{scene.description}）"
+        speech += "。"
+        confirm = [action_desc(a) for a in scene.actions if a.get("require_confirm")]
+        if confirm:
+            speech += f"其中{'、'.join(confirm)}开启时要你确认。"
+        speech += f"说「打开{scene.name}」就能开启。"
+        # 不出场景卡：两端按 context 显示状态签（已保存 / 已开启 / 待确认），不认识的 context 回落成「已保存」——
+        # 讲一讲会被显示成存了一个场景。话术已逐项讲了动作。
+        return AgentResult(speech=speech, data={"scene": scene.name})
 
     # ── 话术 / 卡片 ─────────────────────────────────────────────────────────
     @staticmethod

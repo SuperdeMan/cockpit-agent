@@ -75,11 +75,14 @@ def test_frozen_production_inventory_and_legacy_roundtrip():
                     cc.validate_capability(restored, c)
     assert count == 143
     # 迁到严格契约的旧能力（加上下文范围要改 ABI 指纹）：道路安全（CA2-07）、导航（CA2-19 S4）
-    assert strict_migrations == {("road-safety", intent) for intent in (
+    migrated = {("road-safety", intent) for intent in (
         "safety.driving_advice", "safety.driver_state", "safety.weather_alert", "safety.road_condition")} | {
         ("navigation", f"navigation.{name}") for name in (
             "search_poi", "navigate_to", "estimate", "reroute", "cancel", "set_place",
             "reverse_geocode", "locate", "poi_detail")}
+    # 新增即严格契约的能力（不在历史白名单里，不是迁移）：场景定义问（2026-10-05）
+    new_strict = {("scene-orchestrator", "scene.describe")}
+    assert strict_migrations == migrated | new_strict
     assert len(cc.migration_inventory()) == 156  # immutable historical whitelist
 
 
@@ -317,7 +320,7 @@ def test_inventory_check_turns_red_if_one_current_producer_drops_the_contract(mo
     with pytest.raises(ValueError, match="producer_missing_contract"):
         ci.inventory(validate=True)
     monkeypatch.setattr(ci, "collect_manifests", original)
-    assert len(ci.inventory(validate=True)) == 156
+    assert len(ci.inventory(validate=True)) == 157      # 2026-10-05 +1：新增 scene.describe
 
 
 def test_metadata_migration_keeps_the_planner_catalog_projection_identical():

@@ -169,7 +169,9 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-09-25 154→156：评审四轮待办新增端侧 `rear_view_mirror.heating.open` / `.close`。同 media.stop，**不是新能力**——
     # `commands.yaml` 的后视镜 modes 一直声明着 heating，端侧只有折叠 / 展开：「右侧后视镜加热打开」执行成展开、
     # 「关闭后视镜加热」执行成停止媒体（`media.stop`）。
-    assert len(catalog.ref_to_pair) == 156
+    # 2026-10-05 156→157：新增 `scene.describe`（场景定义问只讲不做，固定语料 V207「露营模式是什么意思」此前没有能力可落、
+    # 闲聊凭常识编）。有意新增的能力，不是重复项。
+    assert len(catalog.ref_to_pair) == 157
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -261,14 +263,15 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-09-26 +3 → 14012：同一句描述补回一批改写时删掉的「胎压」（放列表中段，一批的开头不动）——
     # 「胎压黄灯亮了，还能继续开吗？应该补到多少？」只规划安全续驾一步的比例 3/27（一批前 collector）→
     # 12/23（一批后真栈）。条数不变。
-    assert catalog.catalog_stats["chars_full"] == 14012
-    assert catalog.catalog_stats["chars_final"] == 14012
+    # 2026-10-05 +124 → 14136：新增 `scene.describe`（场景定义问只讲不做，固定语料 V207）。有意新增 +1 条，仍零裁剪。
+    assert catalog.catalog_stats["chars_full"] == 14136
+    assert catalog.catalog_stats["chars_final"] == 14136
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（14012 → 1988）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（14136 → 1864）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 1988
+    assert 16000 - catalog.catalog_stats["chars_final"] == 1864
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

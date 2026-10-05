@@ -1,0 +1,60 @@
+# 场景定义问：按名讲一个场景会做什么（`scene.describe`）
+
+> 2026-10-05。状态：已实现，待部署。交付对象：场景编排 Agent（`agents/scene_orchestrator`）、Planner 知识层（scene 范例、手册边界 guide）。
+> 关联：固定语料 V207（`seed.yaml`，family `definition_question`）；[收尾括号修补](2026-10-04-planner-salvage-retry-floor.md) §5 的登记项；
+> [闲聊让手册](2026-10-04-chitchat-defers-to-confident-manual.md)。按用户「接下来待做的，都按你建议的来」推进。
+
+## 1. 问题
+
+「露营模式是什么意思？」连续几份基线都红：`8ffc8bff` 三遍里两遍、`ee5ce497` 定向复测三遍都落到闲聊（规划器两轮都判「受话、无需动作」），
+闲聊凭常识解释露营模式——「锁车后不让系统断电」「关闭部分提示音」这些都不是本车露营模式做的事。
+
+露营模式是 `agents/scene_orchestrator/scenes.yaml` 里的系统场景（座椅放平 + 空调外循环 22℃ + 暖色氛围灯），权威说明在场景定义里；
+车书手册只在「对外放电」一页提到露营（本地索引：第 219 页，覆盖率 0.78），闲聊的「让手册」认领闸没把握、不撤闲聊答案。
+现有场景能力没有「按名讲一个场景」的只读能力：`scene.list` 无槽，只列名字。名字存在、能力不可达。
+
+## 2. 设计
+
+### 2.1 能力
+
+`scene.describe`：v2 契约、`effect: read`、`response_only: true`，参数 `name`（string）。描述写清边界：讲一个**场景**（回家 / 露营 / 午休 / 自建）
+开启后会做什么；空调、座椅、驾驶等部件自带的工作模式不是场景，归车型手册。只回答、不执行——不返回动作、不挂确认、不追问槽。
+
+### 2.2 处理
+
+1. 场景名：槽 `name`，缺省取原话里抠出的场景名（`extract_scene_name`）；匹配沿用 `_match`（用户场景优先、再内置，精确 → 别名 → 近似）。
+2. 命中：话术「露营模式会：…（场景自带的描述）。其中…开启时要你确认。说『打开露营模式』就能开启。」，动作描述沿用 `action_desc`；不出场景卡——两端按 `context` 显示状态签（已保存 / 已开启 / 待确认），不认识的 context 回落成「已保存」，讲一讲会被显示成存了一个场景。
+3. 没命中任何场景：零播报改派 `manual.query`（`_escalate`，原因 `not_a_scene`，只交用户原话）——「运动模式是什么意思」这类部件模式归手册；
+   改派每轮至多一跳，由编排保证。
+4. 没有名字可讲（原话与槽都抠不出）：一句普通回答列出可用场景，不挂 NEED_SLOT（只响应能力的红线）。
+
+### 2.3 规划知识
+
+- `skills/exemplars/scene.yaml` 追加两条定义问范例（「露营模式会做哪些事」「回家模式是干嘛的」→ `scene.describe`）；
+- `skills/guides/manual-help-boundary.yaml`：场景名 + 定义问 ⇒ `scene.describe`；部件模式（空调 / 座椅 / 驾驶）⇒ 手册，原有反界定不变；
+- 不加 route hint：hint 不认识场景名，「X模式是什么意思」会把部件模式也劫持过来；改派兜底已覆盖错派。
+
+## 3. 验证计划
+
+- 单测：内置场景、用户场景遮蔽内置、近似名、未命中改派手册、无名字时普通回答；只响应契约（无动作 / 无挂起）；能力完整性与范例门禁。
+- 全量与五道门禁（精确 SHA）；部署后：V207 定向 ×6，定义问小探针（回家模式会做什么、午休模式是什么、运动模式是什么意思 ⇒ 手册、
+  空调有哪些模式 ⇒ 仍是手册），零动作；固定语料 20×3 回归。
+
+### 2.4 对抗覆盖（L0 门禁）
+
+新增 active intent 机械地要求正例 2、硬负例 2、relation 对照 1：`coverage_topup.yaml` 加两对 route_flip——「打开露营模式」(`scene.activate`，
+禁 `scene.describe`) ↔「露营模式是什么意思」(`scene.describe`，禁开启与闲聊)；「午休模式开了会做哪些事」(`scene.describe`，禁手册与开启) ↔
+「空调有哪些模式」(手册，禁 `scene.describe` / `scene.list`)。四条均为 `seen_regression`（能力声明与范例本身就是修复，同既往口径）；
+discovery 套件去重输入 634 → 638，上界按惯例同步并在 `suites.yaml` 写明理由。
+
+## 4. 实施记录
+
+- 能力：`agents/scene_orchestrator/manifest.yaml` 新增 `scene.describe`；处理 `_describe`（命中讲动作与确认步骤、对不上改派手册、无名字列场景）。
+- 知识：范例两条（只追加）、`manual-help-boundary` guide v5（场景定义问 ⇒ `scene.describe`，依赖补 `scene.describe` / `scene.activate`）。
+- 用例：场景编排 5 条（内置、原话抠名、用户场景、改派手册、无名字），每条断言无动作无挂起；变异 4 条（不改派、无名字追问、去掉确认提示、只认槽）全部判红。
+  L0 strict 2/2、能力完整性、skills、exemplars 门禁通过。
+- 契约：新能力用 `additional_parameters: reject`（`legacy` 只给历史白名单里的老能力）并显式声明粗粒度 `effect: read`；
+  冻结清单用例把「新增即严格契约」与「迁到严格契约的旧能力」分开断言，历史白名单仍是 156。
+- 钉住的数字按各自纪律更新：在线能力 156 → 157、规划目录 14012 → 14136 字符（余量 1864，零裁剪）、
+  discovery 去重输入上界 634 → 638；手册边界 guide 首版加的一整条让「常驻 policy + 最大 guide」到 2646（预算 2600、会被静默裁掉），
+  改为并进原有「scene.list 只列场景」那句。

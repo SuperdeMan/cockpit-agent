@@ -1467,3 +1467,58 @@ cases:
       - input: {utterance: 取消本次订单预览, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [shop.preview_discard]}], forbidden_intents: [shop.order_cancel, luckin.order_cancel, shop.order_status], allow_extra_intents: false}
+
+  # ── 场景定义问 vs 开启 / 部件模式（scene.describe，2026-10-05 固定语料 V207）─────────────
+  # 「露营模式是什么意思」此前没有能力可落、规划器判无需动作；定义问只讲不做（只响应能力），开启归 scene.activate，
+  # 空调 / 座椅这些部件自带的模式归手册。部件模式误落到 scene.describe 时 Agent 会改派手册，但计划层仍应直接落手册。
+  # 四条均为 seen_regression：能力声明（描述与范例）本身就是这次修复，不能伪装成未见迁移。
+  - id: tu.scene.activate-vs-describe
+    title: 打开露营模式
+    family_id: tu.scene-describe-vs-activate
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-05}
+    turns:
+      - input: {utterance: 打开露营模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.activate]}], forbidden_intents: [scene.describe], allow_extra_intents: false}
+  - id: tu.scene.describe-vs-activate
+    title: 露营模式是什么意思
+    family_id: tu.scene-describe-vs-activate
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-05}
+    relation: {base_case: tu.scene.activate-vs-describe, type: route_flip, expectation: {forbidden_after: [scene.activate], required_change: true}}
+    turns:
+      - input: {utterance: 露营模式是什么意思, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.describe]}], forbidden_intents: [scene.activate, chitchat.talk], allow_extra_intents: false}
+  - id: tu.scene.describe-vs-manual
+    title: 午休模式开了会做哪些事
+    family_id: tu.scene-describe-vs-manual
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [scene, manual], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-05}
+    turns:
+      - input: {utterance: 午休模式开了会做哪些事, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.describe]}], forbidden_intents: [manual.query, scene.activate], allow_extra_intents: false}
+  - id: tu.scene.manual-vs-describe
+    title: 空调有哪些模式（部件模式不是场景）
+    family_id: tu.scene-describe-vs-manual
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [scene, manual], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-05}
+    relation: {base_case: tu.scene.describe-vs-manual, type: route_flip, expectation: {forbidden_after: [scene.describe], required_change: true}}
+    turns:
+      - input: {utterance: 空调有哪些模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [manual.query]}], forbidden_intents: [scene.describe, scene.list], allow_extra_intents: false}

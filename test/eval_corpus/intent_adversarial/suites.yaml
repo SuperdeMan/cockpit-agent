@@ -133,12 +133,15 @@ schema_version: 1
 #      （天气 vs 前方路况，「怎么样」框架的第三条腿），台账契约机械地要求双向各 2 例。
 #      **这一条记在这里是为了让下一个人知道：范例库的门禁读数是相对的，
 #      别把它读成「谁把冲突引进来了」。** 旧尺子一条没删。
+# 2026-10-05 放到 638：新增 active intent `scene.describe`（固定语料 V207「露营模式是什么意思」此前没有能力可落，
+# 规划器判无需动作、闲聊凭常识编）。覆盖矩阵机械新增正例 2、硬负例 2、relation 对照 2（两对 route_flip：开启 vs 定义问、
+# 场景定义 vs 部件模式），去重后 +4。四条均为 `seen_regression`：能力声明与范例本身就是这次修复。旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 634
+    max_cases: 638
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

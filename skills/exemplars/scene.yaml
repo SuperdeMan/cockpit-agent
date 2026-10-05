@@ -162,3 +162,22 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+# 2026-10-05 场景定义问（固定语料 V207）：讲一个场景会做什么，只回答不执行；部件自带的模式归手册。
+- text: 露营模式会做哪些事
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.describe
+  source: manual
+  added: '2026-10-05'
+  tags:
+  - badcase
+  note: 场景定义问落 scene.describe（讲动作、不执行）；此前没有能力可落，规划器判无需动作、闲聊凭常识编
+- text: 回家模式是干嘛的
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.describe
+  source: manual
+  added: '2026-10-05'
+  tags:
+  - badcase
+  note: 问场景是什么≠开启它；开启归 scene.activate

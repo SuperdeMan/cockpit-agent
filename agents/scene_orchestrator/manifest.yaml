@@ -173,6 +173,34 @@ capabilities:
     description: 列出可用的场景模式（我建的 / 内置的）；空调、大灯、座椅等部件自带的工作模式与挡位不是场景，归车型手册问答
     slots: []
     examples: ["有哪些场景模式", "我能用什么模式", "看看我的场景"]
+  # 场景定义问（2026-10-05，固定语料 V207）：「露营模式是什么意思」此前没有能力可落，规划器判无需动作、闲聊凭常识编。
+  # 名字对不上任何场景时 Agent 自己改派手册（部件模式），设计 docs/design/2026-10-05-scene-describe.md。
+  - intent: scene.describe
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        name:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: reject
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
+    effect: read
+    response_only: true
+    description: 讲一个场景模式（回家 / 露营 / 午休 / 自建的）开启后会做什么、哪些步骤要确认；只回答、不执行。
+      空调、座椅、驾驶等部件自带的工作模式不是场景，归车型手册问答
+    slots: [name]
+    examples: ["露营模式是什么意思", "回家模式会做哪些事", "午休模式都开了什么", "我的钓鱼模式会干嘛"]
 
 # 确定性路由（R2.1）：弱 LLM 会把「X模式」三字短语漏成 chitchat。
 # **guard 的核心职责是 D8 端云分工**：驾驶/动力类模式词（运动/省电/雪地…）是端侧

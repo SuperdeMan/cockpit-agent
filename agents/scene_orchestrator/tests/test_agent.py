@@ -692,3 +692,51 @@ def test_ground_hour_uses_business_tz():
     env = a._ground({})
     after = datetime.now(BUSINESS_TZ).hour
     assert env["hour"] in {before, after}          # 夹逼，容忍跨小时边界的瞬间
+
+
+# ── scene.describe：讲一个场景会做什么（2026-10-05 固定语料 V207，设计 2026-10-05-scene-describe.md）────────
+
+def _answer_only(res):
+    """只响应能力：不返回动作、不挂确认、不追问槽。"""
+    assert res.status == "ok" and not res.actions, (res.status, res.actions)
+
+
+def test_describe_tells_what_a_builtin_scene_does_without_doing_it():
+    res = _run(run_handle(_agent(), "scene.describe", slots={"name": "露营模式"},
+                          raw_text="露营模式是什么意思？", ctx=_ctx(KV())))
+    _answer_only(res)
+    assert res.speech.startswith("露营模式会：") and "座椅放平" in res.speech
+    assert "要你确认" in res.speech and "打开露营模式" in res.speech      # 座椅放平是需确认的动作
+    assert not res.ui_card          # 两端的场景卡会把不认识的 context 显示成「已保存」，定义问只回话
+
+
+def test_describe_takes_the_scene_name_from_the_utterance():
+    res = _run(run_handle(_agent(), "scene.describe", slots={}, raw_text="午休模式都开了什么", ctx=_ctx(KV())))
+    _answer_only(res)
+    assert res.speech.startswith("午休模式会：")
+
+
+def test_describe_covers_the_users_own_scene():
+    kv, a = KV(), _agent(_FISHING)
+    _run(run_handle(a, "scene.create", slots={}, raw_text="帮我创建一个钓鱼模式：氛围灯调到10%，空调外循环",
+                    ctx=_ctx(kv)))
+    _run(run_handle(a, "scene.create", slots={}, raw_text="确认", ctx=_ctx(kv), meta={"confirmed": "true"}))
+    res = _run(run_handle(a, "scene.describe", slots={}, raw_text="我的钓鱼模式会干嘛", ctx=_ctx(kv)))
+    _answer_only(res)
+    assert res.speech.startswith("钓鱼模式会：") and "氛围灯" in res.speech
+
+
+def test_a_mode_that_is_not_a_scene_goes_to_the_manual():
+    """「运动模式是什么意思」：部件自带的模式不是场景，零播报改派手册，只交用户原话。"""
+    res = _run(run_handle(_agent(), "scene.describe", slots={"name": "运动模式"},
+                          raw_text="运动模式是什么意思", ctx=_ctx(KV())))
+    _answer_only(res)
+    assert res.speech == ""
+    assert res.data["_escalate"] == {"intent": "manual.query", "slots": {"question": "运动模式是什么意思"},
+                                     "reason": "not_a_scene"}
+
+
+def test_without_a_scene_name_it_lists_the_scenes_instead_of_asking_for_a_slot():
+    res = _run(run_handle(_agent(), "scene.describe", slots={}, raw_text="那个模式是什么意思", ctx=_ctx(KV())))
+    _answer_only(res)
+    assert res.speech.startswith("你想了解哪个场景？") and "露营模式" in res.speech
