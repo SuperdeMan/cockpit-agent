@@ -3177,3 +3177,7 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 
 - 只凭检索资料作答、看不到对话历史的生成（手册）拿到「刚才你说…」会去评论「我没说过」；给它的问题先过 `runtime.question_shape.strip_recall_opener`。
 - 回忆式开头的正则只有 `RECALL_OPENER_PATTERN` 一份，检索剥壳与生成去壳共用。
+
+### 9.75 估算与起终点解析用导航同样的候选条数（2026-10-05）
+
+- `_resolve_point_checked` 不另传 `limit`：只取第一条，但锚词双匹配要在缺省的 3 条里扫，否则同一个地名估算与导航答成两个地方。

@@ -311,3 +311,14 @@ def test_a_guess_that_drops_the_local_city_still_prefers_the_local_place():
                    city="深圳市", address="宝安区新安街道")
     assert agent._keeps_dropped_head("长沙橘子洲", "橘子洲", stir_fry) is False        # 名字里的「长沙」是菜系，不算
 
+
+# ── 估算与导航用同样多的候选做锚词扫描（2026-10-05：「东莞松山湖」估算只取 1 条，能对上的「松山湖」排第二）──────────
+def test_an_estimate_scans_as_many_candidates_as_navigation():
+    bus_stop = POI(id="n1", name="深圳机场(公交站)", category="交通设施服务;公交车站;公交车站相关", lat=22.64, lng=113.81,
+                   city="深圳市")
+    scenic = POI(id="w1", name="松山湖风景区", category="风景名胜;风景名胜;国家级景点", lat=22.90, lng=113.89, city="东莞市")
+    lake = POI(id="w2", name="松山湖", category="地名地址信息;热点地名;热点地名", lat=22.94, lng=113.90, city="东莞市")
+    poi = _KeyedPoi(near={"东莞松山湖": [bus_stop]}, wide={"东莞松山湖": [scenic, lake]})
+    name, point, _ = asyncio.run(_guessing_agent(poi, [])._resolve_point_checked("东莞松山湖", None, dict(META)))
+    assert name == "松山湖" and point.lat == lake.lat
+

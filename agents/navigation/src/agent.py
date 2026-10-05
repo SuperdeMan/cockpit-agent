@@ -463,7 +463,9 @@ class NavigationAgent(BaseAgent):
                         GeoPoint(lat=float(stored["lat"]), lng=float(stored["lng"])), None)
             return label, None, None
         near = await self._current_position(ctx, meta)
-        _, items = await self._find_destination(t, meta, near=near, limit=1)
+        # 与导航同用缺省的 3 条：只取第一条，但锚词双匹配要在候选里扫——只取 1 条时「东莞松山湖」全国第一是「松山湖风景区」
+        # （名字带后缀、校验够不着），能对上的「松山湖」排第二、取不到，只能靠模型猜名（2026-10-05 A/B，几遍之间结果不同）
+        _, items = await self._find_destination(t, meta, near=near)
         if items and items[0].lat is not None:
             top, ambiguity = items[0], None
             far = await self._far_namesake(t, top, near, meta) if check_namesake else None
