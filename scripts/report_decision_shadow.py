@@ -1,10 +1,9 @@
-"""Read-only report of the Jev "addressed" shadow (docs/design/2026-10-04-jev-decide-integration.md §9–§10).
+"""Jev 受话 shadow 的只读报告（docs/design/2026-10-04-jev-decide-integration.md §9–§10）。
 
-Lists turns from the collector over a time window, reads each turn's `decision.shadow` span (which never carries the
-utterance) and reports, split by voice / typed input: how many turns were shadowed, status counts (ok / timeout / …),
-how often Jev and the planner agree, the distribution of Jev's probability, and latency percentiles. With
-`--disagreements` it also lists the disagreeing turns with their text from the collector's own turn record (internal
-debugging data — keep the output out of the repo).
+列出 collector 在时间窗内的轮次，读每轮的 `decision.shadow` span（span 从不带原话）。分桶为语音 / 文字输入 × 合成 E2E 会话
+（会话 ID 以 `e2e-` 开头）/ 真实用户：文字输入按设计一律算受话，探针句子也不是真实流量，所以采纳阈值只看 voice/real。
+每桶报告：shadow 了多少轮、状态计数（ok / timeout / …）、Jev 与规划器的一致率、Jev 概率的分布、时延分位数。带 `--disagreements`
+时另列出不一致的轮次及原话（取 collector 轮次列表的 `user_text`；内部调试数据——输出不进仓库）。
 """
 from __future__ import annotations
 
@@ -53,7 +52,8 @@ async def report(hours: float, limit: int, disagreements: bool) -> dict:
         if span is None:
             continue
         attrs = span.get("attrs") or {}
-        key = "voice" if attrs.get("voice") else "typed"
+        source = "e2e" if str(turn.get("session_id") or "").startswith("e2e-") else "real"
+        key = ("voice" if attrs.get("voice") else "typed") + "/" + source
         b = buckets.setdefault(key, {"shadowed": 0, "status": Counter(), "agree": 0, "scored": 0,
                                      "p_true": [], "latency_ms": []})
         b["shadowed"] += 1
@@ -65,10 +65,10 @@ async def report(hours: float, limit: int, disagreements: bool) -> dict:
         if span.get("duration_ms") is not None:
             b["latency_ms"].append(float(span["duration_ms"]))
         if disagreements and attrs.get("agree") is False:
-            out["disagreements"].append({"trace_id": trace, "voice": bool(attrs.get("voice")),
+            out["disagreements"].append({"trace_id": trace, "voice": bool(attrs.get("voice")), "source": source,
                                          "planner_addressed": attrs.get("planner_addressed"),
                                          "p_true": attrs.get("p_true"),
-                                         "text": str((detail.get("turn") or {}).get("text") or "")[:80]})
+                                         "text": str(turn.get("user_text") or "")[:80]})
     for key, b in buckets.items():
         p = b["p_true"]
         out["by_input"][key] = {
