@@ -1,6 +1,6 @@
 # 场景定义问：按名讲一个场景会做什么（`scene.describe`）
 
-> 2026-10-05。状态：已实现，待部署。交付对象：场景编排 Agent（`agents/scene_orchestrator`）、Planner 知识层（scene 范例、手册边界 guide）。
+> 2026-10-05。状态：已部署 `4e3ffb14`（首版 `858586e6`）。交付对象：场景编排 Agent（`agents/scene_orchestrator`）、Planner 知识层（scene 范例、手册边界 guide）。
 > 关联：固定语料 V207（`seed.yaml`，family `definition_question`）；[收尾括号修补](2026-10-04-planner-salvage-retry-floor.md) §5 的登记项；
 > [闲聊让手册](2026-10-04-chitchat-defers-to-confident-manual.md)。按用户「接下来待做的，都按你建议的来」推进。
 
@@ -65,3 +65,9 @@ discovery 套件去重输入 634 → 638，上界按惯例同步并在 `suites.y
 「露营模式是什么意思？」两遍都答「这项能力的接口或参数暂时不匹配」——trace 显示规划器**选对了** `scene.describe`，槽却按同 Agent
 的开启 / 退出习惯填成 `scene`，严格契约（`additional_parameters: reject`）整步拒掉。同一个 Agent 的能力用同一个槽名：改为 `scene`，
 contract revision 升到 2（已部署的契约变了），目录字符 14136 → 14137。
+
+## 5. 验证
+
+- 精确 SHA 全量：`858586e6` 11106 / 35 / 11、`4e3ffb14` 11106 / 35 / 11，五道门禁均通过；CI 全绿；部署 `858586e6`（verify `20261005T023948Z-858586e.json`）→ `4e3ffb14`（status 5/5，verify `20261005T031920Z-4e3ffb1.json`）；真栈：首版探针 8/10（V207 原句两遍被严格契约拒，见 §4.1）；修正后场景定义问探针 10/10、零动作（露营 / 回家 / 午休讲出动作与确认步骤，运动模式不讲成场景，空调模式仍是手册）；部件 / 功能模式定义问 12 轮里 10 轮正确、零动作（运动 / 舒适 / 节能 / 哨兵 / 空调自动都没被当成场景）；固定语料 V207 ×5：4 遍 `scene.describe`、1 遍规划器判零步落闲聊；连同探针，原句累计 7/9 落到 `scene.describe`（改动前 0/3）。
+- 仍开：规划器对定义问偶尔判「无需动作」（约两成），落闲聊凭常识编；另有一次把「运动模式是什么意思」规划成 `scene.list`（答成场景列表，
+  6 次里 1 次）。下一片：闲聊兜底时先问场景编排「这是不是在问一个已知场景」（内部认领，同「闲聊让手册」），是就改派 `scene.describe`。
