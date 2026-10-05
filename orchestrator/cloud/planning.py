@@ -851,6 +851,46 @@ _NORMALIZABLE_STEP_FIELDS = frozenset({"slots", "depends_on", "slot_refs"})
 # 不存在能力的步骤」被读成无需动作，这里根本没有步骤对象。⚠ `addressed` 写成字符串（`"true"`）**不**规范化：D14 的契约用例
 # 钉着「无需动作只认精确 JSON true」，对抗评测的原始合规率靠它。
 _EMPTY_STEPS_ARTIFACT_RE = re.compile(r"\s*\[\s*\]\s*(?:</steps>)?\s*")
+_TRAILING_FENCE_RE = re.compile(r"\s*```\s*$")
+
+
+def _close_dangling_objects(raw: str) -> str | None:
+    """模型漏写了最外层对象的右花括号 ⇒ 补上后的 JSON 文本；其余形态 ⇒ None。
+
+    固定语料 V207（`8ffc8bff`）：「露营模式是什么意思？」第二轮在文本里交了正确的 `manual.query` 计划，只少最后一个 `}`
+    （`…"露营模式是什么意思"}}]` 就结束了），解析失败被当成「从未规划」，交给闲聊凭常识编了一段露营模式。
+
+    只补对象：steps 数组是模型自己闭合的，说明它写完了步骤。数组没闭合（可能被长度截断、还有步骤没写）、停在字符串里、
+    最外层对象已经闭合（后面是别的问题）都不补——补出来的计划照常走全部校验。"""
+    text = (raw or "").strip()
+    start = text.find("{")
+    if start < 0:
+        return None
+    body = _TRAILING_FENCE_RE.sub("", text[start:]).rstrip()
+    stack: list[str] = []
+    in_string = escaped = False
+    for ch in body:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if not stack or (ch == "}") != (stack[-1] == "{"):
+                return None
+            stack.pop()
+            if not stack:
+                return None
+    if in_string or not stack or "[" in stack or body[-1] not in "}]":
+        return None
+    return body + "}" * len(stack)
 
 
 def _normalize_wire_artifacts(data):
@@ -2632,6 +2672,15 @@ class PlanBuilder:
         try:
             return _normalize_wire_artifacts(json.loads(self._extract_json(raw)))
         except (json.JSONDecodeError, ValueError) as e:
+            repaired = _close_dangling_objects(raw)
+            if repaired is not None:
+                try:
+                    data = json.loads(repaired)
+                except (json.JSONDecodeError, ValueError):
+                    data = None
+                if isinstance(data, dict):
+                    logger.info("Plan JSON lacked only its closing braces; repaired (%s)", e)
+                    return _normalize_wire_artifacts(data)
             logger.warning("Plan JSON parse failed: %s", e)
             return None
 
