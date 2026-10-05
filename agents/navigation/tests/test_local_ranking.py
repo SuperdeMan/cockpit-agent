@@ -322,3 +322,14 @@ def test_an_estimate_scans_as_many_candidates_as_navigation():
     name, point, _ = asyncio.run(_guessing_agent(poi, [])._resolve_point_checked("东莞松山湖", None, dict(META)))
     assert name == "松山湖" and point.lat == lake.lat
 
+
+# ── 「XX海滩」剥两个字取主干（2026-10-05：只剥「滩」时「小梅沙海」配上了「小梅沙海洋世界」）─────────────────
+def test_a_beach_name_is_stemmed_without_the_whole_word_beach():
+    beach = POI(id="n1", name="小梅沙沙滩", category="风景名胜;风景名胜;海滩", lat=22.60, lng=114.32, city="深圳市")
+    resort = POI(id="n2", name="小梅沙海滨乐园", category="体育休闲服务;度假疗养场所;度假村", lat=22.60, lng=114.32, city="深圳市")
+    aquarium = POI(id="c1", name="小梅沙海洋世界", category="风景名胜;公园广场;水族馆", lat=22.60, lng=114.33, city="深圳市")
+    poi = _KeyedPoi(near={"小梅沙海滩": [beach, resort]}, city={"小梅沙海滩": [aquarium]})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("小梅沙海滩", dict(META), near=HERE))
+    assert results[0].name == "小梅沙沙滩"
+    assert NavigationAgent._category_anchor("上海外滩")[0] == "滩"           # 不带「海 / 沙」的照旧剥「滩」
+
