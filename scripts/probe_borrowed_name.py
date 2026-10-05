@@ -1,12 +1,9 @@
-"""Real-stack probe: a far landmark is not silently replaced by a nearby place that borrows its name.
+"""真栈探针：远处地标不被借了它名字的近处地点悄悄顶替。
 
-Read-only: distance-estimate questions only ("去X要开多久"), each destination in a fresh session of a synthetic
-signed E2E user on vehicle v1; no navigation, confirmation, vehicle command or merchant/payment call. For the
-landmarks that resolved to local borrowed names (docs/design/2026-10-04-destination-borrowed-name.md §1) the first
-turn must offer both places (dest_choice card, far one first) with no action; the follow-up turn answers either
-"第一个" or the far candidate's name (what the HMI and the phone send on a tap) and must estimate the far place
-(beyond the local radius). Control destinations must be answered directly. The release SHA is checked before and
-after; a JSON evidence file is written.
+只读：只问距离估算（「去X要开多久」），每个目的地用一个签名的合成 E2E 用户、车辆 v1 的新会话；不导航、不确认、不发车控、
+不调商户 / 支付。曾被解析到本地借名点的地标（docs/design/2026-10-04-destination-borrowed-name.md §1）：第一轮要给出两处
+（dest_choice 卡，远处在前）且零动作；下一轮回答「第一个」或远处候选的名字（HMI 与手机点选发的就是它），要估算到远处那个
+（本地半径之外）。对照目的地要直接作答。前后各核一次 release SHA，写一份 JSON 证据文件。
 """
 from __future__ import annotations
 

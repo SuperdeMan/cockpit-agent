@@ -1,9 +1,8 @@
-"""JV01 real-request smoke for the Jev decision gateway (docs/design/2026-10-04-jev-decide-integration.md).
+"""Jev 判别网关 JV01 真请求冒烟（docs/design/2026-10-04-jev-decide-integration.md）。
 
-Runs the gateway's DecisionService in-process with the real TypeSafe provider on a few synthetic sentences through the
-`smoke` task. The credential is read only from the TYPESAFE_API_KEY environment variable — inject it into this process
-(never into a file in the repo) — and is never printed. Prints per sentence: status, reason, P(asks for an action),
-latency, token usage and the model actually used. No request body or credential is logged.
+在本进程里用真实 TypeSafe 提供方跑网关的 DecisionService，经 `smoke` 任务判几句合成句子。凭证只从环境变量 TYPESAFE_API_KEY 读
+——只注入这个进程（不落仓库里的任何文件），也从不打印。每句打印：状态、原因、「要求动作」的概率、时延、token 用量与实际模型。
+请求体与凭证都不进日志。
 """
 from __future__ import annotations
 

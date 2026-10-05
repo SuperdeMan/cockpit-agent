@@ -1,9 +1,8 @@
-"""An answer to the cloud's choice question goes back to the cloud; the edge runs nothing for it.
+"""回答云端候选追问的那一句回到云端；端侧不为它执行任何东西。
 
-The borrowed-name real-stack probe (2026-10-04) offered 「上海东方明珠广播电视塔 / 东方·明珠城」. Tapping the first
-one sends the name as the next utterance; the edge fast path read 「广播」 as "turn the radio on", played the radio
-locally, and the cloud's pending question never received its answer. The cloud already tells the edge what it is
-waiting for (`FinalResult.slot_request`, suggestions taken from the real result); the edge remembers it per session.
+借名真栈探针（2026-10-04）给出「上海东方明珠广播电视塔 / 东方·明珠城」。点第一个，候选名会作为下一句话发出；端侧快路径把「广播」
+读成「打开收音机」，在本地开了收音机，云端挂起的追问始终没收到回答。云端本来就告诉了端侧它在等什么（`FinalResult.slot_request`，
+候选取自真实结果）；端侧按会话记住它。
 """
 from __future__ import annotations
 

@@ -1,8 +1,7 @@
-"""A recall question that names a media object goes to the cloud; the edge plays nothing.
+"""点到媒体对象的回忆式问句去云端；端侧什么也不播。
 
-The Jev shadow probe (2026-10-04) sent 「你昨天看的那部电影叫什么来着」 (talk between passengers): the edge fast path
-read 「电影」 as "play video" and switched the simulated vehicle's media to playing. Sentence-final 「来着」 asks about
-something that happened or was said — a question, not an instruction (`runtime.question_shape.RECALL_TAILS`).
+Jev shadow 探针（2026-10-04）发了「你昨天看的那部电影叫什么来着」（乘客间对话）：端侧快路径把「电影」读成「播放视频」，
+把模拟车的媒体切到了播放。句末「来着」问的是发生过或说过的事——是问句，不是指令（`runtime.question_shape.RECALL_TAILS`）。
 """
 from __future__ import annotations
 

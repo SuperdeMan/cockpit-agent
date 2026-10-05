@@ -1,16 +1,13 @@
-"""JV03 offline evaluator: how well does Jev judge Chinese cockpit utterances? (docs/design/2026-10-04-jev-decide-integration.md)
+"""JV03 离线评测：Jev 判中文座舱话语判得怎么样？（docs/design/2026-10-04-jev-decide-integration.md）
 
-Real requests through the gateway's DecisionService (real TypeSafe provider; credential only from the TYPESAFE_API_KEY
-environment variable of this process, never printed) on labelled repo corpora — test data, not user data:
+经网关的 DecisionService 发真实请求（真实 TypeSafe 提供方；凭证只取本进程的环境变量 TYPESAFE_API_KEY，从不打印），评的是仓库里
+带标注的语料——测试数据，不是用户数据：
 
-- addressed: test/eval_corpus/rejection_cases.yaml (accept = spoken to the assistant, reject = passenger talk /
-  broadcast / phone);
-- clarify: test/eval_corpus/clarify_cases.yaml (clarify vs direct) plus the intent-adversarial turns whose gold says
-  clarify is required or forbidden.
+- 受话：test/eval_corpus/rejection_cases.yaml（accept = 对助手说的，reject = 乘客间对话 / 播报 / 打电话）；
+- 追问：test/eval_corpus/clarify_cases.yaml（该追问 vs 直接做），加上意图对抗语料里金标写明必须 / 禁止追问的轮次。
 
-Each task is asked with English and Chinese instructions (Jev's primary training language is English). The task specs
-are evaluation-only and are not in the gateway allowlist. Reports per variant: AUC, accuracy at 0.5, and coverage/risk
-when abstaining between two thresholds; writes a JSON evidence file with per-item probabilities.
+每个任务用英文和中文两种问法各问一遍（Jev 的主训练语言是英文）。这些任务规格只用于评测，不在网关 allowlist 里。按变体报告：
+AUC、0.5 处准确率，以及在两个阈值之间弃权时的覆盖率 / 风险；写一份带逐条概率的 JSON 证据文件。
 """
 from __future__ import annotations
 
@@ -65,7 +62,7 @@ def _spec(name: str) -> TaskSpec:
 
 
 def load_items() -> dict[str, list[tuple[str, bool]]]:
-    """task → [(utterance, gold_true)]。"""
+    """任务 → [(原话, 金标是否为「是」)]。"""
     corpus = ROOT / "test" / "eval_corpus"
     addressed = [(row["text"], row["expect"] == "accept")
                  for row in yaml.safe_load((corpus / "rejection_cases.yaml").read_text(encoding="utf-8"))]

@@ -1,10 +1,8 @@
-"""Real-stack probe for the Jev "addressed" shadow (docs/design/2026-10-04-jev-decide-integration.md §9).
+"""Jev 受话 shadow 的真栈探针（docs/design/2026-10-04-jev-decide-integration.md §9）。
 
-Read-only: question / small-talk / passenger-talk / broadcast-style sentences only (no vehicle command), each in a
-fresh session of a synthetic signed E2E user on vehicle v1; half are sent as hands-free voice. After each turn the
-collector trace is read until its `decision.shadow` span arrives; the probe reports the shadow status, Jev's
-probability, the planner's own verdict and whether they agree, and asserts the turn executed no action. Utterance text
-never appears in the span (the probe checks that too). The release SHA is checked before and after.
+只读：只发问句 / 闲聊 / 乘客间对话 / 播报腔句子（不含车控），每句用一个签名的合成 E2E 用户、车辆 v1 的新会话；一半按免唤醒
+语音发送。每轮之后读 collector trace，等到 `decision.shadow` span；报告 shadow 状态、Jev 的概率、规划器自己的判定与两者是否一致，
+并断言这一轮没有执行任何动作。原话从不出现在 span 里（探针也核这一点）。前后各核一次 release SHA。
 """
 from __future__ import annotations
 
