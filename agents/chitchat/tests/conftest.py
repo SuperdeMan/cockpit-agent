@@ -15,3 +15,16 @@ def _manual_claim_defaults_to_not_confident(monkeypatch, request):
         return False
 
     monkeypatch.setattr(ChitchatAgent, "_manual_confident", not_confident)
+
+
+@pytest.fixture(autouse=True)
+def _scene_claim_defaults_to_unclaimed(monkeypatch, request):
+    """问场景编排「这是不是在问一个已知场景」同样是跨 Agent 调用；单测缺省当没认领。
+    专测这条路径的模块设 `USES_SCENE_CLAIM = True`。"""
+    if getattr(request.module, "USES_SCENE_CLAIM", False):
+        return
+
+    async def unclaimed(self, text, ctx):
+        return ""
+
+    monkeypatch.setattr(ChitchatAgent, "_scene_claimed", unclaimed)

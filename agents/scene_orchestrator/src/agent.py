@@ -25,6 +25,7 @@ import yaml
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM, REJECTED
 from agents._sdk.base import Context
 from agents._sdk.shared_state import SCENE_ACTIVE, SCENE_PENDING, vehicle_scoped
+from runtime.question_shape import is_non_directive_question
 
 from .catalog import action_type_for, affected_state_keys, is_danger, load_catalog, \
     resolve_command, restore_action, validate_action
@@ -158,6 +159,7 @@ class SceneOrchestratorAgent(BaseAgent):
             "scene.delete": self._delete,
             "scene.list": self._list_scenes,
             "scene.describe": self._describe,
+            "scene.claim": self._claim,          # 内部意图：不进清单，只给闲聊兜底问
         }
         h = handlers.get(intent.name)
         if not h:
@@ -716,6 +718,18 @@ class SceneOrchestratorAgent(BaseAgent):
         # 不出场景卡：两端按 context 显示状态签（已保存 / 已开启 / 待确认），不认识的 context 回落成「已保存」——
         # 讲一讲会被显示成存了一个场景。话术已逐项讲了动作。
         return AgentResult(speech=speech, data={"scene": scene.name})
+
+    async def _claim(self, intent, ctx, meta) -> AgentResult:
+        """内部意图 `scene.claim`（不进清单，规划器看不见）：这句是不是在问一个已知场景。
+
+        规划把「露营模式是什么意思」退到闲聊时（规划器偶尔判无需动作），闲聊来问；认领了就改派 `scene.describe`，
+        同「闲聊让手册」的 `manual.claim`。只认非指令问句里抠得出、且对得上已有场景的名字；不出话术。"""
+        text = str(intent.slots.get("question") or getattr(intent, "raw_text", "") or "").strip()
+        name = extract_scene_name(text)
+        if not name or not is_non_directive_question(text):
+            return AgentResult(speech="", data={"confident": False})
+        scene = await self._match(ctx, name)
+        return AgentResult(speech="", data={"confident": scene is not None, "scene": scene.name if scene else ""})
 
     # ── 话术 / 卡片 ─────────────────────────────────────────────────────────
     @staticmethod

@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 import json
+import asyncio
 import logging
 import os
 import re
@@ -107,6 +108,18 @@ def _parse_search_mark(text: str) -> str:
 #: 手册 Agent 的内部意图只跑词法检索、不调模型；查不到 / 不可达就照常闲聊，所以超时给得紧。
 _MANUAL_AGENT, _MANUAL_CLAIM, _MANUAL_QUERY = "manual-rag", "manual.claim", "manual.query"
 _MANUAL_CLAIM_TIMEOUT_S = 1.5
+
+
+#: 场景定义问交给场景编排（2026-10-05，docs/design/2026-10-05-scene-describe.md §6）：规划器偶尔把「露营模式是什么意思」
+#: 判成无需动作、退到闲聊，闲聊就凭常识编一个露营模式。场景编排的内部意图只查场景表、不调模型。
+_SCENE_AGENT, _SCENE_CLAIM, _SCENE_DESCRIBE = "scene-orchestrator", "scene.claim", "scene.describe"
+_SCENE_CLAIM_TIMEOUT_S = 1.0
+
+
+def _scene_escalate_result(scene: str) -> AgentResult:
+    """零播报改派场景定义问：只交认领到的场景名。"""
+    return AgentResult(speech="", data={"_escalate": {
+        "intent": _SCENE_DESCRIBE, "slots": {"scene": scene}, "reason": "scene_definition"}})
 
 
 def _manual_escalate_result(text: str) -> AgentResult:
@@ -360,12 +373,30 @@ class ChitchatAgent(BaseAgent):
                 return AgentResult(speech="我这会儿查不到执行记录，稍后再试。")
             return AgentResult(
                 speech=audit_answer(history, with_time=asks_when(text)))
-        if await self._manual_confident(text, ctx):
+        # 两问并发、场景优先：问的是一个已知场景时，场景定义说了算（手册对「露营」只有对外放电一页）
+        scene, manual = await asyncio.gather(self._scene_claimed(text, ctx), self._manual_confident(text, ctx))
+        if scene:
+            logger.info("chitchat defers to the scene: %s", scene)
+            return _scene_escalate_result(scene)
+        if manual:
             # 规划退到了闲聊，可这句问的是本车功能、手册又有把握——交给手册，不让模型泛泛地编
             # （固定语料：「空调温度怎么调」被答成「直接说『把空调调到24度』就行」）
             logger.info("chitchat defers to the manual: manual_confident")
             return _manual_escalate_result(text)
         return None
+
+    async def _scene_claimed(self, text: str, ctx) -> str:
+        """场景编排认领 ⇒ 场景名；非问句、个人记忆的回忆问句、没认领或调用失败 ⇒ ""。"""
+        if not is_non_directive_question(text or "") or memory_read.is_memory_recall_question(text):
+            return ""
+        try:
+            res = await self.agents.call(_SCENE_AGENT, _SCENE_CLAIM, {"question": text}, ctx,
+                                         timeout=_SCENE_CLAIM_TIMEOUT_S)
+        except Exception as exc:            # 场景编排不可达不影响闲聊
+            logger.debug("scene claim unavailable: %s", exc)
+            return ""
+        data = getattr(res, "data", None) or {}
+        return str(data.get("scene") or "") if getattr(res, "status", "") == "ok" and data.get("confident") else ""
 
     async def _manual_confident(self, text: str, ctx) -> bool:
         """非指令问句才问手册（指令句闲聊不接管执行）；个人记忆的回忆问句是闲聊记忆路径的事，不问。

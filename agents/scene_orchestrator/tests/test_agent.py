@@ -740,3 +740,20 @@ def test_without_a_scene_name_it_lists_the_scenes_instead_of_asking_for_a_slot()
     res = _run(run_handle(_agent(), "scene.describe", slots={}, raw_text="那个模式是什么意思", ctx=_ctx(KV())))
     _answer_only(res)
     assert res.speech.startswith("你想了解哪个场景？") and "露营模式" in res.speech
+
+
+# ── scene.claim：闲聊兜底时问「这是不是在问一个已知场景」（内部意图，不进清单）──────────────────────
+
+def _claim(text, agent=None, kv=None):
+    res = _run(run_handle(agent or _agent(), "scene.claim", slots={"question": text}, raw_text=text, ctx=_ctx(kv or KV())))
+    assert res.speech == "" and not res.actions
+    return res.data
+
+
+def test_claim_recognizes_a_question_about_a_known_scene():
+    assert _claim("露营模式是什么意思？") == {"confident": True, "scene": "露营模式"}
+
+
+def test_claim_leaves_component_modes_directives_and_bare_words_alone():
+    for text in ("运动模式是什么意思", "打开露营模式", "露营是什么意思"):
+        assert _claim(text)["confident"] is False, text
