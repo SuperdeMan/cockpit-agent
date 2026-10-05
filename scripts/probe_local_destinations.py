@@ -1,11 +1,9 @@
-"""Real-stack probe: everyday named places resolve to the place itself, not a nearby attachment that borrows the name.
+"""真栈探针：日常具名地点解析到地点本身，而不是借了它名字的近处附属地点。
 
-Read-only: distance-estimate questions only ("去X要开多久"), each in a fresh session of a synthetic signed E2E user on
-vehicle v1; no navigation, confirmation, vehicle command or merchant/payment call. For each destination the estimate
-must name a place containing one of the expected names (docs/design/2026-10-04-local-destination-ranking.md §3 A/B)
-and none of the attachment names it used to land on; 「鼓浪屿」 must offer both places with Xiamen first. Category names
-(§7) must also stay within a route distance (they used to go to Beijing). The release SHA is checked before and after;
-a JSON evidence file is written.
+只读：只问距离估算（「去X要开多久」），每个目的地用一个签名的合成 E2E 用户、车辆 v1 的新会话；不导航、不确认、不发车控、
+不调商户 / 支付。每个目的地的估算话术要带上预期名字之一（docs/design/2026-10-04-local-destination-ranking.md §3 A/B），
+且不出现它曾落到的附属地点名；「鼓浪屿」要给出两处且厦门在前。带类目词的通称（§7）还要在全程距离上限内（它们曾去北京）；
+城市限定的外地名（§8）不能落到本地同名点。前后各核一次 release SHA，写一份 JSON 证据文件。
 """
 from __future__ import annotations
 
@@ -43,10 +41,15 @@ CASES = {
     "7-11便利店": (("7-ELEVEn", "7-Eleven", "7-11"), ("北京",)),
     "华润万家超市": (("华润万家",), ()),
     "医院": ((), ("北京",)),
+    # §8 模型猜名去掉原话里的城市：不落到只同名后半截的本地点
+    "上海外滩": (("外滩",), ("夜市",)),
+    "长沙橘子洲": (("橘子洲",), ("小炒",)),
 }
 ASK = {"鼓浪屿": "厦门"}          # 应发问：候选第一个带这个城市
 # 话术报的全程公里数上限（「全程约X公里」；话术不报距离时不判）：类目通称该在本城、连锁店该是近处那家
 MAX_KM = {"儿童医院": 60, "口腔医院": 15, "7-11便利店": 15, "华润万家超市": 6, "医院": 15}
+# 话术报的全程公里数下限：城市限定的外地名不该落在本城
+MIN_KM = {"上海外滩": 1000, "长沙橘子洲": 500}
 _ROUTE_KM = re.compile(r"全程约\s*([\d.]+)\s*公里")
 
 
@@ -87,6 +90,8 @@ async def probe(expected_sha: str) -> dict:
         km = _ROUTE_KM.search(speech)
         if dest in MAX_KM and km:
             ok = ok and float(km.group(1)) <= MAX_KM[dest]
+        if dest in MIN_KM:
+            ok = ok and bool(km) and float(km.group(1)) >= MIN_KM[dest]
         row = {"dest": dest, "ok": ok, "speech": speech[:160], "items": items, "actions": obs.get("actions") or []}
         result["rows"].append(row)
         print(f"{dest:<6} ok={int(ok)} items={items} | {speech[:70]}")
