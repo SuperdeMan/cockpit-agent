@@ -427,3 +427,83 @@ def test_reroute_origin_and_destination_change_together():
         ctx=make_context(), meta=_session_meta()))
     assert res.ui_card["origin"] == "深圳欢乐海岸"
     assert res.ui_card["destination"] == "世界之窗"
+
+
+# ─── CA2-19 换站：「换一个充电站」在原站附近原位替换 ───
+
+_CHARGER_A = {"name": "路特斯汽车充电站(北站闪充站)", "lat": 22.6100, "lng": 114.0300}
+_CHARGER_B = {"name": "特来电充电站(北站东广场)", "lat": 22.6150, "lng": 114.0300}
+
+
+def _poi(w, pid):
+    return POI(id=pid, name=w["name"], lat=w["lat"], lng=w["lng"])
+
+
+def _swap(waypoints, results, slots=None, raw_text="换一个充电站"):
+    agent, calls = _agent(search_results=results)
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots=slots or {}, raw_text=raw_text,
+        ctx=make_context(), meta=_session_meta(waypoints=waypoints, destination="深圳北站",
+                                               lat=22.609, lng=114.029)))
+    return res, calls
+
+
+def test_swap_charger_replaces_it_in_place_near_the_old_one():
+    other = POI(id="c3", name="星星充电(民治站)", lat=22.6300, lng=114.0400)
+    res, calls = _swap([_KFC, _CHARGER_A],
+                       [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2"), other])
+    assert res.status == "ok"
+    keyword, near = calls["search"][0]
+    assert keyword == "充电站" and (near.lat, near.lng) == (_CHARGER_A["lat"], _CHARGER_A["lng"])
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert nav["payload"]["destination"] == "深圳北站"
+    # 原位替换：肯德基与顺序都不动，原站换成离它最近的另一家
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == [_KFC["name"], _CHARGER_B["name"]]
+    assert f"已把途经点{_CHARGER_A['name']}换成{_CHARGER_B['name']}" in res.speech
+    assert [w["name"] for w in res.data["_route_session"]["waypoints"]] == [_KFC["name"], _CHARGER_B["name"]]
+
+
+def test_swap_charger_skips_stations_already_on_the_route():
+    third = POI(id="c3", name="星星充电(民治站)", lat=22.6200, lng=114.0300)
+    res, _ = _swap([_CHARGER_A, _CHARGER_B], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2"), third],
+                   slots={"remove_waypoint": "路特斯"})
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == [third.name, _CHARGER_B["name"]]
+
+
+def test_swap_with_two_chargers_and_no_name_asks_instead_of_guessing():
+    res, calls = _swap([_CHARGER_A, _CHARGER_B], [])
+    assert "路线上有2个充电站" in res.speech and "换哪一个" in res.speech
+    assert not res.actions and not calls["search"]
+
+
+def test_swap_without_a_charger_on_the_route_says_so():
+    res, calls = _swap([_KFC, _SBUX], [])
+    assert "当前路线上没有途经的充电站" in res.speech
+    assert not res.actions and not calls["search"]
+
+
+def test_a_single_unnamed_stop_is_swapped_only_when_the_search_confirms_it_is_a_charger():
+    grid = {"name": "国家电网(北站东)", "lat": 22.6100, "lng": 114.0300}
+    res, _ = _swap([grid], [_poi(grid, "g1"), _poi(_CHARGER_B, "c2")])
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == [_CHARGER_B["name"]]
+    res, _ = _swap([_KFC], [_poi(_CHARGER_B, "c2")])
+    assert "当前路线上没有途经的充电站" in res.speech and not res.actions
+
+
+def test_swap_with_nothing_else_nearby_keeps_the_route():
+    res, _ = _swap([_CHARGER_A], [_poi(_CHARGER_A, "c1")])
+    assert "附近暂时没找到别的充电站" in res.speech
+    assert not res.actions
+
+
+def test_swap_does_not_remove_or_re_add_the_new_station():
+    """规划器可能把原站名填进 remove_waypoint、把「充电站」填进 add_waypoint：换完之后既不能再删一次
+    （泛指 / 单途经点会把刚换上的站删掉），也不能在当前位置附近再加一个。"""
+    res, calls = _swap([_CHARGER_A], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2")],
+                       slots={"remove_waypoint": "那个充电站", "add_waypoint": "充电站"})
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == [_CHARGER_B["name"]]
+    assert len(calls["search"]) == 1
+

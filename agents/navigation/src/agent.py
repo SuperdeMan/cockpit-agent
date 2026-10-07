@@ -17,6 +17,7 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
                                   location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
+from runtime.charger_swap import asks_to_swap_charger, is_charger_name
 from runtime.slots import is_place_placeholder
 from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
 from agents._sdk.dest_choice import resolve_choice, save_choices
@@ -1946,6 +1947,55 @@ class NavigationAgent(BaseAgent):
                 return nm
         return ""
 
+    #: 换站时在原站附近取多少个候选（高德按距离排，原站自己通常排第一）
+    _SWAP_SCAN = 6
+
+    async def _swap_charger(self, waypoints: list, named: str, meta) -> tuple[str, str]:
+        """把路线上的充电站换成原站附近的另一家（原位替换，`waypoints` 就地改）。
+
+        → (说给用户的那一句, 换上的站名；没换成为空)。在原站附近找，保持它在这趟路上的位置（目的地附近的站
+        仍在目的地附近，沿途补电点仍在原来那一段）；排除原站与路线上已有的点。路线上有几个充电站又没点名换哪个 ⇒
+        反问，不猜；只有一个途经点但名字认不出是充电站 ⇒ 用原站附近的充电站搜索结果核实，核实不了就不换。
+        """
+        idx = [i for i, w in enumerate(waypoints) if is_charger_name(str(w.get("name") or ""))]
+        if len(idx) > 1 and named:
+            picked = [i for i in idx if named in str(waypoints[i].get("name") or "")
+                      or str(waypoints[i].get("name") or "") in named]
+            idx = picked or idx
+        verify = not idx and len(waypoints) == 1
+        if verify:
+            idx = [0]
+        if not idx:
+            return "当前路线上没有途经的充电站，要加一个可以说「顺路加个充电站」。", ""
+        if len(idx) > 1:
+            names = "、".join(str(waypoints[i].get("name") or "") for i in idx)
+            return f"路线上有{len(idx)}个充电站：{names}。您要换哪一个？", ""
+        i = idx[0]
+        old = waypoints[i]
+        old_name = str(old.get("name") or "")
+        try:
+            found = await self.poi.search("充电站", near=GeoPoint(lat=old["lat"], lng=old["lng"]),
+                                          limit=self._SWAP_SCAN, meta=meta)
+        except ProviderError as e:
+            logger.warning("swap charger search failed: %s", e)
+            return "充电站信息暂时拿不到，路线保持不变。", ""
+
+        def same(p, w) -> bool:
+            """搜索结果就是路线上这个点：同名，或坐标相距不到 50 米。"""
+            return p.name == str(w.get("name") or "") or (
+                p.lat is not None and p.lng is not None
+                and self._rough_km(p.lat, p.lng, w["lat"], w["lng"]) < 0.05)
+
+        if verify and not any(same(p, old) for p in found):
+            return "当前路线上没有途经的充电站，要加一个可以说「顺路加个充电站」。", ""
+        pick = next((p for p in found if p.lat is not None and p.lng is not None
+                     and not any(same(p, w) for w in waypoints)), None)
+        if pick is None:
+            return f"{old_name}附近暂时没找到别的充电站，路线保持不变。", ""
+        waypoints[i] = {"name": pick.name, "lat": pick.lat, "lng": pick.lng}
+        km = self._rough_km(old["lat"], old["lng"], pick.lat, pick.lng)
+        return f"已把途经点{old_name}换成{pick.name}（离原来那个约{km:.1f}公里）", pick.name
+
     async def _reroute(self, intent, ctx, meta) -> AgentResult:
         """G8：增量调整当前活动路线（删/加途经点、换路线策略、改目的地、换起点）。
 
@@ -2050,9 +2100,22 @@ class NavigationAgent(BaseAgent):
                            "请补充城市或换个说法。",
                     missing_slots=["destination"])
 
+        # ①½ 换充电站（CA2-19）：「换一个充电站」= 路线上那个充电站换成原站附近的另一家，原位替换，
+        #    其余约束不动。换不成（路线上没有 / 有几个又没点名 / 附近没别的）⇒ 如实说、不动路线、不发导航。
+        swapped = ""
+        if asks_to_swap_charger(raw_text):
+            note, swapped = await self._swap_charger(
+                waypoints, (intent.slots.get("remove_waypoint") or "").strip(), meta)
+            if not swapped:
+                return AgentResult(speech=note, follow_up="也可以说「顺路加个充电站」或「换条路」")
+            notes.append(note)
+            changed = True
+
         # ② 删途经点：按名包含匹配；泛指（「那个途经点」）或单途经点时删最近加入的。
         remove_word = (intent.slots.get("remove_waypoint") or "").strip() \
             or self._parse_reroute_remove(raw_text)
+        if swapped and (is_charger_name(remove_word) or _REROUTE_GENERIC_WP_RE.search(remove_word)):
+            remove_word = ""      # 被换掉的那个已经换完；泛指词再删一次会把刚换上的站删掉
         if remove_word and not self._dest_matches(remove_word, orig_dest):
             removed = self._pop_waypoint(waypoints, remove_word)
             if not removed and waypoints and (
@@ -2081,6 +2144,8 @@ class NavigationAgent(BaseAgent):
                                            if slot_add in raw_text else False)
         else:
             add_word, prepend = self._parse_reroute_add(raw_text)
+        if swapped and is_charger_name(add_word):
+            add_word = ""         # 换站已经把新站放进路线，不在当前位置附近再加一个
         if (add_word and add_word not in (remove_word or "")
                 and not self._dest_matches(add_word, dest_name)):
             keyword = self._stop_keyword(add_word)

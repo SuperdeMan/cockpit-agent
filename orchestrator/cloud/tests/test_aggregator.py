@@ -119,6 +119,22 @@ def test_merges_charging_waypoint_into_navigate_action():
     wps = navs[0]["payload"]["waypoints"]
     assert wps[0]["name"] == "特来电·春笋站" and wps[0]["lat"] == 22.4998
     assert out["ui_card"]["type"] == "charging_route"   # 仍优先展示充能路线卡
+    # 站被并进了路线：系统确定性说一句，不靠模型改写（CA2-19 S3 登记项）
+    assert out["speech"].endswith("已把特来电·春笋站加入导航途经点。")
+
+
+def test_waypoint_line_only_for_stops_another_step_declared_into_a_navigation():
+    """导航步自己的途经点它自己会说；本轮没有导航动作时充电步只是推荐，不能说「已加入途经点」。"""
+    own = StepResult(step_id="s1", status=StepStatus.OK, speech="已规划路线，途经肯德基",
+                     actions=[{"type": "navigate", "payload": {"destination": "万象天地"}}],
+                     data={"waypoints": [{"name": "肯德基", "lat": 22.5, "lng": 113.9}]})
+    weather = StepResult(step_id="s2", status=StepStatus.OK, speech="今天晴。")
+    assert Aggregator.merged_waypoint_line([own, weather], own.actions) == ""
+    charge = StepResult(step_id="s3", status=StepStatus.OK, speech="附近有国网充电站",
+                        data={"waypoint": {"name": "国网充电站", "lat": 22.6, "lng": 114.0}})
+    assert Aggregator.merged_waypoint_line([charge, weather], []) == ""
+    out = asyncio.run(Aggregator(_fake_llm).compose("查附近充电站和天气", [charge, weather]))
+    assert "加入导航途经点" not in out["speech"]
 
 
 def test_prefers_waypoint_choice_card_over_other_cards():

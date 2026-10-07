@@ -1604,7 +1604,8 @@ class PlannerEngine:
                     esc = None
                 if esc is not None:
                     sink: dict = {}
-                    async for ev in self._run_escalated(esc, ctx, agents, sink):
+                    async for ev in self._run_escalated(
+                            esc, ctx, agents, sink, focus=getattr(working_set, "focus", None)):
                         yield ev
                     if sink.get("suspended"):
                         return
@@ -1733,7 +1734,8 @@ class PlannerEngine:
                 results[esc_i].data.pop("_escalate", None)
             sink: dict = {}
             async for ev in self._run_escalated(esc, ctx, agents, sink,
-                                                prior=results[len(seed_results):]):
+                                                prior=results[len(seed_results):],
+                                                focus=getattr(working_set, "focus", None)):
                 yield ev
             if sink.get("suspended"):
                 return
@@ -2134,7 +2136,8 @@ class PlannerEngine:
 
     async def _run_escalated(self, esc: dict, ctx: PlanContext, agents: list,
                              sink: dict,
-                             prior: list[StepResult] | None = None) -> AsyncIterator[dict]:
+                             prior: list[StepResult] | None = None,
+                             focus=None) -> AsyncIterator[dict]:
         """执行通用 escalate 改派（每轮最多一跳）。
 
         目标 intent 在 agent 目录里找到承接方后经 `PlanBuilder._validated_steps` 装配成单步
@@ -2144,7 +2147,11 @@ class PlannerEngine:
           sink["results"] 完成的 StepResult 列表（已剥离二跳 _escalate——结构性防环）
           sink["plan"]    mini-plan（焦点态更新用）
           sink["suspended"]=True 已 yield 挂起 final（调用方直接 return）
-        装配失败（intent 无承接 Agent / 校验不过）→ sink 留空，调用方自行兜底。"""
+        装配失败（intent 无承接 Agent / 校验不过）→ sink 留空，调用方自行兜底。
+
+        focus：本轮工作集的会话焦点。改派出的步与主计划的步同一轮执行，系统持有的焦点事实
+        （活动路线、目的地坐标、候选集…）按同一份 `_apply_focus_meta` 下发——此前只给主计划，
+        改派到导航改路线时 Agent 看不到活动路线，只能答「当前没有正在进行的导航」（CA2-19 换站）。"""
         if not agents:
             agents = await self.clients.list_agents()
         agent_map = {a.manifest.agent_id: a for a in agents}
@@ -2191,6 +2198,8 @@ class PlannerEngine:
             if mini is None:
                 return
             mini.safety_origin_text = safety_origin_text
+        if focus is not None:
+            self._apply_focus_meta(mini, focus)
         steps = mini.steps
         for s in steps:
             # A handoff during slot filling consumes the current answer. Its

@@ -3205,3 +3205,9 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 
 - `compose.yaml` / `deploy/docker-compose.yaml` 是 `compose` 类：不带 `--approve-compose-sha256` 就 `plan_rejected`；摘要绑定每个文件已部署与目标两侧的内容。
 - 主机侧安装的文件（`deploy/cloud/**`）才走 `release-infrastructure.json` 批准锚；批准锚的摘要绑不住的文件不能归在 `infrastructure` 下。
+
+### 9.81 改派出的步拿同一份焦点；换站由导航一步做完（2026-10-07）
+
+- `_escalate` 改派出的步与主计划同一轮执行，焦点事实（活动路线、目的地坐标、候选集）按同一个 `_apply_focus_meta` 下发，仍只给声明了对应范围的步。
+- 「换一个充电站」：说法判据只有一份 `runtime/charger_swap`；充电识别后改派导航改路线，导航在原站附近原位换站、重算全程——不拆成「充电挑站 + 导航改路线」两步。
+- 别的步声明、被并进本轮导航动作的途经点，由聚合器确定性说「已把X加入导航途经点」，不交给模型转述。

@@ -17,6 +17,7 @@ mini-plan 走 executor（heavy/latency_budget/权限自动带出）。固化的�
 from __future__ import annotations
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -25,7 +26,7 @@ from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
-from orchestrator.cloud.models import PlanContext
+from orchestrator.cloud.models import Plan, PlanContext, Step, StepResult, StepStatus
 from orchestrator.cloud.session import SessionStore
 
 _SINGLE_PLAN = json.dumps({"steps": [
@@ -80,7 +81,12 @@ def _agents():
         deployment="cloud", kind="agent", requires_permissions=[], context_scopes=[],
         capabilities=[_Cap("manual.query")], route_hints=[],
     ), endpoint="stub:50066")
-    return [chitchat, info, edge, merchant, manual]
+    navigation = SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="navigation", trust_level="first_party", latency_budget_ms=5000,
+        deployment="cloud", kind="agent", requires_permissions=[], context_scopes=["location"],
+        capabilities=[_Cap("navigation.reroute")], route_hints=[],
+    ), endpoint="stub:50067")
+    return [chitchat, info, edge, merchant, manual, navigation]
 
 
 class _Resp:
@@ -468,3 +474,27 @@ def test_unknown_legacy_origin_blocks_escalated_write_but_allows_read():
     assert "warning_light.close" not in [item[1] for item in write_spy.calls]
     assert [item[1] for item in read_spy.calls] == ["manual.query"]
     assert read_sink["results"][0].speech == "read result"
+
+
+def test_escalated_step_receives_the_focus_facts_of_this_turn():
+    """CA2-19 换站：改派出的步与主计划的步同一轮执行，活动路线这类焦点事实按同一份 `_apply_focus_meta` 下发
+    （只给声明 location 的步）。此前只给主计划，改派到导航改路线时 Agent 只能答「当前没有正在进行的导航」。"""
+    route = {"destination": "深圳北站", "lat": 22.609, "lng": 114.029,
+             "waypoints": [{"name": "路特斯充电站", "lat": 22.61, "lng": 114.03}],
+             "strategy": "", "ts": int(time.time())}
+    spy = _EscSpy(
+        script=[("final", _Resp(speech="", data={"_escalate": {
+            "intent": "navigation.reroute", "slots": {}, "reason": "swap_route_charger"}}))],
+        unary_seq=[_Resp(speech="已把途经点换成另一个充电站。")])
+    engine, _ = _make_engine(spy)
+    nav_plan = Plan(steps=[Step(id="s1", agent_id="navigation", intent="navigation.navigate_to")])
+    seeded = StepResult(step_id="s1", status=StepStatus.OK, source_intent="navigation.navigate_to",
+                        data={"destination": "深圳北站", "_route_session": route})
+    asyncio.run(engine.context.update_focus("sess-esc", nav_plan, [seeded], user_id="u1"))
+
+    events = _run(engine, _req("换一个充电站"))
+
+    assert [c[1] for c in spy.calls] == ["chitchat.talk", "navigation.reroute"]
+    assert json.loads(spy.calls[-1][3]["focus_active_route"])["destination"] == "深圳北站"
+    assert "focus_active_route" not in spy.calls[0][3]      # 没声明 location 的闲聊照旧收不到
+    assert events[-1]["speech"] == "已把途经点换成另一个充电站。"

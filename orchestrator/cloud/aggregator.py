@@ -250,6 +250,9 @@ class Aggregator:
                                              omitted_demands=bool(refused)))
             for line in refused_lines:
                 speech = self._sentence(speech) + line
+        line = self.merged_waypoint_line(results, actions)
+        if line:
+            speech = self._sentence(speech) + line
         refused_follow = next(
             (r.follow_up for r in refused if r.follow_up), "")
         return {
@@ -258,6 +261,26 @@ class Aggregator:
             "ui_card": ui_card,
             "follow_up": refused_follow or (follow_ups[0] if follow_ups else ""),
         }
+
+    @staticmethod
+    def merged_waypoint_line(results: list[StepResult], actions: list[dict]) -> str:
+        """别的步声明、被并进本轮导航动作的途经点 ⇒ 确定性说一句「已把X加入导航途经点」（CA2-19 S3 登记项）。
+
+        导航步自己的途经点它自己会说；充电这类步只推荐、不发导航，它的站被并进路线这件事只有编排知道——
+        交给模型改写时被说成「到了之后附近就有一个充电站」，用户不知道路线会先经过它。合并规则只有一份
+        （`waypoints.merged_waypoints`），这里逐步套用它，只收「本步没发导航动作」的那些。
+        """
+        if not any(a.get("type") == "navigate" for a in actions):
+            return ""
+        names: list[str] = []
+        for result in results:
+            if any(a.get("type") == "navigate" for a in result.actions):
+                continue
+            for waypoint in merged_waypoints([result]):
+                name = str(waypoint.get("name") or "").strip()
+                if name and name not in names:
+                    names.append(name)
+        return f"已把{'、'.join(names)}加入导航途经点。" if names else ""
 
     @staticmethod
     def _sentence(text: str) -> str:

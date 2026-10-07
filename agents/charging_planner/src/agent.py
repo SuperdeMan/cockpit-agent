@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 from runtime.vehicle_state import VehicleStateStore
+import json
 import logging
 import os
 import re
@@ -19,6 +20,7 @@ from agents._sdk.dest_choice import resolve_ordinal, save_choices
 from runtime.proactive import publish_proactive
 from runtime import vehicle_reading
 from runtime.vehicle_reading import Reading
+from runtime.charger_swap import asks_to_swap_charger
 from .low_battery import LowBatteryWatcher
 from .providers import build_charging_provider
 from .providers.base import GeoPoint
@@ -108,6 +110,15 @@ class ChargingPlannerAgent(BaseAgent):
             return await handler(intent, ctx, meta)
         return AgentResult(status=FAILED, speech="充能助手暂不支持该请求。")
 
+    @staticmethod
+    def _route_has_stops(meta) -> bool:
+        """活动路线（编排按 location 范围下发的服务端事实）上有没有途经点。"""
+        try:
+            route = json.loads((meta or {}).get("focus_active_route") or "")
+        except (TypeError, ValueError):
+            return False
+        return isinstance(route, dict) and bool(route.get("waypoints"))
+
     async def _resolve_soc(self, ctx, meta) -> Reading:
         """当前电量连同时效与来源（CA2-19 S1）：只认编排下发、验签且未过期的车况读数。
 
@@ -129,6 +140,11 @@ class ChargingPlannerAgent(BaseAgent):
 
     async def _find(self, intent, ctx, meta) -> AgentResult:
         """找附近的充电站。带 destination 槽位时按目的地搜，最优站作为导航途经点。"""
+        # CA2-19 换站：正在导航且路线上有途经点时，「换一个充电站」是改这趟路线——挑站与改路线都归导航
+        # （原站附近找同类、原位替换、重算全程），这里零播报改派过去；没有活动路线时照旧往下找站。
+        if asks_to_swap_charger(intent.raw_text or "") and self._route_has_stops(meta):
+            return AgentResult(speech="", data={"_escalate": {
+                "intent": "navigation.reroute", "slots": {}, "reason": "swap_route_charger"}})
         # 读电量（真实车辆电量优先，回退 memory）
         soc = await self._resolve_soc(ctx, meta)
 
@@ -268,7 +284,8 @@ class ChargingPlannerAgent(BaseAgent):
         return AgentResult(
             speech=speech, ui_card=card,
             data={"waypoint": waypoint, "items": items, "choice_reason": reason},
-            follow_up="想换一个充电站可以说『换一个』")
+            # 手机端把追问提示整句做成 chip、点按原样发出：提示本身就得是能用的说法（`runtime.charger_swap` 认得出）
+            follow_up="想换一个充电站，说『换一个充电站』就行")
 
     # 行政区划级后缀——以此结尾的目的地视为"过泛"，先确认具体地点再规划途经点
     _ADMIN_SUFFIX = ("市", "省", "区", "县", "自治区", "自治州", "地区")
