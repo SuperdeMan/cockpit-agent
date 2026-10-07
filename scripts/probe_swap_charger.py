@@ -97,6 +97,8 @@ def _judge_swap(turns: list[dict]) -> list[str]:
         return ["第一轮没有带途经充电站的导航动作"]
     original = nav1[0]["waypoints"][0]
     first["original_station"] = original
+    # 只记录不判定：充电步的站被并进导航时聚合器确定性说这一句；规划成导航单步（途经点是导航自己的）时本来就没有
+    first["waypoint_line"] = f"已把{original.get('name')}加入导航途经点" in first["speech"]
     if len(nav2) != 1:
         return problems + ["第二轮没有导航动作（路线没换）"]
     payload = nav2[0]
@@ -176,7 +178,8 @@ def main() -> int:
         navs = [{"destination": p.get("destination"), "waypoints": [w.get("name") for w in p.get("waypoints") or []]}
                 for p in _navigates(turn["actions"])]
         kinds = [a.get("type") for a in turn["actions"] if isinstance(a, dict)]
-        print(f"{turn['say']} -> {turn['speech'][:200]}\n    actions={kinds} navigate={navs}")
+        print(f"{turn['say']} -> {turn['speech'][:200]}\n    actions={kinds} navigate={navs}"
+              + (f" waypoint_line={turn['waypoint_line']}" if "waypoint_line" in turn else ""))
     problems = result.get("problems") or []
     for problem in problems:
         print("  ✗", problem)
