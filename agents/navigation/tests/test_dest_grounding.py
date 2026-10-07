@@ -632,3 +632,19 @@ def test_a_plain_search_that_finds_nothing_just_says_so():
         raw_text="搜一下云岚国际中心", meta=SZ))
     assert "_escalate" not in (res.data or {})
     assert "云岚国际中心" in res.speech
+
+
+def test_search_poi_hands_an_unverified_local_first_result_to_navigate_to():
+    """2026-10-07 真栈：「导航去深圳北站」被规划成 search_poi，按距离排第一的是站旁的「北站中心公园」，名字对不上却在本地半径内，
+    此前照样导过去。现在交给导航到目的地按同一套解析（本地综合排序找得到车站本体；都没有更好的才退回弱匹配）。"""
+    park = POI(id="p1", name="北站中心公园", address="民治致远中路深圳北站西广场西侧",
+               category="风景名胜;公园广场;公园", lat=22.6090, lng=114.0270)
+    poi = _SearchPoi(near_results=[park], wide_results=[park])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "深圳北站"},
+        raw_text="导航去深圳北站，在附近找个充电桩", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert res.data["_escalate"] == {"intent": "navigation.navigate_to",
+                                     "slots": {"destination": "深圳北站"},
+                                     "reason": "search_not_found"}
+    assert "北站中心公园" in res.speech and "对不上" in res.speech

@@ -775,10 +775,13 @@ class NavigationAgent(BaseAgent):
             grounded = (is_visual_landmark or resolved_keyword == keyword
                         or name_matches(keyword, resolved_keyword))
             verified = grounded and self._dest_matches(resolved_keyword, first.name)
-            if not verified and self._beyond_local_radius(first, near) is not None:
-                logger.info("search_poi: unverified first result beyond the local radius, not navigating: %s → %s",
+            # 名字对不上的第一个结果不由这里直接导过去（本地半径内也不行），交给导航到目的地按同一套解析：本地综合排序、
+            # 强校验、跨城判断都走过，没有更好的才退回弱匹配——那条兜底在 `_find_destination` 里只有一份。这里是按距离取
+            # 第一个：「导航去深圳北站」被规划成 search_poi 时，排第一的是站旁的「北站中心公园」（2026-10-07 真栈）。
+            if not verified:
+                logger.info("search_poi: unverified first result, handing over to navigate_to: %s → %s",
                             keyword, first.name)
-                return self._search_not_found(keyword, raw_text)
+                return self._search_not_found(keyword, raw_text, unverified=first.name)
             # G6 轨迹写入也要挂这条自动导航路径——真栈「圆圆的湖→滴水湖」走的
             # 正是这里，漏挂则「上次去过的那个湖」无数据可召回（挂点枚举教训）。
             await self._remember_visited(ctx, first.name, first.lat, first.lng)
@@ -798,15 +801,19 @@ class NavigationAgent(BaseAgent):
         )
 
     @classmethod
-    def _search_not_found(cls, keyword: str, raw_text: str) -> AgentResult:
+    def _search_not_found(cls, keyword: str, raw_text: str, unverified: str = "") -> AgentResult:
         """「没找到 X」。原话带导航词（用户要去一个地方，规划却落成了 search_poi）⇒ 改派 `navigation.navigate_to`：
         「没找到 → 追问目的地 → 补上就导航」是它那条路，挂起落在它身上，下一句补上的地名续接的也是它。
         `f535c654` 真栈 RS39：这里只回一句话、没有挂起，用户接着说「深圳湾公园」成了全新的裸地名，被澄清成
         「你希望我怎么处理深圳湾公园？」。不在这里自己挂补槽：续接轮的 search_poi 读的是本轮原话（槽答案「深圳湾公园」，
         没有导航词），补上了也只会列结果、不导航。
         话术照留：T2 循环不消费改派，那条路上至少还有一句实话；final 里的话术不算「流出过」，不挡 D0 改派。
-        只是搜（不带导航词）⇒ 说没找到即可。"""
-        result = AgentResult(speech=f"没找到「{keyword}」。", follow_up=_NOT_FOUND_FOLLOW_UP)
+        只是搜（不带导航词）⇒ 说没找到即可。
+
+        unverified：搜到了、但第一个结果名字对不上（同一个出口改派，话术如实说搜到的是什么）。"""
+        speech = (f"搜到的第一个是「{unverified}」，和「{keyword}」对不上，没有直接导过去。" if unverified
+                  else f"没找到「{keyword}」。")
+        result = AgentResult(speech=speech, follow_up=_NOT_FOUND_FOLLOW_UP)
         if cls._is_navigation_phrase(raw_text):
             result.data = {"_escalate": {"intent": "navigation.navigate_to",
                                          "slots": {"destination": keyword},
