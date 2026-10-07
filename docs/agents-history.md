@@ -10729,3 +10729,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   CLI 只报 runtime ⇒ 部署后代文档提交 `89162f46`（运维指南记了这条），残留交保留策略 72 h 后自动回收。之后密集 SSH 触发主机连接节流，等候后单次重试。
 - 真栈：换站两遍收尾「取消导航」都结束了导航；第二遍「换一个充电站」落到闲聊、闲聊编了一句「已在路线中添加途经点」（执行声明闸刻意不收无主句）→ `5f68cf3b`。
 - 全量 worker 崩溃定因：验证命令的 `faulthandler_timeout=120` 在慢用例（>120 s）上转储线程栈，Windows 上转储本身触发 access violation ⇒ 改用 900。
+
+## 2026-10-08：「换一个充电站」整句确定性落 charging.find（`5f68cf3b`）
+
+- 换站真栈 6 遍里 2 遍规划器没给出换站路径（一遍多拆三步、一遍落到闲聊编造「已加入途经点」）；充电 manifest 加整句锚定的路由提示，
+  replace 成 charging.find，由它按唯一的换站判据改派导航或照常找站；YAML 正则与 `runtime/charger_swap` 用例对账（提示是判据的子集）。
+- 部署：公网 SSH 被互联网扫描器触发 `MaxStartups` 节流（sshd 日志可见），dry-run / apply 阵发失败，间隔重试成功；切换后第一次 verify 的空产物同因。
+  长远可改走 Tailscale 地址连 SSH（要改本机部署主机配置 / known_hosts，待用户决定）。
+- 验证：`5f68cf3b` 全量 11177 / 35 / 12 + 1 条转储诱发的 worker 崩溃（单跑通过）、五道门禁；CI 全绿；status 5/5，verify `20261007T162120Z-5f68cf3.json`；
+  真栈换站两遍全对（规划器自己答对，提示未替换）。
