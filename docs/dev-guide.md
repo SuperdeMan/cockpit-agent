@@ -103,6 +103,8 @@ python scripts/dev_stack.py verify
 
   deploy 只读 git 与 SSH，不读根 `.env`，所以**不需要**把密钥复制进临时工作树。
 
+**`--apply` 被本地时限杀掉之后**（2026-10-07 实测）：远端构建可能已经跑完——`/opt/car-agent/builds/<sha>/` 与 `:<sha>` 镜像都在，只是没激活。同一个 SHA 再 `--apply` 会在 `remote-build.sh` 的「build directory already exists」（之后还有「target release image already exists」）上秒败，dev_stack 与 `cloud_release.py` 都只报 `error_category=runtime`。处理：部署它的任一后代提交（构建目录与镜像按 SHA 区分，互不冲突）；残留属于保留策略里的失败尝试，`failed_ttl_hours`（72 h）过后由下一次发布事务自动回收，不要手动删。部署命令放后台时给足时限（2 小时）——共享主机上一次构建可能要 30 分钟（同日前几次约 10 分钟）。
+
 ### 云主机容量
 
 远端构建要求可用 ≥ 30 GiB（`insufficient disk capacity`），主机与 drone-agent 共用。先看容量，别等 dry-run 被挡：
