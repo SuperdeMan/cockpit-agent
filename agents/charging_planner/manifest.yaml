@@ -113,6 +113,14 @@ context_scopes: [location, vehicle_state]   # 按位置找站 + 按真实电量�
 # guide）承担。guard 互斥：plan 形态不吃 find 的「附近/就近」，find 形态不吃 plan 的
 # 「怎么充/长途」与导航动词。
 route_hints:
+  # 2026-10-07：「换一个充电站」整句，规划器在 CA2-19 换站真栈 6 遍里 2 遍没给出换站路径——1 遍两次判「无需动作」落到闲聊，
+  # 闲聊编了一句「已在路线中添加途经点」（零动作；执行声明闸只认带「为您」的声明，刻意不收无主句）；1 遍拆成改路线 + 找站 +
+  # 导航到目的地三步，第一步撞高德并发限额。整句锚定落到 charging.find：有活动路线时它按换站判据改派导航原位换站，
+  # 没有路线时照常找站。判据是 `runtime/charger_swap.asks_to_swap_charger` 的子集，`test_the_swap_hint_is_a_subset_of_the_predicate` 对账。
+  - pattern: '^\s*(?:请|帮我|能不能|可以)?\s*换(?:一个|一家|个|家|别的|个别的|另一个|另一家)?\s*(?:充电站|充电桩|快充站?|超充站?|地方充电)(?:吧|呢|啊)?\s*[。！!？?]?\s*$'
+    intent: charging.find
+    policy: replace
+    priority: 125
   # 设备 guard 两条 hint 都要（2026-07-27 评审三批：「去露营手机怎么充电」「去露营怎么
   # 充电宝」会命中 plan 形态——SOC/充电词形对设备成立不分 plan/find）。
   # 【charging.plan 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑

@@ -66,3 +66,53 @@ def test_the_follow_up_hint_is_itself_a_working_swap_request():
     res = _find(agent, "深圳北站附近找个充电站", dict(LOC))
     quoted = res.follow_up.split("『", 1)[1].split("』", 1)[0]
     assert asks_to_swap_charger(res.follow_up) and asks_to_swap_charger(quoted)
+
+
+def _swap_hint():
+    from agents._sdk.manifest import load_manifest
+    from pathlib import Path
+
+    manifest = load_manifest(str(Path(__file__).resolve().parents[1] / "manifest.yaml"))
+    return next(h for h in manifest.route_hints if h.intent == "charging.find")
+
+
+_SWAP_SAYINGS = ["换一个充电站", "换个充电桩吧", "帮我换一家快充站", "能不能换个别的充电站", "换个地方充电", "换一个超充站。"]
+_NOT_THE_HINT = ["这个充电站不行，换一家", "导航去深圳北站，在附近找个充电桩", "换一条路", "附近有换电站吗",
+                 "换个桩", "把充电站换成特来电", "别换充电站", "为什么换一个充电站", "换个充电站然后放首歌"]
+
+
+def test_the_swap_hint_is_a_subset_of_the_predicate():
+    """充电 manifest 里的换站路由提示是 `asks_to_swap_charger` 的子集：提示命中的说法，导航与充电的换站判据一定认得——
+    提示只负责把整句送到充电，换不换由那一份判据决定（声明源只有一份，YAML 里的正则按它对账）。"""
+    import re
+
+    pattern = re.compile(_swap_hint().pattern)
+    for text in _SWAP_SAYINGS:
+        assert pattern.search(text), text
+        assert asks_to_swap_charger(text), text
+    for text in _NOT_THE_HINT:
+        assert not pattern.search(text), text
+    for text in _SWAP_SAYINGS + _NOT_THE_HINT:
+        if pattern.search(text):
+            assert asks_to_swap_charger(text), text
+
+
+def test_the_swap_hint_replaces_a_talk_only_plan():
+    """规划器判「无需动作」交出闲聊时，提示把整句换成 charging.find（由它决定改派换站还是找站）。"""
+    from types import SimpleNamespace
+    from agents._sdk.manifest import load_manifest
+    from orchestrator.cloud.models import Plan, Step
+    from orchestrator.cloud.route_hints import RouteHintEngine
+    from pathlib import Path
+
+    manifest = load_manifest(str(Path(__file__).resolve().parents[1] / "manifest.yaml"))
+    amap = {"charging-planner": SimpleNamespace(manifest=manifest, endpoint="x:0")}
+    plan = Plan(steps=[Step(id="s1", agent_id="chitchat", intent="chitchat.talk")])
+    assert RouteHintEngine(lambda raws, agent_map: [_step_from(item) for item in raws]).apply(
+        plan, "换一个充电站", amap) is True
+    assert [s.intent for s in plan.steps] == ["charging.find"]
+
+
+def _step_from(raw):
+    from orchestrator.cloud.models import Step
+    return Step(id=raw["id"], agent_id=raw["agent_id"], intent=raw["intent"], slots=dict(raw["slots"]))
