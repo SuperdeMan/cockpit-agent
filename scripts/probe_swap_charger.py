@@ -48,6 +48,11 @@ def _km(a: dict, b: dict) -> float:
     return 6371.0 * 2 * math.asin(math.sqrt(h))
 
 
+def _plain(text: str) -> str:
+    """比较站名前统一括号与空格：聚合模型改写话术时会把半角括号写成全角，用户听到的是同一个名字。"""
+    return str(text or "").replace("（", "(").replace("）", ")").replace(" ", "")
+
+
 def _navigates(actions: list) -> list[dict]:
     """本轮 navigate 动作的载荷（动作名逐字相等，`navigate_cancel` 不算）。"""
     return [dict(a.get("payload") or {}) for a in actions
@@ -117,7 +122,7 @@ def _judge_swap(turns: list[dict]) -> list[str]:
         second["swap_distance_km"] = round(distance, 2)
         if distance > SWAP_MAX_KM:
             problems.append(f"新站离原站 {distance:.1f} km，不是同一处补电")
-        if str(station.get("name") or "") not in second["speech"]:
+        if _plain(station.get("name")) not in _plain(second["speech"]):
             problems.append("话术没报出新站名")
     if not any(a.get("type") == "navigate_cancel" for a in cancel["actions"] if isinstance(a, dict)):
         problems.append("收尾没有取消导航")
