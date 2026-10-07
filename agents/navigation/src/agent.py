@@ -707,10 +707,22 @@ class NavigationAgent(BaseAgent):
             return AgentResult(status=NEED_SLOT, speech="您想找什么类型的地点呢？",
                                follow_up="请提供搜索关键词，如『充电站』『川菜馆』", missing_slots=["keyword"])
 
+        raw_text = (intent.raw_text or "").strip()
+        # 设施类目搜索（充电站/加油站/停车场…）按本步关键词如实搜附近，不得被整句多意图
+        # 原文的地标解析劫持，也不自动导航到首个结果——否则多意图“导航去X + 找充电桩”里
+        # 找充电桩的子步会被整句改写成导航到 X（双 navigate、卡片串味）。
+        is_category = self._is_category_search(keyword, intent.slots.get("category") or "")
+        # 「导航去 + 具名地点」被规划成 search_poi：不在这里按距离取第一个直导，交给导航到目的地按同一套解析
+        # （本地综合排序、借名判断、跨城反问都只在 `_find_destination` 里有一份）。2026-10-07 云端容器内直调：
+        # 这里把「深圳北站」导到站旁的「北站中心公园」、把「东方明珠」导到龙岗的住宅小区「东方·明珠城」，
+        # 导航到目的地则解析到车站本体、对东方明珠反问上海那座塔还是附近的小区。
+        # 视觉地标描述（「像贝壳那样的地方」）仍走下面按原话找候选的那一路：规划器可能把描述误抽成别的关键词。
+        if (self._is_navigation_phrase(raw_text) and not is_category
+                and not self._is_visual_landmark_description(raw_text)):
+            return self._named_destination_handoff(keyword)
+
         # 按引用取车辆当前位置（隐私最小化：只取需要的 scope）
         near = await self._current_position(ctx, meta)
-
-        raw_text = (intent.raw_text or "").strip()
         rating_min, prefer_highest = _rating_policy(
             intent.slots.get("rating_min"),
             raw_text,
@@ -725,11 +737,6 @@ class NavigationAgent(BaseAgent):
                 speech=f"地图服务暂时不可用，没查到「{keyword}」，请稍后再试。",
                 follow_up="稍后再说一次就行")
         resolved_keyword = keyword
-
-        # 设施类目搜索（充电站/加油站/停车场…）按本步关键词如实搜附近，不得被整句多意图
-        # 原文的地标解析劫持，也不自动导航到首个结果——否则多意图“导航去X + 找充电桩”里
-        # 找充电桩的子步会被整句改写成导航到 X（双 navigate、卡片串味）。
-        is_category = self._is_category_search(keyword, intent.slots.get("category") or "")
 
         # Planner 有时会把“去深圳笋一样的建筑物”误抽成“笋岗”这类普通关键词。
         # 视觉地标描述即使碰巧命中一个同名普通 POI，也要优先由地图验证语义候选；
@@ -799,6 +806,19 @@ class NavigationAgent(BaseAgent):
             data={"items": items},  # F3：结构化结果供编排 slot_refs 取值（如 s1.data.items.0.id）
             follow_up="可以说『导航去第一个』",
         )
+
+    @staticmethod
+    def _named_destination_handoff(keyword: str) -> AgentResult:
+        """「导航去 + 具名地点」落成 search_poi ⇒ 改派 `navigation.navigate_to`（目的地 = 关键词）。
+
+        与 `_search_not_found` 同一个改派方向：挂起（同名两处的反问、找不到时追问城市）落在导航到目的地身上，
+        下一句「第一个」「上海的」续接的也是它。D0 与多步执行都会消费改派、这句话术被替换；T2 循环不消费，
+        那条路上用户至少知道怎么说。"""
+        return AgentResult(
+            speech=f"要去「{keyword}」的话，说「导航去{keyword}」我来确认目的地。",
+            data={"_escalate": {"intent": "navigation.navigate_to",
+                               "slots": {"destination": keyword},
+                               "reason": "search_named_destination"}})
 
     @classmethod
     def _search_not_found(cls, keyword: str, raw_text: str, unverified: str = "") -> AgentResult:

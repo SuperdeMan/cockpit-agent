@@ -408,13 +408,14 @@ class _SearchPoi(_RecordingPoi):
 
 
 def test_search_poi_with_a_navigation_phrase_does_not_drive_to_an_unverified_far_match():
-    """同一个北京问题的第二个入口：规划把「导航去X」落成 `search_poi` 时，带导航词的原话会自动导到第一个结果。"""
+    """同一个北京问题的第二个入口：规划把「导航去X」落成 `search_poi` 时，带导航词的原话会自动导到第一个结果。
+    2026-10-07 起具名地点在检索前就改派导航到目的地（跨城反问 / 追问城市都在那一份里）。"""
     poi = _SearchPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
     res = asyncio.run(run_handle(
         _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
         raw_text="导航去云岚国际中心", meta=SZ))
     assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
-    assert "请补充城市" in (res.follow_up or ""), res.follow_up
+    assert res.data["_escalate"]["intent"] == "navigation.navigate_to"
 
 
 def test_search_poi_with_nothing_found_says_so():
@@ -422,7 +423,7 @@ def test_search_poi_with_nothing_found_says_so():
     poi = _SearchPoi(near_results=[], wide_results=[])
     res = asyncio.run(run_handle(
         _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
-        raw_text="导航去云岚国际中心", meta=SZ))
+        raw_text="搜一下云岚国际中心", meta=SZ))
     assert "0 个" not in res.speech and "推荐前三个" not in res.speech, res.speech
     assert "云岚国际中心" in res.speech
     assert "第一个" not in (res.follow_up or "")
@@ -430,15 +431,17 @@ def test_search_poi_with_nothing_found_says_so():
     assert not res.actions
 
 
-def test_search_poi_with_a_navigation_phrase_still_drives_to_a_verified_match():
-    """对照：名字对得上（哪怕在另一座城）照旧直接导航。"""
+def test_search_poi_with_a_navigation_phrase_hands_even_a_matching_name_to_navigate_to():
+    """2026-10-07 起名字对得上也交给导航到目的地：按距离排第一、名字又包含关键词的，可能是借名的近处地方
+    （云端直调「导航去东方明珠」⇒ 龙岗「东方·明珠城」）。跨城直导名字对得上的长途在导航到目的地自己的用例里钉着。"""
     tower = POI(id="t1", name="东方明珠广播电视塔", category="风景名胜;风景名胜;国家级景点",
                 lat=31.2397, lng=121.4998)
     poi = _SearchPoi(near_results=[tower], wide_results=[tower])
     res = asyncio.run(run_handle(
         _agent_with(poi), "navigation.search_poi", slots={"keyword": "东方明珠"},
         raw_text="导航去东方明珠", meta=SZ))
-    assert _nav_dest(res) == "东方明珠广播电视塔"
+    assert not res.actions
+    assert res.data["_escalate"]["slots"] == {"destination": "东方明珠"}
 
 
 def test_search_poi_without_a_navigation_phrase_still_lists_what_it_found():
@@ -512,11 +515,12 @@ class _KeywordPoi:
 
 
 def test_search_poi_does_not_auto_navigate_to_a_loose_landmark_match_in_another_city():
-    """修前 `search_poi` 把「地标候选解析过」一律当已验证：候选与结果只有宽松匹配、又在北京 ⇒ 照样自动导过去。"""
+    """修前 `search_poi` 把「地标候选解析过」一律当已验证：候选与结果只有宽松匹配、又在北京 ⇒ 照样自动导过去。
+    原话用视觉地标描述：2026-10-07 起带导航词的具名地点在检索前就改派导航到目的地，到不了地标解析这一路。"""
     poi = _KeywordPoi({"云岚国际中心(北京)": [_BEIJING_SALON]})
     res = asyncio.run(run_handle(
         _agent_with_landmarks(poi, ["云岚国际中心(北京)"]), "navigation.search_poi",
-        slots={"keyword": "云岚国际中心"}, raw_text="导航去云岚国际中心", meta=SZ))
+        slots={"keyword": "像云一样的大楼"}, raw_text="导航去像云一样的大楼", meta=SZ))
     assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
     assert "请补充城市" in (res.follow_up or ""), res.follow_up
 
@@ -584,7 +588,7 @@ def test_a_guess_after_an_unverified_nearby_result_does_not_cross_cities():
 # 所以导航语境下的「没找到」改派给它（挂起落在 navigate_to 上，补上的地名续接它、直接导航）。
 
 _ESCALATE_TO_NAVIGATE = {"intent": "navigation.navigate_to", "slots": {"destination": "云岚国际中心"},
-                         "reason": "search_not_found"}
+                         "reason": "search_named_destination"}
 
 
 def test_search_poi_with_a_navigation_phrase_that_finds_nothing_hands_over_to_navigate_to():
@@ -593,8 +597,8 @@ def test_search_poi_with_a_navigation_phrase_that_finds_nothing_hands_over_to_na
         _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
         raw_text="导航去云岚国际中心", meta=SZ))
     assert (res.data or {}).get("_escalate") == _ESCALATE_TO_NAVIGATE, res.data
-    # 话术照留：不消费改派的路径（T2 循环）上仍是一句实话
-    assert res.speech == "没找到「云岚国际中心」。" and "请补充城市" in (res.follow_up or "")
+    # 话术照留：不消费改派的路径（T2 循环）上仍是一句实话（检索前改派，说的是怎么说）
+    assert res.speech == "要去「云岚国际中心」的话，说「导航去云岚国际中心」我来确认目的地。"
     assert not res.actions
 
 
@@ -634,17 +638,31 @@ def test_a_plain_search_that_finds_nothing_just_says_so():
     assert "云岚国际中心" in res.speech
 
 
-def test_search_poi_hands_an_unverified_local_first_result_to_navigate_to():
-    """2026-10-07 真栈：「导航去深圳北站」被规划成 search_poi，按距离排第一的是站旁的「北站中心公园」，名字对不上却在本地半径内，
-    此前照样导过去。现在交给导航到目的地按同一套解析（本地综合排序找得到车站本体；都没有更好的才退回弱匹配）。"""
+def test_search_poi_hands_a_named_destination_to_navigate_to_before_searching():
+    """2026-10-07 真栈：「导航去深圳北站」被规划成 search_poi，按距离排第一的是站旁的「北站中心公园」，此前照样导过去；
+    云端容器内直调还看到「导航去东方明珠」被导到龙岗的住宅小区「东方·明珠城」。带导航词的具名地点交给导航到目的地
+    （本地综合排序找得到车站本体、对东方明珠反问两处），这里不检索、不导航。"""
     park = POI(id="p1", name="北站中心公园", address="民治致远中路深圳北站西广场西侧",
                category="风景名胜;公园广场;公园", lat=22.6090, lng=114.0270)
     poi = _SearchPoi(near_results=[park], wide_results=[park])
     res = asyncio.run(run_handle(
         _agent_with(poi), "navigation.search_poi", slots={"keyword": "深圳北站"},
         raw_text="导航去深圳北站，在附近找个充电桩", meta=SZ))
-    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert not res.actions and poi.calls == []
     assert res.data["_escalate"] == {"intent": "navigation.navigate_to",
                                      "slots": {"destination": "深圳北站"},
-                                     "reason": "search_not_found"}
-    assert "北站中心公园" in res.speech and "对不上" in res.speech
+                                     "reason": "search_named_destination"}
+    assert "导航去深圳北站" in res.speech      # T2 循环不消费改派时，用户至少知道怎么说
+
+
+def test_search_poi_hands_an_unverified_local_landmark_result_to_navigate_to():
+    """视觉地标描述仍走按原话找候选的那一路：第一个结果名字对不上时，本地半径内也不直导（此前只拦半径外）。"""
+    local = POI(id="l1", name="云岚美容(南山店)", category="生活服务;美容美发店;美容美发店",
+                lat=22.5361, lng=113.9285)
+    poi = _KeywordPoi({"像云一样的大楼": [local]})
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, []), "navigation.search_poi",
+        slots={"keyword": "像云一样的大楼"}, raw_text="导航去像云一样的大楼", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert res.data["_escalate"]["reason"] == "search_not_found"
+    assert "云岚美容(南山店)" in res.speech and "对不上" in res.speech

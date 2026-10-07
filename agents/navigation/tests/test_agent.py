@@ -319,6 +319,21 @@ def test_search_poi_category_not_hijacked_by_multi_intent_raw_text():
     assert agent.poi.queries == ["充电桩"]                   # 只搜了充电桩
 
 
+def test_search_poi_category_step_is_not_handed_to_navigate_to():
+    """同一形态、目的地是具名地点（2026-10-07 起带导航词的具名地点改派导航到目的地）：找充电桩这一步
+    仍是类目搜索，不改派——改派就成了第二个导航动作（双 navigate）。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({"充电桩": [_poi("特来电充电站")]})
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.search_poi", slots={"keyword": "充电桩"},
+        raw_text="导航去深圳北站，然后在附近帮我找个充电桩"))
+
+    assert "_escalate" not in (res.data or {})
+    assert res.actions == [] and res.ui_card["type"] == "poi_list"
+    assert agent.poi.queries == ["充电桩"]
+
+
 def test_navigate_to_reasks_when_no_landmark_candidate_is_validated():
     agent = NavigationAgent()
     agent.poi = _ScriptedPoiProvider(default=[])
@@ -1198,8 +1213,10 @@ def test_navigate_writes_episodic_place_memory():
 
 def test_search_poi_auto_navigate_also_writes_episodic_trail():
     """G6 轨迹写入的挂点覆盖 search_poi 自动导航分支（挂点枚举教训第三次应验：
-    真栈「圆圆的湖→滴水湖」走这条路径，批 C 首版只挂 _route_plan_to 整条漏写）。"""
+    真栈「圆圆的湖→滴水湖」走这条路径，批 C 首版只挂 _route_plan_to 整条漏写）。
+    原话用那次的视觉描述：2026-10-07 起带导航词的具名地点交给导航到目的地，这条分支只剩视觉地标描述。"""
     agent = NavigationAgent()
+    agent.llm.complete = _async_return('["滴水湖"]')
 
     async def search(keyword, **kwargs):
         return [POI(id="d", name="滴水湖", address="临港", lat=30.90, lng=121.93)]
@@ -1215,7 +1232,7 @@ def test_search_poi_auto_navigate_also_writes_episodic_trail():
     ctx.remember = cap
     asyncio.run(run_handle(
         agent, "navigation.search_poi",
-        slots={"keyword": "滴水湖"}, raw_text="带我去滴水湖", ctx=ctx,
+        slots={"keyword": "滴水湖"}, raw_text="带我去那个圆圆的湖", ctx=ctx,
         meta={"current_lat": "31.2", "current_lng": "121.4"}))
 
     hits = [(t, kw) for t, kw in captured if "导航去过滴水湖" in t]
