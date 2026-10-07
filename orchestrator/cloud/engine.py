@@ -25,6 +25,7 @@ from .task_identity import bind_task_identity, restore_task_identity, task_recor
 from . import result_bundle
 from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
+from .dispatch import error_attrs
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import (
     CLAIM_ABSENT, CLAIM_FENCED, CLAIM_OK, CLAIM_TAKEN, CLEAR_UNAVAILABLE,
@@ -2049,6 +2050,7 @@ class PlannerEngine:
         # 上剥，「已为您关闭」「车窗。」两个增量早就到了屏幕 / TTS。判据与 final 那份同源，T2 同一条闸。
         gate = ExecutionClaimGate() if bool(getattr(step, "response_only", False)) else None
         final_sr: StepResult | None = None
+        final_errors: dict = {}           # 步骤 span 的错误码 / 拒绝原因（与调度层同一份 `error_attrs`）
         response_violation: StepResult | None = None
         try:
             # 总截止是 `call_agent_stream` 的缺省（clients.AGENT_STREAM_TIMEOUT_S，60s）：流式 Agent
@@ -2080,6 +2082,7 @@ class PlannerEngine:
                     yield {"kind": "action", "action": payload}
                 elif kind == "final":
                     final_sr = DagExecutor._to_result(step.id, payload)
+                    final_errors = error_attrs(payload)
         except Exception as e:
             logger.warning("Single-step stream failed (%s); caller decides fallback", e)
         if gate is not None:
@@ -2121,7 +2124,7 @@ class PlannerEngine:
                    **({"raw_text_from": "origin"}
                       if step_call_context(step, ctx) is not ctx else {}),
                    # R3-04：句级等待的代价量出来——第一个增量进门到第一次放行（首字时延里闸占的那一截）
-                   **_claim_gate_attrs(gate)})
+                   **_claim_gate_attrs(gate), **final_errors})
         # 过程区的「完成」事件与 executor 路径同款（同一 step_id 合并 running→done）
         if show_process and final_sr.status in (
                 StepStatus.OK, StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):

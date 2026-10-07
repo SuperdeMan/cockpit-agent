@@ -3211,3 +3211,8 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - `_escalate` 改派出的步与主计划同一轮执行，焦点事实（活动路线、目的地坐标、候选集）按同一个 `_apply_focus_meta` 下发，仍只给声明了对应范围的步。
 - 「换一个充电站」：说法判据只有一份 `runtime/charger_swap`；充电识别后改派导航改路线，导航在原站附近原位换站、重算全程——不拆成「充电挑站 + 导航改路线」两步。
 - 别的步声明、被并进本轮导航动作的途经点，由聚合器确定性说「已把X加入导航途经点」，不交给模型转述。
+
+### 9.82 步骤 span 带错误码与契约拒绝原因码（2026-10-07）
+
+- 三处步骤 span（调度层 `_finish`、D0 流式、T2 流式）共用 `orchestrator/cloud/dispatch.error_attrs`：`error_code` 只收标识符形状的错误码，
+  `reject_reason` 只在 `capability_contract_rejected` 时收系统生成的原因码；Agent 自己写的文字（可能夹带第三方内容）不进 span。

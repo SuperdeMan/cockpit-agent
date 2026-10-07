@@ -9,6 +9,7 @@ from typing import AsyncIterator
 from runtime import effect_evidence
 
 from .executor import DagExecutor
+from .dispatch import error_attrs
 from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
 from .planning import PlanBuilder, assign_runtime_ids
@@ -357,6 +358,7 @@ class LoopController:
                     self.executor._resolve_slot_refs(step, done_seed, ctx)
                 timeout = step.latency_budget_ms / 1000.0
                 final_sr = None
+                final_errors: dict = {}   # 步骤 span 的错误码 / 拒绝原因（与调度层同一份 `error_attrs`）
                 response_violation: StepResult | None = None
                 stream_start = self.clock()
                 # 评审二轮 R4：谈话步的增量先过句级闸（与 engine D0 同一条 `ExecutionClaimGate`）。
@@ -388,6 +390,7 @@ class LoopController:
                             yield {"kind": "action", "action": payload}
                         elif kind == "final":
                             final_sr = DagExecutor._to_result(step.id, payload)
+                            final_errors = error_attrs(payload)
                 except Exception as exc:
                     logger.warning(
                         "T2 stream failed for %s, falling back: %s",
@@ -441,7 +444,8 @@ class LoopController:
                                    # R3-04：闸的首次放行等待与拦下处数（同 engine D0 那一格）
                                    **({"claim_gate_hold_ms": int(round(gate.first_hold_ms)),
                                        "claim_gate_removed": int(gate.removed)}
-                                      if gate is not None and gate.first_hold_ms is not None else {})})
+                                      if gate is not None and gate.first_hold_ms is not None else {}),
+                                   **final_errors})
                     except Exception:
                         pass
                     results.append(final_sr)

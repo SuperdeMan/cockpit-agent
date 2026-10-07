@@ -505,3 +505,88 @@ def test_engine_stream_span_marks_the_swap(monkeypatch):
     asyncio.run(run(Step(id="s1", agent_id="nearby", endpoint="n:1", intent="nearby.search",
                          kind="agent", deployment="cloud", origin_text="川菜")))
     assert [a.get("raw_text_from") for a in _step_attrs(spans)] == ["origin", None]
+
+
+# ─── 可观测：三条路径的 step span 都带错误码，契约拒绝再带原因码（CA2-19 §8.4 登记）───
+# 此前三处 span 都只记 ok / err：因契约或权限被拒的步在线上只是一个 err，统计不到。
+
+def _contract_rejected():
+    from runtime.capability_contract import rejected
+    return rejected("invalid_parameter:scene")
+
+
+def _failed(code, message):
+    from cockpit.common.v1 import common_pb2
+    return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.FAILED,
+                                     error=common_pb2.ErrorInfo(code=code, message=message))
+
+
+def test_dispatcher_span_records_the_error_code_and_the_contract_reason(monkeypatch):
+    spans = _capture_spans(monkeypatch)
+    responses = [_contract_rejected(),
+                 _failed("permission_denied", "missing permissions: vehicle.control"),
+                 _failed("商户说门店已打烊", "x"),
+                 agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK, speech="ok")]
+
+    async def cloud(endpoint, intent, slots, ctx, meta, **kwargs):
+        return responses.pop(0)
+
+    dispatcher = UnifiedDispatcher(cloud_call=cloud, edge_call=None, tools=None)
+    ctx = PlanContext(vehicle_id="v1", raw_text="露营模式是什么意思", trace_id="t")
+    for _ in range(4):
+        asyncio.run(dispatcher.dispatch(
+            Step(id="s1", agent_id="scene", endpoint="n:1", intent="scene.describe"), ctx))
+    attrs = _step_attrs(spans)
+    assert (attrs[0]["error_code"], attrs[0]["reject_reason"]) == (
+        "capability_contract_rejected", "invalid_parameter:scene")
+    # 权限拒绝只记码：缺哪些权限审计日志另记，原因文字不进 span
+    assert attrs[1]["error_code"] == "permission_denied" and "reject_reason" not in attrs[1]
+    assert "error_code" not in attrs[2] and "error_code" not in attrs[3]   # 不是标识符形状的「码」不收
+
+
+def test_engine_stream_span_records_the_contract_reason(monkeypatch):
+    spans = _capture_spans(monkeypatch)
+
+    class _Clients:
+        async def call_agent_stream(self, endpoint, intent, slots, ctx, meta, timeout=None, context_scopes=None):
+            yield ("final", _contract_rejected())
+
+    engine = PlannerEngine(clients=_Clients(), planner=None,
+                           executor=DagExecutor(call_agent_fn=_unused_call),
+                           aggregator=None, session=SessionStore(redis_url=""))
+    ctx = PlanContext(raw_text="露营模式是什么意思", trace_id="t")
+
+    async def run():
+        sink = {}
+        return [e async for e in engine._stream_single_step(
+            Step(id="s1", agent_id="scene", endpoint="n:1", intent="scene.describe",
+                 kind="agent", deployment="cloud"), ctx, False, sink)]
+
+    asyncio.run(run())
+    attrs = _step_attrs(spans)
+    assert (attrs[-1]["error_code"], attrs[-1]["reject_reason"]) == (
+        "capability_contract_rejected", "invalid_parameter:scene")
+
+
+def test_loop_stream_span_records_the_contract_reason(monkeypatch):
+    spans = _capture_spans(monkeypatch)
+
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=None, context_scopes=None):
+        yield ("final", _contract_rejected())
+
+    async def unused(*_a, **_k):
+        raise AssertionError("不该 unary")
+
+    planner = _Planner([ReplanDecision(done=False, steps=[
+        Step(id="r2", agent_id="scene", intent="scene.describe", endpoint="stub:1",
+             kind="agent", deployment="cloud")]),
+        ReplanDecision(done=True)])
+    initial = Plan(steps=[], complexity="adaptive", goal="g", safety_origin_text="露营模式是什么意思")
+    ctx = PlanContext(raw_text="露营模式是什么意思", safety_origin_text="露营模式是什么意思", trace_id="t")
+    controller = LoopController(planner, DagExecutor(call_agent_fn=unused), _Agg(), None,
+                                max_iters=2, budget_ms=5000, stream_fn=stream_fn)
+    _collect(controller, goal="g", initial_plan=initial, agents=[], ctx=ctx, user_text="露营模式是什么意思")
+    attrs = _step_attrs(spans)
+    assert attrs and (attrs[-1]["error_code"], attrs[-1]["reject_reason"]) == (
+        "capability_contract_rejected", "invalid_parameter:scene")
+

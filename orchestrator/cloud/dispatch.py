@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 
 from google.protobuf import json_format
@@ -31,6 +32,30 @@ def _deadline_exceeded(exc: BaseException) -> bool:
         return callable(code) and getattr(code(), "name", "") == "DEADLINE_EXCEEDED"
     except Exception:
         return False
+
+
+#: 步骤 span 里的错误码与拒绝原因（CA2-19 §8.4 登记）：错误码、契约拒绝的原因码都由系统生成，只收标识符形状的值——
+#: Agent 自己写的任意文字（可能夹带第三方内容）不进 span。权限拒绝缺哪些权限已有审计日志，这里只记错误码。
+_ERROR_CODE_RE = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+_REJECT_REASON_RE = re.compile(r"[a-z][a-z0-9_]{0,47}(?::[A-Za-z0-9_.]{1,48})?")
+_CONTRACT_REJECTED = "capability_contract_rejected"
+
+
+def error_attrs(response) -> dict:
+    """ExecuteResponse 的错误码（契约拒绝再带原因码）→ 步骤 span 属性；没有或不是标识符形状 ⇒ 空。
+
+    三处步骤 span（调度层、D0 流式、T2 流式）共用这一份。此前三处都只记 ok / err：因契约或权限被拒的步
+    在线上只是一个 err，统计不到（S4 迁严格契约时只能拿规划记录间接估算）。
+    """
+    error = getattr(response, "error", None)
+    code = str(getattr(error, "code", "") or "")
+    if not _ERROR_CODE_RE.fullmatch(code):
+        return {}
+    attrs = {"error_code": code}
+    reason = str(getattr(error, "message", "") or "")
+    if code == _CONTRACT_REJECTED and _REJECT_REASON_RE.fullmatch(reason):
+        attrs["reject_reason"] = reason
+    return attrs
 
 
 def _failure(status: int, code: str, message: str) -> agent_pb2.ExecuteResponse:
@@ -73,6 +98,7 @@ class UnifiedDispatcher:
         elapsed_ms: float,
         pending: bool = False,
         raw_text_from: str = "",
+        errors: dict | None = None,
     ) -> None:
         try:
             emitter = obs_events.get_emitter("cloud")
@@ -88,6 +114,7 @@ class UnifiedDispatcher:
                     "deployment": step.deployment,
                     # W16-b 可观测：这一步读的是自己的起点原话而不是本轮原话（只在换了时出现）
                     **({"raw_text_from": raw_text_from} if raw_text_from else {}),
+                    **(errors or {}),
                 },
             )
             snapshot = metrics.agent_snapshot(step.agent_id)
@@ -117,6 +144,7 @@ class UnifiedDispatcher:
             elapsed_ms,
             pending=pending,
             raw_text_from=("origin" if step_call_context(step, ctx) is not ctx else ""),
+            errors=error_attrs(response),
         )
         return response
 
