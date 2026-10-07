@@ -59,6 +59,7 @@ class TriggerKind(Enum):
     PLAN_ONLY_CONTRACT_VIOLATED = "plan_only_contract_violated"
     COMPLETE_CONDITIONAL_CLARIFIED = "complete_conditional_clarified"
     INFORMATION_QUESTION_CLARIFIED = "information_question_clarified"
+    CLARIFY_COPIES_EXAMPLE = "clarify_copies_example"
     FOCUSED_LIST_BATCH_CONFLICT = "focused_list_batch_conflict"
     FOCUS_DEPENDENT_CONFLICT = "focus_dependent_conflict"
     OPEN_CLOSE_POLARITY_INVERTED = "open_close_polarity_inverted"
@@ -142,6 +143,11 @@ class PlanAttemptState:
 # 原文逐字搬自重构前的 planning.py（行为快照，见方案附录 A）。占位符用
 # `string.Template` 的 `$name`——模板里有 JSON 花括号，`str.format` 会当成字段炸掉。
 
+#: 规划提示词「路由歧义澄清」一节结构示例里的对象（`planning._CLARIFY_SECTION` 由它拼出，声明只此一份）。
+#: 澄清里出现它、用户原话与最近对话里都没有 ⇒ 模型照抄了示例：2026-10-02「露营模式是什么意思？」、
+#: 10-04 发布核验的问候句都被反问「怎么处理云岚国际中心」——被逼着交澄清卡、却没有可澄清的对象时照抄。
+CLARIFY_EXAMPLE_OBJECT = "云岚国际中心"
+
 _CLARIFY_MARKER_HEAD = (
     "\n\n校验反馈：上一版工具提交已正确判断需要澄清，并按协议保持 "
     "steps=[]。现在不要继续只输出 goal 标记，请补全澄清卡。"
@@ -152,6 +158,10 @@ _CLARIFY_CONTRADICTION_HEAD = (
 )
 
 CORRECTION_TEMPLATES = {
+    "clarify_copies_example": (
+        "\n\n校验反馈：上一版澄清里的「" + CLARIFY_EXAMPLE_OBJECT + "」来自格式示例，用户没有说过它。"
+        "澄清只能针对用户原话里的对象；原话里没有待处理的对象（问候、闲聊、完整的问题）就不要澄清，"
+        "按原话直接规划，问候与闲聊归开放域对话能力。"),
     "information_question": (
         "\n\n校验反馈：用户原话已经是一个完整的信息问题（问方法、含义、有哪些、在哪、为什么等），"
         "问的对象和要的东西都说清楚了，不是对象不明。不要向用户反问选哪个动作，也不要执行任何"
@@ -268,6 +278,13 @@ RETRY_POLICIES: tuple = (
         stage=STAGE_GUARD, wire_modes=WIRE_ALL, attempt_limit=2,
         correction_template="information_question",
         next_wire=NEXT_WIRE_PLAN_ONLY),
+    # 2026-10-07：澄清照抄了结构示例的对象（用户没说过它）。排在条件句 / 信息问题两条之后——那两条有更具体的诊断，
+    # 下一次只许给计划；这条兜剩下的形态（问候被逼着交澄清卡）。
+    RetryPolicy(
+        name="clarify_copies_example",
+        trigger=TriggerKind.CLARIFY_COPIES_EXAMPLE,
+        stage=STAGE_GUARD, wire_modes=WIRE_ALL, attempt_limit=2,
+        correction_template="clarify_copies_example"),
     RetryPolicy(
         name="focused_list_batch_conflict",
         trigger=TriggerKind.FOCUSED_LIST_BATCH_CONFLICT,

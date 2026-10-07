@@ -77,7 +77,7 @@ def _inventory_rows() -> list[dict]:
 
 def test_inventory_parser_actually_found_the_table():
     """先证明解析器不是在空扫——扫不全的结构断言比没有更糟。"""
-    assert len(_inventory_rows()) == len(RETRY_POLICIES) == 14
+    assert len(_inventory_rows()) == len(RETRY_POLICIES) == 15
 
 
 def test_inventory_matches_the_code_table():
@@ -235,6 +235,12 @@ _CLARIFY = {"addressed": True, "steps": [], "clarify": {
     "options": [{"label": "导航", "send_text": "导航去华润大厦"},
                 {"label": "搜索", "send_text": "搜索华润大厦"}]}}
 
+# 规划提示词澄清结构示例的原样输出（`CLARIFY_EXAMPLE_OBJECT`）
+_EXAMPLE_CLARIFY = {"addressed": True, "steps": [], "clarify": {
+    "question": "你希望我怎么处理云岚国际中心？",
+    "options": [{"label": "路线引导", "send_text": "请规划到云岚国际中心的路线"},
+                {"label": "地点资料", "send_text": "请介绍云岚国际中心的地点信息"}]}}
+
 # (case, text, focus, prefs, tool_replies, text_replies,
 #  期望命中的策略, 期望 tool/text 调用数, 期望 plan_mode)
 _MATRIX = [
@@ -297,6 +303,12 @@ _MATRIX = [
      [_tool({"addressed": True, "goal": "需要澄清：未指明是查手册还是列场景", "steps": []}),
       _tool(_args(goal="空调有哪些模式？"))], [],
      ["information_question_clarified"], (2, 0), "toolcall"),
+    # 2026-10-07：澄清照抄了结构示例的对象（用户没说过它）——这一版不可用，带校正重问；用户真说了它就不算照抄
+    ("clarify_copies_example", "你好，请只回复一句问候", None, {},
+     [_tool(_EXAMPLE_CLARIFY), _tool(_args(goal="回应问候", steps=[_step("cap_0001")]))], [],
+     ["clarify_copies_example"], (2, 0), "toolcall"),
+    ("clarify_example_object_said_by_user", "云岚国际中心", None, {},
+     [_tool(_EXAMPLE_CLARIFY)], [], [], (1, 0), "toolcall"),
     ("plan_only_contract_violated", "如果明天下雨就提醒我带伞", None, {},
      [_tool(_CLARIFY), _tool({**_args(goal="带伞"), "extra_key": 1})], [],
      ["complete_conditional_clarified", "plan_only_contract_violated"], (2, 0),
@@ -394,3 +406,25 @@ def test_ablating_a_guard_lets_the_bad_plan_through(monkeypatch):
 
     assert spy.tool_calls == 1
     assert [s.intent for s in plan.steps] == ["window.open"], "极性守卫没被关掉"
+
+
+def test_clarify_copy_guard_reads_recent_history():
+    """用户上一轮说过示例里的那个地方（真要去云岚国际中心），这一轮的澄清提到它就不算照抄。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.planning import _trigger_clarify_copies_example
+    from orchestrator.cloud.retry_policy import CLARIFY_EXAMPLE_OBJECT
+
+    clarify = _EXAMPLE_CLARIFY["clarify"]
+    parsed = SimpleNamespace(clarify=clarify)
+    fresh = PlanAttemptState(attempt=0, wire_mode="toolcall", data=_EXAMPLE_CLARIFY, parsed=parsed,
+                             text="那里", working_set=SimpleNamespace(history=[]))
+    assert _trigger_clarify_copies_example(fresh)
+    said = PlanAttemptState(attempt=0, wire_mode="toolcall", data=_EXAMPLE_CLARIFY, parsed=parsed,
+                            text="那里", working_set=SimpleNamespace(history=[
+                                {"role": "user", "text": f"{CLARIFY_EXAMPLE_OBJECT}在哪"}]))
+    assert not _trigger_clarify_copies_example(said)
+    other = PlanAttemptState(attempt=0, wire_mode="toolcall", data=_CLARIFY, parsed=SimpleNamespace(
+        clarify=_CLARIFY["clarify"]), text="华润大厦", working_set=SimpleNamespace(history=[]))
+    assert not _trigger_clarify_copies_example(other)
+    assert CLARIFY_EXAMPLE_OBJECT in render_correction("clarify_copies_example", fresh)
+

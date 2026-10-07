@@ -33,7 +33,7 @@ from .context import (
 from . import pending_cancel
 from .route_hints import RouteHintEngine
 from .retry_policy import (
-    NEXT_WIRE_CLARIFICATION, NEXT_WIRE_PLAN_ONLY, STAGE_ACCEPT, STAGE_GUARD,
+    CLARIFY_EXAMPLE_OBJECT, NEXT_WIRE_CLARIFICATION, NEXT_WIRE_PLAN_ONLY, STAGE_ACCEPT, STAGE_GUARD,
     STAGE_TAIL, PlanAttemptState, RetryController, TriggerKind,
     disabled_policies,
 )
@@ -695,10 +695,10 @@ _CLARIFY_SECTION = (
     "——**必须澄清，不要替用户选一个动作**\n"
     "- 上述单名词/对象名歧义不得输出 addressed=true、steps=[]（这表示无需动作），"
     "也不得当作闲聊复述；必须输出带问题和选项的 clarify\n"
-    "- 结构示例：用户只说『云岚国际中心』→ "
-    "{\"addressed\":true,\"steps\":[],\"clarify\":{\"question\":\"你希望我怎么处理云岚国际中心？\","
-    "\"options\":[{\"label\":\"路线引导\",\"send_text\":\"请规划到云岚国际中心的路线\"},"
-    "{\"label\":\"地点资料\",\"send_text\":\"请介绍云岚国际中心的地点信息\"}]}}；"
+    "- 结构示例：用户只说『" + CLARIFY_EXAMPLE_OBJECT + "』→ "
+    "{\"addressed\":true,\"steps\":[],\"clarify\":{\"question\":\"你希望我怎么处理" + CLARIFY_EXAMPLE_OBJECT + "？\","
+    "\"options\":[{\"label\":\"路线引导\",\"send_text\":\"请规划到" + CLARIFY_EXAMPLE_OBJECT + "的路线\"},"
+    "{\"label\":\"地点资料\",\"send_text\":\"请介绍" + CLARIFY_EXAMPLE_OBJECT + "的地点信息\"}]}}；"
     "不得自行搜索或导航\n"
     "- **缺槽位不算歧义**（『导航』缺目的地→照常输出 step，由对应 agent 追问）；"
     "缺的是**槽位**才照常执行，缺的是**动词**要澄清\n"
@@ -1611,6 +1611,21 @@ def _trigger_information_question_clarified(state: PlanAttemptState) -> bool:
     return wants_clarify and is_complete_information_question(str(state.text or ""))
 
 
+def _trigger_clarify_copies_example(state: PlanAttemptState) -> bool:
+    """澄清照抄了提示词结构示例里的对象（`CLARIFY_EXAMPLE_OBJECT`）：问题或选项里有它，用户原话与最近对话里都没有。
+
+    用户说过它（真有人要去云岚国际中心）就不算照抄；只看解析成功的那份澄清——用户只会看到它。
+    """
+    clarify = getattr(state.parsed, "clarify", None) if state.parsed is not None else None
+    if not clarify or CLARIFY_EXAMPLE_OBJECT not in json.dumps(clarify, ensure_ascii=False):
+        return False
+    said = [str(state.text or "")]
+    for message in getattr(state.working_set, "history", None) or []:
+        if isinstance(message, dict):
+            said.append(str(message.get("text") or ""))
+    return not any(CLARIFY_EXAMPLE_OBJECT in text for text in said)
+
+
 def _trigger_focused_list_batch_conflict(state: PlanAttemptState) -> bool:
     return _focused_list_batch_plan_conflicts(
         state.text, state.working_set, state.parsed, state.catalog)
@@ -1712,6 +1727,7 @@ _RETRY_PREDICATES = {
         _trigger_complete_conditional_clarified,
     TriggerKind.INFORMATION_QUESTION_CLARIFIED:
         _trigger_information_question_clarified,
+    TriggerKind.CLARIFY_COPIES_EXAMPLE: _trigger_clarify_copies_example,
     TriggerKind.FOCUSED_LIST_BATCH_CONFLICT:
         _trigger_focused_list_batch_conflict,
     TriggerKind.FOCUS_DEPENDENT_CONFLICT: _trigger_focus_dependent_conflict,

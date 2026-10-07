@@ -3216,3 +3216,8 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 
 - 三处步骤 span（调度层 `_finish`、D0 流式、T2 流式）共用 `orchestrator/cloud/dispatch.error_attrs`：`error_code` 只收标识符形状的错误码，
   `reject_reason` 只在 `capability_contract_rejected` 时收系统生成的原因码；Agent 自己写的文字（可能夹带第三方内容）不进 span。
+
+### 9.83 澄清不得照抄结构示例里的对象（2026-10-07）
+
+- 规划提示词里的格式示例对象只声明一份（`retry_policy.CLARIFY_EXAMPLE_OBJECT`），提示词与守卫共用；澄清里出现它、用户原话与最近对话里都没有 ⇒
+  重试策略 `clarify_copies_example` 判这一版不可用、带校正重问。新增提示词示例时同样只声明一份，并想清楚「模型照抄它」怎么被发现。
