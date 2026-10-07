@@ -2326,7 +2326,27 @@ class NavigationAgent(BaseAgent):
         if a in b or a.startswith(b):
             return True
         c = NavigationAgent._place_key(city)
-        return bool(c) and a.endswith(b) and a[:len(a) - len(b)] in (c, c.rstrip("市"))
+        if c and a.endswith(b) and a[:len(a) - len(b)] in (c, c.rstrip("市")):
+            return True
+        # 原话 = 这个地点所在城市 + 核心名、核心名含在它的全称里（「上海第六人民医院」之于上海的「上海交通大学医学院附属
+        # 第六人民医院」，「上海华山医院」之于「复旦大学附属华山医院」）：官方全称常在中间夹着「XX大学附属」，俗称是
+        # 「城市 + 后半截」。核心名至少 4 个字（「中医院」这样的太泛），城市必须是这个地点自己的城市（2026-10-07 云端直调）。
+        # 全称在城市与核心名之间夹着区县（「深圳市南山区人民医院」）的是区里的同名机构，不是原话点的这座城市的那一家
+        # （A/B：「深圳人民医院」曾因此从深圳市人民医院 19 km 落到南山区人民医院 2 km）。
+        for prefix in (c, c.rstrip("市")):
+            if not (prefix and a.startswith(prefix) and len(a) - len(prefix) >= 4):
+                continue
+            at = b.find(a[len(prefix):])
+            if at < 0:
+                continue
+            infix = b[:at]
+            for head in (c, c.rstrip("市")):
+                if head and infix.startswith(head):
+                    infix = infix[len(head):]
+                    break
+            if not infix.endswith(("区", "县", "市", "镇", "乡", "街道")):
+                return True
+        return False
 
     @staticmethod
     def _place_key(name: str) -> str:
