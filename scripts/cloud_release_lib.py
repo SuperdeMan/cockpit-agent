@@ -57,9 +57,12 @@ STRICT_PLACEHOLDER_RE = re.compile(
     re.IGNORECASE,
 )
 SYNTHETIC_CREDENTIAL_FIXTURE_MARKER = "# release-secret-fixture"
+# compose 文件单列一类、按一次性摘要批准（2026-10-07）：它们随发布由 docker compose 读取，不装到主机，
+# 基础设施批准锚绑不住它们——此前归在 infrastructure 下，而锚的摘要只算 deploy/cloud/**，
+# 只改 compose 时目标摘要等于已批准摘要，闸直接放行（环境变量透传、端口、挂载都在这里改）。
 CONTROLLED_EXACT = {
-    "compose.yaml": "infrastructure",
-    "deploy/docker-compose.yaml": "infrastructure",
+    "compose.yaml": "compose",
+    "deploy/docker-compose.yaml": "compose",
     ".env.example": "runtime_config_contract",
     "memory/schema.sql": "database_schema",
     "registry/postgres_schema.sql": "database_schema",
@@ -107,6 +110,8 @@ class ReleasePlan:
     approved_ci_cd_digest: str | None = None
     target_database_schema_digest: str | None = None
     approved_database_schema_digest: str | None = None
+    target_compose_digest: str | None = None
+    approved_compose_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,6 +165,7 @@ class ReleaseRequest:
     ssh: SshConfig
     approved_ci_cd_digest: str | None = None
     approved_database_schema_digest: str | None = None
+    approved_compose_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -546,6 +552,12 @@ def database_schema_paths(
     return tuple(sorted(paths))
 
 
+def compose_paths(changed_paths: Sequence[str]) -> tuple[str, ...]:
+    """变更里由 docker compose 读取的编排文件（`compose` 类）。"""
+    normalized = (path.replace("\\", "/") for path in changed_paths)
+    return tuple(sorted({path for path in normalized if classify_changed_path(path) == "compose"}))
+
+
 def make_release_plan(
     *,
     deployed_sha: str,
@@ -558,12 +570,16 @@ def make_release_plan(
     approved_ci_cd_digest: str | None = None,
     target_database_schema_digest: str | None = None,
     approved_database_schema_digest: str | None = None,
+    target_compose_digest: str | None = None,
+    approved_compose_digest: str | None = None,
 ) -> ReleasePlan:
     if not FULL_SHA_RE.fullmatch(target_sha):
         raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
     for digest, label in (
         (target_database_schema_digest, "target database schema digest"),
         (approved_database_schema_digest, "approved database schema digest"),
+        (target_compose_digest, "target compose digest"),
+        (approved_compose_digest, "approved compose digest"),
     ):
         if digest is not None and not SHA256_RE.fullmatch(digest):
             raise ReleaseError(f"{label} is invalid", category="configuration")
@@ -623,10 +639,25 @@ def make_release_plan(
         and approved_database_schema_digest is not None
         and target_database_schema_digest == approved_database_schema_digest
     )
+    # 一次性 compose 批准：摘要绑定每个 compose 文件已部署与目标两侧的内容，只放行审过的这一次变更。
+    has_compose_changes = bool(compose_paths(normalized_paths))
+    if approved_compose_digest is not None and not has_compose_changes:
+        raise ReleaseError(
+            "compose digest approval was provided without compose changes",
+            category="configuration",
+        )
+    compose_approved = (
+        has_compose_changes
+        and target_compose_digest is not None
+        and approved_compose_digest is not None
+        and target_compose_digest == approved_compose_digest
+    )
     blocking: set[ControlledChange] = set()
     for path in normalized_paths:
         category = classify_changed_path(path)
         if category == "ci_cd" and ci_cd_approved:
+            continue
+        if category == "compose" and compose_approved:
             continue
         if category == "infrastructure" and infrastructure_approved:
             continue
@@ -657,6 +688,8 @@ def make_release_plan(
         approved_ci_cd_digest=approved_ci_cd_digest,
         target_database_schema_digest=target_database_schema_digest,
         approved_database_schema_digest=approved_database_schema_digest,
+        target_compose_digest=target_compose_digest,
+        approved_compose_digest=approved_compose_digest,
     )
 
 
@@ -867,6 +900,35 @@ def compute_database_schema_digest(
     }
     canonical = json.dumps(
         {"schema_version": 1, "transitions": transitions},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def compute_compose_digest(
+    repo: Path, deployed_sha: str, target_sha: str, paths: Sequence[str]
+) -> str | None:
+    """这一次 compose 变更的摘要：每个文件已部署与目标两侧的 blob。没改 compose ⇒ None。
+
+    与数据库 schema 的一次性批准同一种绑定：无关提交不改变摘要；compose 文件再改一字、
+    或已部署基线不同，摘要都会变，批准不能覆盖没人看过的版本。
+    """
+    for sha in (deployed_sha, target_sha):
+        if not FULL_SHA_RE.fullmatch(sha):
+            raise ReleaseError("compose digest needs full commit SHAs", category="configuration")
+    if not paths:
+        return None
+    transitions = {
+        path: [
+            _committed_blob_digest(repo, deployed_sha, path),
+            _committed_blob_digest(repo, target_sha, path),
+        ]
+        for path in sorted(set(paths))
+    }
+    canonical = json.dumps(
+        {"schema_version": 1, "kind": "compose", "transitions": transitions},
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -1179,6 +1241,8 @@ def _expected_manifest(
         "approved_ci_cd_sha256": plan.approved_ci_cd_digest,
         "target_database_schema_sha256": plan.target_database_schema_digest,
         "approved_database_schema_sha256": plan.approved_database_schema_digest,
+        "target_compose_sha256": plan.target_compose_digest,
+        "approved_compose_sha256": plan.approved_compose_digest,
     }
 
 
@@ -1865,6 +1929,8 @@ def execute_deploy(
         target_sha,
         database_schema_paths(changed_paths, diff_by_path),
     )
+    compose_digest = compute_compose_digest(
+        request.repo, deployed_sha, target_sha, compose_paths(changed_paths))
     plan = make_release_plan(
         deployed_sha=deployed_sha,
         target_sha=target_sha,
@@ -1878,6 +1944,8 @@ def execute_deploy(
         approved_ci_cd_digest=request.approved_ci_cd_digest,
         target_database_schema_digest=schema_digest,
         approved_database_schema_digest=request.approved_database_schema_digest,
+        target_compose_digest=compose_digest,
+        approved_compose_digest=request.approved_compose_digest,
     )
     if plan.status == "plan_rejected":
         return CloudReleaseResult(

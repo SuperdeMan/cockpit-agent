@@ -42,7 +42,7 @@
 > ⚠ **为什么 `TAILNET_FQDN` 不写进 `.env.example`**：那个文件在发布闸里被分类为
 > `runtime_config_contract`（`scripts/cloud_release_lib.py::CONTROLLED_EXACT`），
 > 而该类别**没有任何放行通道**——`infrastructure` 有 `release-infrastructure.json`
-> 的 digest 批准，`ci_cd` 与 `database_schema` 各有下文的一次性 CLI 摘要批准；
+> 的 digest 批准，`ci_cd`、`database_schema` 与 `compose` 各有下文的一次性 CLI 摘要批准；
 > `runtime_config_contract` / `secret_material` 一律硬阻断。
 > 且 `changed_paths` 取的是「已部署 SHA → 目标 SHA」
 > 的全量 diff，所以只要这一笔在 main 上，`cloud_release.py deploy` 就**永远** `plan_rejected`
@@ -236,6 +236,20 @@ MiniMax long sessions 与 HMI C14，才能形成发布验收证据。
 任一 schema 文件再改或已部署基线不同都会改变它。批准是一次性 CLI 参数，不写远端锚、不支持环境变量；
 无 schema 变化却给批准 → `configuration_rejected`；它不放行任何其他类别。schema 随服务启动的
 `CREATE/ALTER ... IF NOT EXISTS` 生效，发布事务激活前已有 PG 备份；回滚只退代码，不自动 DROP。
+
+### compose 的一次性批准（2026-10-07 起）
+
+`compose.yaml` 与 `deploy/docker-compose.yaml` 单列 `compose` 一类（环境变量透传、端口、挂载、镜像都在这里改）。此前它们归在
+`infrastructure` 下，而 `release-infrastructure.json` 的摘要只算 `deploy/cloud/**`：只改 compose 时目标摘要等于已批准摘要，闸直接放行。
+现在没有批准时 `plan_rejected`；批准只能在用户对**这一次** compose 变更授权之后使用，发布授权本身不包含它。流程与 schema 相同：
+
+1. 无批准 dry-run，确认 `blocking_changes` 里只剩 `compose`，人工核对 compose diff，取同一次输出的 `target_compose_sha256`；
+2. `python scripts/dev_stack.py deploy --sha $sha --approve-compose-sha256 $digest` 再 dry-run，要求 `status=dry_run`、零阻断、两个摘要相等；
+3. 同一 SHA 与摘要加 `--apply`，之后照常独立 status / verify。
+
+摘要 = 每个 compose 文件「已部署 blob、目标 blob」的 sha256 规范化后再哈希：无关提交不改变它，compose 再改一字或已部署基线不同都会改变它。
+批准是一次性 CLI 参数，不写远端锚、不支持环境变量；无 compose 变化却给批准 → `configuration_rejected`；它不放行任何其他类别。
+`deploy/cloud/compose.*.yaml` 装在主机侧，仍归 `infrastructure`、走批准锚。
 
 切回 local 的固定次序是 `python scripts/dev_stack.py target set local` → 人工启动
 Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。

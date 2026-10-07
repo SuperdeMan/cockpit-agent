@@ -157,6 +157,8 @@ python scripts/cloud_release.py verify
 python scripts/cloud_release.py rollback --to 4c1f479 --apply
 ```
 
+`compose.yaml` 与 `deploy/docker-compose.yaml` 不归本目录的批准锚：它们单列 `compose` 类，按一次性摘要批准（`--approve-compose-sha256`，见 `docs/dev-guide.md`「compose 的一次性批准」）。
+
 ### CI/CD 一次性摘要批准
 
 默认不带批准参数时仍然 fail closed。只有用户已经单独授权目标 SHA 的 CI/CD 变化时，才按下面

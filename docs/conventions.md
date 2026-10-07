@@ -3200,3 +3200,8 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 ### 9.79 锚词按最长后缀取：「海滩 / 沙滩」排在「滩」前（2026-10-05）
 
 - `_DEST_CATEGORY_ANCHORS` 取首个命中的后缀，更长的锚词要排在它的后缀之前；否则剥剩的主干带着半个词（「小梅沙海」），会配上不相干的同前缀地点。
+
+### 9.80 compose 文件按一次性摘要批准（2026-10-07）
+
+- `compose.yaml` / `deploy/docker-compose.yaml` 是 `compose` 类：不带 `--approve-compose-sha256` 就 `plan_rejected`；摘要绑定每个文件已部署与目标两侧的内容。
+- 主机侧安装的文件（`deploy/cloud/**`）才走 `release-infrastructure.json` 批准锚；批准锚的摘要绑不住的文件不能归在 `infrastructure` 下。

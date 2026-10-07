@@ -477,8 +477,8 @@ def test_ssh_config_rejects_unsafe_connection_fields(
     [
         ("deploy/cloud/backup.sh", "infrastructure"),
         ("deploy/cloud/README.md", "application"),
-        ("compose.yaml", "infrastructure"),
-        ("deploy/docker-compose.yaml", "infrastructure"),
+        ("compose.yaml", "compose"),
+        ("deploy/docker-compose.yaml", "compose"),
         (".env.example", "runtime_config_contract"),
         (".env.local", "secret_material"),
         ("memory/schema.sql", "database_schema"),

@@ -2045,6 +2045,8 @@ def _cloud_release_payload(status: str = "dry_run") -> dict[str, object]:
         "approved_ci_cd_sha256": None,
         "target_database_schema_sha256": None,
         "approved_database_schema_sha256": None,
+        "target_compose_sha256": None,
+        "approved_compose_sha256": None,
         "artifact_directory": "/opt/car-agent/releases/ignored",
         "bootstrap": {"status": "ready", "source_release": "/opt/ignored", "candidates": [], "details": []},
         "remote": {"current_release": "a" * 40, "runtime_project_name": "car_agent", "disk_available_bytes": 1, "memory_available_bytes": 1, "release_lock_available": True, "runtime_project_ready": True, "shared_scripts_ready": True, "shared_models_ready": True},
@@ -2208,7 +2210,8 @@ def test_release_artifact_directory_rejects_non_string(invalid: object):
 @pytest.mark.parametrize(
     "missing_field",
     ("target_ci_cd_sha256", "approved_ci_cd_sha256",
-     "target_database_schema_sha256", "approved_database_schema_sha256"),
+     "target_database_schema_sha256", "approved_database_schema_sha256",
+     "target_compose_sha256", "approved_compose_sha256"),
 )
 def test_release_audit_fields_are_required_in_child_payload(
     missing_field: str,
@@ -2234,6 +2237,8 @@ def test_release_audit_fields_are_required_in_child_payload(
         ("target_database_schema_sha256", "A" * 64),
         ("approved_database_schema_sha256", "g" * 64),
         ("approved_database_schema_sha256", False),
+        ("target_compose_sha256", "A" * 64),
+        ("approved_compose_sha256", 1),
     ),
 )
 def test_release_audit_fields_reject_malformed_ci_digests(

@@ -54,11 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--sha", default="HEAD")
     plan.add_argument("--approve-ci-cd-sha256")
     plan.add_argument("--approve-database-schema-sha256")
+    plan.add_argument("--approve-compose-sha256")
 
     deploy = subparsers.add_parser("deploy")
     deploy.add_argument("--sha", default="HEAD")
     deploy.add_argument("--approve-ci-cd-sha256")
     deploy.add_argument("--approve-database-schema-sha256")
+    deploy.add_argument("--approve-compose-sha256")
     deploy.add_argument("--apply", action="store_true")
 
     subparsers.add_parser("verify")
@@ -104,6 +106,7 @@ def _request(
         ssh=ssh,
         approved_ci_cd_digest=args.approve_ci_cd_sha256,
         approved_database_schema_digest=args.approve_database_schema_sha256,
+        approved_compose_digest=args.approve_compose_sha256,
     )
 
 
@@ -132,6 +135,8 @@ def _result_payload(result: CloudReleaseResult) -> dict[str, object]:
         "approved_database_schema_sha256": (
             result.plan.approved_database_schema_digest
         ),
+        "target_compose_sha256": result.plan.target_compose_digest,
+        "approved_compose_sha256": result.plan.approved_compose_digest,
         "artifact_directory": (
             str(result.artifact.directory) if result.artifact else None
         ),
