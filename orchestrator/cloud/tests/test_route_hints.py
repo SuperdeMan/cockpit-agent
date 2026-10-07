@@ -576,6 +576,35 @@ def test_plain_person_pickup_hint_does_not_take_negated_or_embedded_phrases():
         assert [s.intent for s in plan.steps] == ["chitchat.talk"]
 
 
+def _navigation_hint_map():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    navigation = load_manifest(str(root / "agents" / "navigation" / "manifest.yaml"))
+    return {"navigation": SimpleNamespace(manifest=navigation, endpoint="x:0")}
+
+
+def test_ending_the_trip_routes_to_navigation_cancel_without_model_variance():
+    """2026-10-07 CA2-19 换站真栈：「取消导航」规划器两次交空计划（1/6），落到取消闸的反问。整句明确的终止导航说法确定性落到
+    `navigation.cancel`（不带槽；没有活动路线时导航自己如实说）。"""
+    amap = _navigation_hint_map()
+    for text in ("取消导航", "结束导航。", "退出导航吧", "帮我取消导航", "停止导航", "导航取消", "不用导航了", "取消当前导航"):
+        for plan in (Plan(steps=[]), _plan("chitchat.talk")):
+            assert _engine().apply(plan, text, amap) is True, text
+            assert [s.intent for s in plan.steps] == ["navigation.cancel"], text
+            assert plan.steps[0].slots == {}
+
+
+def test_the_cancel_hint_does_not_take_compound_negated_or_question_forms():
+    amap = _navigation_hint_map()
+    for text in ("取消导航到公司的提醒", "为什么取消导航", "别取消导航", "导航取消了吗", "取消导航然后放首歌"):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False, text
+        assert [s.intent for s in plan.steps] == ["chitchat.talk"], text
+
+
 def test_deferred_research_language_recovers_shallow_search_plan():
     """The Agent itself advertises this phrase as its async task trigger."""
     import pathlib
