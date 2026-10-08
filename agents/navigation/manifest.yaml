@@ -192,6 +192,9 @@ capabilities:
       未点名的目的地/时限/其余途经点全部保持。多日行程或「第N天」停靠点的增删改归
       trip.modify，本条只管这一趟在开的路线
     slots: [remove_waypoint, add_waypoint, destination, origin, route_pref]
+    # 只有一处追问它：路线上几个充电站、「换一个充电站」没点名换哪个（CA2-19 换站）。续接的回答只收序号
+    # （「换第二个」）；说别的按新请求规划，不往这个槽里灌（序号槽形的理由见 `slot_shape._ordinal`）
+    slot_shapes: {remove_waypoint: ordinal}
     examples: ["刚才那个途经点不去了", "换条路走", "咖啡不买了，先去加油站，别迟到",
                "顺路再加个超市", "目的地改成宝安机场", "从深圳欢乐海岸出发去世界之窗"]
   # 2026-08-19（QA 卡 Q8 / I-017）：**终止**当前导航，与 reroute 的「增量调整」不是

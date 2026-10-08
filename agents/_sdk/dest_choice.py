@@ -11,19 +11,32 @@ import json
 import logging
 import re
 
-ORDINAL_DEST_RE = re.compile(r"^第?\s*([一二两三四五六七八九十\d])\s*[个家项处]?$")
+_ORD_CHARS = r"[一二两三四五六七八九十\d]"
+ORDINAL_DEST_RE = re.compile(rf"^第?\s*({_ORD_CHARS})\s*[个家项处]?$")
+#: 句中的序号：带「第」，或阿拉伯数字带量词（「换第二个」「第2个吧」「2个」）。不带「第」的汉字数字不算——「换一家」的「一」不是序号
+_ORDINAL_IN_RE = re.compile(rf"第\s*({_ORD_CHARS})\s*[个家项处]?|(\d)\s*[个家项处]")
 _CN_ORD = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
            "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 _log = logging.getLogger("agent.dest_choice")
 
 
+def _ord_value(v: str) -> int:
+    return int(v) if v.isdigit() else _CN_ORD.get(v, 0)
+
+
 def ordinal_index(text: str) -> int:
     """「第一个」「2」「第二家」→ 1 起的序号；不是纯序号 ⇒ 0。"""
     m = ORDINAL_DEST_RE.match((text or "").strip())
-    if not m:
-        return 0
-    v = m.group(1)
-    return int(v) if v.isdigit() else _CN_ORD.get(v, 0)
+    return _ord_value(m.group(1)) if m else 0
+
+
+def ordinal_in(text: str) -> int:
+    """原话里带的序号：整句就是序号的同 `ordinal_index`；补槽答案常带着「换」「吧」这类词（「换第二个」）⇒ 句中找；没有 ⇒ 0。"""
+    idx = ordinal_index(text)
+    if idx:
+        return idx
+    m = _ORDINAL_IN_RE.search(text or "")
+    return _ord_value(m.group(1) or m.group(2)) if m else 0
 
 
 def _stored(item: dict) -> dict:

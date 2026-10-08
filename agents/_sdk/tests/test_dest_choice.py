@@ -1,7 +1,7 @@
 """目的地候选卡续接的公共件（充电与导航共用，序数判据只有这一处）。"""
 import asyncio
 
-from agents._sdk.dest_choice import ordinal_index, resolve_choice, resolve_ordinal, save_choices
+from agents._sdk.dest_choice import ordinal_in, ordinal_index, resolve_choice, resolve_ordinal, save_choices
 
 
 class _Ctx:
@@ -18,6 +18,13 @@ class _Ctx:
 def test_ordinal_index():
     assert [ordinal_index(t) for t in ("第一个", "第2家", "两", "第三处", "第十")] == [1, 2, 2, 3, 10]
     assert [ordinal_index(t) for t in ("黄鹤楼", "第一个路口", "", "第一个吧")] == [0, 0, 0, 0]
+
+
+def test_ordinal_in_finds_the_ordinal_inside_a_slot_answer():
+    """补槽答案带着「换」「吧」这类词（换站续接：「换第二个」）：句中找序号；整句就是序号的与 `ordinal_index` 一致。"""
+    assert [ordinal_in(t) for t in ("换第二个", "第2个吧", "就换第一家", "2个", "第三个", "2")] == [2, 2, 1, 2, 3, 2]
+    # 不带「第」的汉字数字不是序号：「换一个充电站」「换一家」里的「一」
+    assert [ordinal_in(t) for t in ("换一个充电站", "换一家", "两个都换", "", "黄鹤楼")] == [0, 0, 0, 0, 0]
 
 
 def test_resolve_consumes_the_choice_and_passes_other_text_through():

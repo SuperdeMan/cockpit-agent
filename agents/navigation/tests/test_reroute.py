@@ -475,6 +475,36 @@ def test_swap_with_two_chargers_and_no_name_asks_instead_of_guessing():
     res, calls = _swap([_CHARGER_A, _CHARGER_B], [])
     assert "路线上有2个充电站" in res.speech and "换哪一个" in res.speech
     assert not res.actions and not calls["search"]
+    # 挂起追问 `remove_waypoint`，下一句「换第二个」续接这一步；不给 follow_up（手机端会把它整句做成 chip 发出）
+    assert res.status == "need_slot" and res.missing_slots == ["remove_waypoint"] and not res.follow_up
+
+
+def test_the_ask_resumes_with_an_ordinal():
+    """续接轮：槽值是用户原话「换第二个」（序号槽形放行、原样填槽），原话仍是任务起点「换一个充电站」——
+    按路线上充电站的先后换第二个，也不再拿「换第二个」去删途经点。"""
+    third = POI(id="c3", name="星星充电(民治站)", lat=22.6200, lng=114.0300)
+    res, _ = _swap([_CHARGER_A, _CHARGER_B], [_poi(_CHARGER_B, "c2"), third, _poi(_CHARGER_A, "c1")],
+                   slots={"remove_waypoint": "换第二个"})
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == [_CHARGER_A["name"], third.name]
+    assert f"换成{third.name}" in res.speech and "没找到" not in res.speech
+    res, _ = _swap([_CHARGER_A, _CHARGER_B], [_poi(_CHARGER_A, "c1"), third], slots={"remove_waypoint": "第一个"})
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == [third.name, _CHARGER_B["name"]]
+
+
+def test_the_ask_declares_the_ordinal_shape():
+    """续接的回答只收序号；说别的按新请求规划，不往 `remove_waypoint` 里灌（序号槽形，判据在 `slot_shape`）。"""
+    from pathlib import Path
+    from agents._sdk.manifest import load_manifest
+    from orchestrator.cloud.slot_shape import verdict
+
+    manifest = load_manifest(str(Path(__file__).resolve().parents[1] / "manifest.yaml"))
+    shapes = next(c for c in manifest.capabilities if c.intent == "navigation.reroute").slot_shapes
+    assert shapes == {"remove_waypoint": "ordinal"}
+    assert verdict(["remove_waypoint"], "换第二个", shapes) is False       # 是答案
+    assert verdict(["remove_waypoint"], "第一个", shapes) is False
+    assert verdict(["remove_waypoint"], "导航去宝安机场", shapes) is True   # 换题
 
 
 def test_swap_without_a_charger_on_the_route_says_so():
