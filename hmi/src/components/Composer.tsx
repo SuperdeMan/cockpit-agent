@@ -8,6 +8,8 @@ import {
   StreamingRecognizer, streamingAsrSupported, asrStreamUrl, type RecordResult,
 } from '../audio'
 import { AuroraOrb, type OrbState } from './aurora'
+import { Icon } from './Icon'
+import { useDriving } from '../DrivingContext'
 
 type MicState = 'idle' | 'recording' | 'transcribing'
 
@@ -17,14 +19,23 @@ export function Composer({
   hint,
   handsFreeOrb,
   onWake,
+  busy = false, speaking = false, onStop, onPartial, onActivity, drivingAnswer, drivingSource,
 }: {
   audioApi: string
   onSend: (text: string) => void
   hint?: string
   handsFreeOrb?: string | null // R4.3：hands-free 激活时 FSM 的 orb 态（armed/listening/…），覆盖空闲 mic 态
   onWake?: () => void // R4.3：hands-free 激活时点光球=开启聆听（VAD-only 的「一次点击开启」）
+  busy?: boolean
+  speaking?: boolean
+  onStop?: () => void
+  onPartial?: (text: string) => void
+  onActivity?: (activity: { mic: boolean; cloud: boolean }) => void
+  drivingAnswer?: string
+  drivingSource?: 'speech' | 'answer'
 }) {
   const { settings } = useSettings()
+  const { driving } = useDriving()
   const [input, setInput] = useState('')
   const [mic, setMic] = useState<MicState>('idle')
   const [notice, setNotice] = useState<string>('')
@@ -38,6 +49,10 @@ export function Composer({
   useEffect(() => {
     streamModeRef.current = streamingAsrSupported()
   }, [settings.asrProvider])
+  useEffect(() => {
+    onActivity?.({ mic: mic === 'recording', cloud: mic === 'transcribing' || (mic === 'recording' && streamModeRef.current) })
+    if (mic === 'idle') onPartial?.('')
+  }, [mic, onActivity, onPartial])
 
   const supported = micSupported() && secureContextOk()
 
@@ -78,7 +93,7 @@ export function Composer({
       language: settings.asrLanguage,
       provider: settings.asrProvider,
       model: settings.asrModel,
-      onPartial: (t) => setInput(t),
+      onPartial: (t) => onPartial?.(t),
       onFinal: (t) => {
         setMic('idle')
         if (t.trim()) send(t)
@@ -140,28 +155,21 @@ export function Composer({
   // 语音按钮即小舟光球：录音→speaking（波纹）、识别中→thinking（律动）；
   // 空闲时若 hands-free 激活则显 FSM 态（armed 待机微光 / listening 聆听脉冲 / …），否则 idle 呼吸。
   const orbState: OrbState =
-    mic === 'recording' ? 'speaking' : mic === 'transcribing' ? 'thinking' : ((handsFreeOrb as OrbState) || 'idle')
-
-  // hands-free 状态提示（给用户明确指引）
-  const hfHint =
-    mic !== 'idle' ? ''
-    : handsFreeOrb === 'armed' ? '免唤醒已开 · 点小舟开始说话'
-    : handsFreeOrb === 'listening' ? '聆听中…（停顿即自动发送）'
-    : handsFreeOrb === 'thinking' ? '处理中…'
-    : handsFreeOrb === 'speaking' ? '播报中 · 可直接开口打断'
-    : ''
+    mic === 'recording' ? 'listening' : mic === 'transcribing' ? 'thinking'
+    : speaking ? 'speaking' : busy ? 'thinking' : ((handsFreeOrb as OrbState) || 'idle')
+  const showStop = !input.trim() && (busy || speaking)
 
   return (
     <div className="au-composer">
-      <div className="au-quick-rail">
-        {settings.quickCommands.map((q) => (
+      {!driving && <div className="au-quick-rail">
+        {settings.quickCommands.slice(0, 4).map((q) => (
           <button key={q} className="au-quick-chip" onClick={() => send(q)}>
             {q}
           </button>
         ))}
-      </div>
+      </div>}
 
-      {(notice || hfHint || hint) && <div className="au-composer-notice">{notice || hfHint || hint}</div>}
+      {(notice || hint) && <div className="au-composer-notice">{notice || hint}</div>}
 
       <div className="au-composer-bar">
         <button
@@ -171,18 +179,25 @@ export function Composer({
           aria-label="语音输入"
           {...holdHandlers}
         >
-          <AuroraOrb size={40} state={orbState} />
+          <AuroraOrb size={driving ? 96 : 72} state={orbState} driving={driving} />
         </button>
-        <input
+        {driving ? <div className="au-driving-answer" data-source={drivingSource}
+          aria-label={drivingSource === 'speech' ? '播报内容' : '回答内容'}>{drivingAnswer}</div> : <input
           className="au-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send(input)}
-          placeholder={mic === 'recording' ? '聆听中…' : '发送消息，或说出你的需求…'}
-        />
-        <button className="au-send" onClick={() => send(input)} aria-label="发送">
-          发送
-        </button>
+          placeholder={mic === 'recording' ? (settings.micMode === 'hold' ? '正在听… 松开结束' : '正在听… 再点光球结束')
+            : mic === 'transcribing' ? '正在识别…' : handsFreeOrb === 'listening' ? '正在听… 停顿即自动发送'
+            : speaking ? '正在播报，点光球可打断' : busy ? '正在思考…'
+            : handsFreeOrb === 'armed' ? '免唤醒已开启，直接说出需求'
+            : settings.micMode === 'hold' ? '输入文字，或按住光球说话' : '输入文字，或点光球说话'}
+        />}
+        {!driving && <button className={'au-send' + (showStop ? ' stop' : '')}
+          disabled={!busy && !speaking && !input.trim()}
+          onClick={() => showStop ? onStop?.() : send(input)} aria-label={showStop ? '停止' : '发送'}>
+          <Icon name={showStop ? 'stop' : 'arrowUp'} size={28} color="currentColor" />
+        </button>}
       </div>
     </div>
   )

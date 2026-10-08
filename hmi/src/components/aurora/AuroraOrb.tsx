@@ -6,8 +6,8 @@ import type { CSSProperties } from 'react'
 
 export type OrbState = 'idle' | 'thinking' | 'speaking' | 'armed' | 'listening'
 
-const AURORA_CONIC = 'conic-gradient(from 0deg, #5BE9FF, #5B8CFF, #9A6BFF, #FF6BD6, #5BE9FF)'
-const AURORA_CONIC_R = 'conic-gradient(from 180deg, #9A6BFF, #5B8CFF, #5BE9FF, #FF6BD6, #9A6BFF)'
+const AURORA_CONIC = 'var(--au-aurora-conic)'
+const AURORA_CONIC_R = 'conic-gradient(from 180deg, var(--au-violet), var(--au-blue), var(--au-cyan), var(--au-magenta), var(--au-violet))'
 
 export function AuroraOrb({
   size = 40,
@@ -36,9 +36,9 @@ export function AuroraOrb({
     : listening
     ? `au-orb-pulse ${1.15 * dm}s ease-in-out infinite`
     : armed
-    ? `au-orb-breathe ${5 * dm}s ease-in-out infinite`
-    : `au-orb-breathe ${4 * dm}s ease-in-out infinite`
-  const haloSpin = `au-orb-spin ${(thinking ? 1.6 : listening ? 4 : armed ? 10 : 8) * dm}s linear infinite`
+    ? `au-orb-breathe calc(var(--au-orb-breathe-armed) * ${dm}) ease-in-out infinite`
+    : `au-orb-breathe calc(var(--au-orb-breathe-idle) * ${dm}) ease-in-out infinite`
+  const haloSpin = thinking ? `au-orb-spin calc(var(--au-orb-spin) * ${dm}) linear infinite` : `au-orb-spin ${(listening ? 4 : armed ? 10 : 8) * dm}s linear infinite`
   const innerSpin = `au-orb-spin ${(thinking ? 1.1 : listening ? 3.2 : armed ? 6 : 5) * dm}s linear infinite`
   const counterSpin = `au-orb-spin-r ${(thinking ? 0.8 : listening ? 2.6 : armed ? 4.6 : 3.8) * dm}s linear infinite`
 
@@ -47,6 +47,7 @@ export function AuroraOrb({
   return (
     <div
       className={['au-orb', className].filter(Boolean).join(' ')}
+      data-orb-state={state}
       style={{ position: 'relative', width: size, height: size, flexShrink: 0, opacity: driving ? 0.6 : 1 }}
       role="img"
       aria-label={title}

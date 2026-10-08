@@ -4,6 +4,7 @@ import { emptyVehicleProjection, bindVehicleIdentity, projectVehicleFrame } from
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSettings, buildMeta } from './settings'
 import { DrivingProvider, useDrivingProjection } from './DrivingContext'
+import { DrivingSpeechView } from './drivingSpeechView.mjs'
 import {
   buildRequestLocationMeta,
   requestCurrentLocation,
@@ -70,8 +71,14 @@ const genTraceId = () => {
 export default function App({ seedMessages, openSettings }: { seedMessages?: Msg[]; openSettings?: boolean } = {}) {
   const { settings, update } = useSettings()
   const drivingView = useDrivingProjection()
+  const drivingSpeechRef = useRef(new DrivingSpeechView())
   const [messages, setMessages] = useState<Msg[]>(seedMessages ?? [])
   const [connected, setConnected] = useState(false)
+  const [connectionState, setConnectionState] = useState('connecting')
+  const [composerPartial, setComposerPartial] = useState('')
+  const [composerActivity, setComposerActivity] = useState({ mic: false, cloud: false })
+  const [speaking, setSpeaking] = useState(false)
+  const [cameraFrameAt, setCameraFrameAt] = useState(0)
   // 车况镜像（edge-gateway vehicle_state 消息：连上即推全量 + 变更广播）→ 右舞台待机场景取数
   const [vehState, setVehState] = useState<Record<string, unknown>>({})
   const [vehStateLabel, setVehStateLabel] = useState('等待车况')
@@ -179,9 +186,11 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     const rws = new ResilientWebSocket(WS_URL, {
       onMessage: (data: any) => {
         drivingView.observe(data)
+        drivingSpeechRef.current.observe(data, requestsRef.current)
         handleEvent(data)
       },
       onStatus: (s: string) => {
+        setConnectionState(s)
         setConnected(s === 'open')
         if (s !== 'open') {
           vehicleProjectionRef.current = { ...vehicleProjectionRef.current, state: {}, signals: {}, label: '车况待更新' }
@@ -287,7 +296,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       },
     })
     handsFreeRef.current = ctrl
-    setTtsLifecycle({ onStart: () => ctrl.ttsStart(), onEnd: () => ctrl.ttsEnd() })
+    setTtsLifecycle({ onStart: () => { setSpeaking(true); ctrl.ttsStart() }, onEnd: () => { setSpeaking(false); ctrl.ttsEnd() } })
     return () => {
       setTtsLifecycle(null)
       ctrl.dispose() // U1：卸载即永久退役——StrictMode remount 的 ctrl#1 在途 enable 经 epoch 作废，不诞生孤儿
@@ -751,8 +760,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     if (settingsRef.current.visionEnabled && !visionDone && needsFrame(text)) {
       setMessages((m) => [...m, { id: uid(), role: 'user', text }])
       setHandsFreeNotice('已拍摄一帧用于识别')
-      void captureFrame(AUDIO_API).then((fid) =>
-        send(text, { ...(metaExtra || {}), vision_frame_id: fid, __bubbled: '1' }))
+      void captureFrame(AUDIO_API).then((fid) => {
+        if (fid) setCameraFrameAt(Date.now())
+        send(text, { ...(metaExtra || {}), vision_frame_id: fid, __bubbled: '1' })
+      })
       return
     }
     if (!metaExtra?.__bubbled) setMessages((m) => [...m, { id: uid(), role: 'user', text }])
@@ -921,32 +932,48 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   }
 
   const requestLocation = () => setLocationEnabled(true)
+  const latestAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+  const busy = handsFreeOrb === 'thinking' || !!(latestAssistant?.pending || latestAssistant?.streaming || latestAssistant?.processActive)
+  const isSpeaking = speaking || handsFreeOrb === 'speaking'
+  const isListening = composerActivity.mic || handsFreeOrb === 'listening'
+  const drivingSpeech = drivingSpeechRef.current.forMessage(latestAssistant)
+  const stopOutput = () => {
+    handsFreeRef.current?.bargeInForProactive()
+    stopTTS()
+  }
 
   return (
     <DrivingProvider value={drivingView}>
     <div className="au-app" data-drive={drivingView.driving ? 'on' : 'off'}>
-      <div className="au-scene-bg" aria-hidden>
-        <span className="blob b1" />
-        <span className="blob b2" />
-        <span className="blob b3" />
-      </div>
-
-      <StatusBar connected={connected} onOpenSettings={() => setShowSettings(true)} />
+      <aside className="au-stage">
+        <ContextualStage messages={messages} vehicle={vehState} vehicleLabel={vehStateLabel} />
+      </aside>
+      <div className="au-stage-scrim" aria-hidden />
+      <StatusBar connection={connectionState} onOpenSettings={() => setShowSettings(true)}
+        privacyMic={composerActivity.mic || !!handsFreeRef.current?.enabled}
+        privacyCloud={composerActivity.cloud || handsFreeOrb === 'listening'} cameraFrameAt={cameraFrameAt} />
       <main className="au-main">
+        <section className={'au-panel' + (messages.length === 0 ? ' compact' : '')}>
         <ChatView messages={messages} awaitConfirm={awaitConfirm}
           livePendingOps={pendingOps.map((o) => o.id)}
-          onConfirm={confirm} onQuick={send} partialUser={handsFreePartial} />
-        <aside className="au-stage">
-          <ContextualStage messages={messages} vehicle={vehState} vehicleLabel={vehStateLabel} />
-        </aside>
-      </main>
+          onConfirm={confirm} onQuick={send} partialUser={handsFreePartial || composerPartial} />
       <Composer
         audioApi={AUDIO_API}
         onSend={send}
         hint={handsFreeNotice || (connected ? undefined : '正在连接座舱服务…')}
         handsFreeOrb={handsFreeOrb}
         onWake={() => handsFreeRef.current?.wake()}
+        busy={busy} speaking={isSpeaking}
+        onStop={isSpeaking ? stopOutput : () => { handsFreeRef.current?.bargeInForProactive(); cancelCurrentTurn(); handsFreeRef.current?.turnEnded() }}
+        onPartial={setComposerPartial} onActivity={setComposerActivity}
+        drivingAnswer={isListening ? (handsFreePartial || composerPartial || '正在听…')
+          : busy && !latestAssistant?.streaming ? '正在思考…'
+          : drivingSpeech.text || '点光球说话，或按方向盘语音键'}
+        drivingSource={drivingSpeech.source}
       />
+        </section>
+      </main>
+      {(isListening || busy) && <div className={'au-edge-glow ' + (isListening ? 'listening' : 'thinking')} aria-hidden />}
 
       {showSettings && (
         <SettingsPanel

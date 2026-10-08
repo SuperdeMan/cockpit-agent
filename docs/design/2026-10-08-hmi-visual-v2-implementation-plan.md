@@ -1,6 +1,6 @@
 # 小舟座舱 HMI 视觉 v2 · 实施计划
 
-- **状态**：实施中（2026-10-09）。I1 已完成本地验证；I2–I6 待实施，逐批证据见 §8。未部署生产。
+- **状态**：实施中（2026-10-09）。I1 已提交并推送；I2 已实现并验证；I3–I6 未实施，逐批证据见 §8。未部署生产。
 - **依据**：[设计 Brief](2026-10-08-hmi-visual-redesign-brief.md)（已批准，§15 全部按推荐）；Figma「小舟座舱 HMI · Visual v2」`QNXzATLf4WOKLD1rV1dilp`，第 11 页 Handoff 里有 token ↔ CSS、组件 ↔ 代码和差异清单 D。
 - **读数基线**：`main` @ `b64fa70a`（2026-10-08）。它与 brief 的基线 `c5171045` 之间 `hmi/` 没有改动，文中 `文件:行号` 两版通用。
 - **范围**：只改 `hmi/` 的视图层与样式。Dashboard 不做；1920×720 只写规则，不出稿。
@@ -155,6 +155,7 @@ M2–M7 期间对 brief 做了以下细化，实施按这一版：
 
 ### I1 · token 与只读行车投影（2026-10-09）
 
+- 提交/推送：`2f8258bc5c4282adeaf31acb8709d768ef5ca1c9`。只推该精确 SHA；不代表生产发布。
 - Figma 只读 `20:9`、`20:311`、`21:9`、`59:9`，变量快照留在 `hmi/design/visual-v2.tokens.json`。`hmi/scripts/generate-visual-tokens.mjs --check` 对账五个集合和四档 Size；运行时声明仍在 `aurora.css`，旧键暂作别名。
 - 深浅主题的正文、次要文字、弱文字、图标按「舞台 → scrim → 面板 → surface 1/2/3」逐层合成后检查，包含面板背后的纯白和路线色；确认/错误语义色在 M0 实色面上的软底检查。
 - Inter / JetBrains Mono 的 Latin 可变字体自托管，保留 OFL 与来源、SHA256；中文沿用系统字体栈。没有新增 npm 依赖。
@@ -163,3 +164,13 @@ M2–M7 期间对 brief 做了以下细化，实施按这一版：
 - Headless Edge 读实际 CSS：深浅 × 行车/泊车 × 标准/大字，共 **8 组**，每组 **27 个 Size token** 与快照一致，两份字体均从本地加载。`?tokens` 字阶夹具对照 Figma `21:9`；中文字体按已批准的系统字体方案有字形差异。
 - 真实 App 配合浏览器内隔离 WebSocket 验证：只有 final 的行车进入 → 手动退出本段 → 同段 true 不重入 → 下一段重入 → false 连续 30 秒退出。没有连接服务端、执行车控或产生业务写入。
 - 证据目录：`.artifacts/hmi-visual-v2/i1/`（截图、浏览器读数、TypeScript 前后对账）；复现：`node test/hmi_cdp/visual_tokens.mjs`，先在 HMI 启动 `Vite --port 5188`。旧外壳/卡片的字号仍在 I2–I6 逐批迁移，不把 token 落地算作整屏完成。
+
+### I2 · 外壳与输入区（2026-10-09）
+
+- 本批只读 Figma `34:9`、`34:924`、`30:522`、`37:154`、`52:71`。已接全幅舞台、800px 单层面板、顶部渐隐、单一光球、连接三态、隐私胶囊、行车回答条与输入/建议隐藏。卡片/回答字号与舞台内容仍由 I3–I5 迁移，不宣称整帧已一致。
+- Composer 实时转写放入原 PartialUserBubble；发送/停止走已有 App 路径，输入新文字时发送优先于停止。按住/点按模式保留；`types.ts` 和 `handleEvent` 未变。隐私相机提示只在成功取得帧 id 后显示。
+- 三枚隐私图标从 Figma SVG 回写共享注册表，保留原 SVG；arrowUp / stop 从 mobile 本地图标提升到共享表，删除重复声明。没有增加 UI 依赖。
+- **批次调整**：D7 中两处铺满舞台的错误极光遮罩提前移除。原因是在 I2 减少动效降级时，动画被停掉后遮罩变为完全不透明、覆盖天气/日程内容；其余舞台修改仍在 I5。
+- 验证：HMI `npm test` **377 passed**，Vite build 通过；mobile 图标/共享准入 **11 passed**；TypeScript 与 I1 前基线仍是相同 **25 个错误**。`check_visual_boundaries.mjs i2` 核对受保护源码并带反向校验。
+- 浏览器：八组深浅夹具的 800px 面板、全幅舞台、一颗光球、最多四条建议与减少动效；另验行车无输入/建议、真实 App 的发送/取消路径。无模糊回退通过显式激活原 `@supports not` 规则验证，非旧 WebView 实机证明。证据在 `.artifacts/hmi-visual-v2/i2/`，复现 `node test/hmi_cdp/visual_shell.mjs`。
+- **文本来源裁决**：Figma DrivingAnswerBar 要显示「朗读的那句话」，但 `Msg.text` 经 `projectResultFinal` 优先取 ResultBundle 完整答案。2026-10-09 用户批准只读 `speech` 视图：`DrivingSpeechView` 按已有 RequestRegistry 归属缓存最多 64 条服务端短句，不结算请求，不改消息、类型/handleEvent/播报链路；缺少对应短句时明确回退为答案文本。旧帧/跨轮/过期与错误、流式回退均有用例；浏览器核对「短 speech + 长 ResultBundle」实际显示短句。D12 尚未实施或取得合入批准。

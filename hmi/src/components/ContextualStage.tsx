@@ -3,7 +3,7 @@
 // 否则回落待机场景（时钟 + 车辆概览 + 氛围）。媒体/车况场景待 HMI 侧补取数（P1 先占位）。
 import { useEffect, useMemo, useState } from 'react'
 import { useSettings } from '../settings'
-import { AuroraOrb } from './aurora'
+import { useDriving } from '../DrivingContext'
 import { Icon, type IconName } from './Icon'
 import type { Msg, UiCard, WeatherCard, PoiListCard, PoiDetailCard, RoutePlanCard, ChargingRouteCard, TripItineraryCard, ReminderListCard, ReminderCard, ReminderItem } from '../types'
 import { resolveView, groupByDay, timelineWindow, yForTime } from '../reminderStage.mjs'
@@ -23,7 +23,14 @@ function flatten(card?: UiCard): UiCard[] {
   return [card]
 }
 
-function deriveScene(messages: Msg[]): Scene {
+function deriveScene(messages: Msg[], driving = false): Scene {
+  if (driving) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const route = flatten(messages[i].uiCard).find(card => ['route_plan', 'charging_route'].includes(card.type))
+      if (route) return { kind: 'map', card: route }
+    }
+    return { kind: 'idle' }
+  }
   for (let i = messages.length - 1; i >= 0; i--) {
     for (const c of flatten(messages[i].uiCard)) {
       if (c.type === 'reminder_list' || c.type === 'reminder_card') return { kind: 'agenda', card: c }
@@ -35,9 +42,10 @@ function deriveScene(messages: Msg[]): Scene {
 }
 
 export function ContextualStage({ messages, vehicle, vehicleLabel }: { messages: Msg[]; vehicle?: Record<string, unknown>; vehicleLabel?: string }) {
-  const scene = deriveScene(messages)
+  const { driving } = useDriving()
+  const scene = deriveScene(messages, driving)
   return (
-    <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(120% 120% at 70% 20%, rgba(91,140,255,0.10), transparent 60%)' }}>
+    <div className="au-stage-content">
       {scene.kind === 'weather' ? (
         <WeatherStage card={scene.card} />
       ) : scene.kind === 'map' ? (
@@ -66,7 +74,6 @@ function IdleStage({ vehicle, vehicleLabel }: { vehicle?: Record<string, unknown
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 28, padding: 40 }}>
-      <AuroraOrb size={120} state="idle" />
       <div style={{ textAlign: 'center' }}>
         <div className="au-num" style={{ fontSize: 84, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1 }}>
           {hh}<span style={{ opacity: 0.5 }}>:</span>{mm}
@@ -123,8 +130,6 @@ function WeatherStage({ card }: { card: WeatherCard }) {
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      {/* AI 上下文激活——屏幕边缘极光（§5）*/}
-      <div style={{ position: 'absolute', inset: 0, borderRadius: 'var(--au-r-3xl)', border: '1.5px solid transparent', background: 'linear-gradient(rgba(0,0,0,0),rgba(0,0,0,0)) padding-box, var(--au-aurora) border-box', animation: 'au-edge-pulse 3.5s ease-in-out infinite', pointerEvents: 'none', zIndex: 6 }} />
       {/* 柔云氛围 */}
       <div style={{ position: 'absolute', top: '10%', left: '14%', width: 380, height: 150, borderRadius: '50%', background: 'radial-gradient(circle, rgba(140,175,255,0.10), transparent 70%)', filter: 'blur(22px)' }} />
       <div style={{ position: 'absolute', top: '34%', right: '10%', width: 260, height: 120, borderRadius: '50%', background: 'radial-gradient(circle, rgba(140,175,255,0.08), transparent 70%)', filter: 'blur(22px)' }} />
@@ -379,8 +384,6 @@ function AgendaStage({ card }: { card: UiCard }) {
 
   return (
     <div style={{ position: 'absolute', inset: 0, borderRadius: 'var(--au-r-3xl)', overflow: 'hidden', background: 'linear-gradient(158deg,#06080F 0%,#0B1020 60%,#080D18 100%)' }}>
-      {/* 到点=AI 时刻：屏幕边缘极光（复用天气场景语言） */}
-      {firedId && <div style={{ position: 'absolute', inset: 0, borderRadius: 'var(--au-r-3xl)', border: '1.5px solid transparent', background: 'linear-gradient(rgba(0,0,0,0),rgba(0,0,0,0)) padding-box, var(--au-aurora) border-box', animation: 'au-edge-pulse 3.5s ease-in-out infinite', pointerEvents: 'none', zIndex: 6 }} />}
       <div style={{ position: 'absolute', top: 18, left: 18, padding: '5px 13px', borderRadius: 20, background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)', display: 'inline-flex', alignItems: 'center', gap: 7, zIndex: 5 }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--au-primary)', boxShadow: '0 0 8px var(--au-primary)' }} />
         <span style={{ fontSize: 12.5, color: 'var(--au-primary)', fontWeight: 500 }}>{title}</span>

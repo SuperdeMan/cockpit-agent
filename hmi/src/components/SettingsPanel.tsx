@@ -22,7 +22,6 @@ import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
 // 声纹录音走与主链路识别**同一条音频通路**（16k PCM + 同一组 EC/NS/AGC）：
 // 走 MediaRecorder/webm 会让模板落在另一个信道上，主链路的 PCM 探针比不上去（真机实测差 0.2）。
 import { PcmRecorder } from '../pcmRecorder.mjs'
-import { AuroraOrb } from './aurora'
 import { Icon, type IconName } from './Icon'
 import { Toggle, Segmented, TextInput, GhostBtn, DangerBtn } from './controls'
 
@@ -145,7 +144,6 @@ export function SettingsPanel({
       {/* 顶栏 */}
       <header style={{ position: 'relative', zIndex: 2, height: 64, padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${DIV}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <AuroraOrb size={28} state="idle" />
           <span className="au-aurora-text" style={{ fontSize: 15, fontWeight: 600 }}>设置</span>
           <span style={{ fontSize: 13, color: FG3, fontWeight: 300 }}>· {settings.assistantName}助手 · 横屏侧栏</span>
         </div>
@@ -160,7 +158,6 @@ export function SettingsPanel({
         <div style={{ width: 236, flexShrink: 0, height: '100%' }}>
           <Glass style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '20px 16px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <AuroraOrb size={40} state="idle" />
               <div>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>{settings.assistantName}</div>
                 <div style={{ fontSize: 11, color: FG3 }}>助手设置</div>

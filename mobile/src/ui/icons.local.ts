@@ -5,9 +5,7 @@
 // keyboard：行车档 B 身份「文本输入折叠成键盘图标」（§6.0）。
 export const LOCAL_ICONS = {
   /** 发送（B5-13：⬆ 箭头，市面 AI 助手通行做法；替掉 B4-9 的纸飞机） */
-  arrowUp: { w: 24, h: 24, body: '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>' },
   /** 打断 / 停（B5-13：与发送合一键，忙时显示） */
-  stop: { w: 24, h: 24, body: '<rect x="6" y="6" width="12" height="12" rx="2"/>' },
   keyboard: {
     w: 24,
     h: 24,

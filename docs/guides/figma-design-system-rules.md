@@ -14,8 +14,8 @@
    一律翻译成本端写法（§3、§7）。
 3. **不新造 token**。颜色、圆角、阴影、材质先在声明源反查（§2.4）；查不到就先改声明源（深浅两档 +
    对应测试）再使用。禁止平行色彩体系；新代码不写 `rgba(70,214,224,…)`、`#F59E0B` 这类 token 字面量。
-4. **极光只用于 AI 时刻**——契约 §5 的五处：光球、聆听/思考时屏幕边缘、流式光标、AI 内容描边/角标、
-   主操作。正文、数字、语义色、普通功能图标、分隔线、面板底一律不上虹彩；非 AI 的交互高亮只用交互蓝。
+4. **极光只用于 AI 时刻**——HMI visual v2（[已批准的 brief §15-3](../design/2026-10-08-hmi-visual-redesign-brief.md)）收为四处：光球、聆听/思考时屏幕边缘、流式光标、AI 内容描边/角标。
+   发送和其它主操作改用交互蓝；正文、数字、语义色、普通功能图标、分隔线、面板底一律不上虹彩。旧 Make 契约 §5 的「主操作」例外只作历史记录。
 5. **数值用等宽**：车速/温度/价格/距离/时间戳/ms。HMI 用 `.au-num` 或 `var(--au-font-mono)`，mobile 用 `TYPE.mono`。
 6. **语义色固定且不单靠颜色**：A 股红涨绿跌；置信度高/中/低 = 交互蓝/琥珀/灰；AQI 七档。
    同时给文字或形状（▲▼、「置信度高」、档位名）。
@@ -136,12 +136,13 @@ rg -n "255, ?255, ?255, ?0\.56" hmi/src/aurora.css mobile/src/ui/theme.ts
 | 圆角 `--radius` 及阶 | `--au-r-*` | `RADIUS.*` |
 | `--chart-1…5` | 极光四色 + 交互蓝，只给图表与 AI 元素 | 同左 |
 
-### 2.5 没有 token 管线
+### 2.5 Token 导出与校验
 
-仓库里没有 Style Dictionary、Tokens Studio 或 Figma Variables 同步脚本；三端 token 都是照契约**手工逐值落**，
-关键性质靠测试守（mobile `tokens.test.ts` 数值、`theme.test.ts` 对比度；HMI `src/themeStyles.test.mjs` 浅色关键面）。
-设计文件有没有定义 Figma Variables **尚未核实**：`get_variable_defs` 要求先在 Figma 里选中图层，对页节点 `0:1` 直接调用会报错
-（2026-10-02 实测）；第一次需要时选中 A-1 帧再调，结果回填本节。
+HMI visual v2 已有 Figma 变量导出：文件 `QNXzATLf4WOKLD1rV1dilp` 的 Color / Size / Space / Radius / Motion，
+冻结快照在 `hmi/design/visual-v2.tokens.json`；`node hmi/scripts/generate-visual-tokens.mjs --check` 检查 `aurora.css`。
+`get_variable_defs` 读取具体节点的当前模式；多模式快照由只读 Plugin API 导出，不扫描无关页面。运行时以代码为唯一声明源。
+HMI `visualTokens.test.mjs` 验证快照、最亮舞台背景上的逐层合成对比度和自托管字体；旧 `themeStyles.test.mjs` 保留。
+mobile 仍通过 `tokens.test.ts` / `theme.test.ts` 验证本端声明；三端没有共享 UI 或第三方 token 依赖。
 
 新增 token 的顺序：契约 / 设计确认 → 声明源加深浅两档 → 补或改测试 → 使用。
 

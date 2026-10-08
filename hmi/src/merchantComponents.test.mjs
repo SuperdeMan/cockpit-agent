@@ -9,6 +9,7 @@ let vite
 let CardRenderer
 let ChatView
 let SettingsProvider
+let DrivingProvider
 
 before(async () => {
   vite = await createServer({
@@ -20,6 +21,7 @@ before(async () => {
   ;({ CardRenderer } = await vite.ssrLoadModule('/src/components/Cards.tsx'))
   ;({ ChatView } = await vite.ssrLoadModule('/src/components/ChatView.tsx'))
   ;({ SettingsProvider } = await vite.ssrLoadModule('/src/settings.tsx'))
+  ;({ DrivingProvider } = await vite.ssrLoadModule('/src/DrivingContext.tsx'))
 })
 
 after(async () => {
@@ -32,6 +34,7 @@ const renderCard = (card) => renderToStaticMarkup(
 
 const renderConfirmation = (uiCard) => renderToStaticMarkup(
   React.createElement(SettingsProvider, null,
+    React.createElement(DrivingProvider, { value: { driving: false, manual: false, observe: () => {}, setDriving: () => {} } },
     React.createElement(ChatView, {
       messages: [{
         id: 'm1', role: 'assistant', text: '请确认。', needConfirm: true, uiCard,
@@ -40,6 +43,7 @@ const renderConfirmation = (uiCard) => renderToStaticMarkup(
       onConfirm: () => {},
       onQuick: () => {},
     }),
+    ),
   ),
 )
 

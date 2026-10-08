@@ -10,7 +10,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useSettings } from '../settings'
 import { CardRenderer } from './Cards'
-import { AuroraOrb, type OrbState } from './aurora'
+import type { OrbState } from './aurora'
+import { useDriving } from '../DrivingContext'
 import type { Action, Msg, ProcessStep } from '../types'
 import { confirmationPresentation } from '../merchantUi.mjs'
 import { ResultDetails } from './ResultDetails'
@@ -70,6 +71,7 @@ export function ChatView({
   partialUser?: string // hands-free 聆听中的实时识别文字（issue②）
 }) {
   const { settings } = useSettings()
+  const { driving } = useDriving()
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -84,20 +86,12 @@ export function ChatView({
 
   return (
     <div className="au-conv-panel">
-      <div className="au-conv-head">
-        <AuroraOrb size={36} state="idle" />
-        <div className="au-conv-head-text">
-          <div className="au-conv-head-name">{settings.assistantName}</div>
-          <div className="au-conv-head-sub">AI 智能助手 · 对话</div>
-        </div>
-      </div>
       <div className="chat" ref={listRef}>
-        {messages.length === 0 && <Welcome name={settings.assistantName} onQuick={onQuick} />}
-        {messages.length > 0 && <div className="au-park-pill">泊车模式 · 已停车</div>}
-        {messages.map((m, i) => (
+        {!driving && messages.length === 0 && <Welcome name={settings.assistantName} onQuick={onQuick} />}
+        {messages.map((m, i) => (!driving || (m.needConfirm && (m.operationId ? livePendingOps?.includes(m.operationId) : awaitConfirm && i === messages.length - 1))) && (
           <MessageItem
             key={m.id}
-            msg={m}
+            msg={{ ...m, driving }}
             isLast={i === messages.length - 1}
             awaitConfirm={awaitConfirm}
             livePendingOps={livePendingOps}
@@ -106,7 +100,7 @@ export function ChatView({
             retryText={lastUserText(i)}
           />
         ))}
-        {partialUser && <PartialUserBubble text={partialUser} />}
+        {!driving && partialUser && <PartialUserBubble text={partialUser} />}
       </div>
     </div>
   )
@@ -115,16 +109,8 @@ export function ChatView({
 function Welcome({ name, onQuick }: { name: string; onQuick: (t: string) => void }) {
   return (
     <div className="au-welcome">
-      <AuroraOrb size={96} state="idle" />
       <div className="au-welcome-title">我是{name}</div>
-      <div className="au-welcome-sub">按住下方光球说话，或点指令试试</div>
-      <div className="au-welcome-chips">
-        {['打开空调26度', '附近的充电站', '讲个笑话'].map((q) => (
-          <button key={q} className="au-welcome-chip" onClick={() => onQuick(q)}>
-            {q}
-          </button>
-        ))}
-      </div>
+      <div className="au-welcome-sub">说出需求，或选择下方指令</div>
     </div>
   )
 }
@@ -174,7 +160,7 @@ function UserBubble({ text }: { text: string }) {
       <div style={{
         maxWidth: '78%', padding: '11px 16px', borderRadius: '18px 18px 4px 18px',
         background: 'rgba(70,214,224,0.12)', border: '1px solid rgba(70,214,224,0.22)',
-        WebkitBackdropFilter: 'blur(16px)', backdropFilter: 'blur(16px)',
+
         boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
       }}>
         <div style={{ fontSize: 14.5, lineHeight: 1.65, color: FG1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</div>
@@ -206,7 +192,7 @@ function PartialUserBubble({ text }: { text: string }) {
       <div style={{
         maxWidth: '78%', padding: '11px 16px', borderRadius: '18px 18px 4px 18px',
         background: 'rgba(70,214,224,0.06)', border: '1px dashed rgba(70,214,224,0.30)',
-        WebkitBackdropFilter: 'blur(16px)', backdropFilter: 'blur(16px)',
+
       }}>
         <div style={{ fontSize: 14.5, lineHeight: 1.65, color: FG2, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {text}<span className="au-cursor" />
@@ -231,14 +217,11 @@ function AIBubbleBase({
         : {}
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14 }}>
-      <div style={{ width: 30, height: 30, flexShrink: 0, marginTop: 2 }}>
-        <AuroraOrb state={orbState} size={30} driving={driving} />
-      </div>
       <div style={{
         flex: 1, minWidth: 0, padding: '13px 15px', borderRadius: '4px 18px 18px 18px',
         background: 'var(--au-fill)', border: '1px solid var(--au-fill-2)',
         borderTop: '1px solid var(--au-hi)',
-        WebkitBackdropFilter: 'blur(20px)', backdropFilter: 'blur(20px)',
+
         boxShadow: '0 4px 20px rgba(0,0,0,0.30),inset 0 1px 0 var(--au-fill-2)',
         position: 'relative', overflow: 'hidden', ...toneStyle, ...style,
       }}>
@@ -567,13 +550,10 @@ function ProactiveBubble({ msg, onAction }: { msg: Msg; onAction: (t: string) =>
       <div style={{
         display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 15px',
         borderRadius: '14px 18px 18px 14px', background: tintBg, border: `1px solid ${tintBd}`,
-        borderLeft: `3px solid ${accent}`, WebkitBackdropFilter: 'blur(20px)', backdropFilter: 'blur(20px)',
+        borderLeft: `3px solid ${accent}`,
         boxShadow: `0 4px 20px rgba(0,0,0,0.24),0 0 12px ${isAlert ? 'rgba(245,158,11,0.08)' : 'rgba(70,214,224,0.08)'}`,
         ...(isAlert ? { animation: 'au-proactive-pulse-amber 3s ease-in-out infinite' } : {}),
       }}>
-        <div style={{ width: 30, height: 30, flexShrink: 0, marginTop: 1 }}>
-          <AuroraOrb state={isAlert ? 'speaking' : 'idle'} size={30} />
-        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
             {isAlert ? <IcAlert size={13} color={accent} /> : <IcBulb size={13} color={accent} />}
