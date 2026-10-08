@@ -334,6 +334,23 @@ def _origin_named(raw_text: str) -> tuple[str, str]:
     return text[:m.start()] + text[m.end():], m.group(1)
 
 
+def _resumed_spoken_origin(raw_text: str, meta) -> str:
+    """续接时起点槽空着 / 是占位：本轮回答、或这一步被规划时那句里「从 X 出发」的 X（先看本轮回答）；不是续接 ⇒ 空串。
+
+    2026-10-08 真栈：「从深南大道9028号出发要开多久」被规划成 `origin: 当前位置, destination: 深南大道9028号`，导航认出目的地其实是
+    起点、追问「您想算从深南大道9028号出发到哪里的路程？」，续接只覆盖目的地 ⇒ 起点还是占位，从当前位置算——追问里说定的起点丢了。
+    只在续接时看（`STEP_ORIGIN_META` 只随被续接的那一步下发）：新请求里起点空着照旧按当前位置，说了起点没说终点由
+    `_unspoken_destination` 追问。"""
+    planned = str((meta or {}).get(STEP_ORIGIN_META) or "")
+    if not planned:
+        return ""
+    for said in (raw_text or "", planned):
+        spoken = _origin_named(said)[1].strip()
+        if spoken and not is_place_placeholder(spoken):
+            return spoken
+    return ""
+
+
 def _without_route_prefs(text: str) -> str:
     """去掉路线偏好短语（不走高速 / 避堵 / 少收费 / 不走快速路）——它们从来不是地名。"""
     for pattern in (_PREF_NO_HW_RE, _PREF_JAM_RE, _PREF_TOLL_RE, _PREF_EXPRESS_RE):
@@ -498,7 +515,7 @@ class NavigationAgent(BaseAgent):
         前序步结果填出的起点（`_trusted_slot_refs`）是系统给的，不查。"""
         text = (intent.slots.get("origin") or "").strip()
         if not text or is_place_placeholder(text):
-            return ""
+            return _resumed_spoken_origin(intent.raw_text, meta)
         said = [t for t in ((intent.raw_text or "").strip(), str((meta or {}).get(STEP_ORIGIN_META) or "").strip()) if t]
         if said and not _filled_by_ref("origin", meta) and not any(_grounded_in_raw(text, t) for t in said):
             logger.info("origin slot not in the words, ignored: %r (raw=%r)", text, said[0][:40])

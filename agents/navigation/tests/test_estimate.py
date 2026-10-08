@@ -140,6 +140,28 @@ def test_a_resumed_step_keeps_the_origin_from_its_planned_utterance():
     assert res.ui_card["origin"] == "特来电(科技园站)"
 
 
+def test_the_origin_promised_by_the_ask_survives_the_resume():
+    """2026-10-08 真栈：「从深南大道9028号出发要开多久」被规划成 `origin: 当前位置, destination: 深南大道9028号`，导航追问
+    「从…出发到哪里」；续接只覆盖目的地、起点还是占位 ⇒ 修前从当前位置算。续接时（`STEP_ORIGIN_META`）起点空着 / 是占位，
+    就取这一步被规划时那句里「从 X 出发」的 X；那句里的起点本身是占位、或不是续接，照旧按当前位置。"""
+    from runtime.slots import STEP_ORIGIN_META
+
+    slots = {"origin": "当前位置", "destination": "深圳北站"}
+    agent, _ = _agent({"欢乐海岸": [_COAST], "深圳北站": [_NORTH]})
+    res = _estimate(agent, dict(slots), "深圳北站", meta={**_HERE, STEP_ORIGIN_META: "从欢乐海岸出发要开多久"})
+    assert res.ui_card["origin"] == "欢乐海岸"
+    agent, calls = _agent({"欢乐海岸": [_COAST], "深圳北站": [_NORTH]})
+    res = _estimate(agent, {"destination": "深圳北站"}, "深圳北站", meta={**_HERE, STEP_ORIGIN_META: "从这里出发要开多久"})
+    assert res.ui_card["origin"] == "当前位置"
+    agent, calls = _agent({"欢乐海岸": [_COAST], "深圳北站": [_NORTH]})
+    res = _estimate(agent, dict(slots), "去深圳北站要开多久")
+    assert res.ui_card["origin"] == "当前位置" and "欢乐海岸" not in calls["search"]
+    # 新请求不走这条：「从现在出发」的「现在」不是地点（collector 90 天真实用户没有说「从 X 出发」的，新请求里规划器丢起点未量）
+    agent, calls = _agent({"深圳北站": [_NORTH]})
+    res = _estimate(agent, dict(slots), "从现在出发去深圳北站要开多久")
+    assert res.ui_card["origin"] == "当前位置" and "现在" not in calls["search"]
+
+
 def test_navigate_to_uses_the_spoken_origin():
     """I-029②：用户明说了出发地，算路/卡片/动作载荷三处都要按它来。
 
