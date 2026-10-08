@@ -1,0 +1,150 @@
+# 小舟座舱 HMI 视觉 v2 · 实施计划（草案）
+
+- **状态**：草案（2026-10-08）。设计已完成，等实施排期；本文不代表已经动代码。
+- **依据**：[设计 Brief](2026-10-08-hmi-visual-redesign-brief.md)（已批准，§15 全部按推荐）；Figma「小舟座舱 HMI · Visual v2」`QNXzATLf4WOKLD1rV1dilp`，第 11 页 Handoff 里有 token ↔ CSS、组件 ↔ 代码和差异清单 D。
+- **读数基线**：`main` @ `b64fa70a`（2026-10-08）。它与 brief 的基线 `c5171045` 之间 `hmi/` 没有改动，文中 `文件:行号` 两版通用。
+- **范围**：只改 `hmi/` 的视图层与样式。Dashboard 不做；1920×720 只写规则，不出稿。
+
+---
+
+## 0. 结论
+
+分 6 批落地，顺序固定为 **token → 外壳 → 对话件 → 卡片 → 舞台 → 设置与无障碍**。每批单独可合入、可回退。
+
+- 前一批不完成，后一批没有可绑定的变量或容器。
+- 数据契约 `hmi/src/types.ts` 和 `App.tsx` 的 `handleEvent` 状态机全程不改。
+- 不引入 Tailwind、shadcn、lucide、MUI、motion 等新 UI 依赖。
+
+行为变更共 5 条（差异清单 D4、D9、D12、D16、D17），都已在 brief §15 拍板，实施时按原决定执行。其中 D12「读历史时不强制滚到底」brief 写的是「实施时确认」，做到 I3 时先问一句再合入。
+
+---
+
+## 1. 不变量
+
+| 项 | 规则 |
+|---|---|
+| 契约 | `types.ts` 字段不增不减；卡片动作仍只合成一句话走普通上行；写确认只在全局确认条产生 |
+| 状态机 | `App.tsx` `handleEvent` 不改；新增的行车态、隐私胶囊、连接态都从已有状态派生 |
+| 安全语义 | 待确认条只由服务端 `need_confirm` 加仍然有效的 `operation_id` 驱动；倒计时只在服务端给期限时显示；付款码行车不显示 |
+| 判据单源 | 车控证据状态复用 `resultBundle.mjs` 的投影，与 `mobile/src/core/cards/controlResult.ts` 同口径，不写第二份判据 |
+| 真实性 | `_prov` 的缓存、降级、模拟角标任何外壳都不得吞掉；mock 渠道必带「模拟数据」，演示商户必带「演示商户」 |
+| 依赖 | 只用 React + 全局 CSS + `--au-*` 变量；字体：中文用系统字体栈，Inter 和 JetBrains Mono 自托管（brief §15-7） |
+
+---
+
+## 2. 分批
+
+| 批 | 内容 | 主要文件 | 完成判据 |
+|---|---|---|---|
+| **I1 token** | 按 Figma 变量生成 `--au-*`：Color（深 / 浅）、Size（`data-drive` × `data-font` 四档）、Space、Radius、Motion（`--au-dur-*`、`--au-ease-*`）；旧键先映射到新键，迁完再删；全局行车状态写到 `data-drive`（Edge `driving` + 手动切换，退出宽限 30 s）；字体自托管 | `aurora.css`、`styles.css`、`App.tsx`（只加属性，不改状态机）、`settings.tsx` | token 快照测试与 Figma 导出一致；对比度测试：深浅两套，正文 ≥4.5、三级文字与图标 ≥3.0，按「面板背后最亮内容」合成后算 |
+| **I2 外壳** | 全幅舞台 + 单一玻璃面板（800）+ scrim；StatusBar（连接三态、隐私胶囊、「行车中」可点退出）；Composer 七态、一屏一颗光球；EdgeGlow；行车布局（答案条，隐藏输入与建议）；无模糊回退与减少动效 | `shell.css`、`components/StatusBar.tsx`、`components/Composer.tsx`、`components/aurora/AuroraOrb.tsx`、`components/ChatView.tsx` | 夹具 `/`、`/?demo`、`/?demo=map` 截图与 P-04 / P-08 / S-02 对照；`prefers-reduced-motion` 与 `@supports not (backdrop-filter)` 两条回退可见 |
+| **I3 对话件** | 回答去气泡、用户气泡、思考行、过程区（四态）、错误 / 超时 / 打断、拒识、主动播报（五种）、输入区提示、「有新消息」胶囊；待确认条改为面板底部固定条（一次钉一条 + 另有 N 个）；结果折叠；车控结果卡 | `components/ChatView.tsx`、`pendingOps.mjs`、`merchantUi.mjs`、`components/ResultDetails.tsx`、`resultBundle.mjs` | `confirmationPresentation` 不再返回「已泊车」，同步改 `merchantComponents.test.mjs:142-146`、`merchantUi.test.mjs:255-261`；`/?demo=states` 对照 P-05～P-16 |
+| **I4 卡片** | 卡片件进 `cards.css` 并补上 `.au-card`；34 个卡型按 Figma 六块看板的家族顺序逐个换皮；置信度改只读样式；AI 角标标签按内容；等宽数字里的单位用正文字阶 + 次要色；二维码固定黑白 | `components/Cards.tsx`、`cards.css`、`components/aurora/ConfBadge.tsx`、`components/aurora/AQISection.tsx` | `/?demo=cards`、`/?demo=info`、`/?demo=results` 对照 06 页；字段缺失时整行隐藏（补用例） |
+| **I5 舞台** | 待机三态（续航读不到就写「读不到」，不再按电量 × 550 估算）；地图（路线、充电规划、地点详情、行程、地图不可用示意）；天气；车况俯视图；日程（当天 / 多天）；阅读；付款码（只在停车时）；媒体极简；删掉舞台边缘极光 bug 和写死的深色信息条 | `components/ContextualStage.tsx`、`vehicleStage.mjs`、`reminderStage.mjs`、`nav.mjs` | `vehicleStage.test.mjs` 改断言（读不到 ⇒ 不估算）；`/?demo=charge`、`/?demo=trip`、`/?demo=route` 对照 05 页 |
+| **I6 设置与无障碍** | 设置重排为 12 节（含开发者区，收纳模型 id、延迟、原始错误、README 指引）；补 Select / ListItem / VoiceTile；内容限宽 1120、行高 ≥80；大字档由 Size token 驱动（文字 ×1.15、触控 ×1.1） | `components/SettingsPanel.tsx`、`components/controls.tsx`、`settings.tsx` | `/?settings` 对照 08 页；大字档、无模糊回退对照 09 页 |
+
+每批的验证口径：
+
+- `npm test`（`node --test src/*.test.mjs`）全绿；
+- `npx vite build` 通过；
+- 本机 Vite + headless Edge 取夹具截图，与对应 Figma 帧并排检查（方法见 brief 附录 B）。`target=cloud` 时只起 Vite，不起本地 Compose。
+- 只改样式的批次不新写测试；行为变更（D4、D9、D12、D16、D17）各补一条用例。
+
+---
+
+## 3. 差异清单 D 对账
+
+| D | 内容 | 批 |
+|---|---|---|
+| D1 | 两栏网格 → 全幅舞台 + 单一玻璃面板 | I2 |
+| D2 | 每条消息一颗光球 → 一屏一颗 | I2 |
+| D3 | 发送键极光 → 交互蓝（同步改设计契约 §5） | I2 |
+| D4 | 写死「泊车模式 · 已停车」「已泊车」→ 读真实行车状态 | I1 / I3 |
+| D5 | 384 处字号字面量 → 12 档字阶 × 4 档 | I1 起逐批 |
+| D6 | hex / rgba 字面量；浅色语义色未覆盖 → 语义 token | I1 起逐批 |
+| D7 | 舞台边缘极光 bug、写死深色信息条 | I5 |
+| D8 | `.au-card` 未定义 | I4 |
+| D9 | 续航按电量 × 550 估算 → 读不到就说读不到 | I5 |
+| D10 | 车控结果显示 action 原文 → ControlResult 证据态 | I3 |
+| D11 | trace 角标、字数常显 → 开发者模式 / 删除 | I3 |
+| D12 | 读历史时强制滚到底 → 「有新消息」胶囊（合入前确认） | I3 |
+| D13 | 置信度胶囊 → 只读元信息 | I4 |
+| D14 | emoji → 注册表图标（新画 10 枚回写 `icons.custom.ts`） | I2 / I4 |
+| D15 | 设置 8 节 + 开发者语言外露 → 12 节 + 开发者区 | I6 |
+| D16 | `data-drive` 从未设置 → 全局行车状态驱动 | I1 |
+| D17 | 「大字」「大触控」开关无效 → Size token 驱动 | I1 / I6 |
+| D18 | 付款码随主题 → 固定黑白；行车只给金额与期限 | I4 / I5 |
+| D19 | 消息区溢出硬切 → 顶部 56px 渐隐 | I2 |
+
+---
+
+## 4. 设计阶段的细化（已回写 brief）
+
+M2–M7 期间对 brief 做了以下细化，实施按这一版：
+
+1. **置信度**：去掉胶囊底，只给圆点上色，文字用中性色，和卡头右槽的来源、时效同级。原因：交互蓝与「置信度 高」同为 `#46D6E0`，胶囊形状会被当成可点的 chip。
+2. **AI 角标**：标签按内容写，分别是「AI · 深度调研」「AI 摘要」「AI 回答」「AI 建议」；检索原文不加角标。
+3. **等宽数字里的单位**：「2 档」「24 分钟」「约 150 km」这类，单位一段用正文字阶 + 次要色，避免中文退回系统字体、空格变宽。
+4. **消息区顶部渐隐**：贴底滚动时顶部 56px 渐隐，读历史时上下都渐隐。
+5. **行车摘要**：一个主数值 + 最多 2 个字段。放不下时先删字段，不缩字号。付款与行情只给单值。
+6. **行车里的选项**：一律用绑定 target 的按钮（≥76），不用 chip（行车档 chip 只有 56）。
+7. **样例数据一致性**：行程样例改成「杭州 2 日」，和西湖底图一致。凡是编造的内容，都在格子标签上标「示例数据」。
+8. **Motion 变量集合**：新增，时长用 FLOAT、缓动用 STRING，code syntax 是 `--au-dur-*` / `--au-ease-*`。
+9. **新增图标 10 枚**：天气雪 / 雾 / 霾 / 沙尘、隐私三枚、行车中、开发者、行情。另外 Android 本地的 18 枚通用图标提升到共享表。
+
+---
+
+## 5. 风险与待定
+
+| 项 | 说明 | 对策 |
+|---|---|---|
+| 车况俯视图 | Figma 里是矩形拼的占位示意 | 量产换车型线稿资产；实施时先用占位，资产到位再替换 |
+| 大字档力度 | ×1.15 与 Android 一致，但只是把泊车档放到行车档的字号 | 先按批准值做；要 ×1.3 需把 Size 改成「基准 × 倍率」（Professional 计划每个集合最多 4 个模式，已用满） |
+| Code Connect | Professional 计划用不了 | 用 Handoff 页的组件 ↔ 代码表对照；升级计划后再补映射 |
+| 地图相机动画 | 舞台切换只做淡化与位移 | 取景动画交给地图 SDK，不在 CSS 里模拟 |
+| 测试锁定的旧文案 | 「已泊车」被两条测试锁住 | I3 与实现同一提交修改，不先删测试 |
+
+---
+
+## 6. Figma 索引
+
+文件：<https://www.figma.com/design/QNXzATLf4WOKLD1rV1dilp>（节点 ID 写成 `34:924` 时，URL 里用 `node-id=34-924`）。
+
+| 页 | 内容 | 关键节点（深色） |
+|---|---|---|
+| 02 Foundations | 色板与对比度、字阶四档、尺寸、材质、间距圆角阴影 | Color 深 `20:9` · 浅 `20:311` · 字阶 `21:9` |
+| 03 Components | 156 个组件 / 套件 | Composer `30:522` · PendingBar `27:566` · ControlResult `27:419` · 卡片件看板 `28:329` · 设置控件 `31:495` · 行车答案条 `52:70` |
+| 04 Parked | 13 屏 × 深浅 | P-04 `34:9` … P-08 `34:924` … P-16 `35:1907`；浅色在下一行 |
+| 05 Stage | 15 场景 × 深浅 | S-01a `37:9` · S-02 `37:154` · S-07 `39:897` · S-09 `40:862` · S-10 `40:1229` |
+| 06 Cards | 六块看板 × 深浅 | 信息与搜索 `42:15` · 体育与出行 `45:409` · 状态与行车摘要 `48:1066` |
+| 07 Driving | 7 屏 × 深浅 | D-02 `52:71` … D-08 `52:834` |
+| 08 Settings | 5 屏 × 深浅 | SET-01 `54:9` … SET-05 `54:1111` |
+| 09 Accessibility | 大字（泊车 / 行车）、减少动效、无模糊回退 | A-01 `55:902` … A-04 `55:1040` |
+| 10 Motion | 光球节奏、过渡规格；泊车与行车两条可点原型 | — |
+| 11 Handoff | token ↔ CSS、组件 ↔ 代码、差异清单 D | `59:9` · `59:609` · `59:673` |
+
+---
+
+## 7. 给实施 Agent 的说明
+
+- **读稿**：
+  - 结构与绑定的变量用 Figma MCP 的 `get_design_context`（`fileKey=QNXzATLf4WOKLD1rV1dilp`，`nodeId` 见 §6）；
+  - token 用 `get_variable_defs`；
+  - 截图只在做对照时取。
+  - 账号是 Professional 计划，读配额约每天 200 次、每分钟 15 次。每批只读这一批涉及的节点，不整页扫。
+- **一帧多用**：深浅、行车、大字是同一组帧切变量模式，不另画。
+  - 实现时对应 `[data-theme]` / `[data-drive]` / `[data-font]`。
+  - 04 / 05 / 07 / 08 页的浅色帧在深色帧正下方，06 页的浅色看板在右侧。
+- **命名**：
+  - Figma 组件与代码同名，变体写成 `属性=值`。
+  - 变量的 WEB code syntax 就是 CSS 变量名，完整对照在 11 Handoff。
+- **以契约为准**：
+  - 设计稿与 `types.ts` 或服务端语义冲突时，以契约为准，并把冲突报回来；实现里不顺手改交互语义（brief §14）。
+  - 需要改稿时，先在 brief 记下原因，再改 Figma。
+- **数据**：
+  - 标「示例数据」的内容是编造的，实现以 `demo.ts` 夹具和真实卡为准。
+  - 车况俯视图是占位，不照着矩形去实现插画。
+- **回写 Figma**（例如按代码校准变量）：
+  - `use_figma` 必须严格串行，脚本出错会整体回滚。
+  - 在组件套件里克隆变体会丢失文字属性绑定，要重新绑定。
+  - 设完实例属性后，自动布局可能不重排，重新挂一次子节点即可。
