@@ -295,6 +295,18 @@ def test_a_task_step_claiming_completion_is_only_observed(monkeypatch):
     assert _outcomes(spans)[0].get("answer_only") == "0"
 
 
+def test_a_subjectless_claim_is_only_observed_even_on_a_talk_step(monkeypatch):
+    """无主完成句（2026-10-07 真栈：闲聊零动作编「已在路线中添加途经点。」）：出 `bare` 一位观测，不剥、不改话术。"""
+    spans = _capture_spans(monkeypatch)
+    speech = "之后再前往深圳北站，全程约0.4公里、2分钟。已在路线中添加途经点。"
+    engine = _talk_engine(speech, response_only=True)
+
+    final = _run(engine, _req("嗯"))[-1]
+
+    assert final["speech"] == speech
+    assert _claims(spans) == [{"family": "bare"}]
+
+
 def test_response_only_plain_answer_is_untouched(monkeypatch):
     spans = _capture_spans(monkeypatch)
     engine = _talk_engine("今天深圳小雨，记得带伞。", response_only=True)

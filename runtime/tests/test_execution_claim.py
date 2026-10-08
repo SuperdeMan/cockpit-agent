@@ -161,3 +161,40 @@ def test_strip_keeps_line_structure_of_the_rest():
     cleaned, removed = strip_execution_claims("第一行建议。\n正在为您安排。\n第三行建议。")
     assert removed == 1
     assert cleaned == "第一行建议。\n第三行建议。"
+
+
+# ── 6. 无主完成句（观测专用，2026-10-08）──────────────────────────────────
+
+from runtime.execution_claim import bare_execution_claim, is_execution_claim_sentence  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    # 2026-10-07 真栈：闲聊零动作编的一句（两族都不收）
+    "之后再前往深圳北站，全程约0.4公里、2分钟。已在路线中添加途经点。（这是您10月7日提过的）",
+    # collector 回放：8 月一轮零动作的充电回复
+    "已为前往东部华侨城的路线加入途经充电站：路特斯汽车充电站(深圳东部华侨城云海谷闪充站)（0.6km，评分3.6）。",
+    "好的，已添加。",                        # 前面一个应答短句
+    "已经关掉了。",
+])
+def test_subjectless_completion_sentences_are_observed(text):
+    assert bare_execution_claim(text)
+    # 只出观测：两族都不认它，流式闸与按句剥也不碰（拦不拦等分布出来再说）
+    assert execution_claim(text) == ""
+    assert not any(is_execution_claim_sentence(s) for s in re.split(r"(?<=[。！？])", text))
+    assert strip_execution_claims(text) == (text, 0)
+
+
+@pytest.mark.parametrize("text", [
+    # collector 90 天回放里零动作的 16 条误报全在这两类：信息获取动词（10 条）、分句中间转述 / 能力自己的产出（6 条）
+    "已找到相关手册原文，但摘要生成暂时不可用，请查看屏幕中的手册内容，或稍后再试。",
+    "已综合 5 个来源。",
+    "已找到 5 个地点。",
+    "（有 1 个方面资料不足，已在报告中标注。）",
+    "珠海是广东省唯一至今全域禁止电动自行车上路的城市，已实施20年。",
+    "已经到了吗？",                           # 问句
+    "路线已经算好了。",                       # 有主语
+    "已为您导航到深圳北站。",                 # 「为您」归 done 一族
+    "",
+])
+def test_statements_shaped_like_it_are_not(text):
+    assert not bare_execution_claim(text)

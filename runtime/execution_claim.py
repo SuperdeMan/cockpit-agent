@@ -66,6 +66,35 @@ def execution_claim(text: str | None) -> str:
     return ""
 
 
+#: 无主完成句（2026-10-08，**只出观测列**）：句首的「已 / 已经」，没写是谁做的。2026-10-07 真栈里闲聊零动作编了一句
+#: 「已在路线中添加途经点。」——`_DONE_RE` 刻意不收无主句（见上），所以它没进任何一列。它不进 `_CLAIM_RE`：流式闸与
+#: 按句剥都不认它，只量分布。与它同形的客观陈述不少，按 collector 90 天 3389 轮回放定的口径：
+#: - 只认句首，前面至多一个 `_LEAD_CLAUSE_MAX` 字以内的应答短句（「好的，已添加。」）——分句中间的「…的城市，已实施20年」
+#:   是在转述资料，「（有 1 个方面资料不足，已在报告中标注」是能力自己的产出；
+#: - 后面跟「为您」的归 `done` 一族；跟信息获取动词的是在报检索结果，不是动了手（「已找到相关手册原文」「已综合 5 个来源」
+#:   「已找到 5 个地点」，回放里零动作命中的 16 条误报都是这两类）；
+#: - 问句不算（「已经到了吗？」）。
+#: 回放口径下零动作命中 2 条，都是真阳性（上面那句；8 月一条零动作的「已为前往…的路线加入途经充电站」）。
+_LEAD_CLAUSE_MAX = 4
+_BARE_DONE_RE = re.compile(
+    rf"^已(?!经?\s*{_FOR_YOU})(?!经?\s*(?:找到|查到|搜到|收到|综合|汇总|检索|获取))\S")
+_LEAD_CLAUSE_RE = re.compile(rf"^[^，,：:]{{1,{_LEAD_CLAUSE_MAX}}}[，,：:]\s*")
+_QUESTION_END_RE = re.compile(r"(?:[吗呢么]\s*[？?]?|[？?])\s*$")
+_SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;\n]?")
+
+
+def bare_execution_claim(text: str | None) -> bool:
+    """有没有一句无主完成句（观测专用，口径见 `_BARE_DONE_RE`）。"""
+    for sentence in _SENTENCE_RE.findall(text or ""):
+        s = sentence.strip()
+        if not s or _QUESTION_END_RE.search(s):
+            continue
+        lead = _LEAD_CLAUSE_RE.match(s)
+        if _BARE_DONE_RE.match(s) or (lead and _BARE_DONE_RE.match(s[lead.end():])):
+            return True
+    return False
+
+
 #: 句边界（W14 按句剥）：只认句末标点与换行，零领域词。
 _SENTENCE_END_RE = re.compile(r"[。！？!?；;\n]")
 #: 分句边界：超长句里丢一段声称时，丢到它所在分句的结束处（逗号 / 顿号 / 冒号，全角半角）。

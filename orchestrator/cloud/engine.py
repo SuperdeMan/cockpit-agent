@@ -46,7 +46,7 @@ from .edge_authority import direction_conflicts
 from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
-    CLAIM_STRIPPED_SPEECH, ExecutionClaimGate, execution_claim, strip_execution_claims)
+    CLAIM_STRIPPED_SPEECH, ExecutionClaimGate, bare_execution_claim, execution_claim, strip_execution_claims)
 from runtime.affirmation import ACK_WORDS, PARTICLE_RE, consists_of, is_bare_acknowledgment
 from runtime.memory_directive import is_memory_directive
 from runtime.clause_split import split_clauses
@@ -603,15 +603,18 @@ class PlannerEngine:
         （`ctx.answer_only`）∧ 零动作 ∧ 话术命中执行性声明。只拦这一种：按句剥掉声称句，
         剥空了换成固定的诚实话术；其余形态（信息类能力的「已为您规划 3 天行程」是真的）照旧只观测。
         剥掉的是**模型编的执行事实**，不是润色——把假话删掉与把失败改写成成功方向相反。
+
+        无主完成句（`bare`，2026-10-08）只观测、不剥：闲聊零动作编的「已在路线中添加途经点。」两族都不收，
+        它与「已经十点了」这类客观陈述同形，先量分布（判据见 `runtime.execution_claim.bare_execution_claim`）。
         """
         if actions:
             return
         speech = str(event.get("speech") or "")
-        family = execution_claim(speech)
+        family = execution_claim(speech) or ("bare" if bare_execution_claim(speech) else "")
         if not family:
             return
         intercepted = False
-        if getattr(ctx, "answer_only", False):
+        if family != "bare" and getattr(ctx, "answer_only", False):
             cleaned, removed = strip_execution_claims(speech)
             if removed:
                 intercepted = True
