@@ -567,7 +567,6 @@ Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供�
 | `NAVIGATION_DEST_CHOICES`（`navigation_dest_choices`） | navigation `_ask_namesake`（近处借名 vs 外地本体时写候选，带坐标） | navigation `_navigate_to` / `_estimate`（续接轮「第N个」或点选名 ⇒ 选中的那个地点，直接用坐标不再重搜；`agents._sdk.dest_choice.resolve_choice`） | `{items:[{name,address[,lat,lng]}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 | `CHARGING_DEST_CHOICES`（`charging_dest_choices`） | charging-planner `_clarify_vague_destination`（泛目的地澄清时写候选） | charging-planner `_resolve_dest_ordinal`（续接轮 destination=「第N个」按序回填真名——引擎补槽灌的是用户字面，旅程 B2-3 真栈拿「第一个」搜 POI 选到无关站） | `{items:[{name,address}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 | `CHARGING_RECOMMENDED`（`charging_recommended`） | charging-planner `_remember_recommended`（附近找站 / 按目的地找站推荐后写；换站时累加） | charging-planner `_find`（没有活动路线时「换一个充电站」排除推荐过的站，CA2-19 换站） | `{items:[{id,name}]}` | 会话内；新的找站覆盖 |
-| `NAVIGATION_SWAP_PENDING`（`navigation_swap_pending`） | navigation `_reroute`（路线上几个充电站、反问换哪个时写） | navigation `_answers_swap_ask`（下一轮改路线：序号或站名的回答认作换站——续接轮下发的原话是本轮回答，任务起点「换一个充电站」到不了 Agent） | `{chargers:[name],ts}` | 一轮追问；消费即清、10 分钟过期 |
 
 > 底层 profile KV 无独立 TTL（随用户画像存储，无 user_id 时静默跳过）。改 key/换存储只需改
 > `shared_state.py` 与本表——不再散落字面量导致静默断链（审计 A5）。
@@ -3238,7 +3237,8 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - `_find_destination` 的兜底（名字没核实的近处结果）要过 `_relates`：去掉类目锚词与城市后，打头两字、按序子序列、地点名含在原话里、
   门牌地址四种沾边之一；纯拉丁字母的说法照旧采信。不沾边 ⇒ 先看外地本体，再当没找到。
 - 门牌地址（整句「路名 + 门牌号」）先按当前城市地理编码（城市取当前位置的逆地理编码），只认门址级且城市一致的结果，拿不到照旧检索；不带城市的地理编码不采信。
-- 起点槽只认原话里说了的（`_origin_text`：占位不算、与原话一个字都不沾的不算，与认目的地同一份 `_grounded_in_raw`）；四个取起点的出口都走它。
+- 起点槽只认用户说过的（`_origin_text`：占位不算；本轮原话与这一步被规划时那句都一个字不沾的不算，与认目的地同一份
+  `_grounded_in_raw`；前序步结果填出的不查）；四个取起点的出口都走它。见 §9.87。
 - 云端容器 A/B 用的是线上同一个高德 key：开发者账号基础搜索有日配额，跑之前估调用量，只跑受改动影响的子集加对照（2026-10-08 一天的测量与两轮全量 A/B 打满了配额，线上检索同时失败到次日）。
 
 ### 9.86 地图检索报错不说「没找到」（2026-10-08）
@@ -3246,3 +3246,14 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 导航 Agent 每个请求一份检索记录（`ContextVar`，见 `_LookupLog`）；一段地点解析里检索一次都没成功、却有报错 ⇒ 说「地图服务暂时不可用，没查到「X」，
   请稍后再试。」（`_map_unavailable`，与 `search_poi` 的诚实降级同一句），不说「没找到」、不追问。新的「没找到」出口同样先问 `_lookup_unavailable`；
   第二个地点（起点）在解析前记 `_lookup_mark()`，只看自己那一段。
+
+### 9.87 续接那一步带上被规划时那句原话（2026-10-08）
+
+- 被续接的那一步（补槽 / 确认恢复）下发的原话是本轮回答（`models.step_raw_text`），它被规划时那句由 `_restore` 写进这一步的
+  meta `step_origin_text`（常量 `runtime.slots.STEP_ORIGIN_META`，取持久化的 `Step.origin_text`，旧记录回填持久化的服务端原话）。
+  只给被续接的那一步；其余步本来就读自己的起点原话。meta 不持久化，再挂起也不会被当成记录带走；客户端偏好里的同名键在
+  `_merge_meta` 丢掉。
+- 它只是「槽值是不是用户说过的」的接地依据，不是授权依据：授权、安全问句只认 `safety_origin_text`。
+- 消费方：导航认起点（「从欢乐海岸出发」→ 问去哪 →「世界之窗」，只看本轮会把起点当成编的）、改路线认「换第二个」是在换站
+  （这一步被规划时那句是「换一个充电站」；新请求里光说「第二个」没有它，不当换站）。
+- ⛔ 写「续接时 Agent 能看到什么」的判据前先核 `step_raw_text`：同日首版以为续接时原话仍是任务起点，用例照着写也绿了。

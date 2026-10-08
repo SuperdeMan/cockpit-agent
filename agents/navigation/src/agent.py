@@ -20,8 +20,8 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
 from runtime.charger_swap import asks_to_swap_charger, is_charger_name
-from runtime.slots import is_place_placeholder
-from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, NAVIGATION_SWAP_PENDING, REMINDABLE_ACTIVE
+from runtime.slots import STEP_ORIGIN_META, is_place_placeholder
+from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
 from agents._sdk.dest_choice import ordinal_in, resolve_choice, save_choices
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
@@ -144,6 +144,15 @@ def _grounded_in_raw(dest: str, raw_text: str) -> bool:
     if d in r:
         return True
     return any(d[i:i + 2] in r for i in range(len(d) - 1))
+
+
+def _filled_by_ref(slot: str, meta) -> bool:
+    """这个槽是执行器拿前序步的结果填的（`_trusted_slot_refs`，执行器每次派发前重建）⇒ 不是规划器转述的原话。"""
+    try:
+        refs = json.loads((meta or {}).get("_trusted_slot_refs") or "{}")
+    except (TypeError, ValueError):
+        return False
+    return isinstance(refs, dict) and slot in refs
 
 
 def _pickup_person(raw_text: str) -> str:
@@ -480,17 +489,19 @@ class NavigationAgent(BaseAgent):
 
     # ── 起终点解析（Q8：manifest 新增 origin 槽）────────────────────────
     @staticmethod
-    def _origin_text(intent) -> str:
+    def _origin_text(intent, meta=None) -> str:
         """起点槽的原话；规划器写的「当前位置 / 这里」这类占位就是没给起点（判据 `runtime.slots`），按当前位置算。
-        原话里一个字都不沾的起点也不算（2026-10-08 真栈：「去深南大道9028号要开多久」规划器填了 origin「北京」，估出 2164 公里）——
-        与认目的地同一份 `_grounded_in_raw`（两字片段沾上就算，规划器把「欢乐海岸」写成「深圳欢乐海岸」照样认）。续接轮下发的原话是
-        本轮的回答（`step_raw_text`），被追问后补上的起点就在里面。"""
+        用户一个字都没说过的起点也不算（2026-10-08 真栈：「去深南大道9028号要开多久」规划器填了 origin「北京」，估出 2164 公里）——
+        与认目的地同一份 `_grounded_in_raw`（两字片段沾上就算，规划器把「欢乐海岸」写成「深圳欢乐海岸」照样认）。
+        「说过」看两句：本轮原话（被追问后补上的起点在里面），和续接时引擎随 meta 下发的、这一步被规划时那句（`STEP_ORIGIN_META`）——
+        被续接的那一步读到的原话是本轮回答，「从欢乐海岸出发」→ 问去哪 →「世界之窗」只看本轮会把起点丢掉。
+        前序步结果填出的起点（`_trusted_slot_refs`）是系统给的，不查。"""
         text = (intent.slots.get("origin") or "").strip()
-        if is_place_placeholder(text):
+        if not text or is_place_placeholder(text):
             return ""
-        raw = (intent.raw_text or "").strip()
-        if text and raw and not _grounded_in_raw(text, raw):
-            logger.info("origin slot not in the words, ignored: %r (raw=%r)", text, raw[:40])
+        said = [t for t in ((intent.raw_text or "").strip(), str((meta or {}).get(STEP_ORIGIN_META) or "").strip()) if t]
+        if said and not _filled_by_ref("origin", meta) and not any(_grounded_in_raw(text, t) for t in said):
+            logger.info("origin slot not in the words, ignored: %r (raw=%r)", text, said[0][:40])
             return ""
         return text
 
@@ -568,7 +579,7 @@ class NavigationAgent(BaseAgent):
             return AgentResult(
                 speech=f"我没找到「{dest_name or dest_text}」这个地方，换个说法再试试？")
 
-        origin_text = self._origin_text(intent)
+        origin_text = self._origin_text(intent, meta)
         if origin_text:
             mark = self._lookup_mark()
             origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
@@ -677,7 +688,7 @@ class NavigationAgent(BaseAgent):
             dest_pt = GeoPoint(lat=active["lat"], lng=active["lng"])
             waypoints = [GeoPoint(lat=w["lat"], lng=w["lng"]) for w in active.get("waypoints") or []]
 
-        origin_text = self._origin_text(intent)
+        origin_text = self._origin_text(intent, meta)
         if origin_text:
             mark = self._lookup_mark()
             origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
@@ -1342,7 +1353,7 @@ class NavigationAgent(BaseAgent):
         prefix = (f"识别到您说的是{first.name}。" if resolved_name != dest else "")
         # Q8 origin 槽：用户明说「从X出发」时按 X 算路。解析不出就**诚实说一句**，
         # 不静默回落当前位置（SL4 要修的就是那个静默）。占位与原话里没有的起点不算（`_origin_text`）
-        origin_text = self._origin_text(intent)
+        origin_text = self._origin_text(intent, meta)
         origin_pair = None
         if origin_text:
             mark = self._lookup_mark()
@@ -2094,30 +2105,6 @@ class NavigationAgent(BaseAgent):
         km = self._rough_km(old["lat"], old["lng"], pick.lat, pick.lng)
         return f"已把途经点{old_name}换成{pick.name}（离原来那个约{km:.1f}公里）", pick.name, False
 
-    #: 「换哪一个」的反问留多久：超过就当没问过（回答是隔了很久才来的，多半是别的事了）
-    _SWAP_ASK_TTL_S = 600
-
-    @classmethod
-    async def _answers_swap_ask(cls, ctx, answer: str) -> bool:
-        """上一轮反问过「换哪一个充电站」（`NAVIGATION_SWAP_PENDING`）、这一句是序号或点了其中一个站名 ⇒ 是在换站（读到即清）。"""
-        try:
-            data = await ctx.load_shared_state(NAVIGATION_SWAP_PENDING)
-            pending = json.loads(data) if isinstance(data, str) else (data or {})
-        except Exception:
-            return False
-        if not isinstance(pending, dict) or not pending.get("chargers"):
-            return False
-        if time.time() - float(pending.get("ts") or 0) > cls._SWAP_ASK_TTL_S:
-            return False
-        text = (answer or "").strip()
-        if not (ordinal_in(text) or any(text and (text in str(n) or str(n) in text) for n in pending["chargers"])):
-            return False
-        try:
-            await ctx.save_shared_state(NAVIGATION_SWAP_PENDING, {})
-        except Exception:
-            pass
-        return True
-
     async def _reroute(self, intent, ctx, meta) -> AgentResult:
         """G8：增量调整当前活动路线（删/加途经点、换路线策略、改目的地、换起点）。
 
@@ -2140,7 +2127,7 @@ class NavigationAgent(BaseAgent):
 
         # ⓪ 换起点（C8）：**先于所有改动判**——解析不出要诚实反问，不能在改完
         #    目的地/途经点之后才发现起点没着落。占位与原话里没有的起点不算（`_origin_text`）
-        origin_text = self._origin_text(intent)
+        origin_text = self._origin_text(intent, meta)
         origin_pair = None
         if origin_text:
             o_name, o_pt = await self._resolve_point(origin_text, ctx, meta)
@@ -2227,18 +2214,15 @@ class NavigationAgent(BaseAgent):
         # ①½ 换充电站（CA2-19）：「换一个充电站」= 路线上那个充电站换成原站附近的另一家，原位替换，
         #    其余约束不动。换不成（路线上没有 / 有几个又没点名 / 附近没别的）⇒ 如实说、不动路线、不发导航。
         swapped = ""
-        remove_slot = (intent.slots.get("remove_waypoint") or "").strip()
-        if asks_to_swap_charger(raw_text) or await self._answers_swap_ask(ctx, remove_slot or raw_text):
-            note, swapped, ask = await self._swap_charger(waypoints, remove_slot or raw_text, meta)
+        # 续接「换哪一个」时下发的原话是本轮回答（「换第二个」），换站说法认不出；这一步被规划时那句「换一个充电站」由引擎
+        # 恢复挂起时随 meta 下发（`STEP_ORIGIN_META`）。新请求里光说「第二个」没有它，不当换站
+        planned = str((meta or {}).get(STEP_ORIGIN_META) or "")
+        if asks_to_swap_charger(raw_text) or asks_to_swap_charger(planned):
+            note, swapped, ask = await self._swap_charger(
+                waypoints, (intent.slots.get("remove_waypoint") or "").strip(), meta)
             if ask:
                 # 几个充电站又没点名换哪个：挂起追问，下一句「换第二个」续接这一步（`remove_waypoint` 声明了序号槽形）。
-                # 续接轮下发的原话是本轮回答，换站说法判据认不出——记一笔「刚问过换哪个」，下一轮据此认（`_answers_swap_ask`）。
                 # 不给 follow_up：手机端会把它整句做成 chip 原样发出，两个选项塞不进一句
-                chargers = [str(w.get("name") or "") for w in waypoints if is_charger_name(str(w.get("name") or ""))]
-                try:
-                    await ctx.save_shared_state(NAVIGATION_SWAP_PENDING, {"chargers": chargers, "ts": int(time.time())})
-                except Exception as e:
-                    logger.debug("swap pending save skipped: %s", e)
                 return AgentResult(status=NEED_SLOT, speech=note, missing_slots=["remove_waypoint"])
             if not swapped:
                 return AgentResult(speech=note, follow_up="也可以说「顺路加个充电站」或「换条路」")

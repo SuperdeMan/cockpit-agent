@@ -16,6 +16,7 @@ from .context_view import check_current, check_context
 from runtime import capability_contract as cap_contract
 from runtime import operation
 from runtime import effect_evidence
+from runtime.slots import STEP_ORIGIN_META
 
 logger = logging.getLogger("planner.clients")
 
@@ -361,6 +362,8 @@ class Clients:
         prefs.pop("memory_epoch", None)
         # CA2-15 S2: the read projection comes from the server's voice proof check.
         prefs.pop("memory_projection", None)
+        # 续接那一步被规划时的原话只来自服务端的挂起记录（`_restore` 写进 step meta）
+        prefs.pop(STEP_ORIGIN_META, None)
         merged = {**prefs, **dict(meta or {})}
         merged.pop("memory_epoch", None)
         merged.pop("memory_projection", None)

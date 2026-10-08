@@ -479,63 +479,41 @@ def test_swap_with_two_chargers_and_no_name_asks_instead_of_guessing():
     assert res.status == "need_slot" and res.missing_slots == ["remove_waypoint"] and not res.follow_up
 
 
-def _kv_ctx():
-    """`make_context` 的共享态是不真存的替身——钉进内存 dict（两轮共用一份）。"""
-    kv = {}
-    ctx = make_context()
-
-    async def save(key, value):
-        kv[key] = value
-        return True
-
-    async def load(key):
-        return kv.get(key)
-
-    ctx.save_shared_state, ctx.load_shared_state = save, load
-    return ctx, kv
-
-
-def _two_chargers_meta():
-    return _session_meta(waypoints=[_CHARGER_A, _CHARGER_B], destination="深圳北站", lat=22.609, lng=114.029)
+def _two_chargers_meta(**extra):
+    return _session_meta(waypoints=[_CHARGER_A, _CHARGER_B], destination="深圳北站", lat=22.609, lng=114.029, **extra)
 
 
 def test_the_ask_resumes_with_an_ordinal():
-    """续接轮下发的原话是本轮回答（`step_raw_text`：被续接的那一步看本轮原话），任务起点「换一个充电站」到不了导航——
-    反问时记一笔，下一轮的序号 / 站名回答据此认作换站，按路线上充电站的先后换第 N 个，也不再拿序号去删途经点。"""
-    from agents._sdk.shared_state import NAVIGATION_SWAP_PENDING
+    """续接轮下发的原话是本轮回答（`step_raw_text`：被续接的那一步看本轮原话「换第二个」），换站说法认不出；这一步被规划时
+    那句「换一个充电站」由引擎恢复挂起时随 meta 下发（`STEP_ORIGIN_META`）——据此认作换站，按路线上充电站的先后换第 N 个，
+    也不再拿序号去删途经点。"""
+    from runtime.slots import STEP_ORIGIN_META
 
     third = POI(id="c3", name="星星充电(民治站)", lat=22.6200, lng=114.0300)
     for answer, results, expect in (
             ("换第二个", [_poi(_CHARGER_B, "c2"), third, _poi(_CHARGER_A, "c1")], [_CHARGER_A["name"], third.name]),
             ("第一个", [_poi(_CHARGER_A, "c1"), third], [third.name, _CHARGER_B["name"]])):
         agent, _ = _agent(search_results=results)
-        ctx, kv = _kv_ctx()
         ask = asyncio.run(run_handle(agent, "navigation.reroute", slots={}, raw_text="换一个充电站",
-                                     ctx=ctx, meta=_two_chargers_meta()))
+                                     ctx=make_context(), meta=_two_chargers_meta()))
         assert ask.status == "need_slot"
-        assert kv[NAVIGATION_SWAP_PENDING]["chargers"] == [_CHARGER_A["name"], _CHARGER_B["name"]]
         res = asyncio.run(run_handle(agent, "navigation.reroute", slots={"remove_waypoint": answer}, raw_text=answer,
-                                     ctx=ctx, meta=_two_chargers_meta()))
+                                     ctx=make_context(), meta=_two_chargers_meta(**{STEP_ORIGIN_META: "换一个充电站"})))
         nav = next(a for a in res.actions if a["type"] == "navigate")
         assert [w["name"] for w in nav["payload"]["waypoints"]] == expect, answer
         assert "换成" in res.speech and "没找到" not in res.speech
-        assert kv[NAVIGATION_SWAP_PENDING] == {}                     # 读到即清
 
 
-def test_an_ordinal_is_a_swap_only_right_after_the_ask():
-    """没问过「换哪一个」、或问过但已过期：「第二个」不当换站（可能是别的事），不去找站、不换站
+def test_an_ordinal_is_a_swap_only_when_the_step_asked_to_swap():
+    """新请求里光说「第二个」（没有规划时那句）、或续接的是别的请求（「删掉一个途经点」）：不当换站，不去找站、不换站
     （它照旧走删途经点的那条路，那是既有行为，这里不管）。"""
-    import time as _time
-    from agents._sdk.shared_state import NAVIGATION_SWAP_PENDING
+    from runtime.slots import STEP_ORIGIN_META
 
-    for preset in ({}, {"chargers": [_CHARGER_A["name"], _CHARGER_B["name"]], "ts": int(_time.time()) - 3600}):
+    for extra in ({}, {STEP_ORIGIN_META: "删掉一个途经点"}):
         agent, calls = _agent(search_results=[_poi(_CHARGER_B, "c2")])
-        ctx, kv = _kv_ctx()
-        if preset:
-            kv[NAVIGATION_SWAP_PENDING] = preset
         res = asyncio.run(run_handle(agent, "navigation.reroute", slots={"remove_waypoint": "第二个"}, raw_text="第二个",
-                                     ctx=ctx, meta=_two_chargers_meta()))
-        assert not calls["search"] and "换成" not in res.speech, preset
+                                     ctx=make_context(), meta=_two_chargers_meta(**extra)))
+        assert not calls["search"] and "换成" not in res.speech, extra
 
 
 def test_the_ask_declares_the_ordinal_shape():

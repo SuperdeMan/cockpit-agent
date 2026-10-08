@@ -69,6 +69,18 @@ def test_merge_meta_step_meta_overrides_prefs():
     assert out["answer_length"] == "short"
 
 
+def test_merge_meta_takes_the_step_origin_only_from_the_step():
+    """续接那一步被规划时的原话只认服务端挂起记录（`_restore` 写进 step meta）；客户端偏好里的同名键丢掉——
+    否则客户端能让一个编出来的起点「在原话里」。"""
+    from runtime.slots import STEP_ORIGIN_META
+
+    ctx = _ctx({STEP_ORIGIN_META: "从北京出发", "answer_length": "short"})
+    out = Clients._merge_meta(ctx, {})
+    assert STEP_ORIGIN_META not in out and out["answer_length"] == "short"
+    out = Clients._merge_meta(ctx, {STEP_ORIGIN_META: "从欢乐海岸出发要开多久"})
+    assert out[STEP_ORIGIN_META] == "从欢乐海岸出发要开多久"
+
+
 def test_merge_meta_rebuilds_granted_scopes_from_authoritative_context():
     """偏好与 step meta 都不可信；只允许 PlanContext 的权限进入 Agent。"""
     ctx = _ctx(

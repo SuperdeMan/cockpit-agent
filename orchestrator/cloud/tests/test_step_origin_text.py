@@ -395,6 +395,37 @@ def test_slot_fidelity_on_a_downstream_step_reads_its_origin():
     assert step.slots["time_text"] == "明天下午三点半"
 
 
+def test_restore_hands_the_resumed_step_its_planned_utterance():
+    """被续接的那一步读本轮回答；它被规划时那句随 meta 下发（导航据此认起点是不是用户说过的），补槽与确认两条恢复都给；
+    其余步本来就读自己的起点原话，不带；meta 不持久化，再挂起也不会被当成记录带走。"""
+    from runtime.slots import STEP_ORIGIN_META
+
+    said = "从欢乐海岸出发要开多久"
+    steps = [Step(id="s1", agent_id="navigation", intent="navigation.estimate",
+                  slots={"origin": "欢乐海岸"}, origin_text=said),
+             Step(id="s2", agent_id="nearby", intent="nearby.search", depends_on=["s1"], origin_text=said)]
+    record = {"steps": [step_record(s) for s in steps], "raw_text": said,
+              "safety_origin_text": said, "complexity": "simple"}
+    for confirmed in (False, True):
+        restored, _ = PlannerEngine._restore(
+            None, SessionState(phase="wait_confirm" if confirmed else "wait_slot",
+                               pending_plan=record, pending_step_id="s1"),
+            inject_confirmed=confirmed)
+        by_id = {s.id: s for s in restored.steps}
+        assert by_id["s1"].meta[STEP_ORIGIN_META] == said, confirmed
+        assert STEP_ORIGIN_META not in by_id["s2"].meta
+        assert "meta" not in step_record(by_id["s1"])
+    # 旧记录没有步级起点原话：回填的是持久化的服务端原话，下发的也是它；连原话都没有就不带
+    legacy = {**record, "steps": [{k: v for k, v in step_record(s).items() if k != "origin_text"} for s in steps]}
+    restored, _ = PlannerEngine._restore(
+        None, SessionState(phase="wait_slot", pending_plan=legacy, pending_step_id="s1"), inject_confirmed=False)
+    assert restored.steps[0].meta[STEP_ORIGIN_META] == said
+    legacy = {**legacy, "raw_text": "", "safety_origin_text": ""}
+    restored, _ = PlannerEngine._restore(
+        None, SessionState(phase="wait_slot", pending_plan=legacy, pending_step_id="s1"), inject_confirmed=False)
+    assert STEP_ORIGIN_META not in restored.steps[0].meta
+
+
 def test_slot_fidelity_on_the_resumed_step_still_reads_the_turn():
     origin = "明天下午四点提醒我开会，三点半再提醒我一次"
     step = Step(id="s1", agent_id="reminder", intent="reminder.create",

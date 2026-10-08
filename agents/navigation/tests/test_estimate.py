@@ -117,6 +117,29 @@ def test_an_origin_the_user_never_said_is_ignored():
     assert res.ui_card["origin"] == "欢乐海岸"
 
 
+def test_a_resumed_step_keeps_the_origin_from_its_planned_utterance():
+    """被续接的那一步读到的原话是本轮回答：「从欢乐海岸出发要开多久」→ 问去哪 →「深圳北站」。起点在这一步被规划时那句里
+    （引擎恢复挂起时随 meta 下发 `STEP_ORIGIN_META`）就认；两句都不沾的照样不算；前序步结果填出的起点（`_trusted_slot_refs`）不查。"""
+    import json
+    from runtime.slots import STEP_ORIGIN_META
+
+    agent, _ = _agent({"欢乐海岸": [_COAST], "深圳北站": [_NORTH]})
+    res = _estimate(agent, {"destination": "深圳北站", "origin": "欢乐海岸"}, "深圳北站",
+                    meta={**_HERE, STEP_ORIGIN_META: "从欢乐海岸出发要开多久"})
+    assert res.ui_card["origin"] == "欢乐海岸"
+    beijing = POI(id="bj", name="北京", address="北京市", lat=39.9042, lng=116.4074)
+    agent, calls = _agent({"深圳北站": [_NORTH], "北京": [beijing]})
+    res = _estimate(agent, {"destination": "深圳北站", "origin": "北京"}, "深圳北站",
+                    meta={**_HERE, STEP_ORIGIN_META: "去深圳北站要开多久"})
+    assert res.ui_card["origin"] == "当前位置" and "北京" not in calls["search"]
+    charger = POI(id="c1", name="特来电(科技园站)", address="科技园", lat=22.5400, lng=113.9500)
+    agent, _ = _agent({"特来电(科技园站)": [charger], "深圳北站": [_NORTH]})
+    refs = json.dumps({"origin": {"ref": "s1.data.items.0.name", "producer_intent": "charging.find"}})
+    res = _estimate(agent, {"destination": "深圳北站", "origin": "特来电(科技园站)"},
+                    "先找个充电站，再算从那儿到深圳北站多久", meta={**_HERE, "_trusted_slot_refs": refs})
+    assert res.ui_card["origin"] == "特来电(科技园站)"
+
+
 def test_navigate_to_uses_the_spoken_origin():
     """I-029②：用户明说了出发地，算路/卡片/动作载荷三处都要按它来。
 

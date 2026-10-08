@@ -451,6 +451,10 @@ def test_escalated_need_slot_is_resumed_on_the_escalated_step():
         "navigation.search_poi", "navigation.navigate_to", "navigation.navigate_to"]
     assert spy.calls[-1][2].get("destination") == "深圳湾公园"
     assert (spy.stream_ctx_raw_texts + spy.unary_ctx_raw_texts)[-1] == "深圳湾公园"
+    # 改派步被规划时那句随 meta 下发给续接那一次（导航认起点、认「换第二个」是在换站都靠它）；首次派发不带
+    from runtime.slots import STEP_ORIGIN_META
+    assert spy.calls[-1][3].get(STEP_ORIGIN_META) == "导航去云岚国际中心"
+    assert STEP_ORIGIN_META not in spy.calls[1][3]
     assert second["speech"] == "为您导航到深圳湾公园。"
     assert asyncio.run(session.load("sess-esc", owner_user_id="u1")) is None
 

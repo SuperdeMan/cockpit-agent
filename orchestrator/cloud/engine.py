@@ -54,6 +54,7 @@ from runtime.cntime import CN_NUM_CHARS, cn_int
 from runtime.outcome import category_of, outcome_of_results
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import is_imperative_opening, is_non_directive_question
+from runtime.slots import STEP_ORIGIN_META
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
 from runtime.session_constraints import (constraint_recall_answer, constraints_in,
                                          describe_constraints,
@@ -3640,6 +3641,10 @@ class PlannerEngine:
                 s.resumed = (s.id == state.pending_step_id)
                 if not s.origin_text:
                     s.origin_text = persisted_origin
+                if s.resumed and s.origin_text:
+                    # 被续接的这一步读本轮原话；它被规划时那句另随 meta 下发——Agent 据此认槽值是不是用户说过的
+                    # （导航起点：「从欢乐海岸出发」→ 问去哪 →「世界之窗」，只看本轮会把起点当成编的）。meta 不持久化
+                    s.meta = {**s.meta, STEP_ORIGIN_META: s.origin_text}
 
             # Keep the long-standing unbound-call compatibility used by small
             # contract tests and migration helpers (``_restore(None, ...)``).

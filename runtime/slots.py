@@ -19,6 +19,12 @@ _CITY_PLACEHOLDERS = frozenset({
 })
 
 
+# 被续接的那一步下发的原话是本轮回答（`orchestrator.cloud.models.step_raw_text`：槽答案 /「确认」就在里面）；这一步被规划时
+# 那句原话由引擎恢复挂起时放进这一步的 meta 下发（服务端持久化的 `Step.origin_text`；客户端偏好里的同名键在合并 meta 时丢弃）。
+# 只作「槽值是不是用户说过的」的接地依据——授权边界只认 `safety_origin_text`，它不是。
+STEP_ORIGIN_META = "step_origin_text"
+
+
 def is_place_placeholder(value) -> bool:
     """槽值只是「当前位置 / 这里 / 未知」这类占位、不是一个真实地点 ⇒ True（城市槽与导航起点槽共用这一份）。
 
