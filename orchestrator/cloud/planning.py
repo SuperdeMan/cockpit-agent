@@ -1303,6 +1303,16 @@ def _origin_clauses(text: str) -> list[str]:
     return [c for c in (re.sub(r"\s+", "", part).lower() for part in out) if c]
 
 
+def _asks_several_questions(text: str) -> bool:
+    """原话里有两个以上的问句（「胎压黄灯亮了，还能继续开吗？应该补到多少？」）：每问一件事，计划少一步就少答一问。
+    分句同 `_origin_clauses`（`split_clauses` 不在问号处断句），问句判据是 `question_shape.is_non_directive_question`
+    （「推荐三部电影」这类请求不算问句）。条件句不算：那条判据把「如果深圳明天下雨」也当成非指令句，而条件句有意把后一半
+    留到条件成立时再做——与多动作守卫同一条排除（`_DEFERRED_CONDITION_RE`）。"""
+    if _DEFERRED_CONDITION_RE.search(re.sub(r"\s+", "", str(text or ""))):
+        return False
+    return sum(1 for clause in _origin_clauses(text) if is_non_directive_question(clause)) >= 2
+
+
 def _longest_common_run(a: str, b: str) -> int:
     """最长公共子串的长度（两边都是短串，O(len·len)）。"""
     best = 0
@@ -2105,11 +2115,15 @@ class PlanBuilder:
         # 抢救出的计划为走正规工具通道重试一次；第二轮只交了天气一步，而「多动作遗漏」守卫只在第一轮有资格——没有下一轮可纠正，
         # 更差的那份被接受了。重试计划正是那条守卫要拦的形态（`_simple_goal_omits_multi_action_step`），它的意图都在抢救计划里、
         # 抢救计划还多出步 ⇒ 用抢救计划。重试交的是空步 / 澄清 / 不受话时不动（那是另一种结论，由既有规则处理）。
+        # 两个以上的问句同样算多件事（来源护栏批红轮 MSE01 r2，2026-09-28：「胎压黄灯亮了，还能继续开吗？应该补到多少？」
+        # 抢救计划是安全建议 + 手册两步，重试只剩安全一步，最终没派手册、漏答「补到多少」——并列问句没有「再 / 然后」，
+        # 那条守卫认不出）。只放进这里的回落、不进第一轮的重试触发：不多花规划调用。
         if (plan is not None and salvage_kept is not None and plan is not salvage_kept
                 and plan.steps and plan.addressed and plan.clarify is None
                 and len(salvage_kept.steps) > len(plan.steps)
                 and {s.intent for s in plan.steps} <= {s.intent for s in salvage_kept.steps}
-                and _simple_goal_omits_multi_action_step(plan_data, plan, text)):
+                and (_simple_goal_omits_multi_action_step(plan_data, plan, text)
+                     or _asks_several_questions(text))):
             logger.info("tool-channel retry dropped step(s) the salvaged plan had; keeping the salvaged plan "
                         "(retry=%s salvaged=%s)", [s.intent for s in plan.steps],
                         [s.intent for s in salvage_kept.steps])

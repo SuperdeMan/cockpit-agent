@@ -96,7 +96,8 @@ def test_a_retry_that_fails_outright_still_falls_back_to_the_salvage():
 
 # ── 重试丢了抢救计划里的一步（2026-10-04 固定语料 V219）────────────────────────────────────────────
 def _agents_with_manual():
-    return _agents() + [MockAgent("manual", ["manual.query"]), MockAgent("weather", ["info.weather"])]
+    return _agents() + [MockAgent("manual", ["manual.query"]), MockAgent("weather", ["info.weather"]),
+                        MockAgent("road-safety", ["safety.driving_advice"])]
 
 
 def _tool_call(*pairs):
@@ -134,6 +135,21 @@ def test_a_retry_that_drops_a_salvaged_step_of_a_compound_request_keeps_the_salv
     plan = _build_with("深圳今天天气怎么样，再告诉我空调有哪些模式", [_WEATHER, _MANUAL], [_WEATHER])
     assert [s.intent for s in plan.steps] == ["info.weather", "manual.query"], plan.steps
     assert plan.plan_mode == "toolcall_salvage_kept"
+
+
+_SAFETY = ("road-safety", "safety.driving_advice")
+
+
+def test_a_retry_that_drops_the_answer_to_one_of_two_questions_keeps_the_salvage():
+    """来源护栏批红轮 MSE01 r2（2026-09-28）：「胎压黄灯亮了，还能继续开吗？应该补到多少？」两问——抢救计划是安全建议 + 手册两步，
+    工具通道重试只剩安全一步，覆盖了首轮，最终没派手册、漏答「补到多少」。并列问句没有「再 / 然后」，同样算多件事。"""
+    plan = _build_with("胎压黄灯亮了，还能继续开吗？应该补到多少？", [_SAFETY, _MANUAL], [_SAFETY])
+    assert [s.intent for s in plan.steps] == ["safety.driving_advice", "manual.query"], plan.steps
+    assert plan.plan_mode == "toolcall_salvage_kept"
+    plan = _build_with("胎压黄灯亮了还能继续开吗", [_SAFETY, _MANUAL], [_SAFETY])
+    assert [s.intent for s in plan.steps] == ["safety.driving_advice"]       # 一问：重试那份就是答案
+    plan = _build_with("推荐三部电影，帮我导航去万象天地", [_SAFETY, _MANUAL], [_SAFETY])
+    assert [s.intent for s in plan.steps] == ["safety.driving_advice"]       # 不是问句：这条不管（多动作另有判据）
 
 
 def test_the_retry_wins_when_it_is_not_a_subset_or_the_request_is_not_compound():
