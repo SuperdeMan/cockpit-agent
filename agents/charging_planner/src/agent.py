@@ -15,7 +15,7 @@ from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
 from agents._sdk.landmark import is_landmark_description, landmark_candidates
-from agents._sdk.shared_state import CHARGING_DEST_CHOICES
+from agents._sdk.shared_state import CHARGING_DEST_CHOICES, CHARGING_RECOMMENDED
 from agents._sdk.dest_choice import resolve_ordinal, save_choices
 from runtime.proactive import publish_proactive
 from runtime import vehicle_reading
@@ -142,9 +142,12 @@ class ChargingPlannerAgent(BaseAgent):
         """找附近的充电站。带 destination 槽位时按目的地搜，最优站作为导航途经点。"""
         # CA2-19 换站：正在导航且路线上有途经点时，「换一个充电站」是改这趟路线——挑站与改路线都归导航
         # （原站附近找同类、原位替换、重算全程），这里零播报改派过去；没有活动路线时照旧往下找站。
-        if asks_to_swap_charger(intent.raw_text or "") and self._route_has_stops(meta):
+        swap = asks_to_swap_charger(intent.raw_text or "")
+        if swap and self._route_has_stops(meta):
             return AgentResult(speech="", data={"_escalate": {
                 "intent": "navigation.reroute", "slots": {}, "reason": "swap_route_charger"}})
+        # 没有活动路线的「换一个充电站」：排除这一会话里推荐过的站（此前照常找站，又推荐同一个——CA2-19 §9.1）
+        seen = await self._recommended(ctx) if swap else []
         # 读电量（真实车辆电量优先，回退 memory）
         soc = await self._resolve_soc(ctx, meta)
 
@@ -159,7 +162,7 @@ class ChargingPlannerAgent(BaseAgent):
             clarify = await self._clarify_vague_destination(destination, meta, ctx=ctx)
             if clarify:
                 return clarify
-            return await self._find_near_destination(destination, charger_type, soc, meta)
+            return await self._find_near_destination(destination, charger_type, soc, meta, ctx=ctx, seen=seen)
 
         # 获取位置
         current = current_location_from_meta(meta)
@@ -187,9 +190,14 @@ class ChargingPlannerAgent(BaseAgent):
 
         # 排序（空闲优先 + 距离近）
         stations.sort(key=lambda s: (-s.available, s.distance_km))
+        if seen:
+            stations = [s for s in stations if not self._was_recommended(s, seen)]
+            if not stations:
+                return AgentResult(speech="附近能找到的充电站刚才都推荐过了。要换个地方找，可以说「到XX附近找充电站」。")
 
         # 组织回复：实时空闲已知（mock）才报"X/Y空闲"，高德基础 POI 未知时报距离/评分，不编造
         top3 = stations[:3]
+        await self._remember_recommended(ctx, top3, seen)
 
         def _desc(s):
             if s.total > 0:
@@ -215,7 +223,7 @@ class ChargingPlannerAgent(BaseAgent):
         )
 
     async def _find_near_destination(self, destination: str, charger_type: str,
-                                     soc: Reading, meta) -> AgentResult:
+                                     soc: Reading, meta, *, ctx=None, seen=()) -> AgentResult:
         """按目的地搜充电站，把最优站作为导航途经点（出 charging_route 卡 + data.waypoint）。
 
         聚合器据 data.waypoint 把该站并入导航步的 navigate 动作（payload.waypoints），
@@ -252,7 +260,13 @@ class ChargingPlannerAgent(BaseAgent):
                 speech=f"{destination}附近暂未找到充电站，到达后我再帮您找。")
 
         stations.sort(key=lambda s: (-s.available, s.distance_km))
+        if seen:
+            stations = [s for s in stations if not self._was_recommended(s, seen)]
+            if not stations:
+                return AgentResult(
+                    speech=f"{destination}附近能找到的充电站刚才都推荐过了，到达后我再帮您找。")
         top = stations[0]
+        await self._remember_recommended(ctx, [top], seen)
         # CA2-19 S3：选站理由可追溯；高德基础 POI 没有实时空闲，按距离选、如实标「空闲状态未知」
         reason = ("空闲桩最多" if top.total > 0 else "离目的地最近（空闲状态未知）")
 
@@ -286,6 +300,31 @@ class ChargingPlannerAgent(BaseAgent):
             data={"waypoint": waypoint, "items": items, "choice_reason": reason},
             # 手机端把追问提示整句做成 chip、点按原样发出：提示本身就得是能用的说法（`runtime.charger_swap` 认得出）
             follow_up="想换一个充电站，说『换一个充电站』就行")
+
+    @staticmethod
+    async def _recommended(ctx) -> list[dict]:
+        """这一会话里推荐过的站（`CHARGING_RECOMMENDED`）；读不到就是空，照常找站。"""
+        try:
+            data = await ctx.load_shared_state(CHARGING_RECOMMENDED)
+            d = json.loads(data) if isinstance(data, str) else (data or {})
+        except Exception:
+            return []
+        return [it for it in (d.get("items") or []) if isinstance(it, dict)] if isinstance(d, dict) else []
+
+    @staticmethod
+    async def _remember_recommended(ctx, picked: list, seen) -> None:
+        """记下这一轮推荐的站：新的找站覆盖，换站时接在推荐过的后面（连着「换一个」一直往后推）。写不进去只影响下一次换站。"""
+        if ctx is None:
+            return
+        items = list(seen) + [{"id": s.id, "name": s.name} for s in picked]
+        try:
+            await ctx.save_shared_state(CHARGING_RECOMMENDED, {"items": items[-20:]})
+        except Exception as exc:
+            logger.debug("recommended stations save skipped: %s", exc)
+
+    @staticmethod
+    def _was_recommended(station, seen) -> bool:
+        return any((it.get("id") and it.get("id") == station.id) or it.get("name") == station.name for it in seen)
 
     # 行政区划级后缀——以此结尾的目的地视为"过泛"，先确认具体地点再规划途经点
     _ADMIN_SUFFIX = ("市", "省", "区", "县", "自治区", "自治州", "地区")

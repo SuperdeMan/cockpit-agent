@@ -53,6 +53,64 @@ def test_without_a_route_or_without_stops_it_finds_stations_as_before():
         assert "_escalate" not in (res.data or {}) and "国网充电站" in res.speech and calls
 
 
+def _kv_ctx():
+    """`make_context` 的共享态是不真存的替身——钉进内存 dict。"""
+    kv = {}
+    ctx = make_context()
+
+    async def save(key, value):
+        kv[key] = value
+        return True
+
+    async def load(key):
+        return kv.get(key)
+
+    ctx.save_shared_state, ctx.load_shared_state = save, load
+    return ctx, kv
+
+
+def _stations_agent(names):
+    agent = ChargingPlannerAgent()
+
+    async def nearby(point, charger_type="", meta=None):
+        return [ChargingStation(id=f"s{i}", name=name, distance_km=0.5 * (i + 1), lat=22.5 + 0.01 * i, lng=113.9)
+                for i, name in enumerate(names)]
+
+    agent.charging.find_nearby = nearby
+    return agent
+
+
+def test_without_a_route_a_swap_skips_the_stations_already_recommended():
+    """CA2-19 §9.1：没有活动路线时「换一个充电站」照常找站，又推荐了同一个站。推荐过的这一会话里记着，换站时排除、
+    连着换一直往后推，都推荐过了就如实说；新的找站从头推荐。"""
+    agent = _stations_agent(["A站", "B站", "C站", "D站", "E站"])
+    ctx, _ = _kv_ctx()
+
+    def ask(text):
+        return asyncio.run(run_handle(agent, "charging.find", slots={}, raw_text=text, ctx=ctx, meta=dict(LOC)))
+
+    assert "推荐：A站" in ask("附近有充电站吗").speech
+    second = ask("换一个充电站")
+    assert "推荐：D站" in second.speech and "A站" not in second.speech and "C站" not in second.speech
+    assert "都推荐过了" in ask("换一个充电站").speech
+    assert "推荐：A站" in ask("附近有充电站吗").speech
+
+
+def test_a_swap_near_a_destination_picks_the_next_station():
+    """按目的地找站推荐的是一个站：「换一个充电站」（没有活动路线，目的地取自焦点）换成下一个。"""
+    agent = _stations_agent(["A站", "B站"])
+    ctx, _ = _kv_ctx()
+
+    def ask(text):
+        return asyncio.run(run_handle(agent, "charging.find", slots={"destination": "深圳北站"}, raw_text=text,
+                                      ctx=ctx, meta=dict(LOC)))
+
+    assert "A站" in ask("深圳北站附近找个充电站").speech
+    swapped = ask("换一个充电站")
+    assert "B站" in swapped.speech and "A站" not in swapped.speech
+    assert "都推荐过了" in ask("换一个充电站").speech
+
+
 def test_a_plain_station_search_on_an_active_route_is_not_handed_off():
     agent, calls = _agent()
     res = _find(agent, "深圳北站附近还有哪些充电站", {**LOC, "focus_active_route": _route([_STATION])})

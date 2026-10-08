@@ -566,6 +566,7 @@ Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供�
 | `SCENE_PENDING`（`scene_pending`） | scene-orchestrator `_create`/`_update`（追问或回读时写草案） | scene-orchestrator 确认轮（取草案落库，**不重跑 LLM**——重编译会产出与用户确认时不一样的动作） | `{name,spec,draft{},overwrite}` | 一轮追问/确认；消费即清 |
 | `NAVIGATION_DEST_CHOICES`（`navigation_dest_choices`） | navigation `_ask_namesake`（近处借名 vs 外地本体时写候选，带坐标） | navigation `_navigate_to` / `_estimate`（续接轮「第N个」或点选名 ⇒ 选中的那个地点，直接用坐标不再重搜；`agents._sdk.dest_choice.resolve_choice`） | `{items:[{name,address[,lat,lng]}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 | `CHARGING_DEST_CHOICES`（`charging_dest_choices`） | charging-planner `_clarify_vague_destination`（泛目的地澄清时写候选） | charging-planner `_resolve_dest_ordinal`（续接轮 destination=「第N个」按序回填真名——引擎补槽灌的是用户字面，旅程 B2-3 真栈拿「第一个」搜 POI 选到无关站） | `{items:[{name,address}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
+| `CHARGING_RECOMMENDED`（`charging_recommended`） | charging-planner `_remember_recommended`（附近找站 / 按目的地找站推荐后写；换站时累加） | charging-planner `_find`（没有活动路线时「换一个充电站」排除推荐过的站，CA2-19 换站） | `{items:[{id,name}]}` | 会话内；新的找站覆盖 |
 
 > 底层 profile KV 无独立 TTL（随用户画像存储，无 user_id 时静默跳过）。改 key/换存储只需改
 > `shared_state.py` 与本表——不再散落字面量导致静默断链（审计 A5）。
