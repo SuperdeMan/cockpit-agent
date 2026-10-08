@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -188,7 +189,10 @@ def test_actual_sdk_receiver_gates_unary_and_first_stream_event(stream, reason):
     assert result.status == (agent_pb2.ExecuteResponse.OK if reason == "valid" else agent_pb2.ExecuteResponse.REJECTED)
 
 
-def test_edge_probe_and_bad_version_do_not_invoke_val():
+def test_edge_probe_and_bad_version_do_not_invoke_val(monkeypatch):
+    # 端侧服务以 orchestrator/edge 为根导入（edge_call 里 `from val import VAL`）。此前靠同进程里别的用例先把它放进路径：
+    # 单独选中本用例、或 xdist 把它排在那些用例之前就 `No module named 'val'`
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "orchestrator" / "edge"))
     from orchestrator.edge.edge_call import EdgeCallExecutor
     class Val:
         commands = {"objects": {"trunk": {"operates": ["open"]}}}
