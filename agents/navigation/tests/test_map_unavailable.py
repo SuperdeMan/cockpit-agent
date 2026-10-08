@@ -75,6 +75,18 @@ def test_the_origin_is_judged_on_its_own_lookups():
     assert res.speech == _honest("欢乐海岸") and not res.actions
 
 
+def test_reroute_with_a_new_origin_says_the_same():
+    """改路线换起点（起点在所有改动之前解析）：起点那几次检索全报错 ⇒ 同一句，不追问。"""
+    import json
+    import time
+
+    route = json.dumps({"destination": "深圳北站", "lat": 22.609, "lng": 114.029, "waypoints": [],
+                        "ts": int(time.time())}, ensure_ascii=False)
+    res = asyncio.run(run_handle(_agent(_Poi(down={"*"})), "navigation.reroute", slots={"origin": "欢乐海岸"},
+                                 raw_text="从欢乐海岸出发", ctx=make_context(), meta={**SZ, "focus_active_route": route}))
+    assert res.speech == _honest("欢乐海岸") and not res.actions and not res.missing_slots
+
+
 def test_an_empty_search_is_still_not_found():
     """对照：检索成功、只是没有结果 ⇒ 照旧「没找到」并追问。"""
     res = _run(_agent(_Poi()), "navigation.navigate_to", {"destination": "云岚国际中心"}, "导航去云岚国际中心")

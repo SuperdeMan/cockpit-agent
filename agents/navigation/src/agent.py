@@ -2109,6 +2109,8 @@ class NavigationAgent(BaseAgent):
         if origin_text:
             o_name, o_pt = await self._resolve_point(origin_text, ctx, meta)
             if o_pt is None:
+                if self._lookup_unavailable():
+                    return self._map_unavailable(origin_text)
                 return AgentResult(
                     status=NEED_SLOT,
                     speech=f"我没找到您说的起点「{o_name or origin_text}」，"
