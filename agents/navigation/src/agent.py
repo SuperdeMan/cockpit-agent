@@ -10,6 +10,8 @@ import logging
 import os
 import re
 import time
+from contextvars import ContextVar
+from dataclasses import dataclass
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
@@ -31,6 +33,27 @@ from .providers.base import GeoPoint, POI
 from .route_geometry import card_geometry
 
 logger = logging.getLogger("agent.navigation")
+
+
+@dataclass
+class _LookupLog:
+    """一个请求里地点检索成功 / 报错的次数。一次都没成功、却有报错 ⇒ 是地图服务不可用（配额用尽、限流、网络），
+    不是没找到（2026-10-08：高德基础搜索日配额用尽时，每次检索都报 10044，用户听到的却是「暂时无法确定…请补充城市」）。"""
+    ok: int = 0
+    failed: int = 0
+
+
+#: `NavigationAgent.handle` 每个请求开一份；并发请求各在自己的任务上下文里，互不串
+_LOOKUP: ContextVar[_LookupLog | None] = ContextVar("navigation_lookup", default=None)
+
+
+def _note_lookup(ok: bool) -> None:
+    log = _LOOKUP.get()
+    if log is not None:
+        if ok:
+            log.ok += 1
+        else:
+            log.failed += 1
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
@@ -346,8 +369,31 @@ class NavigationAgent(BaseAgent):
         }
         handler = handlers.get(intent.name)
         if handler:
-            return await handler(intent, ctx, meta)
+            token = _LOOKUP.set(_LookupLog())
+            try:
+                return await handler(intent, ctx, meta)
+            finally:
+                _LOOKUP.reset(token)
         return AgentResult(status=FAILED, speech="抱歉，这个导航请求我还不会处理。")
+
+    @staticmethod
+    def _lookup_mark() -> tuple[int, int]:
+        """本请求到目前为止的（成功, 报错）次数：解析第二个地点（起点）前记一下，出口只看这一段。"""
+        log = _LOOKUP.get()
+        return (log.ok, log.failed) if log else (0, 0)
+
+    @staticmethod
+    def _lookup_unavailable(mark: tuple[int, int] = (0, 0)) -> bool:
+        """从 `mark` 起这段地点检索一次都没成功、却有报错：没找到的原因是地图服务，不是这个地方（见 `_LookupLog`）。"""
+        log = _LOOKUP.get()
+        return bool(log) and log.failed > mark[1] and log.ok == mark[0]
+
+    @staticmethod
+    def _map_unavailable(what: str) -> AgentResult:
+        """地图服务报错时的如实话术：不说「没找到」、不追问城市——用户补了也一样查不到。
+        R9 契约：话术用 OK 返回（FAILED 会被聚合器吞成裸报错）；`search_poi` 的诚实降级与这里同一句。"""
+        return AgentResult(speech=f"地图服务暂时不可用，没查到「{what}」，请稍后再试。",
+                           follow_up="稍后再说一次就行")
 
     async def _current_position(self, ctx, meta) -> GeoPoint | None:
         """当前位置统一只取本轮已授权的浏览器 GPS——与天气、「我在哪」一致，避免三处定位打架。
@@ -508,13 +554,18 @@ class NavigationAgent(BaseAgent):
         if namesake is not None:
             return await self._ask_namesake(ctx, dest_text, *namesake, estimate=True)
         if dest_pt is None:
+            if self._lookup_unavailable():
+                return self._map_unavailable(dest_text)
             return AgentResult(
                 speech=f"我没找到「{dest_name or dest_text}」这个地方，换个说法再试试？")
 
         origin_text = self._origin_text(intent)
         if origin_text:
+            mark = self._lookup_mark()
             origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
             if origin_pt is None:
+                if self._lookup_unavailable(mark):
+                    return self._map_unavailable(origin_text)
                 return AgentResult(
                     speech=f"我没找到起点「{origin_name or origin_text}」，换个说法再试试？")
         else:
@@ -602,6 +653,8 @@ class NavigationAgent(BaseAgent):
         if dest_text:
             dest_name, dest_pt = await self._resolve_point(dest_text, ctx, meta)
             if dest_pt is None:
+                if self._lookup_unavailable():
+                    return self._map_unavailable(dest_text)
                 return AgentResult(
                     speech=f"我没找到「{dest_name or dest_text}」这个地方，换个说法再试试？",
                     data={"traffic_lookup": "destination_unresolved"})
@@ -617,8 +670,11 @@ class NavigationAgent(BaseAgent):
 
         origin_text = self._origin_text(intent)
         if origin_text:
+            mark = self._lookup_mark()
             origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
             if origin_pt is None:
+                if self._lookup_unavailable(mark):
+                    return self._map_unavailable(origin_text)
                 return AgentResult(
                     speech=f"我没找到起点「{origin_name or origin_text}」，换个说法再试试？",
                     data={"traffic_lookup": "origin_unresolved"})
@@ -733,9 +789,7 @@ class NavigationAgent(BaseAgent):
             results = await self.poi.search(keyword, near=near, rating_min=rating_min, meta=meta)
         except ProviderError as e:
             logger.warning("poi search failed（诚实降级，无 mock 回退）: %s", e)
-            return AgentResult(
-                speech=f"地图服务暂时不可用，没查到「{keyword}」，请稍后再试。",
-                follow_up="稍后再说一次就行")
+            return self._map_unavailable(keyword)
         resolved_keyword = keyword
 
         # Planner 有时会把“去深圳笋一样的建筑物”误抽成“笋岗”这类普通关键词。
@@ -1154,6 +1208,8 @@ class NavigationAgent(BaseAgent):
             resolved_name, results = await self._find_destination(
                 dest, meta, near=near, limit=5 if is_proximity else 3, page=page,
                 strict=not is_proximity)
+        if not results and self._lookup_unavailable():
+            return self._map_unavailable(dest)
         if not results and not is_proximity:
             # person-pickup 卡（2026-08-20）：**接不到地点时再回退人称**。
             # 上面那道 `_person_destination` 的判据是「剥完人称还剩不剩实质内容」
@@ -1280,8 +1336,11 @@ class NavigationAgent(BaseAgent):
         origin_text = (intent.slots.get("origin") or "").strip()
         origin_pair = None
         if origin_text:
+            mark = self._lookup_mark()
             o_name, o_pt = await self._resolve_point(origin_text, ctx, meta)
             if o_pt is None:
+                if self._lookup_unavailable(mark):
+                    return self._map_unavailable(origin_text)
                 return AgentResult(
                     status=NEED_SLOT,
                     speech=f"我没找到您说的起点「{o_name or origin_text}」。",
@@ -2320,7 +2379,7 @@ class NavigationAgent(BaseAgent):
         （「南京南站高铁站」之于「南京南站」），或原话 = 这个地点所在城市 + 它的名字（「上海外滩」之于上海的「外滩」，
         `city` 是该地点的城市）。地点名只是原话的尾巴不算——「火车站」之于「厦门火车站」缺的正是最有区分度的「厦门」
         （2026-10-04 A/B：近处搜索半径放大到城市级后，深圳一个就叫「火车站」的点顶掉了厦门站）。
-        原话里有口头叫法表里的说法（`_PLACE_ALIASES`：「7-11」之于「7-ELEVEn」、「北大」之于「北京大学」）时，换成高德门店名里的写法、
+        原话里有口头叫法表里的说法（`_SPOKEN_ALIASES`：「7-11」之于「7-ELEVEn」、「北大」之于「北京大学」）时，换成高德门店名里的写法、
         两边不分大小写再比一遍。一般的拉丁字母照旧分大小写——A/B（2026-10-08）：不分大小写时「Subway」配上北京的「赛百味 SUBWAY(东方广场店)」
         （1942 km）、「Lawson」配上 18 km 外的「LAWSON罗森」；此前名字对不上，兜底取的是最近的门店。"""
         a, b = NavigationAgent._place_key(query), NavigationAgent._place_key(poi_name)
@@ -2369,7 +2428,7 @@ class NavigationAgent(BaseAgent):
     #: 2026-10-08 云端直调（深圳南山）：这些说法名字校验对不上本地门店——「7-11」「711」「KFC」被全国重搜接到北京一个就叫这个名字的点
     #: （1925–1944 km），「七十一便利店」「中石化加油站」「苹果店」靠兜底才落对，「北大医院」落到眼科门诊。每加一行都要有真栈红例背书；
     #: 高德自己翻得出本地门店的英文品牌（Starbucks、Pizza Hut、Tesla…）不列。两个字的中文简称只认打头（「北大」不能配「河北大学」）。
-    _PLACE_ALIASES = (
+    _SPOKEN_ALIASES = (
         ("7eleven", ("711", "七十一", "seveneleven")),
         ("肯德基", ("kfc",)),
         ("中国石化", ("中石化",)),
@@ -2384,7 +2443,7 @@ class NavigationAgent(BaseAgent):
         """归一、casefold 后的原话里有表里的说法（口头叫法或高德写法本身）⇒ 口头叫法换成高德写法后的形式
         （「711便利店」⇒「7eleven便利店」、「7eleven便利店」原样）；都没有 ⇒ ""，不做不分大小写的比较。"""
         hit = False
-        for canonical, aliases in NavigationAgent._PLACE_ALIASES:
+        for canonical, aliases in NavigationAgent._SPOKEN_ALIASES:
             hit = hit or canonical in key
             for alias in aliases:
                 if len(alias) <= 2 and not alias.isascii():
@@ -2423,7 +2482,9 @@ class NavigationAgent(BaseAgent):
             wide = await self.poi.search(description, near=None, limit=5, meta=meta)
         except ProviderError as e:
             logger.warning("namesake POI search failed: %s", e)
+            _note_lookup(False)
             return None
+        _note_lookup(True)
         # 类目锚词在场时外地候选也要过类目复核（「南山实验小学」的济南同名 POI 是科教文化场所，R1 二期刻意不认它）
         anchor = self._category_anchor(description)
         return next((r for r in wide
@@ -2634,11 +2695,14 @@ class NavigationAgent(BaseAgent):
         """
         async def _direct(bias, n: int = 0, **kw) -> list:
             try:
-                return await self.poi.search(description, near=bias, limit=n or limit,
-                                             page=page, meta=meta, **kw)
+                found = await self.poi.search(description, near=bias, limit=n or limit,
+                                              page=page, meta=meta, **kw)
             except ProviderError as e:
                 logger.warning("destination POI search failed: %s", e)
+                _note_lookup(False)
                 return []
+            _note_lookup(True)
+            return found
 
         async def _via_landmark(guess: bool = False) -> tuple[str, list]:
             for candidate in await self._landmark_candidates(description):
@@ -2650,7 +2714,10 @@ class NavigationAgent(BaseAgent):
                                                       rank="weight", radius_m=_CITY_RADIUS_M)
                     except ProviderError as e:
                         logger.warning("landmark candidate local search failed: %s", e)
+                        _note_lookup(False)
                         local = []
+                    else:
+                        _note_lookup(True)
                     if (local and self._dest_matches(candidate, local[0].name, local[0].city)
                             and self._beyond_local_radius(local[0], near) is None
                             and self._keeps_dropped_head(description, candidate, local[0])):
@@ -2659,7 +2726,9 @@ class NavigationAgent(BaseAgent):
                     results = await self.poi.search(candidate, limit=limit, meta=meta)
                 except ProviderError as e:
                     logger.warning("landmark candidate POI search failed: %s", e)
+                    _note_lookup(False)
                     continue
+                _note_lookup(True)
                 # 高德对非官方名会返回同位置的邻近无关 POI（搜“华润春笋大厦”→V东滨店）：
                 # 只接受 top 结果名与候选实质匹配的，否则换下一个候选（如官方名“中国华润大厦”）。
                 if results and name_matches(candidate, results[0].name):
