@@ -81,6 +81,25 @@ def test_a_place_that_cannot_be_geocoded_is_not_searched_nationwide():
     assert len(place.searches) == 1
 
 
+def test_a_failed_search_is_not_reported_as_a_missing_place():
+    """2026-10-08 高德日配额用尽：解析中心的偏置检索报错（10044），全国地理编码没在本地定位到（没结果 / 落到外地）——
+    不知道它在不在本地，说「没找到」是假话，如实说周边搜索服务暂时不可用（同导航地图报错不说没找到）。检索正常、
+    真定位不到的照旧说没找到（上面两条）。"""
+    from agents._sdk.http import ProviderError
+
+    class _Down(_Place):
+        async def search(self, keyword, near=None, meta=None, **kw):
+            self.searches.append((keyword, near))
+            raise ProviderError("amap search failed: USER_DAILY_QUERY_OVER_LIMIT (10044)")
+
+    for geocoded in (None, _XUANWEI):
+        place = _Down(geocoded)
+        res = _run(place, {"category": "咖啡店", "location": "海岸城"}, "海岸城附近的咖啡店")
+        assert "暂时不可用" in res.speech and "海岸城" in res.speech and "没找到" not in res.speech, geocoded
+        assert not res.ui_card and not res.data
+        assert [k for k, _ in place.searches] == ["海岸城"]
+
+
 def test_the_indoor_fanout_takes_the_same_gate():
     place = _Place(_XUANWEI)
     res = _run(place, {"category": "室内", "location": "云岚国际中心"}, "云岚国际中心附近有什么室内玩的")

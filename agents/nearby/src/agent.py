@@ -34,6 +34,8 @@ _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.y
 class _Unlocated:
     """说出来的地名在本地定位不到、落点又不是用户说出来的那座城 ⇒ 不拿别处冒充「附近」（评审四轮待办，2026-09-25）。"""
     place: str
+    #: 解析中心的那次检索本身报错（日配额用尽 / QPS 超限）⇒ 定位不到不等于没有，不能说「没找到」
+    search_failed: bool = False
 
 
 #: 行政区名的后缀：比「用户有没有说出这座城」时剥掉（「曲靖市」⇒「曲靖」）。长的在前。
@@ -341,11 +343,12 @@ class NearbyAgent(BaseAgent):
             return near                      # 无位置 / 已是坐标 → 原样
         cur = current_location_from_meta(meta)
         bias = GeoPoint(lat=cur.lat, lng=cur.lng) if cur else None
+        search_failed = False
         try:
             hits = await self.place.search(near.address, near=bias, meta=meta)
         except ProviderError as e:
             logger.debug("center resolve search failed: %s", e)
-            hits = []
+            hits, search_failed = [], True
         if hits:
             top = hits[0]
             a, b = near.address, (top.name or "")
@@ -353,9 +356,10 @@ class NearbyAgent(BaseAgent):
                 logger.info("center %r resolved to %r (%.4f,%.4f)",
                             near.address, top.name, top.lat, top.lng)
                 return GeoPoint(lat=top.lat, lng=top.lng)
-        return await self._unverified_center(near, cur, intent, meta)
+        return await self._unverified_center(near, cur, intent, meta, search_failed=search_failed)
 
-    async def _unverified_center(self, near: GeoPoint, cur, intent, meta) -> "GeoPoint | _Unlocated":
+    async def _unverified_center(self, near: GeoPoint, cur, intent, meta, *,
+                                 search_failed: bool = False) -> "GeoPoint | _Unlocated":
         """名字校验不过的地名：先看它 geocode 到哪，再决定在不在那儿搜（评审四轮待办，2026-09-25）。
 
         修前直接交给 provider 的全国 geocode：不存在的「云岚国际中心」落到云南宣威，照样搜出一列宣威的咖啡店（真栈
@@ -375,13 +379,13 @@ class NearbyAgent(BaseAgent):
             return near
         if hit is None:
             logger.info("nearby: %r cannot be geocoded; not searching nationwide", near.address)
-            return _Unlocated(near.address)
+            return _Unlocated(near.address, search_failed)
         km = rough_km(cur.lat, cur.lng, hit.lat, hit.lng)
         if km <= LOCAL_RADIUS_KM or _names_the_area(hit, f"{near.address} {intent.raw_text or ''}"):
             return GeoPoint(lat=hit.lat, lng=hit.lng)
         logger.info("nearby: %r geocoded %.0f km away (%s%s%s) and the user named none of it; not searching there",
                     near.address, km, hit.province, hit.city, hit.district)
-        return _Unlocated(near.address)
+        return _Unlocated(near.address, search_failed)
 
     @staticmethod
     def _unlocated_result(unlocated: "_Unlocated") -> AgentResult:
@@ -389,6 +393,9 @@ class NearbyAgent(BaseAgent):
 
         R9 诚实降级的形态：不出卡、**不带 data**——带了 data，结果校验会把空列表判成「数据源没返回」，再补一句「要不要我再试一次？」
         （`executor._should_report`；真栈 `684bfeec` RS43 3/3 原样）。"""
+        if unlocated.search_failed:
+            # 检索报错、地理编码又没在本地定位到：不知道它在不在，说「没找到」是假话（同导航地图报错不说没找到，2026-10-08 日配额用尽）
+            return AgentResult(speech=f"周边搜索服务暂时不可用，没查到「{unlocated.place}」在哪，稍后再试一次？")
         return AgentResult(speech=f"没找到「{unlocated.place}」。", follow_up=NOT_FOUND_FOLLOW_UP)
 
     # 地点指代词（旅程 B1-3「那附近有停车场」）：与 info 侧 `_DESTINATION_DEICTIC_RE`
