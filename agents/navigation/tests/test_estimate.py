@@ -99,6 +99,24 @@ def test_estimate_unresolvable_destination_is_honest():
     assert "没找到" in res.speech
 
 
+def test_an_origin_the_user_never_said_is_ignored():
+    """2026-10-08 真栈：「去深南大道9028号要开多久」规划器填了 origin「北京」，估出 2164 公里——原话里一个字都不沾的起点
+    不算，按当前位置算（估算与到目的地导航两条路）；规划器给起点加了城市（「深圳欢乐海岸」之于原话「欢乐海岸」）照样认。"""
+    beijing = POI(id="bj", name="北京", address="北京市", lat=39.9042, lng=116.4074)
+    agent, calls = _agent({"深圳北站": [_NORTH], "北京": [beijing]})
+    res = _estimate(agent, {"destination": "深圳北站", "origin": "北京"}, "去深圳北站要开多久")
+    start, _end = calls["route"][0]
+    assert (round(start.lat, 4), round(start.lng, 4)) == (22.5410, 113.9412) and res.ui_card["origin"] == "当前位置"
+    assert "北京" not in calls["search"]
+    agent, calls = _agent({"世界之窗": [_WINDOW], "北京": [beijing]})
+    res = asyncio.run(run_handle(agent, "navigation.navigate_to", slots={"destination": "世界之窗", "origin": "北京"},
+                                 raw_text="导航去世界之窗", ctx=make_context(), meta=dict(_HERE)))
+    assert res.ui_card["origin"] == "当前位置" and "北京" not in calls["search"]
+    agent, calls = _agent({"深圳欢乐海岸": [_COAST], "深圳北站": [_NORTH]})
+    res = _estimate(agent, {"destination": "深圳北站", "origin": "深圳欢乐海岸"}, "从欢乐海岸到深圳北站多远")
+    assert res.ui_card["origin"] == "欢乐海岸"
+
+
 def test_navigate_to_uses_the_spoken_origin():
     """I-029②：用户明说了出发地，算路/卡片/动作载荷三处都要按它来。
 

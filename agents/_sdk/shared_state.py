@@ -17,6 +17,7 @@ Agent 无状态化：一次会话的临时状态落 profile KV（经 `Context.sa
 | `charging_dest_choices` | charging-planner（泛目的地 dest_choice 澄清时写候选） | charging-planner（续接轮「第N个」按序回填目的地） | `{items:[{name,address}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 | `navigation_dest_choices` | navigation（近处借名 vs 外地本体 dest_choice 时写候选，带坐标） | navigation（续接轮「第N个」或点选名 ⇒ 选中的地点，直接用坐标） | `{items:[{name,address[,lat,lng]}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 | `charging_recommended` | charging-planner（找站推荐后写这一轮推荐的站；换站时累加） | charging-planner（没有活动路线时「换一个充电站」排除推荐过的站） | `{items:[{id,name}]}` | 会话内；新的找站覆盖 |
+| `navigation_swap_pending` | navigation（路线上几个充电站、反问换哪个时写） | navigation（下一轮改路线：序号或站名的回答认作换站） | `{chargers:[name], ts}` | 一轮追问；消费即清、10 分钟过期 |
 
 注：底层 profile KV 无独立 TTL（随画像存储；被同 key 下次写覆盖）。新增跨 Agent 状态键**先在此
 登记 + 更新 conventions.md**，再在 owner/reader 用常量引用，不要在业务码写裸字符串。
@@ -51,6 +52,9 @@ NAVIGATION_DEST_CHOICES = "navigation_dest_choices"
 # charging 找站推荐过的站 → 没有活动路线时「换一个充电站」排除它们、推荐下一批（CA2-19 换站；此前又推荐同一个站）。
 # 新的找站覆盖，连着「换一个」累加。
 CHARGING_RECOMMENDED = "charging_recommended"
+# navigation 反问「路线上几个充电站，换哪一个」时写 → 下一轮改路线认出序号 / 站名的回答是在换站。续接轮下发的原话是本轮的回答
+# （「换第二个」），换站说法判据认不出来，任务起点那句「换一个充电站」到不了 Agent——只能靠这一笔。消费即清。
+NAVIGATION_SWAP_PENDING = "navigation_swap_pending"
 
 
 def owner_scoped(key: str, user_id: str, occupant_id: str = "") -> str:
