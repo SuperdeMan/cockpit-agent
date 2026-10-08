@@ -572,7 +572,8 @@ def test_a_guessed_candidate_that_shares_the_users_words_still_crosses_cities():
 
 
 def test_a_guess_after_an_unverified_nearby_result_does_not_cross_cities():
-    """中间那个入口：近侧有结果但名字没对上 ⇒ 全国重搜也没对上 ⇒ 地标猜测。猜出来的东方之门不采信，退回本地弱匹配（照旧报实际名）。"""
+    """中间那个入口：近侧有结果但名字没对上 ⇒ 全国重搜也没对上 ⇒ 地标猜测。猜出来的东方之门不采信；近处的美宜佳和「第二家」
+    毫不相干，也不当目的地（2026-10-08 起；此前退回本地弱匹配、报实际名）。"""
     shop = POI(id="l2", name="美宜佳(华富洋大厦店)", category="购物服务;便利店;便利店", lat=22.5401, lng=113.9420)
     poi = _KeywordPoi({"第二家": [shop], "东方之门": [_SUZHOU_GATE]})
     res = asyncio.run(run_handle(

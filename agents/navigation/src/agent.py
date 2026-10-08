@@ -2319,13 +2319,24 @@ class NavigationAgent(BaseAgent):
         归一（去括号注记/空白/连接符）后原话含在地点名里才算；反方向（地点名比原话短）只认原话以它打头
         （「南京南站高铁站」之于「南京南站」），或原话 = 这个地点所在城市 + 它的名字（「上海外滩」之于上海的「外滩」，
         `city` 是该地点的城市）。地点名只是原话的尾巴不算——「火车站」之于「厦门火车站」缺的正是最有区分度的「厦门」
-        （2026-10-04 A/B：近处搜索半径放大到城市级后，深圳一个就叫「火车站」的点顶掉了厦门站）。"""
+        （2026-10-04 A/B：近处搜索半径放大到城市级后，深圳一个就叫「火车站」的点顶掉了厦门站）。
+        原话里有口头叫法表里的说法（`_PLACE_ALIASES`：「7-11」之于「7-ELEVEn」、「北大」之于「北京大学」）时，换成高德门店名里的写法、
+        两边不分大小写再比一遍。一般的拉丁字母照旧分大小写——A/B（2026-10-08）：不分大小写时「Subway」配上北京的「赛百味 SUBWAY(东方广场店)」
+        （1942 km）、「Lawson」配上 18 km 外的「LAWSON罗森」；此前名字对不上，兜底取的是最近的门店。"""
         a, b = NavigationAgent._place_key(query), NavigationAgent._place_key(poi_name)
         if not (a and b):
             return False
+        c = NavigationAgent._place_key(city)
+        if NavigationAgent._names_match(a, b, c):
+            return True
+        aliased = NavigationAgent._aliased(a.casefold())
+        return bool(aliased) and NavigationAgent._names_match(aliased, b.casefold(), c)
+
+    @staticmethod
+    def _names_match(a: str, b: str, c: str) -> bool:
+        """`_dest_matches` 的本体：`a` 原话、`b` 地点名、`c` 地点所在城市，都已归一。"""
         if a in b or a.startswith(b):
             return True
-        c = NavigationAgent._place_key(city)
         if c and a.endswith(b) and a[:len(a) - len(b)] in (c, c.rstrip("市")):
             return True
         # 原话 = 这个地点所在城市 + 核心名、核心名含在它的全称里（「上海第六人民医院」之于上海的「上海交通大学医学院附属
@@ -2353,6 +2364,35 @@ class NavigationAgent(BaseAgent):
         """地名归一：去括号注记、空白与连接符（「南山书城(深圳湾店)」⇒「南山书城」）。"""
         s = re.sub(r"[（(].*?[)）]", "", name or "")
         return re.sub(r"[\s·,，\-—]", "", s)
+
+    #: 口头叫法 → 高德 POI 名里的写法（都是 `_place_key` 归一、casefold 之后的形式）。
+    #: 2026-10-08 云端直调（深圳南山）：这些说法名字校验对不上本地门店——「7-11」「711」「KFC」被全国重搜接到北京一个就叫这个名字的点
+    #: （1925–1944 km），「七十一便利店」「中石化加油站」「苹果店」靠兜底才落对，「北大医院」落到眼科门诊。每加一行都要有真栈红例背书；
+    #: 高德自己翻得出本地门店的英文品牌（Starbucks、Pizza Hut、Tesla…）不列。两个字的中文简称只认打头（「北大」不能配「河北大学」）。
+    _PLACE_ALIASES = (
+        ("7eleven", ("711", "七十一", "seveneleven")),
+        ("肯德基", ("kfc",)),
+        ("中国石化", ("中石化",)),
+        ("中国石油", ("中石油",)),
+        ("中国海油", ("中海油",)),
+        ("北京大学", ("北大",)),
+        ("apple", ("苹果",)),
+    )
+
+    @staticmethod
+    def _aliased(key: str) -> str:
+        """归一、casefold 后的原话里有表里的说法（口头叫法或高德写法本身）⇒ 口头叫法换成高德写法后的形式
+        （「711便利店」⇒「7eleven便利店」、「7eleven便利店」原样）；都没有 ⇒ ""，不做不分大小写的比较。"""
+        hit = False
+        for canonical, aliases in NavigationAgent._PLACE_ALIASES:
+            hit = hit or canonical in key
+            for alias in aliases:
+                if len(alias) <= 2 and not alias.isascii():
+                    if key.startswith(alias):
+                        key, hit = canonical + key[len(alias):], True
+                elif alias in key:
+                    key, hit = key.replace(alias, canonical), True
+        return key if hit else ""
 
     @classmethod
     def _bare_name(cls, poi) -> str:
@@ -2508,6 +2548,60 @@ class NavigationAgent(BaseAgent):
         logger.info("unverified destination beyond the local radius, not taken: %s → %s (%dkm)",
                     description, results[0].name, far)
         return []
+
+    #: 门牌地址：路名 + 门牌号（「科苑路15号」「深南大道9028号」）
+    _HOUSE_NUMBER_RE = re.compile(r"^(?P<road>.{2,}?(?:大道|路|街|道|巷))(?P<num>\d+号)$")
+
+    @classmethod
+    def _relates(cls, description: str, poi) -> bool:
+        """名字没核实的兜底结果和原话沾不沾边。2026-10-08 云端直调（深圳南山）走到兜底的 13 个中文 / 数字说法里 11 个落对、
+        靠的都是高德的相关度：简称、口头叫法、同音误识别、门牌地址；另 2 个毫不相干——「北大医院」→ 眼科门诊角膜塑形镜室、
+        「301医院」→ 医疗美容门诊部（15 个纯英文说法全部落对）。沾边认这几种（原话先去掉类目锚词与地点所在城市，口头叫法换成高德写法后再比一遍）：
+        - 打头两个字连着出现在地点名里：同音误识别（「欢乐古」之于「深圳欢乐谷」）、借了名的（「云岚国际中心」之于「云岚美容」）；
+        - 三个字以上的按顺序出现在地点名里、跨度不超过两倍：简称是全称的子序列（「中石化」之于「中国石化」、「南科大」之于
+          「南方科技大学」、「华为体验店」之于「华为授权体验店」）；
+        - 门牌地址的门牌号连着、路名按顺序出现在地点地址里（「科苑路15号」之于地址「科苑北路15号」的科兴科学园）；
+        - 地点名（去掉它自己的城市前缀）含在原话里：原话前面多了区县之类的限定（「上海长宁阳光小区」之于「阳光小区」）。
+        纯拉丁字母的说法由高德翻成本地门店（「Pizza Hut」→ 必胜客、「Tesla」→ 特斯拉），字面上判不了，照旧采信；
+        去完不足两个字的也照旧采信。"""
+        core = cls._place_key(description).casefold()
+        anchor = cls._category_anchor(description)
+        if anchor and core.endswith(anchor[0]) and len(core) > len(anchor[0]):
+            core = core[:-len(anchor[0])]
+        city = cls._place_key(getattr(poi, "city", "") or "")
+        for prefix in (city, city.rstrip("市")):
+            if prefix and core.startswith(prefix) and len(core) > len(prefix):
+                core = core[len(prefix):]
+                break
+        if len(core) < 2 or (core.isascii() and not core.isdigit()):
+            return True
+        name = cls._place_key(poi.name).casefold()
+        bare = cls._bare_name(poi).casefold()
+        for form in filter(None, dict.fromkeys((core, cls._aliased(core)))):
+            if form[:2] in name or (len(form) >= 3 and cls._in_order(form, name)):
+                return True
+            if len(bare) >= 2 and bare in form:
+                return True
+        m = cls._HOUSE_NUMBER_RE.match(core)
+        address = cls._place_key(getattr(poi, "address", "") or "")
+        return bool(m and m["num"] in address and cls._in_order(m["road"], address))
+
+    @staticmethod
+    def _in_order(needle: str, hay: str) -> bool:
+        """`needle` 的字按顺序出现在 `hay` 里，跨度不超过它长度的两倍（「南科大」之于「南方科技大学」算；
+        「南山区科技园大厦」里的南…科…大隔得太开，不算）。"""
+        span = 2 * len(needle)
+        for start, ch in enumerate(hay):
+            if ch != needle[0]:
+                continue
+            i, pos = 1, start + 1
+            while i < len(needle) and pos < len(hay) and pos - start < span:
+                if hay[pos] == needle[i]:
+                    i += 1
+                pos += 1
+            if i == len(needle):
+                return True
+        return False
 
     @staticmethod
     def _ask_person_place(person_word: str) -> AgentResult:
@@ -2669,7 +2763,23 @@ class NavigationAgent(BaseAgent):
             name, lm = await _via_landmark(guess=True)
             if lm and self._cross_city_ok(description, lm[0], near):
                 return name, lm
-            # 兜底：本地半径内报出实际名让用户纠正；之外的不采信（评审四轮真栈：导去 1940 km 外）
+            # 带类目词的查询到这里还没在本城按相关度找过：就近扫描是 5 km、按距离排，全国重搜第一在别的城市——「北大医院」的
+            # 北京大学深圳医院在 11 km 外，全国第一是北京大学第一医院（2026-10-08 云端直调）。最后在本城找一次，名字（含口头叫法）
+            # + 类目对得上才算。放在最后：近处扫描接得住的连锁店不受影响（按相关度排的本城结果会把人带到远处的大店）
+            if near is not None and not named:
+                city = self._nearest_city(results)
+                if city:
+                    hit = self._named_hit(description, await _direct(None, region=city), anchor)
+                    if hit and self._cross_city_ok(description, hit[0], near):
+                        return description, hit
+            # 兜底：名字没核实的近处结果。和原话毫不沾边的不当目的地（「北大医院」→ 眼科门诊角膜塑形镜室、「301医院」→ 医疗美容
+            # 门诊部）：外地另有以原话打头的本体就用它（调用方对沾边的近处结果也这么做），没有就当没找到，由调用方追问。
+            # 沾边的本地半径内报出实际名让用户纠正；之外的不采信（评审四轮真栈：导去 1940 km 外）
+            if not self._relates(description, results[0]):
+                far = await self._far_namesake(description, results[0], near, meta)
+                logger.info("unverified destination unrelated to the words, not taken: %s → %s%s", description,
+                            results[0].name, f" (far namesake: {far.name})" if far is not None else "")
+                return description, ([far] if far is not None else [])
             return description, self._local_only(description, results, near)
         return await _via_landmark(guess=True)
 

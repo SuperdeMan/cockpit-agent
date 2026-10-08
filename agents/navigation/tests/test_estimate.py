@@ -39,6 +39,9 @@ def _agent(search_results=None, route=None):
 _CIVIC = POI(id="o1", name="深圳市民中心", address="福中路", lat=22.5460, lng=114.0590)
 _NORTH = POI(id="d1", name="深圳北站", address="致远中路28号", lat=22.6100, lng=114.0290)
 _XIAMEN = POI(id="x1", name="厦门火车站", address="厦禾路900号", lat=24.4680, lng=118.1170)
+#: 「从深圳欢乐海岸出发去世界之窗」那几条的桩：名字要和说法沾边——名字毫不相干的兜底结果不再当起终点（2026-10-08）
+_COAST = POI(id="o2", name="欢乐海岸", address="白石路东8号", lat=22.5460, lng=114.0590)
+_WINDOW = POI(id="d2", name="世界之窗", address="深南大道9037号", lat=22.6100, lng=114.0290)
 
 
 def _estimate(agent, slots, raw_text, meta=None):
@@ -101,13 +104,13 @@ def test_navigate_to_uses_the_spoken_origin():
 
     这条是 SL4 的单测对应物——探针判的是卡片里不再是「当前位置」。
     """
-    agent, calls = _agent({"深圳欢乐海岸": [_CIVIC], "世界之窗": [_NORTH]})
+    agent, calls = _agent({"深圳欢乐海岸": [_COAST], "世界之窗": [_WINDOW]})
     res = asyncio.run(run_handle(
         agent, "navigation.navigate_to",
         slots={"origin": "深圳欢乐海岸", "destination": "世界之窗"},
         raw_text="从深圳欢乐海岸出发去世界之窗",
         ctx=make_context(), meta=dict(_HERE)))
-    assert res.ui_card["origin"] == "深圳市民中心"      # provider 桩返回的 POI 名
+    assert res.ui_card["origin"] == "欢乐海岸"      # provider 桩返回的 POI 名
     start, _end = calls["route"][0]
     assert (round(start.lat, 4), round(start.lng, 4)) == (22.5460, 114.0590), \
         "算路仍然用了当前位置——静默回落正是本条要修的形态"
@@ -116,7 +119,7 @@ def test_navigate_to_uses_the_spoken_origin():
 
 
 def test_navigate_to_unresolvable_origin_asks_instead_of_silently_falling_back():
-    agent, calls = _agent({"世界之窗": [_NORTH]})
+    agent, calls = _agent({"世界之窗": [_WINDOW]})
     res = asyncio.run(run_handle(
         agent, "navigation.navigate_to",
         slots={"origin": "查无此地", "destination": "世界之窗"},
@@ -128,7 +131,7 @@ def test_navigate_to_unresolvable_origin_asks_instead_of_silently_falling_back()
 
 def test_navigate_to_without_origin_is_unchanged():
     """反向对照：没说出发地时，行为与本批之前逐字一致（当前位置起算）。"""
-    agent, calls = _agent({"世界之窗": [_NORTH]})
+    agent, calls = _agent({"世界之窗": [_WINDOW]})
     res = asyncio.run(run_handle(
         agent, "navigation.navigate_to", slots={"destination": "世界之窗"},
         raw_text="导航去世界之窗", ctx=make_context(), meta=dict(_HERE)))

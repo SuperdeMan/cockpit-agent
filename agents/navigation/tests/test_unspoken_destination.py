@@ -18,7 +18,8 @@ from agents.navigation.src.agent import NavigationAgent
 from agents.navigation.src.providers.base import POI
 
 _HERE = {"current_lat": "22.5410", "current_lng": "113.9412"}
-_HAPPY = POI(id="o1", name="华侨城欢乐海岸", address="滨海大道2008号", lat=22.5238, lng=113.9853)
+#: 真实高德结果都带城市：「深圳欢乐海岸」去掉城市后才和「华侨城欢乐海岸」沾边（名字毫不相干的兜底结果不再当起终点，2026-10-08）
+_HAPPY = POI(id="o1", name="华侨城欢乐海岸", address="滨海大道2008号", lat=22.5238, lng=113.9853, city="深圳市")
 _WINDOW = POI(id="d1", name="世界之窗", address="深南大道9037号", lat=22.5405, lng=113.9740)
 _TIANANMEN = POI(id="d2", name="天安门", address="长安街北侧", lat=39.9087, lng=116.3975)
 _PARK = POI(id="p1", name="深圳湾公园", address="滨海大道", lat=22.5160, lng=113.9510)
