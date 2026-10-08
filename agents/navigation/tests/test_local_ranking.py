@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -489,3 +490,53 @@ def test_a_house_number_relates_through_the_address():
                lat=22.548, lng=113.944, city="深圳市")
     assert NavigationAgent._relates("科苑路15号", park)
     assert not NavigationAgent._relates("科苑路16号", park)
+
+
+# ── 门牌地址按当前城市地理编码（2026-10-08）────────────────────────────────────────────────────
+# 云端直调：「南海大道1088号」关键字检索全国重搜接到海口的「南海大道」（478 km），「深南大道9028号」被模型猜成深圳湾体育中心；
+# 高德地理编码对深圳 12 个门牌地址全部给出门址级坐标（0.1–1 km）。
+
+
+class _AddressPoi(_KeyedPoi):
+    """带逆地理编码与门牌地理编码的桩：当前城市深圳；`houses` 按地址给地理编码结果。"""
+
+    def __init__(self, houses=None, city="深圳市", **kw):
+        super().__init__(**kw)
+        self.houses, self.here_city, self.geocoded = dict(houses or {}), city, []
+
+    async def reverse_geocode(self, lng, lat, meta=None):
+        return SimpleNamespace(city=self.here_city, adcode="440305")
+
+    async def geocode_address(self, address, city, meta=None):
+        self.geocoded.append((address, city))
+        return self.houses.get(address)
+
+
+def test_a_house_number_is_geocoded_in_the_current_city():
+    haikou = POI(id="h1", name="南海大道", lat=20.02, lng=110.33, city="海口市", category="地名地址信息;交通地名;道路名")
+    poi = _AddressPoi(houses={"南海大道1088号": {"level": "门址", "location": "113.9258,22.5191",
+                                                 "formatted_address": "广东省深圳市南山区南海大道1088号", "city": "深圳市"}},
+                      wide={"南海大道1088号": [haikou]})
+    _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("南海大道1088号", dict(META), near=HERE))
+    assert results[0].name == "南海大道1088号" and abs(results[0].lat - 22.5191) < 1e-6
+    assert results[0].address == "广东省深圳市南山区南海大道1088号"
+    assert poi.geocoded == [("南海大道1088号", "深圳市")] and not poi.calls       # 不再走关键字检索
+
+
+def test_a_house_number_falls_back_to_search_unless_it_is_a_house_in_this_city():
+    """没有结果、只到道路级、不在当前城市 ⇒ 照旧检索（这里近处那个点的地址沾边，兜底采信）。"""
+    park = POI(id="k1", name="南山科兴科学园", address="粤海街道科苑西社区科苑北路15号", category="商务住宅;产业园区;产业园区",
+               lat=22.548, lng=113.944, distance_km=0.8, city="深圳市")
+    for hit in (None,
+                {"level": "道路", "location": "113.94,22.54", "formatted_address": "广东省深圳市南山区科苑路", "city": "深圳市"},
+                {"level": "门址", "location": "121.47,31.23", "formatted_address": "上海市科苑路15号", "city": "上海市"}):
+        poi = _AddressPoi(houses={"科苑路15号": hit}, near={"科苑路15号": [park]})
+        _, results = asyncio.run(_guessing_agent(poi, [])._find_destination("科苑路15号", dict(META), near=HERE))
+        assert results and results[0].name == park.name, hit
+
+
+def test_names_that_only_look_like_numbers_are_not_geocoded():
+    for name in ("深圳湾1号", "地铁1号线", "3号门", "科苑路15号科兴科学园"):
+        poi = _AddressPoi(houses={}, near={name: [_shop(name, "", 0.5)]})
+        asyncio.run(_guessing_agent(poi, [])._find_destination(name, dict(META), near=HERE))
+        assert not poi.geocoded, name

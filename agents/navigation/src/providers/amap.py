@@ -83,6 +83,18 @@ class AmapPOIProvider(POIProvider):
         geocodes = data.get("geocodes") or []
         return (_as_str(geocodes[0].get("location")) or None) if geocodes else None
 
+    async def geocode_address(self, address: str, city: str, meta=None) -> dict | None:
+        """门牌地址在 `city` 里的正向地理编码 → {level, location("lng,lat"), formatted_address, city}；无结果 None。
+
+        `city` 限定城市（高德 `city` 参数）：不带城市时人民路 100 号这类到处都有。失败照常抛 ProviderError，调用方降级。"""
+        data = await self._get("/v3/geocode/geo", {"address": address, "city": city}, "geocode", meta)
+        geocodes = data.get("geocodes") or []
+        if not geocodes:
+            return None
+        g = geocodes[0]
+        return {"level": _as_str(g.get("level")), "location": _as_str(g.get("location")),
+                "formatted_address": _as_str(g.get("formatted_address")), "city": _as_str(g.get("city"))}
+
     async def geocode_level(self, address: str, meta=None) -> tuple[str, str]:
         """正向地理编码返回 (行政级别, "lng,lat")。
 

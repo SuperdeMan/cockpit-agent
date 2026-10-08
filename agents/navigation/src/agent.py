@@ -2657,6 +2657,35 @@ class NavigationAgent(BaseAgent):
         address = cls._place_key(getattr(poi, "address", "") or "")
         return bool(m and m["num"] in address and cls._in_order(m["road"], address))
 
+    #: 地理编码里算「这个门牌」的级别（高德 level）；只到道路 / 区县的不算
+    _HOUSE_LEVELS = ("门址", "门牌号")
+
+    async def _house_address_point(self, address: str, near, meta) -> POI | None:
+        """门牌地址 → 当前城市里的门址坐标（城市取当前位置的逆地理编码）；拿不到、不在当前城市、只到道路级 ⇒ None，调用方照旧检索。"""
+        geocode = getattr(self.poi, "geocode_address", None)
+        reverse = getattr(self.poi, "reverse_geocode", None)
+        if geocode is None or reverse is None:
+            return None
+        try:
+            here = await reverse(near.lng, near.lat, meta=meta)
+            city = (getattr(here, "city", "") or "").strip()
+            hit = await geocode(address, city, meta=meta) if city else None
+        except ProviderError as e:
+            logger.warning("house address geocode failed: %s", e)
+            return None
+        if not hit or hit.get("level") not in self._HOUSE_LEVELS:
+            return None
+        got_city = str(hit.get("city") or "").strip()
+        if got_city and got_city.rstrip("市") != city.rstrip("市"):
+            return None
+        try:
+            lng_s, lat_s = str(hit.get("location") or "").split(",")[:2]
+            lat, lng = float(lat_s), float(lng_s)
+        except ValueError:
+            return None
+        return POI(id=f"addr_{address}", name=address, address=str(hit.get("formatted_address") or address),
+                   lat=lat, lng=lng, city=got_city or city)
+
     @staticmethod
     def _in_order(needle: str, hay: str) -> bool:
         """`needle` 的字按顺序出现在 `hay` 里，跨度不超过它长度的两倍（「南科大」之于「南方科技大学」算；
@@ -2791,6 +2820,14 @@ class NavigationAgent(BaseAgent):
                                     address=f"{description}（市区中心）",
                                     lat=lat_f, lng=lng_f)
                     return description, [admin_poi]
+
+        # 门牌地址（「深南大道9028号」「南山区科苑路15号」）：关键字检索按地点名找，接到的是附近名字沾边的点、模型猜的楼，或外地的
+        # 同名路（2026-10-08：「南海大道1088号」→ 海口的「南海大道」478 km，「深南大道9028号」→ 深圳湾体育中心）。高德地理编码对
+        # 门牌地址给出门址级坐标（深圳 12 个门牌地址全部命中、0.1–1 km）；只认当前城市里的门址，拿不到就照旧检索
+        if strict and near is not None and self._HOUSE_NUMBER_RE.match(self._place_key(description)):
+            point = await self._house_address_point(description, near, meta)
+            if point is not None:
+                return description, [point]
 
         # 具名目的地（不是类目、不是「最近 / 附近」）：综合排序 + 城市级半径。缺省的周边搜索是 5 km、按距离排，5 km 内借了名的
         # 店天然排第一、真身在 5 km 外根本不在候选里（2026-10-04 真栈：大梅沙→推拿店、蛇口港→公安局、东门→食堂）。
