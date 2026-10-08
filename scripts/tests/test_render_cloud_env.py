@@ -32,7 +32,7 @@ def _effective_values(path: Path) -> tuple[dict[str, str], list[str]]:
 
 def _valid_source() -> str:
     return """# local runtime values
-AUTH_TOKENS=auth-token:u1:v1:navigation.control,location.read,network.external
+AUTH_TOKENS=auth-token-7f3a9c2e5b8d1f4a6c0e9b2d:u1:v1:navigation.control,location.read,network.external
 DEEPSEEK_API_KEY=provider-secret-value
 POSTGRES_DSN=postgresql://cockpit:cockpit@localhost:5432/cockpit
 CLOUD_CHANNEL_TOKEN=stale-channel
@@ -65,7 +65,7 @@ def test_render_preserves_provider_values_and_sets_fail_closed_cloud_runtime(tmp
     assert values["DEBUG_VEHICLE_CONTROL"] == "true"
     assert values["OBS_CONTENT_CAPTURE"] == "on"
     assert values["GRPC_TLS"] == "off"
-    assert values["VITE_WS_TOKEN"] == "auth-token"
+    assert values["VITE_WS_TOKEN"] == "auth-token-7f3a9c2e5b8d1f4a6c0e9b2d"
     assert values["CLOUD_CHANNEL_TOKEN"] == values["CLOUD_CHANNEL_TOKENS"]
     assert len(values["CLOUD_CHANNEL_TOKEN"]) >= 48
     assert values["POSTGRES_PASSWORD"] not in {"", "cockpit"}
@@ -99,6 +99,35 @@ def test_render_upgrades_legacy_three_part_auth_with_new_demo_token(tmp_path: Pa
     assert vehicle_id == "vehicle-1"
     assert scopes.split(",") == list(DEMO_AUTH_SCOPES)
     assert values["VITE_WS_TOKEN"] == token
+
+
+@pytest.mark.parametrize(
+    "auth_line",
+    [
+        "AUTH_TOKENS=u1:u1:v1:navigation.control",
+        "AUTH_TOKENS=short-token-1:u1:v1:navigation.control",
+        "AUTH_TOKENS=auth-token-7f3a9c2e5b8d1f4a6c0e9b2d:u1:v1:navigation.control;u2:u2:v1:navigation.control",
+        "AUTH_TOKENS=account-0f6c1d2e-8b7a-4c3d-9e5f-a1b2c3d4e5f6:account-0f6c1d2e-8b7a-4c3d-9e5f-a1b2c3d4e5f6"
+        ":v1:navigation.control",
+    ],
+)
+def test_render_rejects_weak_pass_through_tokens_without_output(tmp_path: Path, auth_line: str):
+    """4 段形式的 token 原样上云：太短或等于 user_id 段的一律拒绝，每一条都查（不只首条）。
+    本机开发 .env 的 `u1:u1:v1:…` 曾过得了全部闸——闸只查「不是示例值」，查不出强度。
+    等于 user_id 的再长也不行：user_id 会进日志与 trace，等于把 token 公开。"""
+    source = tmp_path / "source.env"
+    output = tmp_path / "cloud.env"
+    source.write_text(f"DEEPSEEK_API_KEY=secret\n{auth_line}\n", encoding="utf-8")
+
+    with pytest.raises(CloudEnvError, match="too weak") as excinfo:
+        render_cloud_env(
+            source=source,
+            output=output,
+            release_sha="4c1f479",
+            tailnet_fqdn="car-agent-dev.example.ts.net",
+        )
+    assert not output.exists()
+    assert "u1:" not in str(excinfo.value) and "short-token" not in str(excinfo.value)
 
 
 @pytest.mark.parametrize(
@@ -238,6 +267,6 @@ def test_cli_stdout_is_json_and_does_not_disclose_any_secret(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"status": "ok", "output": "cloud.env"}
-    for secret in ("provider-secret-value", "auth-token", "stale-channel", "cockpit"):
+    for secret in ("provider-secret-value", "auth-token-7f3a9c2e5b8d1f4a6c0e9b2d", "stale-channel", "cockpit"):
         assert secret not in result.stdout
         assert secret not in result.stderr

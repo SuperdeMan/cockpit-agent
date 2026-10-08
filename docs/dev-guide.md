@@ -22,6 +22,13 @@
 > 云端连接参数由 `CAR_AGENT_DEPLOY_HOST` / `CAR_AGENT_DEPLOY_USER` /
 > `CAR_AGENT_SSH_IDENTITY` 三个环境变量提供，**不进 `.env`、不进 `dev-stack.local`**；
 > 缺任一项时 CLI 返回 `configuration_rejected`（rc=2）而不是去猜。
+> `CAR_AGENT_DEPLOY_HOST` 填主机的 Tailscale 名字（与 `TAILNET_FQDN` 同一个），不填公网地址：公网 22 端口被互联网扫描器
+> 持续敲，sshd `MaxStartups 10:30:100` 在未认证连接积压时随机丢新连接，部署会时好时坏地挂在上传前后，CLI 只报
+> `status=failed`（2026-10-07 实测，主机 sshd 日志定因）；tailnet 内 22 端口直达，不经这条节流（2026-10-08 起本机已切换）。
+> 换名字要给 known_hosts 补条目：经已校验的旧连接读主机公钥，与新名字出示的公钥逐字比对一致再写入，不做首次信任。
+> Windows 自带的 `ssh-keyscan`（9.x）会选上自己不支持的 `sntrup761` KEX（`choose_kex: unsupported`），什么都扫不到；
+> 改用 `ssh -o UserKnownHostsFile=<临时文件> -o StrictHostKeyChecking=accept-new` 取主机出示的公钥。
+> 本机 Tailscale 断开时可临时把变量指回公网地址，那条 known_hosts 条目仍在。
 
 ### Jev 判别的配置键（`.env.example` 里刻意没有）
 

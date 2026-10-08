@@ -41,6 +41,10 @@ DEMO_AUTH_SCOPES = (
     "merchant.read",
     "merchant.write",
 )
+#: 4 段形式的 token 原样透传上云，最少要多少字符。渲染自己生成的是 64 字符（token_urlsafe(48)）。
+#: 本机开发 .env 里的 `u1:u1:v1:…` 形式合法、强度为零，曾经过得了这里和部署形态闸（2026-08-27 登记）：
+#: 闸只查「不是示例值」，查不出强度；云端那份恰好是渲染时生成的强 token，重渲染就会把 `u1` 带上去。
+_MIN_PASSTHROUGH_TOKEN_CHARS = 32
 
 
 def _assignment(raw: str) -> tuple[str, str] | None:
@@ -87,10 +91,21 @@ def _auth_config(auth_tokens: str) -> tuple[str, str | None]:
     if len(parts) != 4 or any(not part.strip() for part in parts):
         raise CloudEnvError("AUTH_TOKENS first entry has an invalid shape")
     token, _user_id, _vehicle_id, scopes = (part.strip() for part in parts)
-    if token.lower() in _SAMPLE_TOKENS:
-        raise CloudEnvError("AUTH_TOKENS contains a sample token")
     if not all(scope.strip() for scope in scopes.split(",")):
         raise CloudEnvError("AUTH_TOKENS first entry has invalid scopes")
+    # 每一条都是凭据、都原样上云，不只首条（首条另外还当 HMI 的 VITE_WS_TOKEN）
+    for index, entry in enumerate(entries, start=1):
+        fields = [part.strip() for part in entry.split(":", 3)]
+        if fields[0].lower() in _SAMPLE_TOKENS:
+            raise CloudEnvError("AUTH_TOKENS contains a sample token")
+        if len(fields) == 4 and (
+            len(fields[0]) < _MIN_PASSTHROUGH_TOKEN_CHARS or fields[0] == fields[1]
+        ):
+            raise CloudEnvError(
+                f"AUTH_TOKENS entry {index} token is too weak to pass through: need at least "
+                f"{_MIN_PASSTHROUGH_TOKEN_CHARS} characters and not equal to its user_id "
+                "(or use the 3-part token:user_id:vehicle_id form to get a generated token)"
+            )
     return token, None
 
 

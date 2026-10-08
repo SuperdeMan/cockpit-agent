@@ -254,7 +254,7 @@ SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 
 
 | 环境变量 | 用途 |
 |---|---|
-| `CAR_AGENT_DEPLOY_HOST` | SSH 主机名或地址 |
+| `CAR_AGENT_DEPLOY_HOST` | SSH 主机名或地址；本机填主机的 Tailscale 名字，公网 22 端口有扫描器触发的连接节流（见 `docs/dev-guide.md`） |
 | `CAR_AGENT_DEPLOY_USER` | SSH 用户名，默认 `ubuntu` |
 | `CAR_AGENT_SSH_IDENTITY` | 本机 SSH 私钥路径 |
 | `CAR_AGENT_SSH_KEX_ALGORITHMS` | 服务器明确要求时使用的 KEX 算法 |
