@@ -4,6 +4,7 @@
 // 数据/交互一字不改地沿用既有真实接线（useSettings / 音色试听 / 地点 / 记忆 / 定位）。
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useSettings } from '../settings'
+import { useDriving } from '../DrivingContext'
 import {
   AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, TTS_PROVIDER_FALLBACK, LLM_PROVIDER_FALLBACK,
   S2S_VOICES, ASR_MODES, ASR_PROVIDER_FALLBACK, DEFAULT_SETTINGS, asrEngineOptions, asrModeOf, pickAsrEngine,
@@ -735,6 +736,7 @@ function VisionSection() {
 // ─── 3 · 显示主题 ───
 function DisplaySection() {
   const { settings, update } = useSettings()
+  const { driving, setDriving } = useDriving()
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
 
@@ -757,8 +759,11 @@ function DisplaySection() {
           <Segmented value={settings.fontScale} onChange={(v) => update({ fontScale: v })}
             options={[{ value: 'normal', label: '标准' }, { value: 'large', label: '大字' }]} />
         </SettingRow>
-        <SettingRow label="大触控模式" sub="行车时放大按钮与点击热区至 56px（§11 车规）" noBorder>
+        <SettingRow label="大触控模式" sub="按当前行车档放大按钮与点击热区">
           <Toggle on={settings.largeTouch} onChange={(v) => update({ largeTouch: v })} />
+        </SettingRow>
+        <SettingRow label="行车模式" sub="简化显示；关闭仅退出当前行车段，不改变车辆状态" noBorder>
+          <Toggle on={driving} onChange={setDriving} />
         </SettingRow>
       </SettingGroup>
       <HR />

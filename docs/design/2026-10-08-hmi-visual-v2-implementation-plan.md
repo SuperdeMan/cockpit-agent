@@ -1,6 +1,6 @@
-# 小舟座舱 HMI 视觉 v2 · 实施计划（草案）
+# 小舟座舱 HMI 视觉 v2 · 实施计划
 
-- **状态**：草案（2026-10-08）。设计已完成，等实施排期；本文不代表已经动代码。
+- **状态**：实施中（2026-10-09）。I1 已完成本地验证；I2–I6 待实施，逐批证据见 §8。未部署生产。
 - **依据**：[设计 Brief](2026-10-08-hmi-visual-redesign-brief.md)（已批准，§15 全部按推荐）；Figma「小舟座舱 HMI · Visual v2」`QNXzATLf4WOKLD1rV1dilp`，第 11 页 Handoff 里有 token ↔ CSS、组件 ↔ 代码和差异清单 D。
 - **读数基线**：`main` @ `b64fa70a`（2026-10-08）。它与 brief 的基线 `c5171045` 之间 `hmi/` 没有改动，文中 `文件:行号` 两版通用。
 - **范围**：只改 `hmi/` 的视图层与样式。Dashboard 不做；1920×720 只写规则，不出稿。
@@ -24,7 +24,7 @@
 | 项 | 规则 |
 |---|---|
 | 契约 | `types.ts` 字段不增不减；卡片动作仍只合成一句话走普通上行；写确认只在全局确认条产生 |
-| 状态机 | `App.tsx` `handleEvent` 不改；新增的行车态、隐私胶囊、连接态都从已有状态派生 |
+| 状态机 | `App.tsx` `handleEvent` 不改；行车态通过 WebSocket 回调旁的独立只读投影读取既有 process/final.driving（2026-10-08 用户批准，见 §8）；隐私胶囊、连接态从已有状态派生 |
 | 安全语义 | 待确认条只由服务端 `need_confirm` 加仍然有效的 `operation_id` 驱动；倒计时只在服务端给期限时显示；付款码行车不显示 |
 | 判据单源 | 车控证据状态复用 `resultBundle.mjs` 的投影，与 `mobile/src/core/cards/controlResult.ts` 同口径，不写第二份判据 |
 | 真实性 | `_prov` 的缓存、降级、模拟角标任何外壳都不得吞掉；mock 渠道必带「模拟数据」，演示商户必带「演示商户」 |
@@ -148,3 +148,18 @@ M2–M7 期间对 brief 做了以下细化，实施按这一版：
   - `use_figma` 必须严格串行，脚本出错会整体回滚。
   - 在组件套件里克隆变体会丢失文字属性绑定，要重新绑定。
   - 设完实例属性后，自动布局可能不重排，重新挂一次子节点即可。
+
+---
+
+## 8. 实施记录
+
+### I1 · token 与只读行车投影（2026-10-09）
+
+- Figma 只读 `20:9`、`20:311`、`21:9`、`59:9`，变量快照留在 `hmi/design/visual-v2.tokens.json`。`hmi/scripts/generate-visual-tokens.mjs --check` 对账五个集合和四档 Size；运行时声明仍在 `aurora.css`，旧键暂作别名。
+- 深浅主题的正文、次要文字、弱文字、图标按「舞台 → scrim → 面板 → surface 1/2/3」逐层合成后检查，包含面板背后的纯白和路线色；确认/错误语义色在 M0 实色面上的软底检查。
+- Inter / JetBrains Mono 的 Latin 可变字体自托管，保留 OFL 与来源、SHA256；中文沿用系统字体栈。没有新增 npm 依赖。
+- **接线裁决**：原 HMI 只保存 process.driving，简单 final 的字段被丢弃，仅从消息状态派生会漏报进入/退出。用户批准在 WebSocket 回调旁增加独立只读投影，`types.ts` 和 `handleEvent` 原文保持不变。行车段、退出本段和 30 秒宽限从 Android 提取到共享 `drivingMode.mjs`；Android 仅改为重导出和登记共享模块，显示与业务语义不变。
+- 本地验证树基于 `92e1332b1073b8b8deb7df18371092181e9079d5`：HMI `npm test` **375 passed**；Vite build 通过（保留 >500 kB bundle 提示）；Android `drivingMode` / `sharedAllowlist` **27 passed**。完整 TypeScript 检查前后均为相同的 **25 个既有错误**，不宣称类型检查全绿；AST 核对 `handleEvent`、逐字核对 `types.ts` 未变。
+- Headless Edge 读实际 CSS：深浅 × 行车/泊车 × 标准/大字，共 **8 组**，每组 **27 个 Size token** 与快照一致，两份字体均从本地加载。`?tokens` 字阶夹具对照 Figma `21:9`；中文字体按已批准的系统字体方案有字形差异。
+- 真实 App 配合浏览器内隔离 WebSocket 验证：只有 final 的行车进入 → 手动退出本段 → 同段 true 不重入 → 下一段重入 → false 连续 30 秒退出。没有连接服务端、执行车控或产生业务写入。
+- 证据目录：`.artifacts/hmi-visual-v2/i1/`（截图、浏览器读数、TypeScript 前后对账）；复现：`node test/hmi_cdp/visual_tokens.mjs`，先在 HMI 启动 `Vite --port 5188`。旧外壳/卡片的字号仍在 I2–I6 逐批迁移，不把 token 落地算作整屏完成。

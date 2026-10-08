@@ -8,6 +8,7 @@ import './shell.css' // Aurora Glass 应用外壳（P1，两栏布局 + 右舞�
 import './cards.css' // Aurora Glass 卡片重皮（P2，覆盖 Cards.tsx 既有语义类）
 import { AuroraPreview } from './components/aurora/AuroraPreview'
 import { IconGallery } from './components/aurora/IconGallery'
+import { VisualTokensPreview } from './components/aurora/VisualTokensPreview'
 import { DEMO_WEATHER, DEMO_MAP, DEMO_CARDS, DEMO_STATES, DEMO_INFO, DEMO_CHARGE, DEMO_TRIP, DEMO_ROUTE, DEMO_RESULTS } from './demo'
 
 const DEMO_MAPS: Record<string, typeof DEMO_WEATHER> = { charge: DEMO_CHARGE, trip: DEMO_TRIP, route: DEMO_ROUTE, results: DEMO_RESULTS }
@@ -38,7 +39,7 @@ const seedMessages = params.has('demo')
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {params.has('icons') ? (
+    {params.has('tokens') ? <VisualTokensPreview /> : params.has('icons') ? (
       <IconGallery />
     ) : showAurora ? (
       <AuroraPreview />

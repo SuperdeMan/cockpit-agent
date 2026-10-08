@@ -10,6 +10,11 @@
   ],
   "modules": [
     {
+      "file": "drivingMode.mjs",
+      "phase": "M4",
+      "purpose": "HMI 与 Android 共用行车段、手动退出和 30 秒宽限的只读判据；不读取车速或挡位"
+    },
+    {
       "file": "vehicleObservation.mjs",
       "phase": "M4",
       "purpose": "车辆身份、投影版本与车况值的只读选择；零动作、零权限、零时钟"

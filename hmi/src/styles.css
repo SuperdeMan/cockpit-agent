@@ -18,27 +18,27 @@
 }
 
 :root {
-  --font-ui: 'Space Grotesk', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Courier New', monospace;
+  --font-ui: var(--au-font-ui);
+  --font-mono: var(--au-font-mono);
 
   /* 深色（默认）*/
-  --bg: #060912;
-  --bg-2: #0a1124;
-  --surface: rgba(18, 27, 48, 0.66);
-  --surface-2: rgba(28, 39, 66, 0.72);
-  --surface-solid: #0f1730;
-  --line: rgba(125, 165, 225, 0.12);
-  --line-strong: rgba(125, 165, 225, 0.24);
-  --text: #e9eef9;
-  --muted: #8a96b4;
-  --faint: #5b6788;
-  --accent: #34e1d8;
-  --accent-2: #4f8cff;
-  --accent-ink: #042320;
-  --warn: #ffb454;
-  --danger: #ff5a78;
-  --glow: rgba(52, 225, 216, 0.45);
-  --glow-2: rgba(79, 140, 255, 0.4);
+  --bg: var(--au-bg);
+  --bg-2: var(--au-bg-2);
+  --surface: var(--au-material-panel);
+  --surface-2: var(--au-surface-2);
+  --surface-solid: var(--au-material-solid);
+  --line: var(--au-line);
+  --line-strong: var(--au-line-2);
+  --text: var(--au-text);
+  --muted: var(--au-text-2);
+  --faint: var(--au-text-3);
+  --accent: var(--au-primary);
+  --accent-2: var(--au-primary);
+  --accent-ink: var(--au-primary-ink);
+  --warn: var(--au-warn);
+  --danger: var(--au-danger);
+  --glow: var(--au-primary-soft);
+  --glow-2: var(--au-primary-line);
   --weather-surface: linear-gradient(135deg, rgba(49, 97, 159, 0.24), rgba(20, 32, 57, 0.76) 58%, var(--surface-2));
   --card-inset-surface: rgba(7, 15, 31, 0.22);
   --card-inset-strong-surface: rgba(7, 15, 31, 0.34);
@@ -49,15 +49,15 @@
   --weather-alert-line: rgba(255, 90, 120, 0.35);
   --summary-surface: rgba(52, 225, 216, 0.07);
   --kline-surface: rgba(6, 12, 25, 0.26);
-  --stock-up: #ff5b55;
+  --stock-up: var(--au-up);
   --stock-up-line: rgba(255, 91, 85, 0.36);
-  --stock-down: #2fb37b;
+  --stock-down: var(--au-down);
   --stock-down-line: rgba(47, 179, 123, 0.36);
 
-  --radius: 18px;
-  --radius-sm: 12px;
-  --radius-lg: 26px;
-  --tap: 48px;
+  --radius: var(--au-r-2xl);
+  --radius-sm: var(--au-r-md);
+  --radius-lg: var(--au-r-4xl);
+  --tap: var(--au-control-target);
   --maxw: 920px;
   --bar-h: 64px;
 
@@ -65,23 +65,23 @@
 }
 
 :root[data-theme='light'] {
-  --bg: #eef2f8;
-  --bg-2: #e3e9f3;
-  --surface: rgba(255, 255, 255, 0.74);
-  --surface-2: rgba(255, 255, 255, 0.92);
-  --surface-solid: #ffffff;
-  --line: rgba(40, 70, 120, 0.12);
-  --line-strong: rgba(40, 70, 120, 0.22);
-  --text: #11203a;
-  --muted: #59667f;
-  --faint: #8a97b2;
-  --accent: #0aa89c;
-  --accent-2: #2f6bf0;
-  --accent-ink: #ffffff;
-  --warn: #c97b12;
-  --danger: #d83a58;
-  --glow: rgba(10, 168, 156, 0.25);
-  --glow-2: rgba(47, 107, 240, 0.2);
+  --bg: var(--au-bg);
+  --bg-2: var(--au-bg-2);
+  --surface: var(--au-material-panel);
+  --surface-2: var(--au-surface-2);
+  --surface-solid: var(--au-material-solid);
+  --line: var(--au-line);
+  --line-strong: var(--au-line-2);
+  --text: var(--au-text);
+  --muted: var(--au-text-2);
+  --faint: var(--au-text-3);
+  --accent: var(--au-primary);
+  --accent-2: var(--au-primary);
+  --accent-ink: var(--au-primary-ink);
+  --warn: var(--au-warn);
+  --danger: var(--au-danger);
+  --glow: var(--au-primary-soft);
+  --glow-2: var(--au-primary-line);
   --weather-surface: linear-gradient(135deg, rgba(84, 145, 221, 0.2), rgba(255, 255, 255, 0.86) 58%, var(--surface-2));
   --card-inset-surface: rgba(255, 255, 255, 0.64);
   --card-inset-strong-surface: rgba(241, 246, 253, 0.92);
@@ -92,15 +92,15 @@
   --weather-alert-line: rgba(216, 58, 88, 0.32);
   --summary-surface: rgba(10, 168, 156, 0.08);
   --kline-surface: rgba(231, 238, 248, 0.8);
-  --stock-up: #c93632;
+  --stock-up: var(--au-up);
   --stock-up-line: rgba(201, 54, 50, 0.32);
-  --stock-down: #17734e;
+  --stock-down: var(--au-down);
   --stock-down-line: rgba(23, 115, 78, 0.32);
   color-scheme: light;
 }
 
-:root[data-font='large'] { font-size: 18.5px; }
-:root[data-touch='large'] { --tap: 60px; --bar-h: 72px; }
+/* Font/touch dimensions come from visual v2 Size modes in aurora.css. */
+:root[data-touch='large'] { --tap: var(--au-control-target); --bar-h: 72px; }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }

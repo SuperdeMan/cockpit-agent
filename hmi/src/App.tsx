@@ -3,6 +3,7 @@ import { emptyVehicleProjection, bindVehicleIdentity, projectVehicleFrame } from
 // 消息流：用户发送 → 立刻插入助手"思考中"占位 → final 替换 / speech_delta 流式填充。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSettings, buildMeta } from './settings'
+import { DrivingProvider, useDrivingProjection } from './DrivingContext'
 import {
   buildRequestLocationMeta,
   requestCurrentLocation,
@@ -68,6 +69,7 @@ const genTraceId = () => {
 
 export default function App({ seedMessages, openSettings }: { seedMessages?: Msg[]; openSettings?: boolean } = {}) {
   const { settings, update } = useSettings()
+  const drivingView = useDrivingProjection()
   const [messages, setMessages] = useState<Msg[]>(seedMessages ?? [])
   const [connected, setConnected] = useState(false)
   // 车况镜像（edge-gateway vehicle_state 消息：连上即推全量 + 变更广播）→ 右舞台待机场景取数
@@ -175,7 +177,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   // ─── WebSocket 连接：指数退避重连 + 断线发送队列（见 ws.mjs）───
   useEffect(() => {
     const rws = new ResilientWebSocket(WS_URL, {
-      onMessage: (data: any) => handleEvent(data),
+      onMessage: (data: any) => {
+        drivingView.observe(data)
+        handleEvent(data)
+      },
       onStatus: (s: string) => {
         setConnected(s === 'open')
         if (s !== 'open') {
@@ -918,7 +923,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const requestLocation = () => setLocationEnabled(true)
 
   return (
-    <div className="au-app">
+    <DrivingProvider value={drivingView}>
+    <div className="au-app" data-drive={drivingView.driving ? 'on' : 'off'}>
       <div className="au-scene-bg" aria-hidden>
         <span className="blob b1" />
         <span className="blob b2" />
@@ -956,5 +962,6 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         />
       )}
     </div>
+    </DrivingProvider>
   )
 }

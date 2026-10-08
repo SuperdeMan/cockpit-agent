@@ -10,41 +10,8 @@
 // 建议（§6 触发③）：身份 C + 横屏 + keep-awake 同时成立时**只建议**（胶囊），不自动切——自动切会误伤副驾用平板。
 import type { Identity } from './presence'
 
-export const DRIVING_EXIT_GRACE_MS = 30_000
-
-export interface DrivingEdgeFact {
-  /** 当前行车段的起点：由非行车转为 true 的那一刻；段内连续 true 不刷新；0=从未 */
-  trueAt: number
-  /** 最近一次「由 true 转 false」的时刻（连续 false 不刷新——「持续 30s」从第一条 false 起算）；0=无 */
-  falseAt: number
-}
-
-export const NO_EDGE_DRIVING: DrivingEdgeFact = { trueAt: 0, falseAt: 0 }
-
-export function drivingActive(f: {
-  manual: boolean
-  edge: DrivingEdgeFact
-  now: number
-  /** 用户在设置页「自动行车中 · 退出」的时刻；0/缺省=没退过。只压住 trueAt <= dismissedAt 的那一段 */
-  dismissedAt?: number
-}): boolean {
-  if (f.manual) return true
-  if (f.edge.trueAt <= 0) return false
-  if ((f.dismissedAt ?? 0) >= f.edge.trueAt) return false
-  if (f.edge.falseAt <= f.edge.trueAt) return true
-  return f.now - f.edge.falseAt < DRIVING_EXIT_GRACE_MS
-}
-
-/** process / final 帧到达时的事实登记（SessionCore 调用；写成 reducer 是为了可测） */
-export function recordEdgeDriving(prev: DrivingEdgeFact, driving: boolean, now: number): DrivingEdgeFact {
-  if (driving) {
-    const inSegment = prev.trueAt > 0 && prev.falseAt <= prev.trueAt
-    return inSegment ? prev : { trueAt: now, falseAt: 0 }
-  }
-  if (prev.trueAt <= 0) return prev // 从没行车过，false 不需要记
-  if (prev.falseAt > prev.trueAt) return prev // 已在 false 段里：不刷新起点
-  return { trueAt: prev.trueAt, falseAt: now }
-}
+export { DRIVING_EXIT_GRACE_MS, NO_EDGE_DRIVING, drivingActive, recordEdgeDriving } from '@shared/drivingMode.mjs'
+export type { DrivingEdgeFact } from '@shared/drivingMode.mjs'
 
 export type ComposerInputMode = 'always' | 'folded' | 'hidden'
 

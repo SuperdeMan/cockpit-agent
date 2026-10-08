@@ -1,123 +1,345 @@
-/* ───────────────────────────────────────────────────────────────────────────
-   Aurora Glass · 极光液态座舱 — 设计系统层（P0 地基）
-   设计契约：Figma Make guidelines/Guidelines.md v1.0
-   非破坏式：所有 token 以 --au-* 前缀命名，与现有 styles.css token 零冲突；
-   现有界面继续用旧 token 渲染，新组件/新页面（P1+）改用本层。
-   主题切换沿用 <html data-theme|data-font|data-touch>（见 settings.tsx）。
-   ─────────────────────────────────────────────────────────────────────────── */
+/* Aurora Glass v2 - token declaration source.
+   Figma: QNXzATLf4WOKLD1rV1dilp, I1 export: design/visual-v2.tokens.json.
+   Runtime modes: data-theme, data-drive, data-font. Legacy consumers migrate in I2-I6. */
+@font-face {
+  font-family: 'Inter'; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url('/fonts/Inter-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500 700; font-display: swap;
+  src: url('/fonts/JetBrainsMono-latin.woff2') format('woff2');
+}
 
+/* BEGIN FIGMA VISUAL V2 TOKENS */
+/* Figma QNXzATLf4WOKLD1rV1dilp, 2026-10-08. Regenerate; do not edit this block. */
+/* Color / Dark */
 :root {
-  /* 字体（§7）：UI 中文/西文 + 仪表级等宽数字 */
-  --au-font-ui: 'Inter', 'Noto Sans SC', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
-  --au-font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --au-bg: #06080f;
+  --au-stage: #06080f;
+  --au-stage-scrim: #06080fe0;
+  --au-material-panel: #0a0e1ac2;
+  --au-material-bar: #06080f99;
+  --au-material-solid: #121829;
+  --au-material-highlight: #ffffff1a;
+  --au-surface-1: #ffffff0f;
+  --au-surface-2: #ffffff1a;
+  --au-surface-3: #ffffff29;
+  --au-text: #fffffff0;
+  --au-text-2: #ffffffb2;
+  --au-text-3: #ffffff80;
+  --au-icon: #ffffffb2;
+  --au-line: #ffffff1a;
+  --au-line-2: #ffffff29;
+  --au-primary: #46d6e0;
+  --au-primary-ink: #06080f;
+  --au-primary-soft: #46d6e024;
+  --au-primary-line: #46d6e03d;
+  --au-warn: #f5a524;
+  --au-warn-fill: #f59e0b;
+  --au-warn-soft: #f59e0b29;
+  --au-warn-line: #f59e0b66;
+  --au-danger: #f26464;
+  --au-danger-soft: #f2646429;
+  --au-online: #2bd46e;
+  --au-up: #f26464;
+  --au-down: #2bd46e;
+  --au-conf-high: #46d6e0;
+  --au-conf-mid: #f5a524;
+  --au-conf-low: #9ca3af;
+  --au-cyan: #5be9ff;
+  --au-blue: #5b8cff;
+  --au-violet: #9a6bff;
+  --au-magenta: #ff6bd6;
+  --au-aqi-0: #6b7280;
+  --au-aqi-1: #34d399;
+  --au-aqi-2: #a3e635;
+  --au-aqi-3: #fcd34d;
+  --au-aqi-4: #fb923c;
+  --au-aqi-5: #ef4444;
+  --au-aqi-6: #9333ea;
+  --au-shadow-color: #00000066;
+  --au-scrim: #00000099;
+  --au-map-land: #0b1222;
+  --au-map-water: #0c1a2e;
+  --au-map-park: #0d1c1c;
+  --au-map-road-major: #1d2944;
+  --au-map-road-minor: #141c30;
+  --au-map-casing: #070b15;
+  --au-map-label: #ffffff80;
+  --au-map-route: #46d6e0;
+  --au-warn-ink: #1a1203;
+}
 
-  /* 深空底色（§3-A）*/
-  --au-bg: #06080F;          /* Space-950 页面最底层 */
-  --au-bg-2: #0A0E1A;        /* Space-900 */
-  --au-space-800: #0F1525;
-  --au-space-700: #151D30;
-  --au-space-600: #1C2540;
-  --au-space-500: #243055;
+/* Color / Light */
+:root[data-theme='light'] {
+  --au-bg: #edf1fa;
+  --au-stage: #edf1fa;
+  --au-stage-scrim: #edf1fadb;
+  --au-material-panel: #ffffffd6;
+  --au-material-bar: #edf1fab8;
+  --au-material-solid: #ffffff;
+  --au-material-highlight: #ffffff;
+  --au-surface-1: #0a0e1a0a;
+  --au-surface-2: #0a0e1a12;
+  --au-surface-3: #0a0e1a1f;
+  --au-text: #0a0e1aeb;
+  --au-text-2: #0a0e1aa8;
+  --au-text-3: #0a0e1a7a;
+  --au-icon: #0a0e1aa8;
+  --au-line: #0a0e1a1a;
+  --au-line-2: #0a0e1a29;
+  --au-primary: #0369a1;
+  --au-primary-ink: #ffffff;
+  --au-primary-soft: #0369a11a;
+  --au-primary-line: #0369a12e;
+  --au-warn: #92400e;
+  --au-warn-fill: #d97706;
+  --au-warn-soft: #b453091f;
+  --au-warn-line: #92400e66;
+  --au-danger: #c62828;
+  --au-danger-soft: #c628281a;
+  --au-online: #166534;
+  --au-up: #c62828;
+  --au-down: #166534;
+  --au-conf-high: #0369a1;
+  --au-conf-mid: #92400e;
+  --au-conf-low: #4b5563;
+  --au-cyan: #5be9ff;
+  --au-blue: #5b8cff;
+  --au-violet: #9a6bff;
+  --au-magenta: #ff6bd6;
+  --au-aqi-0: #6b7280;
+  --au-aqi-1: #0f9d63;
+  --au-aqi-2: #4d8b00;
+  --au-aqi-3: #9a7400;
+  --au-aqi-4: #c2570a;
+  --au-aqi-5: #dc2626;
+  --au-aqi-6: #7e22ce;
+  --au-shadow-color: #0a0e1a1f;
+  --au-scrim: #0a0e1a7a;
+  --au-map-land: #e8edf5;
+  --au-map-water: #c9dcef;
+  --au-map-park: #d7e8d9;
+  --au-map-road-major: #ffffff;
+  --au-map-road-minor: #f7f9fc;
+  --au-map-casing: #cbd4e3;
+  --au-map-label: #0a0e1a7a;
+  --au-map-route: #0369a1;
+  --au-warn-ink: #1a1203;
+}
 
-  /* 文字三级冷白灰阶（正文绝不上虹彩）*/
-  --au-text: rgba(255, 255, 255, 0.92);   /* Primary   ≥8.5:1 */
-  --au-text-2: rgba(255, 255, 255, 0.56); /* Secondary ≥4.5:1 */
-  --au-text-3: rgba(255, 255, 255, 0.32); /* Tertiary  ≥3.0:1 */
-  --au-line: rgba(255, 255, 255, 0.07);
-  --au-line-2: rgba(255, 255, 255, 0.12);
-  /* 内嵌 surface 填充（玻璃面板内的子块/控件底色）——随主题反相，浅色下变浅墨而非透明白 */
-  --au-fill: rgba(255, 255, 255, 0.05);
-  --au-fill-2: rgba(255, 255, 255, 0.10);
-  --au-hi: rgba(255, 255, 255, 0.16); /* 顶缘高光 */
+/* Size / 泊车·标准 */
+:root {
+  --au-size-target: 64px;
+  --au-size-chip: 48px;
+  --au-size-icon: 28px;
+  --au-size-orb: 72px;
+  --au-size-panel: 800px;
+  --au-type-display-size: 56px;
+  --au-type-display-line: 68px;
+  --au-type-headline-size: 40px;
+  --au-type-headline-line: 52px;
+  --au-type-title-size: 30px;
+  --au-type-title-line: 40px;
+  --au-type-answer-size: 28px;
+  --au-type-answer-line: 42px;
+  --au-type-body-size: 24px;
+  --au-type-body-line: 36px;
+  --au-type-label-size: 22px;
+  --au-type-label-line: 28px;
+  --au-type-caption-size: 20px;
+  --au-type-caption-line: 28px;
+  --au-type-num-hero-size: 160px;
+  --au-type-num-hero-line: 160px;
+  --au-type-num-xl-size: 72px;
+  --au-type-num-xl-line: 80px;
+  --au-type-num-l-size: 44px;
+  --au-type-num-l-line: 52px;
+  --au-type-num-m-size: 28px;
+  --au-type-num-m-line: 36px;
+}
 
-  /* 交互蓝：非 AI 时刻唯一高亮色（§5 铁律）*/
-  --au-primary: #46D6E0;
-  --au-primary-ink: #06080F;
+/* Size / 行车·标准 */
+:root[data-drive='on'] {
+  --au-size-target: 76px;
+  --au-size-chip: 56px;
+  --au-size-icon: 32px;
+  --au-size-orb: 96px;
+  --au-size-panel: 680px;
+  --au-type-display-size: 56px;
+  --au-type-display-line: 68px;
+  --au-type-headline-size: 44px;
+  --au-type-headline-line: 56px;
+  --au-type-title-size: 34px;
+  --au-type-title-line: 44px;
+  --au-type-answer-size: 32px;
+  --au-type-answer-line: 46px;
+  --au-type-body-size: 28px;
+  --au-type-body-line: 40px;
+  --au-type-label-size: 26px;
+  --au-type-label-line: 32px;
+  --au-type-caption-size: 24px;
+  --au-type-caption-line: 32px;
+  --au-type-num-hero-size: 180px;
+  --au-type-num-hero-line: 180px;
+  --au-type-num-xl-size: 88px;
+  --au-type-num-xl-line: 96px;
+  --au-type-num-l-size: 52px;
+  --au-type-num-l-line: 60px;
+  --au-type-num-m-size: 32px;
+  --au-type-num-m-line: 40px;
+}
 
-  /* AI 签名渐变——极光（§4）。仅用于 §5 允许的 5 处。*/
-  --au-cyan: #5BE9FF;
-  --au-blue: #5B8CFF;
-  --au-violet: #9A6BFF;
-  --au-magenta: #FF6BD6;
-  --au-aurora: linear-gradient(135deg, #5BE9FF 0%, #5B8CFF 33%, #9A6BFF 66%, #FF6BD6 100%);
-  --au-aurora-conic: conic-gradient(from 0deg, #5BE9FF, #5B8CFF, #9A6BFF, #FF6BD6, #5BE9FF);
+/* Size / 泊车·大字 */
+:root[data-font='large'] {
+  --au-size-target: 70px;
+  --au-size-chip: 52px;
+  --au-size-icon: 32px;
+  --au-size-orb: 72px;
+  --au-size-panel: 840px;
+  --au-type-display-size: 64px;
+  --au-type-display-line: 78px;
+  --au-type-headline-size: 46px;
+  --au-type-headline-line: 60px;
+  --au-type-title-size: 34px;
+  --au-type-title-line: 46px;
+  --au-type-answer-size: 32px;
+  --au-type-answer-line: 48px;
+  --au-type-body-size: 28px;
+  --au-type-body-line: 42px;
+  --au-type-label-size: 26px;
+  --au-type-label-line: 32px;
+  --au-type-caption-size: 23px;
+  --au-type-caption-line: 32px;
+  --au-type-num-hero-size: 160px;
+  --au-type-num-hero-line: 160px;
+  --au-type-num-xl-size: 80px;
+  --au-type-num-xl-line: 88px;
+  --au-type-num-l-size: 50px;
+  --au-type-num-l-line: 58px;
+  --au-type-num-m-size: 32px;
+  --au-type-num-m-line: 40px;
+}
 
-  /* 语义色（实色，绝不虹彩化；A股红涨绿跌）*/
-  --au-up: #EF4444;          /* 涨（A股红）*/
-  --au-down: #22C55E;        /* 跌（A股绿）*/
-  --au-conf-high: #46D6E0;
-  --au-conf-mid: #F59E0B;
-  --au-conf-low: #6B7280;
-  --au-danger: #EF4444;
-  --au-warn: #F59E0B;
-  --au-online: #34D399;
+/* Size / 行车·大字 */
+:root[data-drive='on'][data-font='large'] {
+  --au-size-target: 84px;
+  --au-size-chip: 62px;
+  --au-size-icon: 36px;
+  --au-size-orb: 96px;
+  --au-size-panel: 720px;
+  --au-type-display-size: 64px;
+  --au-type-display-line: 78px;
+  --au-type-headline-size: 50px;
+  --au-type-headline-line: 64px;
+  --au-type-title-size: 40px;
+  --au-type-title-line: 50px;
+  --au-type-answer-size: 36px;
+  --au-type-answer-line: 52px;
+  --au-type-body-size: 32px;
+  --au-type-body-line: 46px;
+  --au-type-label-size: 30px;
+  --au-type-label-line: 36px;
+  --au-type-caption-size: 28px;
+  --au-type-caption-line: 36px;
+  --au-type-num-hero-size: 180px;
+  --au-type-num-hero-line: 180px;
+  --au-type-num-xl-size: 96px;
+  --au-type-num-xl-line: 104px;
+  --au-type-num-l-size: 60px;
+  --au-type-num-l-line: 68px;
+  --au-type-num-m-size: 36px;
+  --au-type-num-m-line: 44px;
+}
 
-  /* AQI 7 档（§3-A）*/
-  --au-aqi-1: #34D399;       /* 优 0–50 */
-  --au-aqi-2: #A3E635;       /* 良 51–100 */
-  --au-aqi-3: #FCD34D;       /* 轻度 101–150 */
-  --au-aqi-4: #FB923C;       /* 中度 151–200 */
-  --au-aqi-5: #EF4444;       /* 重度 201–300 */
-  --au-aqi-6: #9333EA;       /* 严重 301+ */
-  --au-aqi-0: #6B7280;       /* 未知 */
+/* Space / Default */
+:root {
+  --au-space-4: 4px;
+  --au-space-8: 8px;
+  --au-space-12: 12px;
+  --au-space-16: 16px;
+  --au-space-24: 24px;
+  --au-space-32: 32px;
+  --au-space-48: 48px;
+  --au-space-64: 64px;
+}
 
-  /* 液态玻璃材质（§6 深色）*/
-  --au-glass-bg: rgba(255, 255, 255, 0.056);
-  --au-glass-blur: 32px;
-  --au-glass-tint: rgba(180, 220, 255, 0.09);
-  --au-glass-bd-top: rgba(255, 255, 255, 0.17);
-  --au-glass-bd-left: rgba(255, 255, 255, 0.13);
-  --au-glass-bd-right: rgba(255, 255, 255, 0.07);
-  --au-glass-bd-bottom: rgba(255, 255, 255, 0.05);
-  --au-glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.13);
-  --au-glass-fallback: rgba(20, 28, 48, 0.92); /* 不支持 backdrop-filter 时的纯色降级 */
-
-  /* 圆角（squircle，§8）*/
+/* Radius / Default */
+:root {
   --au-r-sm: 8px;
   --au-r-md: 12px;
   --au-r-lg: 16px;
-  --au-r-xl: 20px;
-  --au-r-2xl: 24px;          /* 主面板推荐默认 */
-  --au-r-3xl: 28px;
-
-  /* 阴影 / 辉光（§8）*/
-  --au-shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.30);
-  --au-shadow-md: 0 8px 32px rgba(0, 0, 0, 0.44);
-  --au-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
-  --au-glow-aurora: 0 0 32px rgba(91, 142, 255, 0.45);
-  --au-glow-teal: 0 4px 18px rgba(70, 214, 224, 0.40);
-
-  /* 玻璃面板完整投影（§6）*/
-  --au-glass-shadow: 0 8px 40px rgba(0, 0, 0, 0.50), 0 2px 12px rgba(0, 0, 0, 0.28), var(--au-glass-inset);
+  --au-r-2xl: 24px;
+  --au-r-4xl: 32px;
+  --au-r-full: 999px;
 }
 
-/* ─── 浅色主题（磨砂白，§3-B / §12）——沿用 [data-theme='light'] ─── */
-:root[data-theme='light'] {
-  --au-bg: #EDF1FA;
-  --au-bg-2: #E4EBF7;
-  --au-text: rgba(10, 14, 26, 0.92);
-  --au-text-2: rgba(10, 14, 26, 0.55);
-  --au-text-3: rgba(10, 14, 26, 0.30);
-  --au-line: rgba(10, 14, 26, 0.08);
-  --au-line-2: rgba(10, 14, 26, 0.14);
-  --au-fill: rgba(10, 14, 26, 0.045);
-  --au-fill-2: rgba(10, 14, 26, 0.08);
-  --au-hi: rgba(255, 255, 255, 0.85);
-  --au-primary: #0A8FCC;     /* 浅色加深以保对比 */
-
-  --au-glass-bg: rgba(255, 255, 255, 0.76);
-  --au-glass-tint: transparent;          /* 浅色去冷色 tint */
-  --au-glass-bd-top: rgba(255, 255, 255, 1);
-  --au-glass-bd-left: rgba(255, 255, 255, 1);
-  --au-glass-bd-right: rgba(10, 14, 26, 0.06);
-  --au-glass-bd-bottom: rgba(10, 14, 26, 0.06);
-  --au-glass-inset: inset 0 1px 0 rgba(255, 255, 255, 1);
-  --au-glass-fallback: rgba(255, 255, 255, 0.94);
-  --au-glass-shadow: 0 8px 32px rgba(10, 14, 26, 0.09), 0 2px 8px rgba(10, 14, 26, 0.05), var(--au-glass-inset);
-  --au-shadow-sm: 0 4px 16px rgba(10, 14, 26, 0.06);
-  --au-shadow-md: 0 8px 32px rgba(10, 14, 26, 0.09);
-  --au-shadow-lg: 0 16px 48px rgba(10, 14, 26, 0.12);
+/* Motion / Default */
+:root {
+  --au-dur-fast: 120ms;
+  --au-dur-base: 200ms;
+  --au-dur-slow: 320ms;
+  --au-dur-slower: 480ms;
+  --au-orb-breathe-idle: 4000ms;
+  --au-orb-breathe-armed: 2400ms;
+  --au-orb-spin: 2000ms;
+  --au-glow-breathe: 3000ms;
+  --au-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --au-ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
+  --au-ease-decel: cubic-bezier(0, 0, 0, 1);
+  --au-ease-accel: cubic-bezier(0.3, 0, 1, 1);
 }
+/* END FIGMA VISUAL V2 TOKENS */
+
+/* Compatibility aliases: reuse roles, never introduce another palette. */
+:root {
+  --au-font-ui: 'Inter', 'HarmonyOS Sans SC', 'MiSans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --au-font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --au-bg-2: var(--au-material-solid);
+  --au-space-800: var(--au-material-solid);
+  --au-space-700: var(--au-surface-1);
+  --au-space-600: var(--au-surface-2);
+  --au-space-500: var(--au-surface-3);
+  --au-fill: var(--au-surface-1);
+  --au-fill-2: var(--au-surface-2);
+  --au-hi: var(--au-material-highlight);
+  --au-r-xl: var(--au-r-2xl);
+  --au-r-3xl: var(--au-r-4xl);
+  --au-glass-bg: var(--au-material-panel);
+  --au-glass-blur: 40px;
+  --au-glass-tint: transparent;
+  --au-glass-bd-top: var(--au-material-highlight);
+  --au-glass-bd-left: var(--au-line-2);
+  --au-glass-bd-right: var(--au-line);
+  --au-glass-bd-bottom: var(--au-line);
+  --au-glass-inset: inset 0 1px 0 var(--au-material-highlight);
+  --au-glass-fallback: var(--au-material-solid);
+  --au-shadow-sm: 0 4px 16px var(--au-shadow-color);
+  --au-shadow-md: 0 8px 32px var(--au-shadow-color);
+  --au-shadow-lg: 0 16px 48px var(--au-shadow-color);
+  --au-glass-shadow: var(--au-shadow-md), var(--au-glass-inset);
+  --au-glow-aurora: 0 0 32px color-mix(in srgb, var(--au-blue) 45%, transparent);
+  --au-glow-teal: 0 4px 18px var(--au-primary-line);
+  --au-aurora: linear-gradient(135deg, var(--au-cyan), var(--au-blue) 33%, var(--au-violet) 66%, var(--au-magenta));
+  --au-aurora-conic: conic-gradient(from 0deg, var(--au-cyan), var(--au-blue), var(--au-violet), var(--au-magenta), var(--au-cyan));
+  --au-control-target: var(--au-size-target);
+}
+:root[data-drive='on'] { --au-glass-blur: 24px; }
+:root[data-touch='large'] { --au-control-target: max(var(--au-size-target), 70px); }
+:root[data-touch='large'][data-drive='on'] { --au-control-target: max(var(--au-size-target), 84px); }
+
+/* Existing literal sizes migrate to these type roles in I2-I6. */
+.au-type-display { font-size: var(--au-type-display-size); line-height: var(--au-type-display-line); }
+.au-type-headline { font-size: var(--au-type-headline-size); line-height: var(--au-type-headline-line); }
+.au-type-title { font-size: var(--au-type-title-size); line-height: var(--au-type-title-line); }
+.au-type-answer { font-size: var(--au-type-answer-size); line-height: var(--au-type-answer-line); }
+.au-type-body { font-size: var(--au-type-body-size); line-height: var(--au-type-body-line); }
+.au-type-label { font-size: var(--au-type-label-size); line-height: var(--au-type-label-line); }
+.au-type-caption { font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); }
+.au-type-num-hero { font-size: var(--au-type-num-hero-size); line-height: var(--au-type-num-hero-line); }
+.au-type-num-xl { font-size: var(--au-type-num-xl-size); line-height: var(--au-type-num-xl-line); }
+.au-type-num-l { font-size: var(--au-type-num-l-size); line-height: var(--au-type-num-l-line); }
+.au-type-num-m { font-size: var(--au-type-num-m-size); line-height: var(--au-type-num-m-line); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    液态玻璃容器（§6）
@@ -146,16 +368,16 @@
 }
 .au-glass > * { position: relative; z-index: 1; }
 
-/* 行车态降级：模糊 32→20px、不透明度升、辉光弱（§6/§11）。给 <html data-drive='on'> 用 */
+/* 行车态降级：模糊 40→24px、不透明度升、辉光弱（§6/§11）。给 <html data-drive='on'> 用 */
 :root[data-drive='on'] .au-glass {
-  -webkit-backdrop-filter: blur(20px) saturate(1.1);
-  backdrop-filter: blur(20px) saturate(1.1);
-  background: rgba(255, 255, 255, 0.10);
+  -webkit-backdrop-filter: blur(var(--au-glass-blur)) saturate(1.1);
+  backdrop-filter: blur(var(--au-glass-blur)) saturate(1.1);
+  background: color-mix(in srgb, var(--au-material-solid) 92%, transparent);
 }
 
 /* 不支持 backdrop-filter（旧车机 webview）→ 纯色面板降级 */
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .au-glass { background: var(--au-glass-fallback); }
+  .au-glass, :root[data-drive='on'] .au-glass { background: var(--au-glass-fallback); }
   .au-glass::before { display: none; }
 }
 
@@ -186,8 +408,12 @@
 .au-num {
   font-family: var(--au-font-mono);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
+.au-type-display { letter-spacing: -0.01em; }
+.au-type-headline { letter-spacing: -0.5px; }
+.au-type-num-hero { letter-spacing: -4px; }
+.au-type-num-xl, .au-type-num-l { letter-spacing: -2px; }
 
 /* 聆听/思考态屏幕边缘极光辉光（类 Siri 激活态，§5）*/
 .au-edge-glow {
