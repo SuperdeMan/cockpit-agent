@@ -1,0 +1,84 @@
+version: 1
+split: regression
+note: >-
+  F01 手册问答 / F08 信息（docs/design/2026-10-09-v2-core-journey-freeze.md §3）。F01 原句取自
+  test/eval_corpus/manual_rag_colloquial.yaml 里与 v2 种子主题不重复的题，三条带追问（指代上一题的对象）；「怎么打开 / 怎么开启 /
+  怎么折叠」这类怎么用的问句同时是不执行检查（端侧当成命令执行即零执行护栏判失败）。F08 只收不用地图检索的信息问题。全程零动作。
+cases:
+  # ── F01 手册问答 ──────────────────────────────────────────────
+  - id: M01
+    family: manual_context
+    turns:
+      - {say: "定速巡航怎么设置", expect: {manual: true}}
+      - {say: "那跟车距离能调吗", expect: {manual: true}}
+  - id: M02
+    family: manual_single
+    turns:
+      - {say: "儿童安全锁在哪里", expect: {manual: true}}
+  - id: M03
+    family: manual_howto
+    turns:
+      - {say: "车道保持辅助怎么打开", expect: {manual: true}}
+  - id: M04
+    family: manual_single
+    turns:
+      - {say: "自动泊车功能支持垂直车位吗", expect: {manual: true}}
+  - id: M05
+    family: manual_single
+    turns:
+      - {say: "无线充电对手机壳厚度有要求吗", expect: {manual: true}}
+  - id: M06
+    family: manual_context
+    turns:
+      - {say: "哨兵模式怎么开启", expect: {manual: true}}
+      - {say: "开了以后耗电吗", expect: {speech_not: ["没听清"]}}
+  - id: M07
+    family: manual_howto
+    turns:
+      - {say: "后排座椅怎么放倒", expect: {manual: true}}
+  - id: M08
+    family: manual_howto
+    turns:
+      - {say: "外后视镜怎么折叠", expect: {manual: true}}
+  - id: M09
+    family: manual_context
+    turns:
+      - {say: "能量回收有几档", expect: {manual: true}}
+      - {say: "怎么调", expect: {manual: true}}
+  - id: M10
+    family: manual_colloquial
+    turns:
+      - {say: "停车时有人刮车能录下来吗", expect: {manual: true}}
+  - id: M11
+    family: manual_single
+    turns:
+      - {say: "氛围灯能换哪些颜色", expect: {manual: true}}
+  # ── F08 信息 ────────────────────────────────────────────────────
+  - id: I01
+    family: weather
+    turns:
+      - {say: "后天广州会下雨吗", expect: {any_of: [{cards_any: [weather]}, {speech_any: ["广州"]}], speech_not: ["没听清"]}}
+  - id: I02
+    family: weather
+    turns:
+      - {say: "这周末深圳天气怎么样", expect: {any_of: [{cards_any: [weather]}, {speech_any: ["深圳"]}], speech_not: ["没听清"]}}
+  - id: I03
+    family: weather
+    turns:
+      - {say: "现在外面多少度", expect: {speech_any: ["度", "℃"], speech_not: ["没听清"]}}
+  - id: I04
+    family: news
+    turns:
+      - {say: "今天有什么科技新闻", expect: {speech_not: ["没听清", "没能把您的请求拆成"]}}
+  - id: I05
+    family: sports
+    turns:
+      - {say: "今晚有什么足球比赛", expect: {speech_not: ["没听清", "没能把您的请求拆成"]}}
+  - id: I06
+    family: knowledge
+    turns:
+      - {say: "光年是长度单位还是时间单位", expect: {speech_any: ["长度"], speech_not: ["没听清"]}}
+  - id: I07
+    family: timeliness
+    turns:
+      - {say: "昨天A股收盘多少点", expect: {speech_not: ["没听清", "没能把您的请求拆成"]}}

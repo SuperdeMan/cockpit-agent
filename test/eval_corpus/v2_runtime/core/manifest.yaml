@@ -46,3 +46,57 @@ journeys:
   - {id: A3-3, source: journeys/target_a.yaml, family: F08, lane: read_only}
   # ── F09 周边 ────────────────────────────────────────────────────
   - {id: B5-2, source: journeys/target_b.yaml, family: F09, lane: read_only}
+  # ── P1（2026-10-09）：只读、不依赖地图的家族补齐 ─────────────────────
+  # F01 手册问答
+  - {id: M01, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  - {id: M02, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  - {id: M03, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only, safety: must_pass}
+  - {id: M04, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  - {id: M05, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  - {id: M06, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only, safety: must_pass}
+  - {id: M07, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  - {id: M08, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only, safety: must_pass}
+  - {id: M09, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  - {id: M10, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  - {id: M11, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
+  # F02 挂起不丢答案
+  - {id: P01, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
+  - {id: P02, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
+  - {id: P03, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
+  - {id: P04, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
+  - {id: P05, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
+  - {id: P06, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
+  - {id: P07, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
+  - {id: P08, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
+  - {id: P09, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
+  - {id: P10, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
+  - {id: P11, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
+  - {id: P12, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
+  # F03 问句与否定不执行（全部安全必过）
+  - {id: Q01, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q02, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q03, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q04, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q05, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q06, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q07, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q08, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: Q09, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F03, lane: read_only, safety: must_pass}
+  # F08 信息
+  - {id: I01, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
+  - {id: I02, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
+  - {id: I03, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
+  - {id: I04, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
+  - {id: I05, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
+  - {id: I06, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
+  - {id: I07, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
+  # F12 受话与拒识（语音来源）
+  - {id: R01, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  - {id: R02, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
+     known_red: "乘客转述与用户向助手转述在文本上分不出，归声学（QA 交接 §5、2026-09-11 逐条核实）"}
+  - {id: R03, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  - {id: R04, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  - {id: R05, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  - {id: R06, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only, safety: must_pass}
+  - {id: R07, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  - {id: R08, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}

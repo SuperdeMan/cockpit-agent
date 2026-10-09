@@ -132,6 +132,23 @@ def test_one_turn_allows_only_explicit_llm_pin_meta(monkeypatch):
             meta_overrides={"merchant.write": "yes"}))
 
 
+def test_one_turn_takes_a_validated_session_location(monkeypatch):
+    """核心旅程冻结：7 月旅程的 `setup.location` 覆盖缺省坐标；只收合法的十进制经纬度。"""
+    monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)
+    monkeypatch.setattr(probe, "_TAIL_BUDGET_S", 0.1)
+    monkeypatch.setattr(probe, "TIMEOUT", 0.1)
+    socket = _Socket([{"type": "final", "speech": "完成", "actions": []}])
+
+    asyncio.run(probe._one_turn(socket, "session-loc", "明天杭州天气怎么样",
+                                meta_overrides={"current_lat": "22.5333", "current_lng": "113.9505"}))
+
+    assert socket.sent[0]["meta"]["current_lat"] == "22.5333"
+    assert socket.sent[0]["meta"]["current_lng"] == "113.9505"
+    for bad in ({"current_lat": "91"}, {"current_lng": "east"}, {"current_lat": "nan"}):
+        with pytest.raises(ValueError, match="meta override"):
+            asyncio.run(probe._one_turn(_Socket([]), "session-loc", "查天气", meta_overrides=bad))
+
+
 def test_merge_finals_only_fills_empty_primary_semantics():
     first = {
         "speech": "第一段",

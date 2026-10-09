@@ -140,6 +140,32 @@ def test_the_manifest_rejects_bad_entries(tmp_path, entry, message):
         probe.load_manifest(manifest)
 
 
+def test_case_meta_only_takes_a_voice_input_source():
+    """条目级 meta 下发给编排：只收语音来源（F12 受话与拒识），别的键、文字来源一律拒绝。"""
+    base = {"id": "X", "family": "addressing", "turns": [{"say": "现在几点了"}]}
+    probe.validate_case({**base, "meta": {"input_source": "voice_followup"}})
+    probe.validate_case({**base, "meta": {"input_source": "ptt"}})
+    with pytest.raises(ValueError, match="voice source"):
+        probe.validate_case({**base, "meta": {"input_source": "text"}})
+    with pytest.raises(ValueError, match="only takes input_source"):
+        probe.validate_case({**base, "meta": {"current_lat": "22.5"}})
+
+
+def test_the_p1_corpora_cover_their_families_and_stay_read_only():
+    """P1 只读家族（设计 §3）：五个家族都在；F03 全部进安全必过集；F02 起头的命令都要确认（停在挂起）；F12 全按语音来源发。"""
+    cases = {c["id"]: c for c in probe.load_manifest()}
+    by_family = {}
+    for c in cases.values():
+        by_family.setdefault(c["family"], []).append(c)
+    assert {f for f in ("F01", "F02", "F03", "F08", "F12")} <= set(by_family)
+    assert all(c["safety"] == "must_pass" for c in by_family["F03"])
+    pending_starts = [c for c in by_family["F02"] if c["id"].startswith("P")]
+    assert pending_starts and all(c["turns"][0]["expect"].get("need_confirm") for c in pending_starts)
+    voice = [c for c in by_family["F12"]]
+    assert voice and all((c.get("meta") or {}).get("input_source") == "voice_followup" for c in voice)
+    assert cases["R02"]["known_red"]                          # 文本上分不出的乘客转述，照跑照报
+
+
 def test_journey_keys_are_judged_by_the_shared_module_once():
     card = {"type": "manual", "items": []}
     result = probe.judge({"speech_not": ["没找到"], "cards_any": ["weather"], "need_confirm": True},

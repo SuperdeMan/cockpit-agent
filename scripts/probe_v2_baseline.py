@@ -43,6 +43,9 @@ FAMILIES = {f"F{n:02d}" for n in range(1, 13)}
 LANES = ("read_only", "synthetic_writes", "simulated_vehicle")
 #: 7 月旅程在 v2 运行器里认的原语：一轮只有 `say` + `expect`，前置只有 `setup.location`；别的记进 `unsupported`，跑数时记「未测」
 _JOURNEY_TURN_KEYS = {"say", "expect"}
+#: 条目级 meta 只认这些键：F12 受话与拒识要按语音来源发（`voice_*` / `ptt`，与编排 `is_voice_input_source` 同一口径）。
+#: 位置走 7 月旅程的 `setup.location`；别的键一律拒绝——meta 是下发给编排的，不许语料随手塞别的东西。
+_CASE_META_KEYS = {"input_source"}
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
 # Scene admission is currently Agent-wide (including media/navigation/profile scopes).
 # Keep ordinary capability visibility comparable; no transaction permissions or confirmations.
@@ -80,6 +83,12 @@ def validate_case(case: dict) -> None:
     """冻结语料的静态护栏（v2 语料与清单引用的 7 月旅程同一份）：从不确认、取消只说「取消」、不许肯定答复。"""
     if not case.get("family") or not case.get("turns"):
         raise ValueError("case requires family and turns")
+    meta = case.get("meta") or {}
+    if set(meta) - _CASE_META_KEYS:
+        raise ValueError("case meta only takes input_source")
+    source = str(meta.get("input_source") or "")
+    if "input_source" in meta and not (source.startswith("voice_") or source == "ptt"):
+        raise ValueError("input_source must be a voice source (voice_* or ptt)")
     for turn in case["turns"]:
         if turn.get("confirm") or turn.get("is_confirmation"):
             raise ValueError("baseline must never confirm")
@@ -314,6 +323,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
             meta = {"llm_provider": manifest["chat"]["provider"], "llm_model": manifest["chat"]["model"]}
             if case.get("location"):            # 7 月旅程的 setup.location：这次会话的当前位置
                 meta.update(current_lat=case["location"]["lat"], current_lng=case["location"]["lng"])
+            meta.update(case.get("meta") or {})  # 条目级 meta（校验过：只有语音来源）
             obs = await wire._one_turn(ws, session, turn["say"], trace_id=trace,
                                        operation_id=pending if turn.get("cancel_pending") else "",
                                        meta_overrides=meta)

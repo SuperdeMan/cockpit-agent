@@ -1,0 +1,55 @@
+version: 1
+split: regression
+note: >-
+  F12 受话与拒识（docs/design/2026-10-09-v2-core-journey-freeze.md §3）。按语音来源（meta.input_source = voice_followup，
+  免唤醒追问）发：不是对助手说的话静默拒识（final 带 rejected 卡），对助手说的照常回答；全程零动作（运行器护栏）。
+  原句取自 test/eval_corpus/rejection_cases.yaml 的拒识类与求信息的对照类；会被端侧直接执行的车控对照不收（只读车道）。
+cases:
+  - id: R01
+    family: addressing_passenger
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "妈你到哪了，我们在停车场等你"
+        expect: {cards_any: [rejected]}
+  - id: R02
+    family: addressing_passenger
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "他昨天跟我说那个项目黄了"
+        expect: {cards_any: [rejected]}
+  - id: R03
+    family: addressing_phone
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "喂，听得到吗，我在开车呢"
+        expect: {cards_any: [rejected]}
+  - id: R04
+    family: addressing_broadcast
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "据央视新闻报道，今日多地迎来强降雨天气"
+        expect: {cards_any: [rejected]}
+  - id: R05
+    family: addressing_announcement
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "下一站人民广场，请从后门下车"
+        expect: {cards_any: [rejected]}
+  - id: R06
+    family: addressing_broadcast
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "接下来为您播放一首经典老歌"
+        expect: {cards_any: [rejected]}
+  - id: R07
+    family: addressing_control
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "现在几点了"
+        expect: {speech_any: ["点"], speech_not: ["没听清"]}
+  - id: R08
+    family: addressing_control
+    meta: {input_source: voice_followup}
+    turns:
+      - say: "帮我查下明天杭州的天气"
+        expect: {any_of: [{cards_any: [weather]}, {speech_any: ["杭州"]}], speech_not: ["没听清"]}
