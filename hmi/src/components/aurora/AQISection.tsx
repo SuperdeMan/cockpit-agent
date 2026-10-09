@@ -14,13 +14,13 @@ export function AQISection({ aqi, category }: { aqi?: number | string; category?
   const idx = n == null || Number.isNaN(n) ? -1 : LEVELS.findIndex((l) => (n as number) <= l.max)
   const active = idx >= 0 ? LEVELS[idx] : null
   return (
-    <div>
+    <div className="au-aqi-section">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <span style={{ fontSize: 13, color: 'var(--au-text-2)' }}>空气质量</span>
         {active && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--au-text)' }}>
             <i style={{ width: 7, height: 7, borderRadius: '50%', background: `var(${active.v})`, flex: 'none' }} />
-            <b className="au-num" style={{ color: `var(${active.v})` }}>{n}</b> {category || active.name}
+            <b className="au-num" style={{ color: 'var(--au-text)' }}>{n}</b> {category || active.name}
           </span>
         )}
       </div>
@@ -34,8 +34,8 @@ export function AQISection({ aqi, category }: { aqi?: number | string; category?
               height: 6,
               borderRadius: 3,
               background: `var(${l.v})`,
-              opacity: idx < 0 ? 0.5 : i === idx ? 1 : 0.28,
-              boxShadow: i === idx ? `0 0 10px var(${l.v})` : 'none',
+              opacity: idx < 0 ? 0.28 : i === idx ? 1 : 0.28,
+              boxShadow: 'none',
             }}
           />
         ))}

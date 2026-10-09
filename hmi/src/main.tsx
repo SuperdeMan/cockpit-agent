@@ -10,6 +10,7 @@ import './conversation.css' // visual v2 conversation overrides follow the shell
 import { AuroraPreview } from './components/aurora/AuroraPreview'
 import { IconGallery } from './components/aurora/IconGallery'
 import { VisualTokensPreview } from './components/aurora/VisualTokensPreview'
+import { CardGallery } from './components/CardGallery'
 import { DEMO_WEATHER, DEMO_MAP, DEMO_CARDS, DEMO_STATES, DEMO_INFO, DEMO_CHARGE, DEMO_TRIP, DEMO_ROUTE, DEMO_RESULTS } from './demo'
 
 const DEMO_MAPS: Record<string, typeof DEMO_WEATHER> = { charge: DEMO_CHARGE, trip: DEMO_TRIP, route: DEMO_ROUTE, results: DEMO_RESULTS }
@@ -40,7 +41,7 @@ const seedMessages = params.has('demo')
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {params.has('tokens') ? <VisualTokensPreview /> : params.has('icons') ? (
+    {params.has('card-gallery') ? <CardGallery /> : params.has('tokens') ? <VisualTokensPreview /> : params.has('icons') ? (
       <IconGallery />
     ) : showAurora ? (
       <AuroraPreview />

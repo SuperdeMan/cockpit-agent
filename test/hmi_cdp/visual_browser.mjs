@@ -13,17 +13,19 @@ export async function withVisualPage(batch, run) {
   const exe = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(existsSync)
   assert.ok(exe, 'Edge is required')
   const port = 9339
-  const browser = spawn(exe, ['--headless=new', '--no-first-run', '--disable-extensions', '--disable-features=Translate,EdgeTranslate', '--force-device-scale-factor=1',
+  assert.ok((await fetch(base)).ok, 'Vite must be running before visual QA')
+  const browser = spawn(exe, ['--headless=new', '--guest', '--no-first-run', '--disable-extensions', '--disable-features=Translate,EdgeTranslate', '--force-device-scale-factor=1',
     `--remote-debugging-port=${port}`, `--user-data-dir=${join(out, 'browser-profile')}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' })
   const cdp = new Cdp()
   try {
     let pages
     for (let i = 0; i < 60; i++) {
-      try { pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); if (pages.length) break } catch {}
+      try { pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); if (pages.some(p => p.type === 'page' && p.url.startsWith('about:blank'))) break } catch {}
       await sleep(250)
     }
-    assert.ok(pages?.length, 'browser did not start')
-    cdp.ws = new WebSocket(pages.find(p => p.type === 'page').webSocketDebuggerUrl)
+    const target = pages?.find(p => p.type === 'page' && p.url.startsWith('about:blank'))
+    assert.ok(target, 'isolated blank browser page did not start')
+    cdp.ws = new WebSocket(target.webSocketDebuggerUrl)
     await new Promise((res, rej) => { cdp.ws.onopen = res; cdp.ws.onerror = rej })
     cdp.ws.onmessage = ev => cdp._onMessage(String(ev.data))
     for (const domain of ['Page', 'Runtime', 'Network']) await cdp.send(`${domain}.enable`)
@@ -45,7 +47,8 @@ export async function withVisualPage(batch, run) {
     ` })
     const go = async query => {
       await cdp.send('Page.navigate', { url: base + '/' + query })
-      await cdp.waitFor("!!document.querySelector('.au-panel') && window.__visualSocket?.readyState===1")
+      await cdp.waitFor(query.includes('card-gallery') ? "!!document.querySelector('.au-card-gallery')"
+        : "!!document.querySelector('.au-panel') && window.__visualSocket?.readyState===1")
       await cdp.eval('document.fonts.ready.then(()=>true)')
       await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
       await sleep(600)

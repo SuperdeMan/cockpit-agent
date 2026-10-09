@@ -3,6 +3,36 @@
 // 后续将经 use_figma 推回 Figma A-8 页，保持设计源一致（见 docs/design 实施计划）。
 // 形态取标准线性图标语汇，与 Figma 导出的 39 个视觉一致。
 export const ICON_CUSTOM = {
+  // Shared rating data icons (visual v2 I4).
+  star: { w: 24, h: 24, body: '<path d="M12 3.5 L14.41 9.58 L20.94 10 L15.9 14.17 L17.53 20.5 L12 17 L6.47 20.5 L8.1 14.17 L3.06 10 L9.59 9.58 Z"/>' },
+  'star-filled': { w: 24, h: 24, body: '<path d="M12 3.5 L14.41 9.58 L20.94 10 L15.9 14.17 L17.53 20.5 L12 17 L6.47 20.5 L8.1 14.17 L3.06 10 L9.59 9.58 Z" fill="currentColor"/>' },
+  'star-half': {
+    w: 24,
+    h: 24,
+    body: '<path d="M12 3.5 L9.59 9.58 L3.06 10 L8.1 14.17 L6.47 20.5 L12 17 Z" fill="currentColor" stroke="none"/><path d="M12 3.5 L14.41 9.58 L20.94 10 L15.9 14.17 L17.53 20.5 L12 17 L6.47 20.5 L8.1 14.17 L3.06 10 L9.59 9.58 Z"/>',
+  },
+  // Visual v2 I4: Figma weather/data icons and promoted shared library icons.
+  camera: { w: 24, h: 24, body: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>' },
+  bolt: { w: 24, h: 24, body: '<path d="M4 14a1 1 0 0 1-.8-1.6l9-12A.5.5 0 0 1 13 .7V9h7a1 1 0 0 1 .8 1.6l-9 12a.5.5 0 0 1-.9-.3V14z"/>' },
+  'chevron-down': { w: 24, h: 24, body: '<path d="M6 9l6 6 6-6"/>' },
+  'external-link': { w: 24, h: 24, body: '<path d="M18 13.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5.5"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/>' },
+  football: {
+    w: 24,
+    h: 24,
+    body: '<circle cx="12" cy="12" r="9"/><path d="M12 8.6 L15.23 10.95 L14 14.75 L10 14.75 L8.77 10.95 Z"/><path d="M12 8.6 L12 3.1"/><path d="M15.23 10.95 L20.46 9.25"/><path d="M14 14.75 L17.23 19.2"/><path d="M10 14.75 L6.77 19.2"/><path d="M8.77 10.95 L3.54 9.25"/>',
+  },
+  lock: { w: 24, h: 24, body: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/><path d="M12 15v2.5"/>' },
+  layers: { w: 24, h: 24, body: '<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12.5l9 5 9-5"/><path d="M3 16.5l9 5 9-5"/>' },
+  trophy: {
+    w: 24,
+    h: 24,
+    body: '<path d="M8 3.5h8V9a4 4 0 0 1-8 0V3.5z"/><path d="M8 5.5H5.5a2.5 2.5 0 0 0 2.6 3.9"/><path d="M16 5.5h2.5a2.5 2.5 0 0 1-2.6 3.9"/><path d="M12 13v4"/><path d="M8.5 20.5h7"/><path d="M9.5 17h5v3.5h-5z"/>',
+  },
+  "weather-snow": {w:24,h:24,body:"\n<path d=\"M4.49999 13.5H17C17.9283 13.5663 18.8448 13.2611 19.5481 12.6516C20.2514 12.0421 20.6837 11.1782 20.75 10.25C20.8163 9.32172 20.5111 8.40514 19.9016 7.70188C19.2922 6.99861 18.4283 6.56628 17.5 6.49997C17.3635 5.37469 16.8487 4.32918 16.04 3.53488C15.2313 2.74059 14.1767 2.24466 13.0491 2.12842C11.9216 2.01218 10.788 2.28252 9.83423 2.89511C8.88048 3.50771 8.1632 4.4262 7.79999 5.49997C6.73913 5.06237 5.54787 5.06411 4.48829 5.50482C3.42871 5.94553 2.5876 6.78911 2.14999 7.84997C1.71239 8.91084 1.71413 10.1021 2.15484 11.1617C2.59555 12.2213 3.43913 13.0624 4.49999 13.5Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M8 17.5V17.51M12 17.5V17.51M16 17.5V17.51M10 21V21.01M14 21V21.01\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n"},
+  "weather-fog": {w:24,h:24,body:"\n<g clip-path=\"url(#clip0_23_310)\">\n<path d=\"M4.50001 11H17C17.9283 11.0663 18.8448 10.7611 19.5481 10.1516C20.2514 9.54213 20.6837 8.67823 20.75 7.74997C20.8163 6.82172 20.5112 5.90514 19.9017 5.20188C19.2922 4.49861 18.4283 4.06628 17.5 3.99997C17.3635 2.87469 16.8487 1.82918 16.04 1.03488C15.2313 0.240591 14.1767 -0.255338 13.0491 -0.371582C11.9216 -0.487825 10.788 -0.217483 9.83424 0.395114C8.8805 1.00771 8.16321 1.9262 7.80001 2.99997C6.73914 2.56237 5.54789 2.56411 4.48831 3.00482C3.42873 3.44553 2.58762 4.28911 2.15001 5.34997C1.7124 6.41084 1.71415 7.60209 2.15486 8.66167C2.59557 9.72126 3.43914 10.5624 4.50001 11Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M3 15H21M5 19H19\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n</g>\n<defs>\n<clipPath id=\"clip0_23_310\">\n<rect width=\"24\" height=\"24\" fill=\"white\"/>\n</clipPath>\n</defs>\n"},
+  "weather-haze": {w:24,h:24,body:"\n<path d=\"M12 12C13.933 12 15.5 10.433 15.5 8.5C15.5 6.567 13.933 5 12 5C10.067 5 8.5 6.567 8.5 8.5C8.5 10.433 10.067 12 12 12Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M12 2V3M6.3 4.3L7 5M17.7 4.3L17 5M3 15H21M6 19H18\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n"},
+  "weather-dust": {w:24,h:24,body:"\n<path d=\"M3 8H14C14.5933 8 15.1734 7.82405 15.6667 7.49441C16.1601 7.16477 16.5446 6.69623 16.7716 6.14805C16.9987 5.59987 17.0581 4.99667 16.9424 4.41473C16.8266 3.83279 16.5409 3.29824 16.1213 2.87868C15.7018 2.45912 15.1672 2.1734 14.5853 2.05765C14.0033 1.94189 13.4001 2.0013 12.8519 2.22836C12.3038 2.45543 11.8352 2.83994 11.5056 3.33329C11.1759 3.82664 11 4.40666 11 5\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M3 12H19C19.5933 12 20.1734 12.1759 20.6667 12.5056C21.1601 12.8352 21.5446 13.3038 21.7716 13.8519C21.9987 14.4001 22.0581 15.0033 21.9424 15.5853C21.8266 16.1672 21.5409 16.7018 21.1213 17.1213C20.7018 17.5409 20.1672 17.8266 19.5853 17.9424C19.0033 18.0581 18.4001 17.9987 17.8519 17.7716C17.3038 17.5446 16.8352 17.1601 16.5056 16.6667C16.1759 16.1734 16 15.5933 16 15\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M3 16H10M15 20H15.01M19 19.5H19.01M7 20H7.01\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n"},
+  "trend": {w:24,h:24,body:"\n<path d=\"M3 17L9 11L13 15L21 7\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M15 7H21V13\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n"},
   // Visual v2 I3: exact shared dialog/control icon paths.
   refresh: { w: 24, h: 24, body: '<path d="M21 12a9 9 0 0 1-9 9 9.8 9.8 0 0 1-6.7-2.8L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 9-9 9.8 9.8 0 0 1 6.7 2.8L21 8"/><path d="M21 3v5h-5"/>' },
   check: { w: 24, h: 24, body: '<path d="M20 6 9 17l-5-5"/>' },

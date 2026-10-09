@@ -73,6 +73,7 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
     return undefined
   }
   return <div className="au-conv-panel">
+    {driving && !pinned && [...messages].reverse().find(m => m.uiCard) && <CardRenderer driving card={[...messages].reverse().find(m => m.uiCard)!.uiCard!} onAction={onQuick} />}
     <div className="au-chat-scroll">
     <div className={'chat' + (!atTail ? ' reading-history' : '')} ref={listRef} onScroll={onScroll}>
       <div className="au-chat-content" ref={contentRef}>

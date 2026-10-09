@@ -24,13 +24,15 @@ import {
 } from '../merchantUi.mjs'
 import { AQISection } from './aurora'
 import { Icon, type IconName } from './Icon'
+import { CardHeader, MetricTile, CardEmpty, NumericText } from './CardParts'
+import { cardTitle, drivingCardSummary, present } from '../cardPresentation.mjs'
 
 // AI 出品角标（照 A-4「AI · X」）：小极光点 + 虹彩文字，标识 AI 生成内容（§5）。
 function AIBadge({ label }: { label: string }) {
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '3px 11px 3px 5px', borderRadius: 999, background: 'rgba(91,140,255,0.10)', border: '1px solid rgba(91,140,255,0.20)' }}>
-      <span style={{ width: 13, height: 13, borderRadius: '50%', background: 'var(--au-aurora-conic)', boxShadow: '0 0 8px rgba(91,140,255,0.5)' }} />
-      <span className="au-aurora-text" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.03em' }}>{label}</span>
+    <div className="au-ai-badge">
+      <span aria-hidden />
+      <span>{label}</span>
     </div>
   )
 }
@@ -41,7 +43,7 @@ function SocBar({ soc, dest, note }: { soc: string; dest: string; note?: string 
   const ok = pct > 50
   return (
     <div className="cr-soc">
-      <div className="cr-soc-head"><span>当前电量{note ? ` · ${note}` : ''}</span><b className="au-num" style={{ color: ok ? 'var(--au-primary)' : 'var(--au-warn)' }}>{pct}%</b></div>
+      <div className="cr-soc-head"><span>当前电量{note ? ` · ${note}` : ''}</span><NumericText as="b" className="au-num" style={{ color: ok ? 'var(--au-primary)' : 'var(--au-warn)' }}>{pct}%</NumericText></div>
       <div className="cr-soc-track"><div className="cr-soc-fill" style={{ width: `${pct}%`, background: ok ? 'linear-gradient(to right,#46D6E0,#34D399)' : 'linear-gradient(to right,#F59E0B,#EF4444)' }} /></div>
       <div className="cr-soc-foot"><span>出发地</span><span>目的地 · {dest}</span></div>
     </div>
@@ -49,7 +51,7 @@ function SocBar({ soc, dest, note }: { soc: string; dest: string; note?: string 
 }
 
 // 卡内分节横线（照 A-3 HR）
-const CardHR = () => <div style={{ height: 1, background: 'var(--au-line)' }} />
+const CardHR = () => <div className="cv-shared-1"  />
 
 // 商户卡动作的唯一渲染出口。onAction 复用 App.send，因此这些按钮始终是
 // `is_confirmation=false` 的普通自然语言输入；创建/取消的写确认只在全局
@@ -60,7 +62,7 @@ function MerchantActionRow({ buttons, onAction }: {
 }) {
   if (!buttons.length) return null
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+    <div className="cv-merchant-action-row-1" >
       {buttons.map((button) => {
         const destructive = /取消/.test(button.label)
         return (
@@ -69,15 +71,7 @@ function MerchantActionRow({ buttons, onAction }: {
             type="button"
             onClick={() => onAction?.(button.send_text)}
             disabled={!onAction}
-            style={{
-              minHeight: 44, padding: '9px 14px', borderRadius: 12,
-              cursor: onAction ? 'pointer' : 'default', fontFamily: 'inherit',
-              fontSize: 12.5, fontWeight: 650,
-              color: destructive ? 'var(--au-warn)' : 'var(--au-text)',
-              background: destructive ? 'rgba(245,158,11,0.09)' : 'var(--au-fill)',
-              border: destructive ? '1px solid rgba(245,158,11,0.28)' : '1px solid var(--au-line-2)',
-              opacity: onAction ? 1 : 0.58,
-            }}
+            className="cv-merchant-action-row-2" style={{ cursor: onAction ? 'pointer' : 'default', color: destructive ? 'var(--au-warn)' : 'var(--au-text)', background: destructive ? 'rgba(245,158,11,0.09)' : 'var(--au-fill)', border: destructive ? '1px solid rgba(245,158,11,0.28)' : '1px solid var(--au-line-2)', opacity: onAction ? 1 : 0.58 }}
           >
             {button.label}
           </button>
@@ -89,9 +83,9 @@ function MerchantActionRow({ buttons, onAction }: {
 
 // ─── A-4 信息卡共享原语（照 A-4 源）───
 // 内联线性图标（lucide 风，避免第三方依赖）
-function Ico({ d, size = 12, color = 'currentColor', sw = 2, style }: { d: string | string[]; size?: number; color?: string; sw?: number; style?: CSSProperties }) {
-  const paths = Array.isArray(d) ? d : [d]
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }}>{paths.map((p, i) => <path key={i} d={p} />)}</svg>
+function Ico({ d, size = 24, color = 'currentColor', style, className }: { d: string | string[]; size?: number; color?: string; sw?: number; style?: CSSProperties; className?: string }) {
+  const name: IconName = d === IC_CHEVRON ? 'chevron-down' : d === IC_EXT ? 'external-link' : d === IC_ALERT ? 'warning' : d === IC_BOOK ? 'manual' : 'chevron-right'
+  return <Icon name={name} size={Math.max(size, 24)} color={color} style={style} className={className} />
 }
 const IC_CHEVRON = 'm6 9 6 6 6-6'
 const IC_EXT = ['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6']
@@ -101,17 +95,17 @@ const IC_MAX = ['M15 3h6v6', 'M9 21H3v-6', 'M21 3l-7 7', 'M3 21l7-7']
 
 // 置信度徽章（A-4 ConfBadge；§3-A 语义色，绝不虹彩）
 const _CONF_TONE: Record<string, { c: string; bg: string; bd: string; label: string }> = {
-  high: { c: 'var(--au-conf-high)', bg: 'rgba(70,214,224,0.11)', bd: 'rgba(70,214,224,0.26)', label: '高' },
-  medium: { c: 'var(--au-conf-mid)', bg: 'rgba(245,158,11,0.11)', bd: 'rgba(245,158,11,0.26)', label: '中' },
-  low: { c: 'var(--au-conf-low)', bg: 'rgba(107,114,128,0.11)', bd: 'rgba(107,114,128,0.24)', label: '未充分核实' },
+  high: { c: 'var(--au-conf-high)', bg: "color-mix(in srgb, var(--au-primary) 11%, transparent)", bd: "color-mix(in srgb, var(--au-primary) 26%, transparent)", label: '高' },
+  medium: { c: 'var(--au-conf-mid)', bg: "color-mix(in srgb, var(--au-warn) 11%, transparent)", bd: "color-mix(in srgb, var(--au-warn) 26%, transparent)", label: '中' },
+  low: { c: 'var(--au-conf-low)', bg: "color-mix(in srgb, var(--au-conf-low) 11%, transparent)", bd: "color-mix(in srgb, var(--au-conf-low) 24%, transparent)", label: '未充分核实' },
 }
 function ConfPill({ level, small }: { level?: string; small?: boolean }) {
   if (!level) return null
   const t = _CONF_TONE[level] ?? _CONF_TONE.medium
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: small ? '2px 7px' : '3px 9px', borderRadius: 20, background: t.bg, border: `1px solid ${t.bd}`, flexShrink: 0 }}>
-      <span style={{ width: small ? 5 : 6, height: small ? 5 : 6, borderRadius: '50%', background: t.c, flexShrink: 0 }} />
-      <span style={{ fontSize: small ? 10 : 11.5, fontWeight: 600, color: t.c, whiteSpace: 'nowrap' }}>置信度 {t.label}</span>
+    <span className="au-confidence">
+      <span className="cv-conf-pill-1" style={{ width: small ? 5 : 6, height: small ? 5 : 6, background: t.c }} />
+      <span>置信度 {t.label}</span>
     </span>
   )
 }
@@ -122,30 +116,38 @@ function domainOf(url?: string, fallback?: string): string {
 }
 
 // ─── 天气图标映射 ───
-const WEATHER_ICONS: Record<string, string> = {
-  '晴': '☀️', '多云': '⛅', '阴': '☁️', '小雨': '🌦️', '中雨': '🌧️',
-  '大雨': '🌧️', '暴雨': '⛈️', '雷阵雨': '⛈️', '小雪': '🌨️', '中雪': '🌨️',
-  '大雪': '❄️', '雾': '🌫️', '霾': '😷', '沙尘暴': '🌪️',
-}
-function weatherIcon(text: string): string {
-  for (const [k, v] of Object.entries(WEATHER_ICONS)) {
-    if (text.includes(k)) return v
-  }
-  return '🌤️'
-}
-// 天气现象 → A-8 线性图标（雪/雾/霾/沙尘等未出图标，回落 emoji）。判定顺序：雷>雨>晴>云。
-const WEATHER_GLYPH: Array<[string, IconName]> = [
-  ['雷', 'weather-thunder-alert'], ['雨', 'weather-rain'], ['晴', 'weather-sunny'],
-  ['多云', 'weather-cloudy'], ['阴', 'weather-cloudy'], ['云', 'weather-cloudy'],
-]
-function weatherGlyph(text: string, size: number, color = 'var(--au-text-2)') {
-  for (const [k, n] of WEATHER_GLYPH) if (text.includes(k)) return <Icon name={n} size={size} color={color} />
-  return <span style={{ fontSize: size * 0.92, lineHeight: 1 }}>{weatherIcon(text)}</span>
-}
+const WEATHER_GLYPH: Array<[string, IconName]> = [['\u96ea','weather-snow'],['\u96fe','weather-fog'],['\u973e','weather-haze'],['\u5c18','weather-dust'],['\u96f7','weather-thunder-alert'],['\u96e8','weather-rain'],['\u6674','weather-sunny'],['\u4e91','weather-cloudy'],['\u9634','weather-cloudy']]
+function weatherGlyph(text: string, size: number, color = 'var(--au-text-2)') { const name = WEATHER_GLYPH.find(([word])=>String(text).includes(word))?.[1] || 'weather-cloudy'; return <Icon name={name} size={size} color={color} /> }
 
 // ─── 卡片渲染入口 ───
 
-export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (text: string) => void }) {
+export function CardRenderer({ card, onAction, driving = false }: { card: UiCard; onAction?: (text: string) => void; driving?: boolean }) {
+  const prov = (card as { _prov?: Provenance })._prov
+  const mockChannel = 'channel' in card && card.channel === 'mock' && prov?.mode !== 'mock'
+  if (driving) {
+    const summary = drivingCardSummary(card)
+    if (!summary) return null
+    return <section className="au-card au-driving-card" data-card-type={card.type}>
+      <CardHeader icon="info" title={summary.title} />
+      {summary.main && <div className="au-driving-metric"><NumericText as="b" className="au-num">{summary.main}</NumericText><span className="au-unit">{summary.unit}</span></div>}
+      {summary.fields.map((value, index) => <div className="au-driving-field" key={index}>{value}</div>)}
+      {summary.button && <button className="au-driving-card-action" disabled={!onAction} onClick={() => onAction?.(summary.button!.text)}>{summary.button.label}</button>}
+      <ProvBadge prov={prov} />
+      {mockChannel && <span className="au-prov mock">模拟数据</span>}
+      {'demo' in card && card.demo === true && <span className="au-prov mock">演示商户</span>}
+    </section>
+  }
+  if (card.type === 'card_group') return <div className="au-card-group">{card.items.map((child, i) => i === 0
+    ? <CardRenderer key={i} card={child} onAction={onAction} />
+    : <details key={i}><summary>{cardTitle(child)}<ProvBadge prov={(child as { _prov?: Provenance })._prov} /></summary><CardRenderer card={child} onAction={onAction} /></details>)}<ProvBadge prov={prov} /></div>
+  return <div className="au-card-host" data-card-type={card.type}>
+    {['news_list','search_list','poi_list','place_list'].includes(card.type) && 'items' in card && Array.isArray(card.items) && card.items.length === 0
+      ? <section className="au-card"><CardHeader icon="info" title={cardTitle(card)} /><CardEmpty>没查到相关结果，可以换个关键词再试试。</CardEmpty></section>
+      : <CardContent card={card} onAction={onAction} />}
+    <div className="au-card-provenance"><ProvBadge prov={prov} />{mockChannel && <span className="au-prov mock">模拟数据</span>}</div>
+  </div>
+}
+function CardContent({card,onAction}: {card: UiCard;onAction?: (text:string)=>void}) {
   switch (card.type) {
     case 'card_group':
       // 多卡同屏：逐张渲染（如"查股价+新闻"→股票卡 + 新闻卡并存）
@@ -188,7 +190,7 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'merchant_checkout': return <MerchantCheckoutCardView card={card} onAction={onAction} />
     case 'merchant_choices': return <MerchantCheckoutCardView card={card} onAction={onAction} />
     case 'merchant_order_preview': return <MerchantCheckoutCardView card={card} onAction={onAction} />
-    default: return null
+    default: return <section className="au-card"><CardHeader icon="info" title="这条结果暂时无法展示" /><CardEmpty>可以让我换一种方式说明。</CardEmpty></section>
   }
 }
 
@@ -199,14 +201,14 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
 function ProvBadge({ prov }: { prov?: Provenance }) {
   if (!prov) return null
   const pill = (bg: string, fg: string, text: string, title?: string) => (
-    <span title={title} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: bg, color: fg, whiteSpace: 'nowrap', flexShrink: 0 }}>{text}</span>
+    <span title={title} className="cv-prov-badge-1" style={{ background: bg, color: fg }}>{text}</span>
   )
   if (prov.mode === 'mock') return pill('rgba(245,158,11,0.16)', 'var(--au-warn)', '模拟数据', '演示用模拟数据，非真实来源')
   if (prov.mode === 'degraded') return pill('rgba(148,163,184,0.16)', 'var(--au-text-2)', prov.note ? `降级 · ${prov.note}` : '降级', '真实数据，但经降级路径取得')
   if (prov.mode === 'cached') return pill('rgba(148,163,184,0.16)', 'var(--au-text-2)', prov.note ? `缓存 · ${prov.note}` : '缓存')
-  const t = (prov.fetched_at || '').replace('T', ' ').slice(5, 16)
+  const t = relativeTime(prov.fetched_at)
   return (
-    <span title="数据来源 · 取数时间" style={{ fontSize: 10, color: 'var(--au-text-3)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+    <span title="数据来源 · 取数时间" className="cv-prov-badge-2" >
       {prov.vendor}{t ? ` · ${t}` : ''}
     </span>
   )
@@ -216,10 +218,7 @@ function ProvBadge({ prov }: { prov?: Provenance }) {
 function AccountBadge({ label }: { label?: string }) {
   if (!label) return null
   return (
-    <span title="车上所有用户共用这一个商户账号" style={{
-      fontSize: 10, padding: '1px 6px', borderRadius: 6, whiteSpace: 'nowrap', flexShrink: 0,
-      background: 'rgba(148,163,184,0.16)', color: 'var(--au-text-2)', fontWeight: 700,
-    }}>{label}</span>
+    <span title="车上所有用户共用这一个商户账号" className="cv-account-badge-1" >{label}</span>
   )
 }
 
@@ -229,36 +228,36 @@ function ManualCardView({ card }: { card: ManualCard }) {
   const title = card.document?.title || '车型用户手册'
   const revision = card.document?.revision || card._prov?.data_time || ''
   return (
-    <div className="card card-evidence" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-        <span style={{ width: 34, height: 34, borderRadius: 11, display: 'grid', placeItems: 'center', background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)', flexShrink: 0 }}>
-          <Icon name="manual" size={18} color="var(--au-primary)" />
+    <div className="card card-evidence cv-manual-card-view-1" >
+      <div className="cv-manual-card-view-2" >
+        <span className="cv-manual-card-view-3" >
+          <Icon name="manual" size={24} color="var(--au-primary)" />
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--au-text)' }}>{title}</div>
-          <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--au-text-3)' }}>
+        <div className="cv-manual-card-view-4" >
+          <div className="cv-manual-card-view-5" >{title}</div>
+          <div className="cv-manual-card-view-6" >
             {[card.document?.vehicle_model, revision && `版本 ${revision}`].filter(Boolean).join(' · ')}
           </div>
         </div>
-        <ProvBadge prov={card._prov} />
+
       </div>
       {images.length > 0 && (
         <>
           <CardHR />
-          <div style={{ display: 'grid', gridTemplateColumns: images.length > 1 ? '1fr 1fr' : '1fr', gap: 10, padding: 12 }}>
+          <div className="cv-manual-card-view-7" style={{ gridTemplateColumns: images.length > 1 ? '1fr 1fr' : '1fr' }}>
             {images.map((image) => (
-              <figure key={image.asset_id} style={{ margin: 0, minWidth: 0 }}>
-                <div style={{ minHeight: image.role === 'warning_icon' ? 148 : 128, maxHeight: 250, borderRadius: 12, overflow: 'hidden', background: 'rgba(255,255,255,0.96)', border: '1px solid var(--au-line-2)', display: 'grid', placeItems: 'center' }}>
+              <figure key={image.asset_id} className="cv-manual-card-view-8" >
+                <div className="cv-manual-card-view-9" style={{ minHeight: image.role === 'warning_icon' ? 148 : 128 }}>
                   <img
                     src={image.data_uri}
                     alt={image.caption || '手册配图'}
                     loading="lazy"
-                    style={{ display: 'block', width: image.role === 'warning_icon' ? 116 : '100%', height: image.role === 'warning_icon' ? 116 : 'auto', maxHeight: 250, objectFit: 'contain' }}
+                    className="cv-manual-card-view-10" style={{ width: image.role === 'warning_icon' ? 116 : '100%', height: image.role === 'warning_icon' ? 116 : 'auto' }}
                   />
                 </div>
-                <figcaption style={{ marginTop: 7, display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 10.5, color: 'var(--au-text-3)' }}>
-                  <span style={{ color: 'var(--au-text-2)' }}>{image.caption || '手册配图'}</span>
-                  <span style={{ whiteSpace: 'nowrap' }}>PDF 第 {image.page_start} 页</span>
+                <figcaption className="cv-manual-card-view-11" >
+                  <span className="cv-manual-card-view-12" >{image.caption || '手册配图'}</span>
+                  <span className="cv-manual-card-view-13" >PDF 第 {image.page_start} 页</span>
                 </figcaption>
               </figure>
             ))}
@@ -268,16 +267,16 @@ function ManualCardView({ card }: { card: ManualCard }) {
       {chunks.length > 0 && (
         <>
           <CardHR />
-          <div style={{ padding: '11px 16px 13px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+          <div className="cv-manual-card-view-14" >
             {chunks.map((chunk, index) => (
-              <div key={`${chunk.page_start || 0}:${index}`} style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontSize: 10.5, fontWeight: 650, color: 'var(--au-primary)' }}>
+              <div key={`${chunk.page_start || 0}:${index}`} className="cv-manual-card-view-15" >
+                <div className="cv-manual-card-view-16" >
+                  <span className="cv-manual-card-view-17" >
                     {chunk.section_path?.slice(-1)[0] || `引用 ${index + 1}`}
                   </span>
-                  {chunk.page_start ? <span style={{ fontSize: 10, color: 'var(--au-text-3)', whiteSpace: 'nowrap' }}>PDF 第 {chunk.page_start} 页</span> : null}
+                  {chunk.page_start ? <span className="cv-manual-card-view-18" >PDF 第 {chunk.page_start} 页</span> : null}
                 </div>
-                <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.65, color: 'var(--au-text-2)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                <p className="cv-manual-card-view-19" >
                   {chunk.content}
                 </p>
               </div>
@@ -291,139 +290,32 @@ function ManualCardView({ card }: { card: ManualCard }) {
 
 function WeatherCardView({ card }: { card: WeatherCard }) {
   const alert = weatherAlertSummary(card.alerts)
-  const upd = card.update_time && card.update_time !== 'mock'
-    ? card.update_time.replace('T', ' ').replace(/\+.*/, '') : ''
-  // 焦点日（问「明天/后天天气」）：主视觉切到该日预报，今天实况降为次行；遥测格换该日字段
   const focus = card.focus
-  const tele: Array<{ icon: IconName; label: string; v: string | null; u: string }> = focus
-    ? [
-        { icon: 'humidity', label: '湿度', v: focus.humidity || null, u: '%' },
-        { icon: 'wind', label: '风向', v: focus.wind_dir ? `${focus.wind_dir}${focus.wind_scale ? `${focus.wind_scale}级` : ''}` : null, u: '' },
-        { icon: 'weather-rain', label: '降水', v: focus.precip || null, u: 'mm' },
-        { icon: 'weather-sunny', label: '紫外线', v: focus.uv_index || null, u: '' },
-        { icon: 'weather-cloudy', label: '夜间', v: focus.text_night || null, u: '' },
-        { icon: 'temperature', label: '现在', v: card.temp ? `${card.temp}°C ${card.text}` : null, u: '' },
-      ]
-    : [
-        { icon: 'temperature', label: '体感', v: card.feels_like || null, u: '°C' },
-        { icon: 'humidity', label: '湿度', v: card.humidity || null, u: '%' },
-        { icon: 'wind', label: '风向', v: card.wind_dir ? `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` : null, u: '' },
-        { icon: 'visibility', label: '能见度', v: card.visibility || null, u: 'km' },
-        { icon: 'weather-rain', label: '降水', v: card.precip || null, u: 'mm' },
-        { icon: 'pressure', label: '气压', v: card.pressure || null, u: 'hPa' },
-      ]
-  const headGlyphText = focus ? focus.text_day : card.text
-  return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      {/* 预警 callout */}
-      {alert && (
-        <div style={{ padding: '10px 16px', background: 'rgba(245,158,11,0.11)', borderBottom: '1px solid rgba(245,158,11,0.20)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-          <Icon name="warning" size={15} color="var(--au-warn)" style={{ flexShrink: 0, marginTop: 1 }} />
-          <div>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--au-warn)' }}>{alert.headline}</div>
-            <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginTop: 2, lineHeight: 1.55 }}>{alert.detail}</div>
-          </div>
-        </div>
-      )}
-      {/* 头部：城市(+焦点日 chip) + 大温度/温度区间 + 天气文案 | 图标 + 更新 */}
-      <div style={{ padding: '18px 18px 12px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>{card.city}</span>
-            {focus && (
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'rgba(91,140,255,0.14)', color: 'var(--au-accent, #5B8CFF)', border: '1px solid rgba(91,140,255,0.28)' }}>{focus.label}</span>
-            )}
-          </div>
-          {focus ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, lineHeight: 1 }}>
-              <span className="au-num" style={{ fontSize: 54, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--au-text)' }}>{focus.temp_low}~{focus.temp_high}</span>
-              <span className="au-num" style={{ fontSize: 22, fontWeight: 300, color: 'var(--au-text-2)', marginBottom: 4 }}>°C</span>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, lineHeight: 1 }}>
-              <span className="au-num" style={{ fontSize: 68, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--au-text)' }}>{card.temp}</span>
-              <span className="au-num" style={{ fontSize: 24, fontWeight: 300, color: 'var(--au-text-2)', marginTop: 10 }}>°C</span>
-            </div>
-          )}
-          <div style={{ fontSize: 13.5, color: 'var(--au-text-2)', marginTop: 5 }}>
-            {focus
-              ? `${focus.text_day}${focus.text_night && focus.text_night !== focus.text_day ? `转${focus.text_night}` : ''}`
-              : (card.text || '天气数据更新中')}
-          </div>
-        </div>
-        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 }}>
-          <span style={{ lineHeight: 1, display: 'inline-flex', justifyContent: 'flex-end' }}>{weatherGlyph(headGlyphText, 40, 'var(--au-text)')}</span>
-          {upd && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>更新 {upd}</span>}
-          {card._prov && (
-            <span style={{ display: 'inline-flex', justifyContent: 'flex-end' }}>
-              <ProvBadge prov={card._prov} />
-            </span>
-          )}
-        </div>
-      </div>
-      <CardHR />
-      {/* telemetry 3×2 */}
-      <div style={{ padding: '12px 13px', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 7 }}>
-        {tele.map((t) => {
-          const miss = t.v == null
-          return (
-            <div key={t.label} style={{ padding: '9px 6px', borderRadius: 11, background: miss ? 'var(--au-fill)' : 'var(--au-fill)', border: '1px solid var(--au-line-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-              <Icon name={t.icon} size={17} state={miss ? 'disabled' : 'default'} />
-              <span className="au-num" style={{ fontSize: 11.5, fontWeight: miss ? 400 : 600, color: miss ? 'var(--au-text-3)' : 'var(--au-text)', textAlign: 'center', lineHeight: 1.2 }}>{miss ? '—' : `${t.v}${t.u}`}</span>
-              <span style={{ fontSize: 9.5, color: 'var(--au-text-3)' }}>{t.label}</span>
-            </div>
-          )
-        })}
-      </div>
-      {/* 3 日预报（焦点日高亮） */}
-      {!!card.forecast?.length && (
-        <>
-          <CardHR />
-          <div style={{ padding: '13px 12px', display: 'flex' }}>
-            {card.forecast.slice(0, 3).map((f, i) => {
-              const isFocus = !!focus && f.date.slice(0, 10) === focus.date
-              return (
-                <div key={i} style={{ flex: 1, textAlign: 'center', padding: '6px 6px', borderRight: i < 2 ? '1px solid var(--au-line)' : 'none', borderRadius: isFocus ? 11 : 0, background: isFocus ? 'rgba(91,140,255,0.10)' : 'transparent' }}>
-                  <div style={{ fontSize: 11, color: isFocus ? 'var(--au-accent, #5B8CFF)' : 'var(--au-text-3)', fontWeight: isFocus ? 700 : 400, marginBottom: 6 }}>{isFocus ? focus.label : (i === 0 ? '今天' : f.date.slice(5))}</div>
-                  <div style={{ marginBottom: 4, lineHeight: 1, display: 'flex', justifyContent: 'center' }}>{weatherGlyph(f.text_day, 26)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginBottom: 8 }}>{f.text_day}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                    <span className="au-num" style={{ fontSize: 11, color: '#93C5FD' }}>{f.temp_low}°</span>
-                    <div style={{ flex: 1, height: 2.5, borderRadius: 2, background: 'linear-gradient(to right,rgba(91,140,255,.5),rgba(255,165,50,.5))' }} />
-                    <span className="au-num" style={{ fontSize: 11, color: '#FCA5A5' }}>{f.temp_high}°</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </>
-      )}
-      {/* AQI 7 档 */}
-      {card.air_quality && (
-        <>
-          <CardHR />
-          <div style={{ padding: '6px 16px 14px' }}><AQISection aqi={card.air_quality.aqi} category={card.air_quality.category} /></div>
-        </>
-      )}
-      {/* 生活建议 2×2 */}
-      {!!card.indices?.length && (
-        <>
-          <CardHR />
-          <div style={{ padding: '13px 14px' }}>
-            <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600, marginBottom: 10 }}>生活建议</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              {card.indices.slice(0, 4).map((t) => (
-                <div key={t.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 9, padding: '8px 10px', borderRadius: 11, background: 'var(--au-fill)', border: '1px solid var(--au-line-2)' }}>
-                  <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{t.name}</span>
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--au-text)' }}>{t.level}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
+  const metrics: Array<{icon: IconName;label: string;value: unknown;unit?: string}> = focus ? [
+    {icon:'temperature',label:'温度区间',value:[focus.temp_low,focus.temp_high].filter(present).join('～'),unit:'°C'},
+    {icon:'humidity',label:'湿度',value:focus.humidity,unit:'%'},
+    {icon:'wind',label:focus.wind_dir || '风',value:focus.wind_scale,unit:'级'},
+    {icon:'umbrella',label:'降水',value:focus.precip,unit:'mm'},
+    {icon:'uv',label:'紫外线',value:focus.uv_index},
+    {icon:'weather-cloudy',label:'夜间',value:focus.text_night},
+  ] : [
+    {icon:'temperature',label:'体感',value:card.feels_like,unit:'°C'},
+    {icon:'humidity',label:'湿度',value:card.humidity,unit:'%'},
+    {icon:'wind',label:card.wind_dir || '风',value:card.wind_scale,unit:'级'},
+    {icon:'umbrella',label:'降水',value:card.precip,unit:'mm'},
+    {icon:'visibility',label:'能见度',value:card.visibility,unit:'km'},
+    {icon:'pressure',label:'气压',value:card.pressure,unit:'hPa'},
+  ]
+  return <section className="au-card au-weather-evidence">
+    <CardHeader icon={WEATHER_GLYPH.find(([word]) => (focus?.text_day || card.text || '').includes(word))?.[1] || 'weather-cloudy'} title={[card.city,focus?.label || '实况'].filter(Boolean).join(' · ')}
+      meta={card.update_time && card.update_time !== 'mock' ? relativeTime(card.update_time) : undefined} />
+    {alert && <div className="au-card-warning"><Icon name="warning" size={24} color="var(--au-warn)" />
+      <div><strong>{alert.headline}</strong>{alert.detail && <div>{alert.detail}</div>}</div></div>}
+    {metrics.some(m=>present(m.value)) ? <div className="au-metric-grid">{metrics.map(m=><MetricTile key={m.label} {...m} />)}</div> : <CardEmpty>天气数据暂不可用</CardEmpty>}
+    {card.air_quality && <AQISection aqi={card.air_quality.aqi} category={card.air_quality.category} />}
+    {!!card.indices?.length && <div className="au-card-tags">{card.indices.filter(t=>present(t.level)).slice(0,4).map(t=>
+      <span key={t.name}>{t.name} <strong>{t.level}</strong></span>)}</div>}
+  </section>
 }
 
 // ─── 天气预报卡片 ───
@@ -431,12 +323,12 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
 function ForecastCardView({ card }: { card: ForecastCard }) {
   return (
     <div className="card card-forecast">
-      <div className="card-header">{card.city} 未来{card.days.length}天</div>
+      <div className="card-header"><span className="au-card-heading-icon"><Icon name="weather-cloudy" size={24} state="active" /></span>{card.city} 未来{card.days.length}天</div>
       <div className="card-forecast-days">
         {card.days.map((d, i) => (
           <div key={i} className="forecast-day">
             <div className="forecast-date">{d.date.slice(5)}</div>
-            <div className="forecast-icon" style={{ display: 'flex', justifyContent: 'center' }}>{weatherGlyph(d.text_day, 22)}</div>
+            <div className="forecast-icon cv-forecast-card-view-1" >{weatherGlyph(d.text_day, 22)}</div>
             <div className="forecast-text">{d.text_day}</div>
             <div className="forecast-temp">
               <span className="temp-low">{d.temp_low}°</span>
@@ -475,7 +367,7 @@ function StockCardView({ card }: { card: StockCard }) {
   const prev = candles[candles.length - 2]
   // 今开/最高/最低/昨收：从最后一根 K 线 + 前一根收盘推导（StockCard 无独立 OHLC 字段）
   const ohlc = last
-    ? [{ l: '今开', v: last.open }, { l: '最高', v: last.high }, { l: '最低', v: last.low }, { l: '昨收', v: prev?.close ?? last.open }]
+    ? [{ l: '今开', v: last.open }, { l: '最高', v: last.high }, { l: '最低', v: last.low }, { l: '昨收', v: prev?.close }]
     : []
   // 市场标签优先用后端权威 market（腾讯 00700 是港股非 A 股）；缺失时按代码保守分类，不再硬编码 A股主板
   const marketTag = card.market || (() => {
@@ -485,45 +377,44 @@ function StockCardView({ card }: { card: StockCard }) {
     return card.symbol && !d ? '美股' : ''
   })()
   const stats = [
-    { l: '市值', v: null }, { l: '市盈率', v: null }, { l: '市净率', v: null },
     { l: '成交量', v: last?.volume ?? null },
   ]
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+    <div className="card cv-stock-card-view-1" >
       {/* 头部 */}
-      <div style={{ padding: '16px 18px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className="cv-stock-card-view-2" >
         <div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 5 }}>{card.name}</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{card.symbol}</span>
-            {marketTag && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· {marketTag}</span>}
+          <div className="cv-stock-card-view-3 au-card-inline-heading"><Icon name="trend" size={28} state="active" />{card.name}</div>
+          <div className="cv-stock-card-view-4" >
+            <NumericText as="span" className="au-num cv-stock-card-view-5" >{card.symbol}</NumericText>
+            {marketTag && <span className="cv-stock-card-view-6" >· {marketTag}</span>}
           </div>
         </div>
         {card.market_time && card.market_time !== 'mock' && (
-          <div style={{ padding: '3px 9px', borderRadius: 20, background: 'rgba(107,114,128,0.10)', border: '1px solid rgba(107,114,128,0.20)' }}>
-            <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.market_time}</span>
+          <div className="cv-stock-card-view-7" >
+            <span className="cv-stock-card-view-8" >{card.market_time}</span>
           </div>
         )}
       </div>
       <CardHR />
       {/* 价格 + OHLC */}
-      <div style={{ padding: '14px 18px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <div className="cv-stock-card-view-9" >
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-            <span className="au-num" style={{ fontSize: 40, fontWeight: 700, letterSpacing: '-0.025em', lineHeight: 1, color: cc }}>{card.price}</span>
-            <span className="au-num" style={{ fontSize: 13, color: 'var(--au-text-3)' }}>CNY</span>
+          <div className="cv-stock-card-view-10" >
+            <NumericText as="span" className="au-num cv-stock-card-view-11" style={{ color: 'var(--au-text)' }}>{card.price}</NumericText>
+            <NumericText as="span" className="au-num cv-stock-card-view-12" ></NumericText>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span className="au-num" style={{ padding: '3px 10px', borderRadius: 7, background: dir === 'down' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${cc}`, fontSize: 13, fontWeight: 700, color: cc }}>{card.change}</span>
-            <span className="au-num" style={{ fontSize: 13, fontWeight: 600, color: cc }}>{card.change_pct}</span>
+          <div className="cv-stock-card-view-13" >
+            <NumericText as="span" className="au-num cv-stock-card-view-14" style={{ background: dir === 'down' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${cc}`, color: cc }}>{card.change}</NumericText>
+            <NumericText as="span" className="au-num cv-stock-card-view-15" style={{ color: cc }}>{card.change_pct}</NumericText>
           </div>
         </div>
         {ohlc.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {ohlc.map((s) => (
-              <div key={s.l} style={{ display: 'flex', gap: 14, justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{s.l}</span>
-                <span className="au-num" style={{ fontSize: 11.5, color: 'var(--au-text)' }}>{s.v}</span>
+          <div className="cv-stock-card-view-16" >
+            {ohlc.filter(s => present(s.v)).map((s) => (
+              <div key={s.l} className="cv-stock-card-view-17" >
+                <span className="cv-stock-card-view-18" >{s.l}</span>
+                <NumericText as="span" className="au-num cv-stock-card-view-19" >{s.v}</NumericText>
               </div>
             ))}
           </div>
@@ -532,27 +423,27 @@ function StockCardView({ card }: { card: StockCard }) {
       <CardHR />
       {/* K 线 */}
       {candles.length ? (
-        <div style={{ padding: '12px 4px 8px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 14px', marginBottom: 8 }}>
-            <span style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600 }}>日K线 · {candles.length}日</span>
-            <div style={{ display: 'flex', gap: 10 }}>
-              {['1日', '5日', '1月', '3月'].map((t, i) => (
-                <span key={t} style={{ fontSize: 10.5, color: i === 1 ? 'var(--au-primary)' : 'var(--au-text-3)', fontWeight: i === 1 ? 600 : 400 }}>{t}</span>
+        <div className="cv-stock-card-view-20" >
+          <div className="cv-stock-card-view-21" >
+            <span className="cv-stock-card-view-22" >日K线 · {candles.length}日</span>
+            <div className="cv-stock-card-view-23" >
+              {[].map((t, i) => (
+                <span key={t} className="cv-stock-card-view-24" style={{ color: i === 1 ? 'var(--au-primary)' : 'var(--au-text-3)', fontWeight: i === 1 ? 600 : 400 }}>{t}</span>
               ))}
             </div>
           </div>
           <KlineChart card={card} />
         </div>
       ) : (
-        <div style={{ padding: '22px 18px', textAlign: 'center', fontSize: 12, color: 'var(--au-text-3)' }}>K 线数据暂不可用</div>
+        <div className="cv-stock-card-view-25" >K 线数据暂不可用</div>
       )}
       <CardHR />
       {/* 指标 4 列 */}
-      <div style={{ padding: '13px 16px', display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 6px' }}>
-        {stats.map((s, i) => (
-          <div key={i} style={{ textAlign: 'center' }}>
-            <div className="au-num" style={{ fontSize: 12.5, fontWeight: 600, color: s.v ? 'var(--au-text)' : 'var(--au-text-3)', marginBottom: 4 }}>{s.v ?? '—'}</div>
-            <div style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{s.l}</div>
+      <div className="cv-stock-card-view-26" >
+        {stats.filter(s => present(s.v)).map((s, i) => (
+          <div key={i} className="cv-stock-card-view-27" >
+            <NumericText as="div" className="au-num cv-stock-card-view-28" style={{ color: s.v ? 'var(--au-text)' : 'var(--au-text-3)' }}>{s.v ?? '—'}</NumericText>
+            <div className="cv-stock-card-view-29" >{s.l}</div>
           </div>
         ))}
       </div>
@@ -565,7 +456,7 @@ function StockCardView({ card }: { card: StockCard }) {
 function NewsCardView({ card }: { card: NewsCard }) {
   return (
     <div className="card card-news">
-      <div className="card-header">
+      <div className="card-header"><span className="au-card-heading-icon"><Icon name="newspaper" size={24} state="active" /></span>
         {card.topic ? `「${card.topic}」新闻` : '今日热点'}
       </div>
       {card.summary && <div className="summary-brief"><span>结论摘要</span><p>{card.summary}</p></div>}
@@ -595,7 +486,8 @@ function NewsCardView({ card }: { card: NewsCard }) {
 function NewsDigestCardView({ card }: { card: NewsDigestCard }) {
   return (
     <div className="card card-news-digest">
-      <div className="card-header" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><Icon name="newspaper" size={16} color="var(--au-text)" />{card.topic || '今日热点'}</div>
+      <div className="card-header cv-news-digest-card-view-1" ><Icon name="newspaper" size={24} color="var(--au-text)" />{card.topic || '今日热点'}</div>
+      <AIBadge label="AI 摘要" />
       <div className="news-digest-summary">{card.summary}</div>
       {card.headlines.length > 0 && (
         <div className="news-digest-headlines">
@@ -617,7 +509,7 @@ function NewsDigestCardView({ card }: { card: NewsDigestCard }) {
 function SearchCardView({ card }: { card: SearchCard }) {
   return (
     <div className="card card-search">
-      <div className="card-header">搜索「{card.query}」</div>
+      <div className="card-header"><span className="au-card-heading-icon"><Icon name="search" size={24} state="active" /></span>搜索「{card.query}」</div>
       {card.summary && <div className="summary-brief"><span>结论摘要</span><p>{card.summary}</p></div>}
       <div className="card-search-list">
         {card.items.map((item, i) => (
@@ -640,12 +532,13 @@ function SearchAnswerCardView({ card }: { card: SearchAnswerCard }) {
   const [expanded, setExpanded] = useState(false)
   return (
     <div className="card card-search-answer">
-      <div className="card-header" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><Icon name="search" size={16} color="var(--au-text)" />{card.query}</div>
+      <div className="card-header cv-search-answer-card-view-1" ><Icon name="search" size={24} color="var(--au-text)" />{card.query}</div>
+      <AIBadge label="AI 回答" />
       <div className="search-answer-text">{card.answer}</div>
       {card.sources.length > 0 && (
         <div className="search-answer-sources">
           <button className="sources-toggle" onClick={() => setExpanded(!expanded)}>
-            ▸ {card.sources.length} 条来源
+            <Icon name="chevron-right" size={24} /> {card.sources.length} 条来源
           </button>
           {expanded && (
             <div className="sources-list">
@@ -672,7 +565,7 @@ function SearchAnswerCardView({ card }: { card: SearchAnswerCard }) {
 function relativeTime(iso?: string): string {
   if (!iso || iso === 'mock') return ''
   const t = Date.parse(iso)
-  if (Number.isNaN(t)) return ''
+  if (Number.isNaN(t)) return /^\d{1,2}:\d{2}/.test(iso) ? iso : ''
   const diff = Date.now() - t
   if (diff < 60000) return '刚刚'
   const min = Math.floor(diff / 60000)
@@ -685,14 +578,7 @@ function relativeTime(iso?: string): string {
 }
 
 function ConfidenceBadge({ level }: { level?: string }) {
-  if (!level) return null
-  const map: Record<string, { label: string; tone: string }> = {
-    high: { label: '高', tone: 'ok' },
-    medium: { label: '中', tone: 'mid' },
-    low: { label: '未充分核实', tone: 'low' },
-  }
-  const c = map[level] ?? map.medium
-  return <div className={`ev-confidence ev-confidence-${c.tone}`}>置信度 <b>{c.label}</b></div>
+  return <ConfPill level={level} />
 }
 
 function SourceList({ sources }: {
@@ -731,19 +617,19 @@ function SearchResultCardView({ card }: { card: SearchResultCard }) {
   const extra = sources.length - 3
   const fresh = relativeTime(card.freshness)
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <AIBadge label="AI · 联网搜索" />
-          <ProvBadge prov={card._prov} />
+    <div className="card cv-search-result-card-view-1" >
+      <div className="cv-search-result-card-view-2" >
+        <div className="cv-search-result-card-view-3" >
+
+
         </div>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
-              <Ico d={['m21 21-4.34-4.34', 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z']} size={13} color="var(--au-text-2)" />
-              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--au-text)' }}>{card.query}</span>
+        <div className="cv-search-result-card-view-4" >
+          <div className="cv-search-result-card-view-5" >
+            <div className="cv-search-result-card-view-6" >
+              <Icon name="search" size={24} color="var(--au-text-2)" />
+              <span className="cv-search-result-card-view-7" >{card.query}</span>
             </div>
-            <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>找到 {sources.length} 条来源{fresh ? ` · 更新于${fresh}` : ''}</span>
+            <span className="cv-search-result-card-view-8" >找到 {sources.length} 条来源{fresh ? ` · 更新于${fresh}` : ''}</span>
           </div>
           <ConfPill level={card.confidence} />
         </div>
@@ -753,27 +639,27 @@ function SearchResultCardView({ card }: { card: SearchResultCard }) {
         const dom = domainOf(s.url)
         return (
           <div key={i}>
-            <div style={{ padding: '11px 16px', display: 'flex', gap: 11, alignItems: 'flex-start' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0, marginTop: 1 }}>
-                <span className="au-num" style={{ fontSize: 10, color: 'var(--au-text-3)', lineHeight: 1 }}>{i + 1}</span>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--au-primary)' }} />
+            <div className="cv-search-result-card-view-9" >
+              <div className="cv-search-result-card-view-10" >
+                <NumericText as="span" className="au-num cv-search-result-card-view-11" >{i + 1}</NumericText>
+                <span className="cv-search-result-card-view-12"  />
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--au-text)' }}>{s.source || dom || '来源'}</span>
-                  {dom && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{dom}</span>}
-                  <span style={{ fontSize: 10.5, color: 'var(--au-text-3)', marginLeft: 'auto' }}>{relativeTime(s.published) || s.published || ''}</span>
+              <div className="cv-search-result-card-view-13" >
+                <div className="cv-search-result-card-view-14" >
+                  <span className="cv-search-result-card-view-15" >{s.source || dom || '来源'}</span>
+                  {dom && <span className="cv-search-result-card-view-16" >{dom}</span>}
+                  <span className="cv-search-result-card-view-17" >{relativeTime(s.published) || s.published || ''}</span>
                 </div>
-                <p style={{ fontSize: 12, color: 'var(--au-text-2)', lineHeight: 1.6, margin: 0 }}>{s.title}</p>
+                <p className="cv-search-result-card-view-18" >{s.title}</p>
               </div>
-              {s.url && <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, marginTop: 2 }}><Ico d={IC_EXT} size={11} color="var(--au-text-3)" /></a>}
+              {s.url && <a href={s.url} target="_blank" rel="noopener noreferrer" className="cv-search-result-card-view-19" ><Ico d={IC_EXT} size={24} color="var(--au-text-3)" /></a>}
             </div>
-            {i < shown.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+            {i < shown.length - 1 && <div className="cv-search-result-card-view-20"  />}
           </div>
         )
       })}
       {extra > 0 && (
-        <div style={{ padding: '10px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', justifyContent: 'flex-end' }}>
+        <div className="cv-search-result-card-view-21" >
           <button className="ev-more" onClick={() => setOpen(!open)}>{open ? '收起' : `更多 ${extra} 条 ›`}</button>
         </div>
       )}
@@ -790,20 +676,20 @@ function ResearchSection({ idx, heading, body, citations, confidence, open, onTo
   const t = _CONF_TONE[confidence ?? ''] ?? _CONF_TONE.low
   return (
     <div>
-      <button onClick={onToggle} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
-        <span style={{ width: 24, height: 24, borderRadius: 8, flexShrink: 0, background: open ? t.bg : 'var(--au-fill)', border: `1px solid ${open ? t.bd : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', transition: 'all .22s' }}>
-          <span className="au-num" style={{ fontSize: 10, fontWeight: 700, color: open ? t.c : 'var(--au-text-3)' }}>{String(idx).padStart(2, '0')}</span>
+      <button onClick={onToggle} className="cv-research-section-1" >
+        <span className="cv-research-section-2" style={{ background: open ? t.bg : 'var(--au-fill)', border: `1px solid ${open ? t.bd : 'var(--au-line-2)'}` }}>
+          <NumericText as="span" className="au-num cv-research-section-3" style={{ color: open ? t.c : 'var(--au-text-3)' }}>{String(idx).padStart(2, '0')}</NumericText>
         </span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: open ? 'var(--au-text)' : 'var(--au-text-2)', transition: 'color .2s' }}>{heading}</span>
+        <span className="cv-research-section-4" style={{ color: open ? 'var(--au-text)' : 'var(--au-text-2)' }}>{heading}</span>
         <ConfPill level={confidence} small />
-        <Ico d={IC_CHEVRON} size={14} color="var(--au-text-3)" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .22s' }} />
+        <Ico d={IC_CHEVRON} size={24} color="var(--au-text-3)" className="cv-research-section-5" style={{ transform: open ? 'rotate(180deg)' : 'none' }} />
       </button>
       {open && (
-        <div style={{ padding: '2px 16px 14px 52px' }}>
-          <p style={{ fontSize: 13, color: 'var(--au-text-2)', lineHeight: 1.8, margin: 0 }}>
+        <div className="cv-research-section-6" >
+          <p className="cv-research-section-7" >
             {body}
             {!!citations?.length && citations.map((c) => (
-              <sup key={c} className="au-num" style={{ fontSize: '0.72em', fontWeight: 700, color: 'var(--au-primary)', marginLeft: 2 }}>[{c}]</sup>
+              <sup key={c} className="au-num cv-research-section-8" >[{c}]</sup>
             ))}
           </p>
         </div>
@@ -821,22 +707,22 @@ function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
   const sources = card.sources || []
   const gaps = card.gaps || []
   return (
-    <div className="card card-research" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '16px 18px 14px' }}>
-        <AIBadge label="AI · 深度调研报告" />
-        <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '11px 0 12px' }}>
-          <Ico d={IC_BOOK} size={14} color="var(--au-text-2)" style={{ marginTop: 2 }} />
-          <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.38, color: 'var(--au-text)' }}>{card.question || '深度调研'}</span>
+    <div className="card card-research cv-research-report-card-view-1" >
+      <div className="cv-research-report-card-view-2" >
+        <AIBadge label="AI · 深度调研" />
+        <div className="cv-research-report-card-view-3" >
+          <Icon name="research" size={28} state="active" className="cv-research-report-card-view-4" />
+          <span className="cv-research-report-card-view-5" >{card.question || '深度调研'}</span>
         </div>
         {card.summary && (
-          <div style={{ padding: '11px 14px', borderRadius: 12, background: 'rgba(70,214,224,0.07)', border: '1px solid rgba(70,214,224,0.16)', marginBottom: 13 }}>
-            <p style={{ fontSize: 13, color: 'var(--au-text)', lineHeight: 1.72, margin: 0 }}>{card.summary}</p>
+          <div className="cv-research-report-card-view-6" >
+            <p className="cv-research-report-card-view-7" >{card.summary}</p>
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div className="cv-research-report-card-view-8" >
           <ConfPill level={card.overall_confidence} />
-          {fresh && <><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>·</span><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>时效 {fresh}</span></>}
-          {sources.length > 0 && <><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>·</span><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>引用 {sources.length} 篇</span></>}
+          {fresh && <><span className="cv-research-report-card-view-9" >·</span><span className="cv-research-report-card-view-10" >时效 {fresh}</span></>}
+          {sources.length > 0 && <><span className="cv-research-report-card-view-11" >·</span><span className="cv-research-report-card-view-12" >引用 {sources.length} 篇</span></>}
         </div>
       </div>
       <CardHR />
@@ -849,8 +735,8 @@ function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
       {sections.length > 1 && !allOpen && (
         <>
           <CardHR />
-          <div style={{ padding: '12px 16px', textAlign: 'center' }}>
-            <button onClick={() => setOpenSet(new Set(sections.map((_, i) => i)))} style={{ padding: '8px 22px', borderRadius: 20, background: 'rgba(70,214,224,0.08)', border: '1px solid rgba(70,214,224,0.22)', color: 'var(--au-primary)', fontSize: 12.5, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+          <div className="cv-research-report-card-view-13" >
+            <button onClick={() => setOpenSet(new Set(sections.map((_, i) => i)))} className="cv-research-report-card-view-14" >
               展开完整报告（共 {sections.length} 节）
             </button>
           </div>
@@ -859,15 +745,15 @@ function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
       {gaps.length > 0 && (
         <>
           <CardHR />
-          <div style={{ padding: '13px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <Ico d={IC_ALERT} size={13} color="var(--au-warn)" />
-              <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--au-warn)' }}>未覆盖数据缺口</span>
+          <div className="cv-research-report-card-view-15" >
+            <div className="cv-research-report-card-view-16" >
+              <Ico d={IC_ALERT} size={24} color="var(--au-warn)" />
+              <span className="cv-research-report-card-view-17" >未覆盖数据缺口</span>
             </div>
             {gaps.map((g, i) => (
-              <div key={i} style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: i < gaps.length - 1 ? 7 : 0 }}>
-                <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(245,158,11,0.55)', flexShrink: 0, marginTop: 6 }} />
-                <span style={{ fontSize: 12, color: 'var(--au-text-2)', lineHeight: 1.65 }}>{g}</span>
+              <div key={i} className="cv-research-report-card-view-18" style={{ marginBottom: i < gaps.length - 1 ? 7 : 0 }}>
+                <span className="cv-research-report-card-view-19"  />
+                <span className="cv-research-report-card-view-20" >{g}</span>
               </div>
             ))}
           </div>
@@ -876,16 +762,16 @@ function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
       {sources.length > 0 && (
         <>
           <CardHR />
-          <div style={{ padding: '13px 16px' }}>
-            <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', textTransform: 'uppercase', fontWeight: 600, marginBottom: 10 }}>参考来源</div>
+          <div className="cv-research-report-card-view-21" >
+            <div className="cv-research-report-card-view-22" >参考来源</div>
             {sources.map((r, i) => (
-              <div key={i} style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 8 }}>
-                <sup className="au-num" style={{ fontSize: 9, fontWeight: 700, color: 'var(--au-primary)', flexShrink: 0, marginTop: 3.5, minWidth: 14 }}>[{r.idx ?? i + 1}]</sup>
+              <div key={i} className="cv-research-report-card-view-23" >
+                <sup className="au-num cv-research-report-card-view-24" >[{r.idx ?? i + 1}]</sup>
                 <div>
                   {r.url
-                    ? <a href={r.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--au-text-2)', textDecoration: 'none' }}>{r.title}</a>
-                    : <span style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{r.title}</span>}
-                  <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}> — {[r.source, r.published].filter(Boolean).join(' · ') || domainOf(r.url)}</span>
+                    ? <a href={r.url} target="_blank" rel="noopener noreferrer" className="cv-research-report-card-view-25" >{r.title}</a>
+                    : <span className="cv-research-report-card-view-26" >{r.title}</span>}
+                  <span className="cv-research-report-card-view-27" > — {[r.source, r.published].filter(Boolean).join(' · ') || domainOf(r.url)}</span>
                 </div>
               </div>
             ))}
@@ -907,15 +793,15 @@ function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
   const extra = items.length - SHOW
   const srcCount = new Set(items.map((n) => n.source).filter(Boolean)).size
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 新闻速览" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <Ico d={['M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2', 'M18 14h-8M15 18h-5M10 6h8v4h-8z']} size={13} color="var(--au-text-2)" />
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--au-text)' }}>{card.topic || '今日要闻'}</span>
+    <div className="card cv-news-brief-card-view-1" >
+      <div className="cv-news-brief-card-view-2" >
+        <AIBadge label="AI 摘要" />
+        <div className="cv-news-brief-card-view-3" >
+          <div className="cv-news-brief-card-view-4" >
+            <Icon name="newspaper" size={24} color="var(--au-text-2)" />
+            <span className="cv-news-brief-card-view-5" >{card.topic || '今日要闻'}</span>
           </div>
-          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>已摘要 {items.length} 条</span>
+          <span className="cv-news-brief-card-view-6" >已摘要 {items.length} 条</span>
         </div>
       </div>
       <CardHR />
@@ -923,44 +809,44 @@ function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
         const rel = relativeTime(n.publish_time)
         return (
           <div key={i}>
-            <div style={{ padding: '11px 16px', display: 'flex', gap: 11, alignItems: 'flex-start' }}>
-              <span className="au-num" style={{ fontSize: 10.5, color: 'var(--au-text-3)', flexShrink: 0, marginTop: 1.5, minWidth: 16 }}>{String(i + 1).padStart(2, '0')}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="cv-news-brief-card-view-7" >
+              <NumericText as="span" className="au-num cv-news-brief-card-view-8" >{String(i + 1).padStart(2, '0')}</NumericText>
+              <div className="cv-news-brief-card-view-9" >
                 {n.url
-                  ? <a href={n.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 600, color: 'var(--au-text)', lineHeight: 1.4, textDecoration: 'none' }}>{n.title}</a>
-                  : <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--au-text)', lineHeight: 1.4 }}>{n.title}</div>}
-                {n.summary && <p style={{ fontSize: 11.5, color: 'var(--au-text-2)', lineHeight: 1.68, margin: '5px 0' }}>{n.summary}</p>}
+                  ? <a href={n.url} target="_blank" rel="noopener noreferrer" className="cv-news-brief-card-view-10" >{n.title}</a>
+                  : <div className="cv-news-brief-card-view-11" >{n.title}</div>}
+                {n.summary && <p className="cv-news-brief-card-view-12" >{n.summary}</p>}
                 {(n.source || rel) && (
-                  <div style={{ display: 'flex', gap: 5, alignItems: 'center', marginTop: n.summary ? 0 : 5 }}>
-                    {n.source && <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--au-text-3)' }}>{n.source}</span>}
-                    {rel && <><span style={{ fontSize: 10, color: 'var(--au-text-3)' }}>·</span><span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{rel}</span></>}
+                  <div className="cv-news-brief-card-view-13" style={{ marginTop: n.summary ? 0 : 5 }}>
+                    {n.source && <span className="cv-news-brief-card-view-14" >{n.source}</span>}
+                    {rel && <><span className="cv-news-brief-card-view-15" >·</span><span className="cv-news-brief-card-view-16" >{rel}</span></>}
                   </div>
                 )}
               </div>
             </div>
-            {i < shown.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+            {i < shown.length - 1 && <div className="cv-news-brief-card-view-17"  />}
           </div>
         )
       })}
-      <div style={{ borderTop: '1px solid var(--au-line)', padding: '10px 16px 13px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="cv-news-brief-card-view-18" >
+        <div className="cv-news-brief-card-view-19" >
           {srcCount > 0 ? (
-            <button onClick={() => setShowSrc(!showSrc)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--au-text-2)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+            <button onClick={() => setShowSrc(!showSrc)} className="cv-news-brief-card-view-20" >
               参考来源 {srcCount} 个
-              <Ico d={IC_CHEVRON} size={12} color="var(--au-text-3)" style={{ transform: showSrc ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+              <Ico d={IC_CHEVRON} size={24} color="var(--au-text-3)" className="cv-news-brief-card-view-21" style={{ transform: showSrc ? 'rotate(180deg)' : 'none' }} />
             </button>
           ) : <span />}
           {extra > 0 && <button className="ev-more" onClick={() => setOpen(!open)}>{open ? '收起' : `更多 ${extra} 条 ›`}</button>}
         </div>
         {showSrc && (
-          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div className="cv-news-brief-card-view-22" >
             {items.map((n, i) => {
               const rel = relativeTime(n.publish_time)
               return (
-                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--au-primary)', flexShrink: 0 }} />
-                  <span style={{ fontSize: 11, color: 'var(--au-text-2)' }}>{n.source}</span>
-                  {rel && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>· {rel}</span>}
+                <div key={i} className="cv-news-brief-card-view-23" >
+                  <span className="cv-news-brief-card-view-24"  />
+                  <span className="cv-news-brief-card-view-25" >{n.source}</span>
+                  {rel && <span className="cv-news-brief-card-view-26" >· {rel}</span>}
                 </div>
               )
             })}
@@ -973,14 +859,14 @@ function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
 
 function TeamSquare({ name, color, flag }: { name: string; color: string; flag?: string }) {
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, minWidth: 0 }}>
-      <div style={{ width: 48, height: 48, borderRadius: 12, display: 'grid', placeItems: 'center', background: `${color}22`, border: `2px solid ${color}55` }}>
+    <div className="cv-team-square-1" >
+      <div className="cv-team-square-2" style={{ background: `${color}22`, border: `2px solid ${color}55` }}>
         {/* 国家队显示国旗 emoji（.au-flag 套自托管国旗字体，Windows Chromium 也正常渲染）；无旗回落队名缩写 */}
         {flag
-          ? <span className="au-flag" style={{ fontSize: 26, lineHeight: 1 }}>{flag}</span>
-          : <span style={{ fontFamily: 'var(--au-font-mono)', fontSize: 14, fontWeight: 700, color }}>{name.slice(0, 2)}</span>}
+          ? <span className="au-flag cv-team-square-3" >{flag}</span>
+          : <span className="cv-team-square-4" style={{ color }}>{name.slice(0, 2)}</span>}
       </div>
-      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      <span className="cv-team-square-5" >{name}</span>
     </div>
   )
 }
@@ -993,19 +879,19 @@ function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
   const kickoff = f.kickoff && f.kickoff.includes('T') ? f.kickoff.slice(11, 16) : ''
   const goals = f.goals || []
   return (
-    <div style={{ padding: '6px 0 4px' }}>
+    <div className="cv-fixture-board-1" >
       {/* 计分板 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px 14px' }}>
+      <div className="cv-fixture-board-2" >
         <TeamSquare name={f.home} color={HOME_C} flag={f.home_flag} />
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 80 }}>
+        <div className="cv-fixture-board-3" >
           {scored ? (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="au-num" style={{ fontSize: 30, fontWeight: 700, color: HOME_C, lineHeight: 1 }}>{f.home_goals}</span>
-              <span className="au-num" style={{ fontSize: 18, fontWeight: 300, color: 'var(--au-text-3)' }}>–</span>
-              <span className="au-num" style={{ fontSize: 30, fontWeight: 700, color: AWAY_C, lineHeight: 1 }}>{f.away_goals}</span>
+            <span className="cv-fixture-board-4" >
+              <NumericText as="span" className="au-num cv-fixture-board-5" style={{ color: HOME_C }}>{f.home_goals}</NumericText>
+              <NumericText as="span" className="au-num cv-fixture-board-6" >–</NumericText>
+              <NumericText as="span" className="au-num cv-fixture-board-7" style={{ color: AWAY_C }}>{f.away_goals}</NumericText>
             </span>
-          ) : <span style={{ fontSize: 14, color: 'var(--au-text-3)' }}>{kickoff || 'VS'}</span>}
-          <span style={{ fontSize: 10.5, fontWeight: f.status === 'live' ? 700 : 400, color: f.status === 'live' ? 'var(--au-warn)' : 'var(--au-text-3)' }}>
+          ) : <span className="cv-fixture-board-8" >{kickoff || 'VS'}</span>}
+          <span className="cv-fixture-board-9" style={{ fontWeight: f.status === 'live' ? 700 : 400, color: f.status === 'live' ? 'var(--au-warn)' : 'var(--au-text-3)' }}>
             {f.status === 'live' && f.elapsed ? `${f.status_text} ${f.elapsed}'` : f.status_text}
           </span>
         </div>
@@ -1013,25 +899,25 @@ function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
       </div>
       {/* 进球时间线 */}
       {goals.length > 0 && (
-        <div style={{ padding: '13px 16px', borderTop: '1px solid var(--au-line)' }}>
-          <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600, marginBottom: 12 }}>进球时间线</div>
+        <div className="cv-fixture-board-10" >
+          <div className="cv-fixture-board-11" >进球时间线</div>
           {/* 90 分钟时间轴 + 进球标点 */}
-          <div style={{ position: 'relative', height: 6, borderRadius: 3, background: 'var(--au-fill)', marginBottom: 14 }}>
-            <div style={{ position: 'absolute', inset: 0, borderRadius: 3, background: `linear-gradient(to right,${HOME_C}40,${AWAY_C}30)` }} />
+          <div className="cv-fixture-board-12" >
+            <div className="cv-fixture-board-13" style={{ background: `linear-gradient(to right,${HOME_C}40,${AWAY_C}30)` }} />
             {goals.map((g, i) => {
               const m = Math.min(parseInt(g.minute, 10) || 0, 90)
               const color = g.team === 'away' ? AWAY_C : HOME_C
-              return <span key={i} style={{ position: 'absolute', left: `${(m / 90) * 100}%`, top: -3, transform: 'translateX(-50%)', width: 12, height: 12, borderRadius: '50%', background: color, border: '2px solid rgba(6,8,15,0.8)', boxShadow: `0 0 8px ${color}80` }} />
+              return <span key={i} className="cv-fixture-board-14" style={{ left: `${(m / 90) * 100}%`, top: -3, background: color, boxShadow: `0 0 8px ${color}80` }} />
             })}
           </div>
           {/* 进球事件 */}
           {goals.map((g, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <span className="au-num" style={{ fontSize: 11, fontWeight: 700, color: g.team === 'away' ? AWAY_C : HOME_C, width: 28, textAlign: 'right', flexShrink: 0 }}>{g.minute}&apos;</span>
-              <Icon name="sports" size={14} color="var(--au-text-2)" />
-              <span style={{ fontSize: 12.5, color: 'var(--au-text)' }}>{g.player || '球员'}</span>
-              {g.detail && g.detail !== '进球' && <span style={{ fontSize: 10, color: 'var(--au-text-3)', border: '1px solid var(--au-line-2)', borderRadius: 3, padding: '0 4px' }}>{g.detail}</span>}
-              <span className="au-flag" style={{ fontSize: 11, color: 'var(--au-text-3)', marginLeft: 'auto' }}>{g.team === 'away' ? `${f.away_flag ? f.away_flag + ' ' : ''}${f.away}` : g.team === 'home' ? `${f.home_flag ? f.home_flag + ' ' : ''}${f.home}` : ''}</span>
+            <div key={i} className="cv-fixture-board-15" >
+              <NumericText as="span" className="au-num cv-fixture-board-16" style={{ color: g.team === 'away' ? AWAY_C : HOME_C }}>{g.minute}&apos;</NumericText>
+              <Icon name="sports" size={24} color="var(--au-text-2)" />
+              <span className="cv-fixture-board-17" >{g.player || '球员'}</span>
+              {g.detail && g.detail !== '进球' && <span className="cv-fixture-board-18" >{g.detail}</span>}
+              <span className="au-flag cv-fixture-board-19" >{g.team === 'away' ? `${f.away_flag ? f.away_flag + ' ' : ''}${f.away}` : g.team === 'home' ? `${f.home_flag ? f.home_flag + ' ' : ''}${f.home}` : ''}</span>
             </div>
           ))}
         </div>
@@ -1042,24 +928,24 @@ function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
 
 function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 赛事信息" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="sports" size={17} color="var(--au-text)" />{card.title}</span>
-          {card.freshness && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{relativeTime(card.freshness)}</span>}
+    <div className="card cv-sports-scores-card-view-1" >
+      <div className="cv-sports-scores-card-view-2" >
+
+        <div className="cv-sports-scores-card-view-3" >
+          <span className="cv-sports-scores-card-view-4" ><Icon name="sports" size={24} color="var(--au-text)" />{card.title}</span>
+          {card.freshness && <span className="cv-sports-scores-card-view-5" >{relativeTime(card.freshness)}</span>}
         </div>
       </div>
       <CardHR />
       {card.fixtures.length === 0
-        ? <div style={{ padding: 18, textAlign: 'center', fontSize: 12, color: 'var(--au-text-3)' }}>暂无比赛安排</div>
+        ? <div className="cv-sports-scores-card-view-6" >暂无比赛安排</div>
         : card.fixtures.map((f, i) => (
             <div key={i}>
               {i > 0 && <CardHR />}
               <FixtureBoard f={f} />
             </div>
           ))}
-      {card.source && <div style={{ padding: '8px 16px 12px', fontSize: 10, color: 'var(--au-text-3)', fontFamily: 'var(--au-font-mono)' }}>数据来源 {card.source}</div>}
+      {card.source && <div className="cv-sports-scores-card-view-7" >数据来源 {card.source}</div>}
     </div>
   )
 }
@@ -1067,9 +953,9 @@ function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
 function SportsScorersCardView({ card }: { card: SportsScorersCard }) {
   return (
     <div className="card card-evidence card-sports">
-      <AIBadge label="AI · 射手榜" />
+
       <div className="ev-head">
-        <span className="ev-head-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><Icon name="sports" size={16} color="var(--au-text)" />{card.title}</span>
+        <span className="ev-head-title cv-sports-scorers-card-view-1" ><Icon name="sports" size={24} color="var(--au-text)" />{card.title}</span>
         {card.season && <span className="ev-fresh">{card.season}</span>}
       </div>
       {card.scorers.length === 0
@@ -1096,16 +982,16 @@ function RoutePlanCardView({ card, onAction }: { card: RoutePlanCard; onAction?:
     ? `${Math.floor(card.duration_min / 60) ? `${Math.floor(card.duration_min / 60)}小时` : ''}${card.duration_min % 60 ? `${card.duration_min % 60}分钟` : ''}`
     : ''
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 路线规划" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600, opacity: card.cancelled ? 0.55 : 1, textDecoration: card.cancelled ? 'line-through' : 'none' }}><Icon name="route-map" size={17} color="var(--au-text)" />{card.cancelled ? '导航已结束' : card.estimate ? '距离估算' : '规划路线'}</span>
-          {(card.distance_km || dur) && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{dur}{card.distance_km ? `${dur ? ' · ' : ''}${card.distance_km}km` : ''}</span>}
+    <div className="card cv-route-plan-card-view-1" >
+      <div className="cv-route-plan-card-view-2" >
+
+        <div className="cv-route-plan-card-view-3" >
+          <span className="cv-route-plan-card-view-4" style={{ opacity: card.cancelled ? 0.55 : 1, textDecoration: card.cancelled ? 'line-through' : 'none' }}><Icon name="route-map" size={24} color="var(--au-text)" />{card.cancelled ? '导航已结束' : card.estimate ? '距离估算' : '规划路线'}</span>
+          {(card.distance_km || dur) && <NumericText as="span" className="au-num cv-route-plan-card-view-5" >{dur}{card.distance_km ? `${dur ? ' · ' : ''}${card.distance_km}km` : ''}</NumericText>}
         </div>
       </div>
       <CardHR />
-      <div style={{ padding: '14px 20px' }}>
+      <div className="cv-route-plan-card-view-6" >
         {[
           { type: 'origin', icon: 'location' as IconName, label: card.origin || '当前位置', sub: '出发' },
           ...card.waypoints.map((w) => ({ type: 'stop', icon: 'pin' as IconName, label: w.name, sub: w.address || '途经点' })),
@@ -1113,30 +999,30 @@ function RoutePlanCardView({ card, onAction }: { card: RoutePlanCard; onAction?:
         ].map((n, i, arr) => {
           const color = n.type === 'origin' ? 'var(--au-primary)' : n.type === 'dest' ? '#34D399' : '#F59E0B'
           return (
-            <div key={i} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: `${n.type === 'stop' ? 'rgba(245,158,11,0.15)' : color}`, border: `2px solid ${color}` }}><Icon name={n.icon} size={15} color={n.type === 'stop' ? '#F59E0B' : '#06080F'} /></span>
-                {i < arr.length - 1 && <span style={{ width: 1, height: 26, background: 'var(--au-line-2)', margin: '4px 0' }} />}
+            <div key={i} className="cv-route-plan-card-view-7" >
+              <div className="cv-route-plan-card-view-8" >
+                <span className="cv-route-plan-card-view-9" style={{ background: `${n.type === 'stop' ? 'rgba(245,158,11,0.15)' : color}`, border: `2px solid ${color}` }}><Icon name={n.icon} size={24} color={n.type === 'stop' ? '#F59E0B' : '#06080F'} /></span>
+                {i < arr.length - 1 && <span className="cv-route-plan-card-view-10"  />}
               </div>
-              <div style={{ paddingTop: 4, flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{n.label}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>{n.sub}</div>
+              <div className="cv-route-plan-card-view-11" >
+                <div className="cv-route-plan-card-view-12" >{n.label}</div>
+                <div className="cv-route-plan-card-view-13" >{n.sub}</div>
               </div>
             </div>
           )
         })}
       </div>
-      <div style={{ padding: '0 16px 14px' }}>
+      <div className="cv-route-plan-card-view-14" >
         {/* 按钮回发的必须是**可直接执行的自然语言**（I-031：「解释定位原理」那颗按钮回发后
             被判没听清）。estimate 卡上它才是真按钮——只算不导之后「那就导过去」是下一步；
             规划卡上导航已经发出去了，再点一次没有语义，保持原来的装饰态。 */}
         {card.cancelled
           ? <button onClick={() => onAction?.(`导航去${card.destination}`)} disabled={!onAction}
-              style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'transparent', border: '1px solid var(--au-line-2)', color: 'var(--au-text-2)', fontSize: 13.5, fontWeight: 600, cursor: onAction ? 'pointer' : 'default', opacity: onAction ? 1 : 0.58, fontFamily: 'inherit' }}>重新导航</button>
+              className="cv-route-plan-card-view-15" style={{ cursor: onAction ? 'pointer' : 'default', opacity: onAction ? 1 : 0.58 }}>重新导航</button>
           : card.estimate
           ? <button onClick={() => onAction?.(`导航去${card.destination}`)} disabled={!onAction}
-              style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'var(--au-aurora)', border: 'none', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: onAction ? 'pointer' : 'default', opacity: onAction ? 1 : 0.58, fontFamily: 'inherit' }}>导航过去</button>
-          : <button style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'var(--au-aurora)', border: 'none', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>开始导航</button>}
+              className="cv-route-plan-card-view-16" style={{ cursor: onAction ? 'pointer' : 'default', opacity: onAction ? 1 : 0.58 }}>导航过去</button>
+          : <button className="cv-route-plan-card-view-17" disabled={!onAction} onClick={() => onAction?.(`导航去${card.destination}`)}>开始导航</button>}
       </div>
     </div>
   )
@@ -1149,57 +1035,57 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
     ? `${Math.floor(card.duration_min / 60) ? `${Math.floor(card.duration_min / 60)}小时` : ''}${card.duration_min % 60 ? `${card.duration_min % 60}分钟` : ''}`
     : ''
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 充电路线" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600, color: 'var(--au-warn)' }}><Icon name="charging-station" size={17} color="var(--au-warn)" />充电路线规划</span>
-          {card.distance_km ? <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{card.distance_km}km{dur ? ` · ${dur}` : ''}</span> : null}
+    <div className="card cv-charging-route-card-view-1" >
+      <div className="cv-charging-route-card-view-2" >
+
+        <div className="cv-charging-route-card-view-3" >
+          <span className="cv-charging-route-card-view-4" ><Icon name="charging-station" size={24} color="var(--au-warn)" />充电路线规划</span>
+          {card.distance_km ? <NumericText as="span" className="au-num cv-charging-route-card-view-5" >{card.distance_km}km{dur ? ` · ${dur}` : ''}</NumericText> : null}
         </div>
       </div>
       <CardHR />
       {card.soc
-        ? <div style={{ padding: '12px 16px 10px' }}><SocBar soc={card.soc} dest={card.destination} note={card.soc_note} /></div>
+        ? <div className="cv-charging-route-card-view-6" ><SocBar soc={card.soc} dest={card.destination} note={card.soc_note} /></div>
         : card.soc_note
-          ? <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--au-text-3)' }}>当前电量：{card.soc_note}</div>
+          ? <div className="cv-charging-route-card-view-7" >当前电量：{card.soc_note}</div>
           : null}
       <CardHR />
       {card.stops.length > 0 ? (
-        <div style={{ padding: '14px 18px' }}>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--au-primary)', flexShrink: 0 }} />
+        <div className="cv-charging-route-card-view-8" >
+          <div className="cv-charging-route-card-view-9" >
+            <span className="cv-charging-route-card-view-10"  />
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>出发地</div>
-              {card.soc && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>当前电量 {card.soc}</div>}
+              <div className="cv-charging-route-card-view-11" >出发地</div>
+              {card.soc && <div className="cv-charging-route-card-view-12" >当前电量 {card.soc}</div>}
             </div>
           </div>
           {card.stops.map((s, i) => (
             <div key={i}>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '2px 0 2px 4px' }}>
-                <span style={{ width: 1, height: 22, background: 'var(--au-line-2)' }} />
-                {s.at_km != null && <span className="au-num" style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>约 {s.at_km}km 处</span>}
+              <div className="cv-charging-route-card-view-13" >
+                <span className="cv-charging-route-card-view-14"  />
+                {s.at_km != null && <NumericText as="span" className="au-num cv-charging-route-card-view-15" >约 {s.at_km}km 处</NumericText>}
               </div>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 10, padding: '12px 14px', borderRadius: 14, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.20)' }}>
-                <span style={{ width: 28, height: 28, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'rgba(245,158,11,0.18)', border: '1px solid rgba(245,158,11,0.30)', flexShrink: 0 }}><Icon name="charging-station" size={15} color="#F59E0B" /></span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{s.name}</div>
-                  {s.address && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{s.address}</div>}
+              <div className="cv-charging-route-card-view-16" >
+                <span className="cv-charging-route-card-view-17" ><Icon name="charging-station" size={24} color="#F59E0B" /></span>
+                <div className="cv-charging-route-card-view-18" >
+                  <div className="cv-charging-route-card-view-19" >{s.name}</div>
+                  {s.address && <div className="cv-charging-route-card-view-20" >{s.address}</div>}
                 </div>
               </div>
             </div>
           ))}
-          <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 0 4px' }}><span style={{ width: 1, height: 18, background: 'var(--au-line-2)' }} /></div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#34D399', flexShrink: 0 }} />
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{card.destination}</div>
+          <div className="cv-charging-route-card-view-21" ><span className="cv-charging-route-card-view-22"  /></div>
+          <div className="cv-charging-route-card-view-23" >
+            <span className="cv-charging-route-card-view-24"  />
+            <div className="cv-charging-route-card-view-25" >{card.destination}</div>
           </div>
         </div>
       ) : (
-        <div style={{ padding: '20px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ width: 36, height: 36, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.28)' }}><Icon name="check-circle" size={20} color="#34D399" /></span>
+        <div className="cv-charging-route-card-view-26" >
+          <span className="cv-charging-route-card-view-27" ><Icon name="check-circle" size={28} color="#34D399" /></span>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#34D399' }}>全程无需补电</div>
-            <div style={{ fontSize: 11.5, color: 'var(--au-text-3)', marginTop: 2 }}>当前电量足以完成全程</div>
+            <div className="cv-charging-route-card-view-28" >全程无需补电</div>
+            <div className="cv-charging-route-card-view-29" >当前电量足以完成全程</div>
           </div>
         </div>
       )}
@@ -1226,16 +1112,16 @@ function TripItineraryCardView({ card, onAction }:
     return s
   })
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 行程规划" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="calendar-trip" size={17} color="var(--au-text)" />{card.destination} · {card.days}日行程</span>
-          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.status === 'confirmed' ? '已确认' : card.theme ? `《${card.theme}》主题` : '自驾 · AI 规划'}</span>
+    <div className="card cv-trip-itinerary-card-view-1" >
+      <div className="cv-trip-itinerary-card-view-2" >
+
+        <div className="cv-trip-itinerary-card-view-3" >
+          <span className="cv-trip-itinerary-card-view-4" ><Icon name="calendar-trip" size={24} color="var(--au-text)" />{card.destination} · {card.days}日行程</span>
+          <span className="cv-trip-itinerary-card-view-5" >{card.status === 'confirmed' ? '已确认' : card.theme ? `《${card.theme}》主题` : '自驾 · AI 规划'}</span>
         </div>
       </div>
       <CardHR />
-      <div style={{ padding: '8px 0 4px' }}>
+      <div className="cv-trip-itinerary-card-view-6" >
         {days.map((day, di) => {
           const color = DAY_COLORS[di % DAY_COLORS.length]
           const charges = (day.legs || []).flatMap((l) => l.charging_stops || [])
@@ -1243,36 +1129,36 @@ function TripItineraryCardView({ card, onAction }:
           return (
             <div key={di}>
               {charges.length > 0 && (
-                <div style={{ margin: '0 16px 6px', padding: '6px 12px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.18)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Icon name="charging-station" size={13} color="var(--au-warn)" />
-                  <span style={{ fontSize: 11, color: 'var(--au-warn)' }}>途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}</span>
+                <div className="cv-trip-itinerary-card-view-7" >
+                  <Icon name="charging-station" size={24} color="var(--au-warn)" />
+                  <span className="cv-trip-itinerary-card-view-8" >途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}</span>
                 </div>
               )}
-              <button onClick={() => toggle(day.day_index)} style={{ width: '100%', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--au-text)', fontFamily: 'inherit' }}>
-                <span style={{ width: 28, height: 20, borderRadius: 6, display: 'grid', placeItems: 'center', background: `${color}20`, border: `1px solid ${color}40`, fontFamily: 'var(--au-font-mono)', fontSize: 9.5, fontWeight: 700, color }}>D{day.day_index}</span>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, textAlign: 'left' }}>{day.city ? `${day.city} · ` : ''}{day.theme || `第${day.day_index}天`}</span>
+              <button onClick={() => toggle(day.day_index)} className="cv-trip-itinerary-card-view-9" >
+                <span className="cv-trip-itinerary-card-view-10" style={{ background: `${color}20`, border: `1px solid ${color}40`, color }}>D{day.day_index}</span>
+                <span className="cv-trip-itinerary-card-view-11" >{day.city ? `${day.city} · ` : ''}{day.theme || `第${day.day_index}天`}</span>
                 {day.weather?.text && (
-                  <span title={day.weather.text} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--au-text-3)' }}>
+                  <span title={day.weather.text} className="cv-trip-itinerary-card-view-12" >
                     {weatherGlyph(day.weather.text, 14)}
                     {day.weather.temp_low && day.weather.temp_high ? `${day.weather.temp_low}-${day.weather.temp_high}℃` : day.weather.text}
                   </span>
                 )}
-                <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{day.stops.length}个点</span>
-                <span style={{ fontSize: 13, color: 'var(--au-text-3)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }}>›</span>
+                <span className="cv-trip-itinerary-card-view-13" >{day.stops.length}个点</span>
+                <span className="cv-trip-itinerary-card-view-14" style={{ transform: isOpen ? 'rotate(90deg)' : 'none' }}>›</span>
               </button>
-              <div style={{ maxHeight: isOpen ? 600 : 0, overflow: 'hidden', transition: 'max-height .3s ease' }}>
+              <div className="cv-trip-itinerary-card-view-15" style={{ maxHeight: isOpen ? 600 : 0 }}>
                 {day.stops.map((s, i) => {
                   // 已接地的停靠点可点导航：派发整句『导航去第N天的X』→ 编排器路由 trip.navigate
                   const go = s.grounded && onAction ? () => onAction(`导航去第${day.day_index}天的${s.name}`) : undefined
                   return (
-                    <div key={i} style={{ padding: '7px 16px 7px 52px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <Icon name={TRIP_STOP_ICON[s.type] || 'pin'} size={15} color="var(--au-text-2)" style={{ marginTop: 1 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 500, color: s.grounded ? 'var(--au-text)' : 'var(--au-text-2)' }}>{s.name}</div>
-                        <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.grounded ? (s.poi?.address || '') : '待确认地点'}</div>
+                    <div key={i} className="cv-trip-itinerary-card-view-16" >
+                      <Icon name={TRIP_STOP_ICON[s.type] || 'pin'} size={24} color="var(--au-text-2)" className="cv-trip-itinerary-card-view-17"  />
+                      <div className="cv-trip-itinerary-card-view-18" >
+                        <div className="cv-trip-itinerary-card-view-19" style={{ color: s.grounded ? 'var(--au-text)' : 'var(--au-text-2)' }}>{s.name}</div>
+                        <div className="cv-trip-itinerary-card-view-20" >{s.grounded ? (s.poi?.address || '') : '待确认地点'}</div>
                       </div>
                       {go && (
-                        <button onClick={go} style={{ padding: '3px 10px', borderRadius: 8, background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)', fontSize: 10.5, color: 'var(--au-primary)', cursor: 'pointer', flexShrink: 0, fontFamily: 'inherit' }}>导航</button>
+                        <button onClick={go} className="cv-trip-itinerary-card-view-21" >导航</button>
                       )}
                     </div>
                   )
@@ -1283,9 +1169,9 @@ function TripItineraryCardView({ card, onAction }:
           )
         })}
       </div>
-      <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon name="voice-input" size={14} color="var(--au-text-3)" />
-        <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>下一站</span>」或「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 天的XX</span>」</span>
+      <div className="cv-trip-itinerary-card-view-22" >
+        <Icon name="voice-input" size={24} color="var(--au-text-3)" />
+        <span className="cv-trip-itinerary-card-view-23" >说「<span className="cv-trip-itinerary-card-view-24" >下一站</span>」或「<span className="cv-trip-itinerary-card-view-25" >导航去第 2 天的XX</span>」</span>
       </div>
     </div>
   )
@@ -1297,34 +1183,34 @@ function PoiListCardView({ card }: { card: PoiListCard }) {
   const isChoice = card.purpose === 'dest_choice' || card.purpose === 'waypoint_choice'
   const title = isChoice ? (card.title || '请选择') : `附近${card.keyword || '地点'}`
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 位置搜索" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="location" size={17} color="var(--au-text)" />{title}</span>
-          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>已更新 · 共 {card.items.length} 个</span>
+    <div className="card cv-poi-list-card-view-1" >
+      <div className="cv-poi-list-card-view-2" >
+
+        <div className="cv-poi-list-card-view-3" >
+          <span className="cv-poi-list-card-view-4" ><Icon name="location" size={24} color="var(--au-text)" />{title}</span>
+          <span className="cv-poi-list-card-view-5" >已更新 · 共 {card.items.length} 个</span>
         </div>
       </div>
       <CardHR />
       {card.items.map((item, i) => (
         <div key={item.id || i}>
-          <div style={{ padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'var(--au-line)', border: '1px solid var(--au-line-2)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-text-2)' }}>{i + 1}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</span>
-                {(item.distance_km ?? 0) > 0 && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-primary)', fontWeight: 600, flexShrink: 0 }}>{item.distance_km}km</span>}
+          <div className="cv-poi-list-card-view-6" >
+            <span className="cv-poi-list-card-view-7" >{i + 1}</span>
+            <div className="cv-poi-list-card-view-8" >
+              <div className="cv-poi-list-card-view-9" >
+                <span className="cv-poi-list-card-view-10" >{item.name}</span>
+                {(item.distance_km ?? 0) > 0 && <NumericText as="span" className="au-num cv-poi-list-card-view-11" >{item.distance_km}km</NumericText>}
               </div>
-              {(item.rating ?? 0) > 0 && <div style={{ fontSize: 11, color: 'var(--au-warn)', marginBottom: 4 }}>★ {item.rating}</div>}
-              {item.address && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{item.address}</div>}
+              {(item.rating ?? 0) > 0 && <div className="cv-poi-list-card-view-12" ><Icon name="star-filled" size={20} color="var(--au-warn)" style={{display: 'inline-block', verticalAlign: '-2px'}} /> {item.rating}</div>}
+              {item.address && <div className="cv-poi-list-card-view-13" >{item.address}</div>}
             </div>
           </div>
-          {i < card.items.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+          {i < card.items.length - 1 && <div className="cv-poi-list-card-view-14"  />}
         </div>
       ))}
-      <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon name="voice-input" size={14} color="var(--au-text-3)" />
-        <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 个</span>」或「<span style={{ color: 'var(--au-text-2)' }}>最近的{card.keyword || '地点'}</span>」</span>
+      <div className="cv-poi-list-card-view-15" >
+        <Icon name="voice-input" size={24} color="var(--au-text-3)" />
+        <span className="cv-poi-list-card-view-16" >说「<span className="cv-poi-list-card-view-17" >导航去第 2 个</span>」或「<span className="cv-poi-list-card-view-18" >最近的{card.keyword || '地点'}</span>」</span>
       </div>
     </div>
   )
@@ -1335,10 +1221,10 @@ function PoiListCardView({ card }: { card: PoiListCard }) {
 function PoiDetailCardView({ card }: { card: PoiDetailCard }) {
   return (
     <div className="card card-poi-detail">
-      <div className="poi-detail-name">{card.name}</div>
-      {card.address && <div className="poi-detail-addr" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="pin" size={13} color="var(--au-text-3)" />{card.address}</div>}
+      <div className="poi-detail-name au-card-inline-heading"><Icon name="location" size={24} state="active" />{card.name}</div>
+      {card.address && <div className="poi-detail-addr cv-poi-detail-card-view-1" ><Icon name="pin" size={24} color="var(--au-text-3)" />{card.address}</div>}
       <div className="poi-detail-row">
-        {card.rating > 0 && <span>★ {card.rating}</span>}
+        {card.rating > 0 && <span><Icon name="star-filled" size={20} color="var(--au-warn)" style={{display: 'inline-block', verticalAlign: '-2px'}} /> {card.rating}</span>}
         {card.category && <span>{card.category}</span>}
       </div>
     </div>
@@ -1352,24 +1238,24 @@ function ReminderListCardView({ card }: { card: ReminderListCard }) {
     s === 'fired' ? '#F59E0B' : s === 'done' ? 'var(--au-text-3)' : 'var(--au-primary)'
   const total = card.items.length + (card.todos?.length || 0)
   return (
-    <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{card.date_label || '我的提醒'}</span>
-        <span style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>{total} 条</span>
+    <div className="au-glass cv-reminder-list-card-view-1" >
+      <div className="cv-reminder-list-card-view-2" >
+        <span className="cv-reminder-list-card-view-3" >{card.date_label || '我的提醒'}</span>
+        <span className="cv-reminder-list-card-view-4" >{total} 条</span>
       </div>
       {card.items.map((it) => (
-        <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="au-num" style={{ fontSize: 12.5, minWidth: 86, color: color(it.status) }}>{it.time_display}</span>
-          <span style={{ fontSize: 13.5, flex: 1, textDecoration: it.status === 'done' ? 'line-through' : 'none', opacity: it.status === 'done' ? 0.55 : 1 }}>{it.title}</span>
-          {it.recur_label && <span style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 10, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)' }}>{it.recur_label}</span>}
-          {it.status === 'fired' && <span style={{ fontSize: 10.5, color: '#F59E0B' }}>到点</span>}
+        <div key={it.id} className="cv-reminder-list-card-view-5" >
+          <NumericText as="span" className="au-num cv-reminder-list-card-view-6" style={{ color: color(it.status) }}>{it.time_display}</NumericText>
+          <span className="cv-reminder-list-card-view-7" style={{ textDecoration: it.status === 'done' ? 'line-through' : 'none', opacity: it.status === 'done' ? 0.55 : 1 }}>{it.title}</span>
+          {it.recur_label && <span className="cv-reminder-list-card-view-8" >{it.recur_label}</span>}
+          {it.status === 'fired' && <span className="cv-reminder-list-card-view-9" >到点</span>}
         </div>
       ))}
       {(card.todos?.length || 0) > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingTop: 6, borderTop: '1px solid var(--au-line-2)' }}>
-          <span style={{ fontSize: 11, color: 'var(--au-text-3)', width: '100%' }}>待办 · {card.todos!.length}</span>
+        <div className="cv-reminder-list-card-view-10" >
+          <span className="cv-reminder-list-card-view-11" >待办 · {card.todos!.length}</span>
           {card.todos!.map((t) => (
-            <span key={t.id} className="au-glass" style={{ padding: '4px 10px', fontSize: 12, textDecoration: t.status === 'done' ? 'line-through' : 'none' }}>{t.title}</span>
+            <span key={t.id} className="au-glass cv-reminder-list-card-view-12" style={{ textDecoration: t.status === 'done' ? 'line-through' : 'none' }}>{t.title}</span>
           ))}
         </div>
       )}
@@ -1387,19 +1273,19 @@ function ReminderCardView({ card, onAction }: { card: ReminderCard; onAction?: (
     card.context === 'updated' ? '已改时间' : '已创建提醒'
   return (
     <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
-      ...(fired ? { animation: 'au-proactive-pulse-amber 3s ease-in-out infinite', border: '1px solid rgba(245,158,11,0.35)' } : {}) }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent, boxShadow: `0 0 8px ${accent}` }} />
-        <span style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{label}</span>
-        {it.recur_label && <span style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 10, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)' }}>{it.recur_label}</span>}
-        {it.time_display && <span className="au-num" style={{ marginLeft: 'auto', fontSize: 12.5, color: fired ? '#F59E0B' : 'var(--au-text-2)' }}>{it.time_display}</span>}
+      ...(fired ? { animation: 'au-proactive-pulse-amber 3s ease-in-out infinite', border: "1px solid color-mix(in srgb, var(--au-warn) 35%, transparent)" } : {}) }}>
+      <div className="cv-reminder-card-view-1" >
+        <span className="cv-reminder-card-view-2" style={{ background: accent, boxShadow: `0 0 8px ${accent}` }} />
+        <span className="cv-reminder-card-view-3" >{label}</span>
+        {it.recur_label && <span className="cv-reminder-card-view-4" >{it.recur_label}</span>}
+        {it.time_display && <NumericText as="span" className="au-num cv-reminder-card-view-5" style={{ color: fired ? '#F59E0B' : 'var(--au-text-2)' }}>{it.time_display}</NumericText>}
       </div>
-      <div style={{ fontSize: 15, fontWeight: 600 }}>{it.title}</div>
+      <div className="cv-reminder-card-view-6" >{it.title}</div>
       {(fired || offer) && (card.actions?.length || 0) > 0 && (
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="cv-reminder-card-view-7" >
           {card.actions!.map((a) => (
-            <button key={a.label} onClick={() => onAction?.(a.send_text)} className="au-glass"
-              style={{ padding: '7px 14px', fontSize: 12.5, cursor: 'pointer', border: '1px solid var(--au-line-2)', background: 'transparent', color: 'var(--au-text)' }}>
+            <button key={a.label} onClick={() => onAction?.(a.send_text)} className="au-glass cv-reminder-card-view-8"
+              >
               {a.label}
             </button>
           ))}
@@ -1417,36 +1303,36 @@ function SceneCardView({ card, onAction }: { card: SceneCard; onAction?: (t: str
     confirm: { label: '待确认', accent: 'var(--au-warn)' },
     created: { label: '已保存', accent: 'var(--au-primary)' },
     activated: { label: '已开启', accent: 'var(--au-primary)' },
-    suggest: { label: 'AI 建议', accent: '#F59E0B' },
+    suggest: { label: 'AI 建议', accent: "var(--au-warn)" },
   }
   const { label, accent } = meta[card.context] || meta.created
   const steps = card.actions_preview || []
   return (
-    <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent, boxShadow: `0 0 8px ${accent}` }} />
-        <span style={{ fontSize: 15, fontWeight: 600 }}>{card.name}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--au-text-3)' }}>{label}</span>
+    <div className="au-glass cv-scene-card-view-1" >
+      <div className="cv-scene-card-view-2" >
+        <span className="au-card-heading-icon"><Icon name="lightbulb" size={24} color={accent} /></span>
+        <span className="cv-scene-card-view-4" >{card.name}</span>
+        {card.context === 'suggest' ? <AIBadge label="AI 建议" /> : <span className="cv-scene-card-view-5">{label}</span>}
       </div>
       {card.description && (
-        <div style={{ fontSize: 12.5, color: 'var(--au-text-3)', lineHeight: 1.5 }}>{card.description}</div>
+        <div className="cv-scene-card-view-6" >{card.description}</div>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className="cv-scene-card-view-7" >
         {steps.map((s, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <span className="au-num" style={{ width: 18, height: 18, borderRadius: 6, flexShrink: 0, display: 'grid', placeItems: 'center', fontSize: 10.5, fontWeight: 700, background: 'var(--au-line)', color: 'var(--au-text-3)' }}>{i + 1}</span>
-            <span style={{ fontSize: 13, flex: 1 }}>{s.label}</span>
+          <div key={i} className="cv-scene-card-view-8" >
+            <NumericText as="span" className="au-num cv-scene-card-view-9" >{i + 1}</NumericText>
+            <span className="cv-scene-card-view-10" >{s.label}</span>
             {s.danger && (
-              <span style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 10, color: 'var(--au-warn)', background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.25)' }}>需确认</span>
+              <span className="cv-scene-card-view-11" >需确认</span>
             )}
           </div>
         ))}
       </div>
       {(card.buttons?.length || 0) > 0 && (
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="cv-scene-card-view-12" >
           {card.buttons!.filter((b) => b.send_text).map((b) => (
-            <button key={b.label} onClick={() => onAction?.(b.send_text)} className="au-glass"
-              style={{ padding: '7px 14px', fontSize: 12.5, cursor: 'pointer', border: '1px solid var(--au-line-2)', background: 'transparent', color: 'var(--au-text)' }}>
+            <button key={b.label} onClick={() => onAction?.(b.send_text)} className="au-glass cv-scene-card-view-13"
+              >
               {b.label}
             </button>
           ))}
@@ -1459,27 +1345,27 @@ function SceneCardView({ card, onAction }: { card: SceneCard; onAction?: (t: str
 // ─── 场景列表卡（scene.list）：我建的 / 内置，条目可点 → 回发「开启X」 ───
 function SceneListCardView({ card, onAction }: { card: SceneListCard; onAction?: (t: string) => void }) {
   const Group = ({ title, items }: { title: string; items: SceneListCard['mine'] }) => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{title} · {items.length}</span>
+    <div className="cv-scene-list-card-view-1" >
+      <span className="cv-scene-list-card-view-2" >{title} · {items.length}</span>
       {items.map((s) => (
         <button key={s.id} onClick={onAction ? () => onAction(`开启${s.name}`) : undefined}
-          style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 12, cursor: onAction ? 'pointer' : 'default', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: 'var(--au-text)' }}>
-          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{s.name}</span>
+          className="cv-scene-list-card-view-3" style={{ cursor: onAction ? 'pointer' : 'default' }}>
+          <span className="cv-scene-list-card-view-4" >{s.name}</span>
           {s.description && (
-            <span style={{ fontSize: 11.5, color: 'var(--au-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.description}</span>
+            <span className="cv-scene-list-card-view-5" >{s.description}</span>
           )}
           {!!s.action_count && (
-            <span className="au-num" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: 'var(--au-text-3)' }}>{s.action_count} 步</span>
+            <NumericText as="span" className="au-num cv-scene-list-card-view-6" >{s.action_count} 步</NumericText>
           )}
         </button>
       ))}
     </div>
   )
   return (
-    <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="au-glass cv-scene-list-card-view-7" >
       {card.mine?.length > 0 && <Group title="我建的" items={card.mine} />}
       {card.builtin?.length > 0 && <Group title="内置" items={card.builtin} />}
-      <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「创建钓鱼模式：座椅放平、氛围灯调暗」就能造一个</div>
+      <div className="cv-scene-list-card-view-8" >说「创建钓鱼模式：座椅放平、氛围灯调暗」就能造一个</div>
     </div>
   )
 }
@@ -1488,32 +1374,28 @@ function SceneListCardView({ card, onAction }: { card: SceneListCard; onAction?:
 function IntentChoiceCardView({ card, onAction }: { card: IntentChoiceCard; onAction?: (t: string) => void }) {
   const options = (card.options || []).filter((o) => o?.send_text)
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 需要确认" />
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <Icon name="info" size={17} color="var(--au-primary)" style={{ marginTop: 2, flexShrink: 0 }} />
-          <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}>{card.question}</span>
+    <div className="card cv-intent-choice-card-view-1" >
+      <div className="cv-intent-choice-card-view-2" >
+
+        <div className="cv-intent-choice-card-view-3" >
+          <Icon name="info" size={24} color="var(--au-primary)" className="cv-intent-choice-card-view-4"  />
+          <span className="cv-intent-choice-card-view-5" >{card.question}</span>
         </div>
       </div>
       <CardHR />
-      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="cv-intent-choice-card-view-6" >
         {options.map((o, i) => (
           <button
             key={i}
             onClick={onAction ? () => onAction(o.send_text) : undefined}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
-              padding: '11px 14px', borderRadius: 12, cursor: onAction ? 'pointer' : 'default',
-              background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: 'var(--au-text)',
-            }}
+            className="cv-intent-choice-card-view-7" style={{ cursor: onAction ? 'pointer' : 'default' }}
           >
-            <span style={{ width: 22, height: 22, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'var(--au-line)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-primary)' }}>{i + 1}</span>
-            <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.label}</span>
+            <span className="cv-intent-choice-card-view-8" >{i + 1}</span>
+            <span className="cv-intent-choice-card-view-9" >{o.label}</span>
           </button>
         ))}
       </div>
-      <div style={{ padding: '0 16px 12px', fontSize: 11, color: 'var(--au-text-3)' }}>说「第一个/第二个」或点选即可</div>
+      <div className="cv-intent-choice-card-view-10" >说「第一个/第二个」或点选即可</div>
     </div>
   )
 }
@@ -1521,15 +1403,15 @@ function IntentChoiceCardView({ card, onAction }: { card: IntentChoiceCard; onAc
 function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?: (t: string) => void }) {
   const title = `附近${card.keyword || card.category || '地点'}`
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <AIBadge label="AI · 周边发现" />
-          <ProvBadge prov={card._prov} />
+    <div className="card cv-place-list-card-view-1" >
+      <div className="cv-place-list-card-view-2" >
+        <div className="cv-place-list-card-view-3" >
+
+
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="location" size={17} color="var(--au-text)" />{title}</span>
-          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>共 {card.items.length} 家</span>
+        <div className="cv-place-list-card-view-4" >
+          <span className="cv-place-list-card-view-5" ><Icon name="location" size={24} color="var(--au-text)" />{title}</span>
+          <span className="cv-place-list-card-view-6" >共 {card.items.length} 家</span>
         </div>
       </div>
       <CardHR />
@@ -1537,13 +1419,13 @@ function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?:
         <div key={item.id || i}>
           <div
             onClick={onAction ? () => onAction(`看${item.name}的详情`) : undefined}
-            style={{ padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'flex-start', cursor: onAction ? 'pointer' : 'default' }}
+            className="cv-place-list-card-view-7" style={{ cursor: onAction ? 'pointer' : 'default' }}
           >
-            <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'var(--au-line)', border: '1px solid var(--au-line-2)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-text-2)' }}>{i + 1}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <span className="cv-place-list-card-view-8" >{i + 1}</span>
+            <div className="cv-place-list-card-view-9" >
+              <div className="cv-place-list-card-view-10" >
+                <span className="cv-place-list-card-view-11" >{item.name}</span>
+                <span className="cv-place-list-card-view-12" >
                   {(() => {
                     // 品牌门店（瑞幸/麦当劳）补「看菜单」直达：发现→看单→点单全程可点按
                     const menu = placeMenuAction(item.name)
@@ -1551,32 +1433,28 @@ function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?:
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onAction(menu.send_text) }}
-                        style={{
-                          padding: '3px 9px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                          fontFamily: 'inherit', cursor: 'pointer', color: 'var(--au-primary)',
-                          background: 'transparent', border: '1px solid var(--au-primary)',
-                        }}
+                        className="cv-place-list-card-view-13"
                       >{menu.label}</button>
                     ) : null
                   })()}
-                  {(item.distance_km ?? 0) > 0 && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-primary)', fontWeight: 600 }}>{item.distance_km}km</span>}
+                  {(item.distance_km ?? 0) > 0 && <NumericText as="span" className="au-num cv-place-list-card-view-14" >{item.distance_km}km</NumericText>}
                 </span>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: item.address ? 4 : 0 }}>
-                {(item.rating ?? 0) > 0 && <span style={{ fontSize: 11, color: 'var(--au-warn)', fontWeight: 600 }}>★ {item.rating}</span>}
-                {item.cost && <span style={{ fontSize: 11, color: 'var(--au-text-2)' }}>人均 ¥{item.cost}</span>}
-                {item.open_today && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{item.open_today}</span>}
+              <div className="cv-place-list-card-view-15" style={{ marginBottom: item.address ? 4 : 0 }}>
+                {(item.rating ?? 0) > 0 && <span className="cv-place-list-card-view-16" ><Icon name="star-filled" size={20} color="var(--au-warn)" style={{display: 'inline-block', verticalAlign: '-2px'}} /> {item.rating}</span>}
+                {item.cost && <span className="cv-place-list-card-view-17" >人均 ¥{item.cost}</span>}
+                {item.open_today && <span className="cv-place-list-card-view-18" >{item.open_today}</span>}
               </div>
-              {item.address && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{item.address}</div>}
-              {item.tags && <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', marginTop: 3 }}>{item.tags.split(/[,，]/).slice(0, 3).join(' · ')}</div>}
+              {item.address && <div className="cv-place-list-card-view-19" >{item.address}</div>}
+              {item.tags && <div className="cv-place-list-card-view-20" >{item.tags.split(/[,，]/).slice(0, 3).join(' · ')}</div>}
             </div>
           </div>
-          {i < card.items.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+          {i < card.items.length - 1 && <div className="cv-place-list-card-view-21"  />}
         </div>
       ))}
-      <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon name="voice-input" size={14} color="var(--au-text-3)" />
-        <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>看第 1 个详情</span>」或「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 个</span>」</span>
+      <div className="cv-place-list-card-view-22" >
+        <Icon name="voice-input" size={24} color="var(--au-text-3)" />
+        <span className="cv-place-list-card-view-23" >说「<span className="cv-place-list-card-view-24" >看第 1 个详情</span>」或「<span className="cv-place-list-card-view-25" >导航去第 2 个</span>」</span>
       </div>
     </div>
   )
@@ -1585,10 +1463,10 @@ function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?:
 // ─── 周边发现详情卡（nearby.detail）───
 function PlaceDetailRow({ icon, label, text }: { icon?: IconName; label?: string; text: string }) {
   return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: 'var(--au-text-2)' }}>
-      {icon && <Icon name={icon} size={14} color="var(--au-text-3)" />}
-      {label && <span style={{ color: 'var(--au-text-3)', flexShrink: 0, minWidth: 30 }}>{label}</span>}
-      <span style={{ flex: 1, minWidth: 0 }}>{text}</span>
+    <div className="cv-place-detail-row-1" >
+      {icon && <Icon name={icon} size={24} color="var(--au-text-3)" />}
+      {label && <span className="cv-place-detail-row-2" >{label}</span>}
+      <span className="cv-place-detail-row-3" >{text}</span>
     </div>
   )
 }
@@ -1597,47 +1475,47 @@ function PlaceDetailCardView({ card, onAction }: { card: PlaceDetailCard; onActi
   const hours = card.open_today || card.open_week
   const tel = (card.tel || '').split(/[;；/]/)[0].trim()
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '15px 16px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <AIBadge label="AI · 商户详情" />
-          <ProvBadge prov={card._prov} />
+    <div className="card cv-place-detail-card-view-1" >
+      <div className="cv-place-detail-card-view-2" >
+        <div className="cv-place-detail-card-view-3" >
+
+
         </div>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{card.name}</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-          {(card.rating ?? 0) > 0 && <span style={{ fontSize: 12, color: 'var(--au-warn)', fontWeight: 700 }}>★ {card.rating}</span>}
-          {card.cost && <span style={{ fontSize: 12, color: 'var(--au-text-2)' }}>人均 ¥{card.cost}</span>}
-          {card.category && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.category.split(/[;；]/)[0]}</span>}
+        <div className="cv-place-detail-card-view-4 au-card-inline-heading"><Icon name="dining" size={28} state="active" />{card.name}</div>
+        <div className="cv-place-detail-card-view-5" >
+          {(card.rating ?? 0) > 0 && <span className="cv-place-detail-card-view-6" ><Icon name="star-filled" size={20} color="var(--au-warn)" style={{display: 'inline-block', verticalAlign: '-2px'}} /> {card.rating}</span>}
+          {card.cost && <span className="cv-place-detail-card-view-7" >人均 ¥{card.cost}</span>}
+          {card.category && <span className="cv-place-detail-card-view-8" >{card.category.split(/[;；]/)[0]}</span>}
         </div>
       </div>
       {card.photos && card.photos.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, padding: '0 16px 12px', overflowX: 'auto' }}>
+        <div className="cv-place-detail-card-view-9" >
           {card.photos.slice(0, 4).map((u, i) => (
             <img key={i} src={u} alt="" loading="lazy"
               onError={(e) => { e.currentTarget.style.display = 'none' }}
-              style={{ width: 100, height: 72, objectFit: 'cover', borderRadius: 8, flexShrink: 0, border: '1px solid var(--au-line)' }} />
+              className="cv-place-detail-card-view-10"  />
           ))}
         </div>
       )}
       <CardHR />
-      <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="cv-place-detail-card-view-11" >
         {hours && <PlaceDetailRow icon="clock" text={hours} />}
         {tel && <PlaceDetailRow label="电话" text={card.tel!} />}
         {card.tags && <PlaceDetailRow label="特色" text={card.tags.split(/[,，]/).slice(0, 4).join(' · ')} />}
         {card.address && <PlaceDetailRow icon="pin" text={card.address} />}
       </div>
-      <div style={{ display: 'flex', gap: 8, padding: '2px 16px 14px' }}>
+      <div className="cv-place-detail-card-view-12" >
         {onAction && (
           <button
             onClick={() => onAction(`导航去${card.name}`)}
-            style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#fff', background: 'var(--au-primary)' }}
+            className="cv-place-detail-card-view-13"
           >
-            <Icon name="compass" size={15} color="#fff" />导航
+            <Icon name="compass" size={24} color="#fff" />导航
           </button>
         )}
         {tel && (
           <a href={`tel:${tel}`}
-            style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, textDecoration: 'none', fontSize: 13, fontWeight: 600, color: 'var(--au-text)', background: 'var(--au-line)', border: '1px solid var(--au-line-2)' }}
+            className="cv-place-detail-card-view-14"
           >拨打电话</a>
         )}
       </div>
@@ -1650,17 +1528,15 @@ function PlaceDetailCardView({ card, onAction }: { card: PlaceDetailCard; onActi
 // 不说清楚就是拿演示当真实（铁律③）。
 function VisionAnswerCardView({ card }: { card: any }) {
   return (
-    <div className="au-card" style={{ padding: '12px 14px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{card.question || '看一看'}</span>
+    <div className="au-card cv-vision-answer-card-view-1" >
+      <CardHeader icon="camera" title="看一看" meta={<AIBadge label="AI 回答" />} />
+      <div className="cv-vision-answer-card-view-2" >
+        <span className="cv-vision-answer-card-view-3" >{card.question || '看一看'}</span>
         {card.simulated && (
-          <span style={{
-            fontSize: 10, padding: '1px 6px', borderRadius: 6,
-            background: 'var(--au-fill-2)', color: 'var(--au-text-3)',
-          }}>模拟车外摄像头</span>
+          <span className="cv-vision-answer-card-view-4" >模拟车外摄像头</span>
         )}
       </div>
-      <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--au-text)' }}>{card.answer}</div>
+      <div className="cv-vision-answer-card-view-5" >{card.answer}</div>
     </div>
   )
 }
@@ -1696,62 +1572,42 @@ function PaymentQrCardView({ card, onAction }: { card: PaymentQrCard; onAction?:
     }
   }
   return (
-    <div className="au-card" style={{ padding: '14px 16px', maxWidth: 320 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>{presentation.title}</span>
-        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>
+    <div className="au-card cv-payment-qr-card-view-1" >
+      <div className="cv-payment-qr-card-view-2" >
+        <span className="cv-payment-qr-card-view-3" >{presentation.title}</span>
+        <span className="cv-payment-qr-card-view-4" >{card.amount}</span>
         <AccountBadge label={card.account_label} />
-        <span style={{ flex: 1 }} />
-        <ProvBadge prov={card._prov} />
+        <span className="cv-payment-qr-card-view-5"  />
+
       </div>
       {presentation.hasQr ? (
-        <div style={{
-          display: 'flex', justifyContent: 'center', padding: 10, borderRadius: 12,
-          background: '#fff', opacity: expired ? 0.35 : 1, position: 'relative',
-        }}>
-          <img src={card.qr_svg} alt="付款码" style={{ width: 180, height: 180, display: 'block' }} />
+        <div className="cv-payment-qr-card-view-6" style={{ opacity: expired ? 0.35 : 1 }}>
+          <img src={card.qr_svg} alt="付款码" className="cv-payment-qr-card-view-7"  />
           {expired && (
-            <span style={{
-              position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
-              fontSize: 13, fontWeight: 700, color: '#7a3b06',
-              background: 'rgba(245,158,11,0.92)', padding: '4px 12px', borderRadius: 8,
-            }}>已过期</span>
+            <span className="cv-payment-qr-card-view-8" >已过期</span>
           )}
         </div>
       ) : presentation.safeUrl && !expired ? (
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, padding: 10,
-          borderRadius: 12, background: 'var(--au-fill)', border: '1px solid var(--au-line-2)',
-        }}>
+        <div className="cv-payment-qr-card-view-9" >
           <a
             href={presentation.safeUrl}
             target="_blank"
             rel="noopener noreferrer"
-            style={{
-              minHeight: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              borderRadius: 10, textDecoration: 'none', background: 'rgba(70,214,224,0.12)',
-              border: '1px solid rgba(70,214,224,0.28)', color: 'var(--au-primary)',
-              fontSize: 12.5, fontWeight: 700,
-            }}
+            className="cv-payment-qr-card-view-10"
           >打开安全支付链接</a>
           <button
             type="button"
             onClick={copyLink}
-            style={{
-              minHeight: 44, padding: '0 13px', borderRadius: 10, cursor: 'pointer',
-              background: 'transparent', border: '1px solid var(--au-line-2)',
-              color: copied ? 'var(--au-online)' : 'var(--au-text-2)',
-              fontFamily: 'inherit', fontSize: 12,
-            }}
+            className="cv-payment-qr-card-view-11" style={{ color: copied ? 'var(--au-online)' : 'var(--au-text-2)' }}
           >{copied ? '已复制' : '复制链接'}</button>
         </div>
       ) : null}
-      <div style={{ marginTop: 8, fontSize: 12, color: 'var(--au-text-3)', textAlign: 'center' }}>
+      <div className="cv-payment-qr-card-view-12" >
         {expired ? '支付入口已过期，请重新发起' :
           expiresAt > 0 ? `${presentation.hint} · ${mm}:${ss} 后过期` : presentation.hint}
       </div>
       {card.merchant_note && (
-        <div style={{ marginTop: 4, fontSize: 11, color: 'var(--au-text-3)', textAlign: 'center' }}>
+        <div className="cv-payment-qr-card-view-13" >
           {card.merchant_note}
         </div>
       )}
@@ -1763,19 +1619,15 @@ function PaymentQrCardView({ card, onAction }: { card: PaymentQrCard; onAction?:
 // 支付回执卡：worker 确认收款后经主动引擎推送；parking 直发的历史通道同渲。
 function PaymentReceiptCardView({ card }: { card: any }) {
   return (
-    <div className="au-card" style={{ padding: '12px 14px', maxWidth: 320 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span aria-hidden style={{
-          width: 18, height: 18, borderRadius: 999, background: 'rgba(52,211,153,0.18)',
-          color: '#34d399', fontSize: 12, fontWeight: 800, display: 'inline-flex',
-          alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-        }}>✓</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>支付成功</span>
-        {card.amount && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>}
-        <span style={{ flex: 1 }} />
-        <ProvBadge prov={card._prov} />
+    <div className="au-card cv-payment-receipt-card-view-1" >
+      <div className="cv-payment-receipt-card-view-2" >
+        <span aria-hidden className="cv-payment-receipt-card-view-3" ><Icon name="check" size={24} color="var(--au-online)" /></span>
+        <span className="cv-payment-receipt-card-view-4" >支付成功</span>
+        {card.amount && <span className="cv-payment-receipt-card-view-5" >{card.amount}</span>}
+        <span className="cv-payment-receipt-card-view-6"  />
+
       </div>
-      <div style={{ marginTop: 6, fontSize: 11, color: 'var(--au-text-3)' }}>
+      <div className="cv-payment-receipt-card-view-7" >
         凭证号 {card.receipt_id}{card.order_id ? ` · 订单 ${card.order_id}` : ''}
       </div>
     </div>
@@ -1800,64 +1652,54 @@ function McpOrderCardView({ card, onAction }: {
     ? card.duplicate
     : card.duplicate === true
   return (
-    <div className="au-card" style={{ padding: '14px 16px', maxWidth: 340 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{
-          fontSize: 10.5, fontWeight: 800, letterSpacing: '0.06em', padding: '3px 8px',
-          borderRadius: 999, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)',
-          border: '1px solid rgba(70,214,224,0.22)',
-        }}>
+    <div className="au-card cv-mcp-order-card-view-1" >
+      <div className="cv-mcp-order-card-view-2" >
+        <span className="cv-mcp-order-card-view-3" >
           {order.brand}
         </span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>
+        <span className="cv-mcp-order-card-view-4" >
           {card.type === 'mcp_order' ? '商户订单' : '商户服务'}
         </span>
         {card.demo && (
-          <span style={{
-            fontSize: 10, padding: '1px 6px', borderRadius: 6,
-            background: 'rgba(245,158,11,0.16)', color: 'var(--au-warn)', fontWeight: 700,
-          }}>{card.demo_label || '演示商户'}</span>
+          <span className="cv-mcp-order-card-view-5" >{card.demo_label || '演示商户'}</span>
         )}
         <AccountBadge label={card.account_label} />
-        <span style={{ flex: 1 }} />
-        <ProvBadge prov={card._prov} />
+        <span className="cv-mcp-order-card-view-6"  />
+
       </div>
-      <div style={{ marginTop: 12, padding: '10px 0', borderTop: '1px dashed var(--au-line-2)', borderBottom: '1px dashed var(--au-line-2)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>订单号</span>
-          <span style={{ flex: 1 }} />
-          {order.status && <span style={{ fontSize: 11, color: 'var(--au-warn)', flexShrink: 0 }}>{order.status}</span>}
+      <div className="cv-mcp-order-card-view-7" >
+        <div className="cv-mcp-order-card-view-8" >
+          <span className="cv-mcp-order-card-view-9" >订单号</span>
+          <span className="cv-mcp-order-card-view-10"  />
+          {order.status && <span className="cv-mcp-order-card-view-11" >{order.status}</span>}
         </div>
-        <div
-          className="au-num"
+        <NumericText as="div"
+          className="au-num cv-mcp-order-card-view-12"
           data-order-id={order.orderId || undefined}
           title={order.orderId || undefined}
-          style={{
-            marginTop: 4, fontSize: 12, lineHeight: 1.35, fontWeight: 700,
-            color: 'var(--au-text)', overflowWrap: 'anywhere', wordBreak: 'break-all',
-          }}
+          style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}
         >
           {order.orderId || '待商户回传'}
-        </div>
-        {order.storeName && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--au-text-2)' }}>门店 · {order.storeName}</div>}
-        {order.fulfillment && <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--au-text-3)' }}>取餐 · {order.fulfillment}</div>}
+        </NumericText>
+        {order.storeName && <div className="cv-mcp-order-card-view-13" >门店 · {order.storeName}</div>}
+        {order.fulfillment && <div className="cv-mcp-order-card-view-14" >取餐 · {order.fulfillment}</div>}
         {order.items.map((item, i) => (
-          <div key={`${item.name}:${i}`} style={{ display: 'flex', gap: 8, marginTop: 7, color: 'var(--au-text-2)' }}>
-            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>{item.name}{item.specs ? <span style={{ color: 'var(--au-text-3)' }}> · {item.specs}</span> : null}</span>
-            <span className="au-num" style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>×{item.quantity}</span>
+          <div key={`${item.name}:${i}`} className="cv-mcp-order-card-view-15" >
+            <span className="cv-mcp-order-card-view-16" >{item.name}{item.specs ? <span className="cv-mcp-order-card-view-17" > · {item.specs}</span> : null}</span>
+            <NumericText as="span" className="au-num cv-mcp-order-card-view-18" >×{item.quantity}</NumericText>
           </div>
         ))}
         {(sku || size) && !order.items.length && (
-          <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--au-text-3)' }}>
+          <div className="cv-mcp-order-card-view-19" >
             {sku}{size ? ` · ${size}` : ''}
           </div>
         )}
       </div>
       {(order.amount || duplicate) && (
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 10 }}>
-          {order.amount && <><span style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>应付</span><span style={{ fontSize: 18, fontWeight: 850, color: 'var(--au-text)' }}>{order.amount}</span></>}
-          <span style={{ flex: 1 }} />
-          {duplicate && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>已有订单 · 幂等命中</span>}
+        <div className="cv-mcp-order-card-view-20" >
+          {order.amount && <><span className="cv-mcp-order-card-view-21" >应付</span><span className="cv-mcp-order-card-view-22" >{order.amount}</span></>}
+          <span className="cv-mcp-order-card-view-23"  />
+          {duplicate && <span className="cv-mcp-order-card-view-24" >已有订单 · 幂等命中</span>}
         </div>
       )}
       <MerchantActionRow buttons={actionButtons} onAction={onAction} />
@@ -1872,28 +1714,21 @@ function McpOrderCardView({ card, onAction }: {
 function McpInfoCardView({ card }: { card: McpResultCard }) {
   const order = normalizeMerchantOrder(card)
   return (
-    <div className="au-card" style={{ padding: '14px 16px', maxWidth: 340 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{
-          fontSize: 10.5, fontWeight: 800, letterSpacing: '0.06em', padding: '3px 8px',
-          borderRadius: 999, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)',
-          border: '1px solid rgba(70,214,224,0.22)',
-        }}>
+    <div className="au-card cv-mcp-info-card-view-1" >
+      <div className="cv-mcp-info-card-view-2" >
+        <span className="cv-mcp-info-card-view-3" >
           {order.brand}
         </span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>商户信息</span>
+        <span className="cv-mcp-info-card-view-4" >商户信息</span>
         {card.demo && (
-          <span style={{
-            fontSize: 10, padding: '1px 6px', borderRadius: 6,
-            background: 'rgba(245,158,11,0.16)', color: 'var(--au-warn)', fontWeight: 700,
-          }}>{card.demo_label || '演示商户'}</span>
+          <span className="cv-mcp-info-card-view-5" >{card.demo_label || '演示商户'}</span>
         )}
         <AccountBadge label={card.account_label} />
-        <span style={{ flex: 1 }} />
-        <ProvBadge prov={card._prov} />
+        <span className="cv-mcp-info-card-view-6"  />
+
       </div>
       {typeof card.tool === 'string' && card.tool && (
-        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--au-text-3)' }}>来源 · {card.tool}</div>
+        <div className="cv-mcp-info-card-view-7" >来源 · {card.tool}</div>
       )}
     </div>
   )
@@ -1926,39 +1761,31 @@ function MerchantCheckoutCardView({ card, onAction }: {
     : centsLabel(card.discount_cents)
 
   return (
-    <div className="au-card" style={{ padding: '15px 16px', maxWidth: 360 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-          background: 'var(--au-primary)', boxShadow: '0 0 10px rgba(70,214,224,0.55)',
-        }} />
-        <span style={{ fontSize: 14.5, fontWeight: 750, color: 'var(--au-text)' }}>{title}</span>
+    <div className="au-card cv-merchant-checkout-card-view-1" >
+      <div className="cv-merchant-checkout-card-view-2" >
+        <span className="cv-merchant-checkout-card-view-3"  />
+        <span className="cv-merchant-checkout-card-view-4" >{title}</span>
         <AccountBadge label={card.account_label} />
-        <span style={{ flex: 1 }} />
-        <ProvBadge prov={card._prov} />
+        <span className="cv-merchant-checkout-card-view-5"  />
+
       </div>
 
       {isChoices ? (
-        <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+        <div className="cv-merchant-checkout-card-view-6" >
           {typeof card.total === 'number' && card.total > optionButtons.length && (
-            <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>
+            <div className="cv-merchant-checkout-card-view-7" >
               在售共 {card.total} 款，这里是一页——按分类看或直接报名字
             </div>
           )}
           {Array.isArray(card.categories) && card.categories.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div className="cv-merchant-checkout-card-view-8" >
               {card.categories.map((cat) => (cat?.label && cat?.send_text ? (
                 <button
                   key={cat.label}
                   type="button"
                   disabled={!onAction}
                   onClick={onAction ? () => onAction(cat.send_text!) : undefined}
-                  style={{
-                    padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                    fontFamily: 'inherit', cursor: onAction ? 'pointer' : 'default',
-                    color: 'var(--au-primary)', background: 'transparent',
-                    border: '1px solid var(--au-primary)',
-                  }}
+                  className="cv-merchant-checkout-card-view-9" style={{ cursor: onAction ? 'pointer' : 'default' }}
                 >{cat.label}</button>
               ) : null))}
             </div>
@@ -1972,12 +1799,7 @@ function MerchantCheckoutCardView({ card, onAction }: {
                 type="button"
                 onClick={() => onAction?.(button.send_text)}
                 disabled={!onAction}
-                style={{
-                  minHeight: 52, width: '100%', padding: '9px 12px', borderRadius: 12,
-                  display: 'flex', flexDirection: 'row', justifyContent: 'flex-start', alignItems: 'center', gap: 10,
-                  textAlign: 'left', cursor: onAction ? 'pointer' : 'default', fontFamily: 'inherit',
-                  color: 'var(--au-text)', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)',
-                }}
+                className="cv-merchant-checkout-card-view-10" style={{ cursor: onAction ? 'pointer' : 'default' }}
               >
                 {image && (
                   // 图加载失败就把自己摘掉——车机上一张裂图比没有图更糟
@@ -1987,15 +1809,12 @@ function MerchantCheckoutCardView({ card, onAction }: {
                     loading="lazy"
                     referrerPolicy="no-referrer"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                    style={{
-                      width: 40, height: 40, flexShrink: 0, borderRadius: 8,
-                      objectFit: 'cover', background: 'var(--au-line-2)',
-                    }}
+                    className="cv-merchant-checkout-card-view-11"
                   />
                 )}
-                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>{button.label}</span>
-                  {option?.subtitle && <span style={{ marginTop: 3, fontSize: 11, color: 'var(--au-text-3)' }}>{option.subtitle}</span>}
+                <span className="cv-merchant-checkout-card-view-12" >
+                  <span className="cv-merchant-checkout-card-view-13" >{button.label}</span>
+                  {option?.subtitle && <span className="cv-merchant-checkout-card-view-14" >{option.subtitle}</span>}
                 </span>
               </button>
             )
@@ -2003,26 +1822,26 @@ function MerchantCheckoutCardView({ card, onAction }: {
         </div>
       ) : (
         <>
-          <div style={{ marginTop: 12, padding: '10px 0', borderTop: '1px dashed var(--au-line-2)', borderBottom: '1px dashed var(--au-line-2)' }}>
-            {order.storeName && <div style={{ fontSize: 12.5, color: 'var(--au-text-2)' }}>门店 · {order.storeName}</div>}
+          <div className="cv-merchant-checkout-card-view-15" >
+            {order.storeName && <div className="cv-merchant-checkout-card-view-16" >门店 · {order.storeName}</div>}
             {order.items.map((item, i) => (
-              <div key={`${item.name}:${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: order.storeName || i > 0 ? 8 : 0 }}>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--au-text)' }}>
+              <div key={`${item.name}:${i}`} className="cv-merchant-checkout-card-view-17" style={{ marginTop: order.storeName || i > 0 ? 8 : 0 }}>
+                <span className="cv-merchant-checkout-card-view-18" >
                   {item.name}
-                  {item.specs && <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: 'var(--au-text-3)' }}>{item.specs}</span>}
+                  {item.specs && <span className="cv-merchant-checkout-card-view-19" >{item.specs}</span>}
                 </span>
-                <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>×{item.quantity}</span>
+                <NumericText as="span" className="au-num cv-merchant-checkout-card-view-20" >×{item.quantity}</NumericText>
               </div>
             ))}
-            {order.fulfillment && <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--au-text-3)' }}>取餐方式 · {order.fulfillment}</div>}
+            {order.fulfillment && <div className="cv-merchant-checkout-card-view-21" >取餐方式 · {order.fulfillment}</div>}
           </div>
           {Array.isArray(card.spec_options) && card.spec_options.length > 0 && (
             // 规格 chips（demo-3ukshz #3）：只展示下单链消费得动的组（桥侧已按
             // _SPEC_GROUPS 过滤）；点非当前项发「在{店}点一杯{品}，要{规格}」重出预览
-            <div style={{ marginTop: 10, display: 'grid', gap: 7 }}>
+            <div className="cv-merchant-checkout-card-view-22" >
               {card.spec_options.map((group) => (
-                <div key={group.name} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 11, color: 'var(--au-text-3)', flexShrink: 0, minWidth: 28 }}>{group.name}</span>
+                <div key={group.name} className="cv-merchant-checkout-card-view-23" >
+                  <span className="cv-merchant-checkout-card-view-24" >{group.name}</span>
                   {(group.options || []).map((opt) => {
                     if (!opt?.label) return null
                     const active = opt.label === group.selected
@@ -2034,13 +1853,7 @@ function MerchantCheckoutCardView({ card, onAction }: {
                         type="button"
                         disabled={!clickable}
                         onClick={clickable ? () => onAction!(action!.send_text) : undefined}
-                        style={{
-                          padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                          fontFamily: 'inherit', cursor: clickable ? 'pointer' : 'default',
-                          color: active ? 'var(--au-bg, #0d1117)' : 'var(--au-text-2)',
-                          background: active ? 'var(--au-primary)' : 'var(--au-fill)',
-                          border: `1px solid ${active ? 'var(--au-primary)' : 'var(--au-line-2)'}`,
-                        }}
+                        className="cv-merchant-checkout-card-view-25" style={{ cursor: clickable ? 'pointer' : 'default', color: active ? 'var(--au-bg, #0d1117)' : 'var(--au-text-2)', background: active ? 'var(--au-primary)' : 'var(--au-fill)', border: `1px solid ${active ? 'var(--au-primary)' : 'var(--au-line-2)'}` }}
                       >
                         {opt.label}
                         {typeof opt.price_delta_cents === 'number' && opt.price_delta_cents > 0
@@ -2053,9 +1866,9 @@ function MerchantCheckoutCardView({ card, onAction }: {
             </div>
           )}
           {(discount || order.amount) && (
-            <div style={{ marginTop: 10 }}>
-              {discount && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--au-text-3)' }}><span>优惠</span><span>-{discount}</span></div>}
-              {order.amount && <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginTop: discount ? 4 : 0 }}><span style={{ fontSize: 12, color: 'var(--au-text-2)' }}>实付</span><span style={{ fontSize: 20, fontWeight: 850, color: 'var(--au-text)' }}>{order.amount}</span></div>}
+            <div className="cv-merchant-checkout-card-view-26" >
+              {discount && <div className="cv-merchant-checkout-card-view-27" ><span>优惠</span><span>-{discount}</span></div>}
+              {order.amount && <div className="cv-merchant-checkout-card-view-28" style={{ marginTop: discount ? 4 : 0 }}><span className="cv-merchant-checkout-card-view-29" >实付</span><span className="cv-merchant-checkout-card-view-30" >{order.amount}</span></div>}
             </div>
           )}
           <MerchantActionRow buttons={regularButtons} onAction={onAction} />
@@ -2068,13 +1881,13 @@ function MerchantCheckoutCardView({ card, onAction }: {
 // 停车费查询卡（只读，一分钱不动）
 function ParkingFeeCardView({ card }: { card: any }) {
   return (
-    <div className="au-card" style={{ padding: '12px 14px', maxWidth: 320 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ fontSize: 13, color: 'var(--au-text-2)' }}>当前停车费</span>
-        <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>
+    <div className="au-card cv-parking-fee-card-view-1" >
+      <div className="cv-parking-fee-card-view-2" >
+        <span className="cv-parking-fee-card-view-3" >当前停车费</span>
+        <span className="cv-parking-fee-card-view-4" >{card.amount}</span>
       </div>
       {card.plate && (
-        <div style={{ marginTop: 4, fontSize: 11, color: 'var(--au-text-3)' }}>车牌 {card.plate}</div>
+        <div className="cv-parking-fee-card-view-5" >车牌 {card.plate}</div>
       )}
     </div>
   )

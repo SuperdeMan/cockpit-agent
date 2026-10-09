@@ -28,8 +28,8 @@ after(async () => {
   await vite?.close()
 })
 
-const renderCard = (card) => renderToStaticMarkup(
-  React.createElement(CardRenderer, { card, onAction: () => {} }),
+const renderCard = (card, options = {}) => renderToStaticMarkup(
+  React.createElement(CardRenderer, { card, onAction: () => {}, ...options }),
 )
 
 const renderConfirmation = (uiCard, extra = {}) => renderToStaticMarkup(
@@ -155,6 +155,21 @@ test('an action waiting for confirmation is never presented as executed', () => 
   const html = renderConfirmation(undefined, { actions: [{ type: 'vehicle.control', require_confirm: true, payload: { command: 'trunk.open' } }] })
   assert.doesNotMatch(html, /已执行|已核实/)
   assert.match(html, /危险操作需二次确认/)
+})
+
+test('weather omits absent field rows while preserving real zero values', () => {
+  const html = renderCard({type:'weather',city:'杭州',temp:'20',text:'晴',feels_like:'0',humidity:'0'})
+  assert.match(html, /体感/)
+  assert.match(html, /湿度/)
+  assert.doesNotMatch(html, /气压|能见度|降水|—/)
+  assert.equal((html.match(/class="au-metric-tile"/g)||[]).length, 2)
+})
+
+test('driving payment omits QR and links, and keeps provenance; future card types have an honest fallback', () => {
+  const html = renderCard({type:'payment_qr',amount:'15.90元',qr_svg:'data:image/svg+xml;base64,eA==',_prov:{mode:'mock',vendor:'sample'}},{driving:true})
+  assert.doesNotMatch(html, /<img|href=|扫码完成支付/)
+  assert.match(html, /模拟数据/)
+  assert.match(renderCard({type:'future_card',_prov:{mode:'cached',vendor:'sample'}}), /这条结果暂时无法展示/)
 })
 
 test('renders a grounded manual image with caption, page and source excerpt', () => {
