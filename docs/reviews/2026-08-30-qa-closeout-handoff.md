@@ -27,8 +27,8 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
-| 当前生产 release | `6280cdb0ddd8291440e83a90aab693dfc9bcd522`，2026-10-09 上线 HMI Visual v2：I1–I6、类型清理与示例标识；`types.ts` / `App.handleEvent` 不变，无后端业务、schema、CI/CD 或基础设施改动。前版 / 回退基线 `b64fa70ac27bd565102ccb151b300ea66e5d9f77`；发布过程见 [T4](../design/2026-10-09-hmi-visual-v2-validation-release.md#t4-授权部署与独立验收2026-10-09) |
-| 当前 status / verify | release = running = `6280cdb0ddd8291440e83a90aab693dfc9bcd522`，status ok、5/5 healthy、发布 warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261009T055611Z-6280cdb.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`，时间 `2026-10-09T05:56:11.440955Z` |
+| 当前生产 release | `ff9bce828fb58459b8979f2ba8263f746c4bd250`，2026-10-09 上线：时钟问句判据收进 `runtime/clock_question.py`，规划器漏给或缩掉槽时内置时间工具按这一步的原话直答（`7035ef68`）；端侧转述框架「据〈来源〉报道」不再本地执行（`6733f0ae`，先随 `2464356a` 上线）；容量治理 P2 修订（`b9d7819b`，锚 `abe367c4`）。无 schema、CI/CD、compose 改动。前版 / 回退基线 `2464356a0f379d67b95a2a609c3bfe7843129e00`（再前 `6280cdb0`，HMI Visual v2）；过程见 [核心旅程冻结 §11](../design/2026-10-09-v2-core-journey-freeze.md#11-落地记录) |
+| 当前 status / verify | release = running = `ff9bce828fb58459b8979f2ba8263f746c4bd250`，status ok、5/5 healthy、发布 warnings 为空、可用 59.77 GiB；verify `verified`：`.artifacts/dev-stack-verifications/20261009T105656Z-ff9bce8.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`，时间 `2026-10-09T10:56:56.306672Z`。前版 `2464356a`：`20261009T102149Z-2464356.json` |
 | 本轮 HMI 线上资源 | 5 项只读核对通过：v2 token/设置样式、示例标识组件，以及两份自托管字体；字体字节 SHA-256 与候选 git blob 一致，前后 release 固定。`.artifacts/hmi-visual-v2/release-prep/live-assets.json`；不代替车机触控/GPU/可读性验收 |
 | 本轮代码与本地证据 | 候选 HMI 严格类型检查 0 错误、388 tests、Vite build 通过；88 组大字卡片、12 组高度布局及对话/舞台/设置回归通过。Android 相关 64 项与 0 类型错误属于 `3e2da487`，其唯一源码注解的 JS 产物未变。没有给本 release 借用旧后端全量/长会话数字；详见 [验证记录](../design/2026-10-09-hmi-visual-v2-validation-release.md) |
 | 本轮容量 | 发布后可用 `36,057,206,784` 字节（约 33.6 GiB）：高于 30 GiB 构建闸，仍低于 40 GiB 预警线。未手动清理镜像/卷/数据，发布事务继续按已批准保留策略运行 |
@@ -256,6 +256,12 @@ CA2-07 另登记：V210 r1 手册未派发，V207 r3 场景列表未回答模式
 权限专项的正向回忆也有一轮声称无记录，但数据存在，Agent 具体输入缺乏完整证据，根因待裁定。
 这些都没有随权限机制签收而关闭，见 [CA2-07 §5](../design/2026-09-28-v2-permissioned-context-view.md#5-发布与证据2026-09-28)。
 2026-10-02 CA2-10 真栈车控探针（两次授权）新增三项：① 车端把「如果深圳今天不下雪，就把空调打开」拆开，后件当场执行、空调被无条件打开（「温度低于20度时打开空调」也会被当成设 20 度）——**已修**，`9d6b0509` 整句上云，判据与规划器共用；② 修后云端 T2 查完条件不派后件（goal「条件式指示不产生本轮动作步」，trace `ac80349a236c4747b074dc1cd8c8b162`），未修，改规划知识需 A/B；③ 规划为空步时谈话步说「好，关空调这步执行完了」（trace `70b966cf482846969e001e1b320d93d2`），执行声明闸刻意只认「为您」类标记，放宽前要先拿历史谈话量误伤，未修。另有「下雨的话…」「等到了公司再…」两种延后形态端云两侧都不认，未修。见 [CA2-10 §5](../design/2026-10-02-v2-effect-evidence.md#5-实现与证据2026-10-02)。
+2026-10-09 核心旅程冻结（CA2-21）首批真栈读数新增，见 [冻结设计 §11](../design/2026-10-09-v2-core-journey-freeze.md#11-落地记录)：
+① 语音来源「据央视新闻报道…」端侧本地放了媒体，已修（`6733f0ae`），复测转绿；
+② 「打开充电口，顺便告诉我今天几号」以及真实用户「what time is it now」听到「没能换算」，工具一侧已修（`7035ef68`），仍有规划器把问日期误派天气（P06 2/5，`known_red`）；
+③ 挂起中问「我刚才让你做了什么」，审计不提在等确认的操作（P10，产品缺口）；
+④ 公交报站与回声风格句没被拒识（R05 / R06），按拒识设计「负例只入基线」登记 `known_red`。
+另：Jev 自 10-09 起全部请求 HTTP 451（[Jev §13](../design/2026-10-04-jev-decide-integration.md)，停外呼需改云端 `.env`，待用户）；main 的 CI 自 `81a133ba` 起 mobile 一直红，其余 job 绿，待指派。
 会话四轮未关项按 [原待办](../design/2026-09-24-conversation-review-round4-remediation.md) §7 重证；
 Android 按 [总表](../design/2026-09-14-android-remaining-todos.md)。统一优先级见 [路线图](../roadmap.md)，
 下面保留历史 QA 五项的逐条处置，不代表全部仍待修。

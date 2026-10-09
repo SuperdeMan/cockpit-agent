@@ -66,7 +66,7 @@ journeys:
   - {id: P04, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P05, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P06, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only,
-     known_red: "规划器把「今天几号」派给 datetime.parse 却不给 text 槽，工具回「没能换算」（90 天 datetime.parse 3 次派发 2 次失败，含真实用户英文问时间）；待修"}
+     known_red: "工具一侧已修（7035ef68：ff9bce82 上派到 datetime.parse 的 3/3 都答对日期）；剩下的是规划器把「顺便告诉我今天几号」误派给 info.weather（2/5）。不改工具描述：会把「明天几号 / 下周三是几号」也引到只会答当下的工具"}
   - {id: P07, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P08, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P09, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
