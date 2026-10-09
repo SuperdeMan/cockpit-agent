@@ -17,6 +17,7 @@
 
 ## T2 · 视觉与交互复查
 
+- 提交/推送与发布候选：`6280cdb0ddd8291440e83a90aab693dfc9bcd522`。
 - 新增 `visual_accessibility.mjs`：从实际面板读取 **734px** 内容宽，44 份卡片 × 深浅的大字档共 **88 组**无横向溢出；1920×720 / 1080 / 1200 × 深浅 × 行车/非行车，共 **12 组**布局通过。注入一个超宽子元素验证扫描确实会拒绝溢出。720 高度只验证既定回退规则，不宣称新增设计稿或硬件验收。
 - 人工看图发现旧 `?demo` 场景没有明确来源提示，已补只读「含示例数据」标识；普通页面不显示。不改消息数据、数据来源合同或服务端执行语义。
 - 最终树复验：HMI 类型检查 **0 错误**、**388 passed**、Vite build 通过；保护脚本核对 `types.ts` / `handleEvent` 原文不变。原有 >500 kB bundle 提示仍在。
@@ -26,6 +27,20 @@
 
 ## T3 · 生产发布准备
 
-- 当前只读 status：运行 release `b64fa70ac27bd565102ccb151b300ea66e5d9f77`，5 个入口健康。健康检查不替代业务验收。
-- 最终目标提交完成并推送后，在干净的隔离 worktree 执行 dry-run，记录精确 SHA、变更范围、容量/闸状态和回退基线。
-- 未执行 `--apply`，不修改 `.env`、CI/CD、数据库或基础设施批准锚。
+- **dry-run 已通过，待实际部署授权**。部署候选是 T2 的 `6280cdb0ddd8291440e83a90aab693dfc9bcd522`；此后的本文件更新仅是准备记录，不改变发布候选。
+- 只读 status 与 dry-run 的基线一致：`b64fa70ac27bd565102ccb151b300ea66e5d9f77`，运行 release 一致，5 个入口健康。健康检查不替代业务验收。
+- 干净隔离工作树：`D:/car-agent-hmi-v2-release-wt`，detached 在候选 SHA；仅复制 `dev-stack.local`，未复制 `.env`。主工作树他人的两个未提交文件未动。
+- dry-run 返回 `status=dry_run`、`blocking_changes=[]`；发布锁可用，运行项目/共享脚本/受控模型均就绪。目标与已批准基础设施摘要均为 `ef2be6118821dec9950481759318535fc512905aadaadd5bdf93b320ce2b09d4`，不需要新增基础设施、Compose、schema 或 CI/CD 批准。
+- 变更范围：docs 8、hmi 95、mobile 9、test 9 个路径；无后端业务、协议、环境文件、CI/CD、数据库或部署脚本改动。Android 相关源文件包含共享提取与适配，云端发布不生成 APK。
+- dry-run 可用磁盘 **34,459,168,768 字节（约 32.1 GiB）**，高于 30 GiB 构建闸，但仍在 40 GiB 预警线以下；可用内存 **5,663,436,800 字节**。没有手动清理镜像/数据或改保留策略。
+- 产物：隔离树 `.artifacts/releases/6280cdb0ddd8291440e83a90aab693dfc9bcd522/`，包含 `manifest.json`、`source.tar`、`transport.tar` 和 `checksums.sha256`。source SHA-256：`83748a12eba8422149ba3ecb50fe1ea9f7fc3092887adfa1104135d4d341bc5f`；manifest 同时绑定候选与部署基线。
+- 准备记录 JSON：隔离树 `.artifacts/hmi-v2-release-dry-run.json`；便于复核的副本在主树 `.artifacts/hmi-visual-v2/release-prep/`。
+- **未执行 `--apply`**。取得本轮人工授权后，在该干净隔离树运行：
+
+```powershell
+python scripts/dev_stack.py target show
+python scripts/dev_stack.py deploy --sha 6280cdb0ddd8291440e83a90aab693dfc9bcd522 --apply
+```
+
+- apply 会重新 preflight；基线或批准材料漂移时按工具拒绝结果重新准备，不绕过。返回 submitted 后，仍须回主工作树独立执行 `status` / `verify`，记录实际 release 与验收 artifact；不得把本地夹具结果写成生产验收。
+- 回退基线已明确为 `b64fa70ac27bd565102ccb151b300ea66e5d9f77`；回退也是生产动作，未经授权不执行。真实地图底图、车型线稿与车机触控/GPU 可读性仍按原交付边界单列。
