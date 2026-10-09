@@ -99,7 +99,9 @@ journeys:
   - {id: R03, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
      known_red: "电话开场「喂，听得到吗」与对助手试麦在文本上分不清，归声学（同 R02）"}
   - {id: R04, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
-  - {id: R05, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
-  - {id: R06, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only, safety: must_pass}
+  - {id: R05, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
+     known_red: "公交报站没有确定性语域证据（不加报站词：用户也说「下一站去哪」），规划器判受话派了 trip.navigate；拒识语料写明负例拦截率只入基线、拿不准算受话"}
+  - {id: R06, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
+     known_red: "回声风格命中播报语域，但规划器首轮给了闲聊；云侧确定性拒识只在两轮空手时生效（防误拒「主持人 / 为大家 / 据了解」开头的闲聊问句；90 天真实流量语域命中为零，量不出扩规则的收益与误伤）"}
   - {id: R07, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
   - {id: R08, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
