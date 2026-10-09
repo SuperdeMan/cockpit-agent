@@ -188,6 +188,16 @@
 - 本机用网关同一套 `DecisionService` + TypeSafe 提供方，各发一句合成句「打开空调」（`smoke` 任务）：
   - **直连**：`HTTP 451 {"title":"Typesafe is not available in your region.","status":451}`，Cloudflare 边缘（`cf-ray …-SJC`）拦截，1.7 s；
   - **经本机代理（境外出口）**：`DECISION_STATUS_OK`，`jev-1.13.0`，12.6 s（含跨境建连）。
+- 复核（同日，不带任何凭证）：Cloudflare 自己的 `/cdn-cgi/trace` 给出判定的出口国家，再发一个**不带鉴权头**的 POST：
+
+  | 出口 | Cloudflare 判定 | 无凭证 POST 的回应 |
+  |---|---|---|
+  | 本机直连 | `loc=CN`（SJC） | `451 Typesafe is not available in your region.` |
+  | 本机代理 | `loc=SG`（SIN） | `403 Must supply an API key!`（进到了鉴权层） |
+  | 云主机 | `loc=CN`（LAX） | `451 Typesafe is not available in your region.` |
+
+  同一请求，唯一的变量是出口国家：判定为 CN 就在鉴权之前被拦，换成 SG 就能到鉴权层。网上查不到公告，按证据是对方悄悄上线的地区策略
+  （首次 451 在 10-09 13:51 北京时间）。
 - 结论：不是账号或内容问题。typesafe.ai 从 10-09 起拒绝来自国内出口的请求，云主机在国内，重试解决不了。
 - 处置（待用户决定，都涉及云端网络或 `.env`，属红线）：
   - A. 给云端的 Jev 外呼一个境外出口（境外中转或 HTTPS 代理）。代码侧只需让提供方接受一个代理地址；地址进云端 `.env`。
