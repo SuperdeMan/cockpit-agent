@@ -72,7 +72,7 @@ class ToolRegistry:
             ],
         )
 
-    async def call(self, intent: str, slots: dict, _ctx):
+    async def call(self, intent: str, slots: dict, ctx):
         handler = self._handlers.get(intent)
         if handler is None:
             return agent_pb2.ExecuteResponse(
@@ -81,7 +81,8 @@ class ToolRegistry:
                     code="tool_not_found", message=f"unknown tool: {intent}"),
             )
         try:
-            data, speech = handler(slots, self._now_fn)
+            # 这一步的用户原话（派发已按 `step_call_context` 换好）：时间工具在规划器漏给 / 缩掉时钟问句时按它认（2026-10-09）
+            data, speech = handler(slots, self._now_fn, str(getattr(ctx, "raw_text", "") or ""))
         except ToolInputError as exc:
             return agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.REJECTED,

@@ -203,6 +203,29 @@ def test_dispatches_tool_in_process():
     assert tools.calls == [("math.eval", {"expression": "1+2"}, "v1")]
 
 
+def test_tool_step_sees_its_own_origin_words_in_a_resumed_turn():
+    """工具同 Agent 步读「这一步的原话」（2026-10-09）：续接轮本轮原话是「确认」，下游工具步看自己的起点原话。"""
+    seen = []
+
+    class _WordsTools:
+        async def call(self, intent, slots, ctx):
+            seen.append(ctx.raw_text)
+            return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK, speech="tool")
+
+    async def unused(*_args):
+        raise AssertionError("tool step must stay in process")
+
+    dispatcher = UnifiedDispatcher(cloud_call=unused, edge_call=unused, tools=_WordsTools())
+    step = Step(id="s2", agent_id="builtin-tools", kind="tool", intent="datetime.parse", slots={},
+                origin_text="打开充电口，顺便告诉我今天几号")
+    ctx = PlanContext(vehicle_id="v1", raw_text="确认")
+
+    _run(dispatcher.dispatch(step, ctx))
+
+    assert seen == ["打开充电口，顺便告诉我今天几号"]
+    assert ctx.raw_text == "确认"
+
+
 def test_cloud_transport_failure_becomes_failed_response():
     """云 Agent 超时/不可达不再 re-raise 炸整条 DAG，降级为 FAILED step。"""
     async def cloud(*_args, **_kwargs):

@@ -207,7 +207,8 @@ class UnifiedDispatcher:
                 )
             start = time.monotonic()
             try:
-                resp = await self._tools.call(step.intent, step.slots, ctx)
+                # 工具同 Agent 步看「这一步的原话」（`step_call_context`）：续接轮的下游步读自己的起点原话，不读「确认」
+                resp = await self._tools.call(step.intent, step.slots, step_call_context(step, ctx))
                 elapsed = (time.monotonic() - start) * 1000
                 metrics.record_agent_call(
                     step.agent_id, elapsed,

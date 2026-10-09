@@ -7,6 +7,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from runtime.clock_question import WEEKDAY, clock_answer, clock_question, clock_question_in
+
 
 class ToolInputError(ValueError):
     pass
@@ -34,7 +36,7 @@ _UNARY_OPS = {
 }
 
 
-def math_eval(slots: dict, _now_fn=None) -> tuple[dict, str]:
+def math_eval(slots: dict, _now_fn=None, _utterance: str = "") -> tuple[dict, str]:
     expression = (slots.get("expression") or slots.get("text") or "").strip()
     if not expression or len(expression) > 160:
         raise ToolInputError("invalid expression")
@@ -82,7 +84,7 @@ _UNITS = {
 }
 
 
-def unit_convert(slots: dict, _now_fn=None) -> tuple[dict, str]:
+def unit_convert(slots: dict, _now_fn=None, _utterance: str = "") -> tuple[dict, str]:
     try:
         value = float(slots.get("value", ""))
     except (TypeError, ValueError) as exc:
@@ -113,27 +115,42 @@ def unit_convert(slots: dict, _now_fn=None) -> tuple[dict, str]:
     )
 
 
-def datetime_parse(slots: dict, now_fn=None) -> tuple[dict, str]:
+#: 表示「当下」的槽值：规划器把「现在几点」缩成了它（真实用户「what time is it now」→ `{"text": "now"}`）。
+_NOW_WORDS = {"现在", "当前", "此刻", "now", "right now"}
+#: 规划器把「今天几号」缩成的裸日词（2026-06-20）：答今天的日期。
+_TODAY_WORDS = {"今天", "今日", "本日"}
+
+
+def datetime_parse(slots: dict, now_fn=None, utterance: str = "") -> tuple[dict, str]:
+    """时间表达归一化为 ISO 8601；时钟问句按墙钟直答。`utterance` 是这一步的用户原话（`step_call_context`）。"""
     text = (
         slots.get("text") or slots.get("value") or slots.get("datetime") or ""
     ).strip()
-    if not text:
-        raise ToolInputError("missing datetime text")
     now_fn = now_fn or (lambda: datetime.now(_shanghai_tz()))
     now = now_fn()
     if now.tzinfo is None:
         now = now.replace(tzinfo=_shanghai_tz())
 
-    normalized = re.sub(r"\s+", "", text)
-    if normalized in {"今天", "今日", "本日", "今天是几号", "今天几号", "今日几号", "今天日期", "今日日期",
-                      "今天星期几", "今天周几", "今日星期几", "今日周几"}:
-        weekday = "一二三四五六日"[now.weekday()]
-        date = now.date()
+    # 时钟问句按墙钟直答（判据 runtime/clock_question.py，与闲聊同一份）。槽本身是问句就认槽；槽为空或只剩「现在 / now」
+    # ——规划器漏给或缩掉了问句（核心旅程 P06 槽为空；真实用户 `now`）——就按这一步的用户原话逐分句认。
+    # 槽是正常的时间表达（「明天19:30」）时不看原话：同一句里的另一个问句归别的步。
+    kind = clock_question(text)
+    if not kind and (not text or text.lower() in _NOW_WORDS):
+        kind = clock_question_in(utterance)
+    if not kind and re.sub(r"\s+", "", text) in _TODAY_WORDS:
+        kind = "date"
+    if kind:
+        moment = now.replace(second=0, microsecond=0)
         return (
-            {"date": date.isoformat(), "weekday": f"星期{weekday}",
-             "timezone": str(now.tzinfo)},
-            f"今天是{date.year}年{date.month}月{date.day}日，星期{weekday}。",
+            {"date": moment.date().isoformat(), "weekday": f"星期{WEEKDAY[moment.weekday()]}",
+             "time": f"{moment:%H:%M}", "iso8601": moment.isoformat(), "timezone": str(moment.tzinfo)},
+            clock_answer(kind, moment),
         )
+    if not text:
+        raise ToolInputError("missing datetime text")
+    if text.lower() in _NOW_WORDS:
+        iso = now.replace(second=0, microsecond=0).isoformat()
+        return {"iso8601": iso, "timezone": str(now.tzinfo)}, f"时间已确定为{iso}"
 
     try:
         parsed = datetime.fromisoformat(text)

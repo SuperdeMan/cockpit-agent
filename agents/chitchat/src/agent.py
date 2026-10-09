@@ -15,7 +15,6 @@ import asyncio
 import logging
 import os
 import re
-from datetime import datetime
 
 from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.grounding import shanghai_now
@@ -23,6 +22,7 @@ from agents._sdk.grounding import shanghai_now
 # 编排层也要用同一条判据，而云侧镜像不 COPY agents/——在两边各写一份
 # 正是 B1 那个 bug 的成因。这里只剩兜底位的消费，判据与话术都在那一份里。
 from runtime import memory_read
+from runtime.clock_question import WEEKDAY, bare_question, clock_answer, clock_question
 from runtime.question_shape import is_non_directive_question
 from runtime.session_facts import (
     asks_when, audit_answer, is_execution_audit_question,
@@ -39,23 +39,8 @@ _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.y
 
 # ── 钟点/日期/星期确定性直答（badcase 2026-07-15：「现在几点了」被 LLM 编造时刻）──
 # 系统自己持有墙钟，这类问题不该让 LLM 回答——prompt 锚只有日期时，模型会编一个像真的
-# 时刻（实测 14:25 答 14:43 / 10:06，两采样全错）。正则须**占据整句**（去礼貌前缀与
-# 语气尾词后锚定 ^$），防劫持「明天几点有比赛」「几点提醒我」这类含时间词的其他意图。
-_Q_PREFIX_RE = re.compile(r"^(请问|问一下|问下|那|哎|诶|嘿)+")
-_Q_SUFFIX = " 呀啊呢哦吧了嘛么？?。！!，,"
-_CLOCK_RE = re.compile(r"^(现在|当前)?(是)?几点(钟)?$|^(现在|当前)(的)?(是)?(什么)?时间(是多少|是几点)?$")
-_DATE_RE = re.compile(r"^今天(是)?(几号|多少号|几月几号|几月几日|什么日期)$")
-_WEEK_RE = re.compile(r"^今天(是)?(星期几|周几|礼拜几)$")
-_WEEKDAY = "一二三四五六日"
-
-
-def _spoken_time(now: datetime) -> str:
-    """口语化时刻：「下午2点27分」（0 分说「整」；0 点按惯例说凌晨12点）。"""
-    h, m = now.hour, now.minute
-    seg = ("凌晨" if h < 5 else "早上" if h < 9 else "上午" if h < 12
-           else "中午" if h == 12 else "下午" if h < 18 else "晚上")
-    h12 = h % 12 or 12
-    return f"{seg}{h12}点" + ("整" if m == 0 else f"{m}分")
+# 时刻（实测 14:25 答 14:43 / 10:06，两采样全错）。判据与答句 2026-10-09 收进
+# `runtime/clock_question.py`（内置时间工具同用一份，正则仍占据整句、防劫持含时间词的其他意图）。
 
 
 # ── 身份问句确定性直答（真机 2026-07-27：换人说话后仍答上一个人的名字）──────────
@@ -74,23 +59,14 @@ def _identity_answer(text: str, meta: dict) -> str:
     who = (meta or {}).get("occupant_name", "").strip()
     if not who:
         return ""      # 认不出就别硬答——诚实降级由 LLM 按 system 里没有名字来处理
-    t = _Q_PREFIX_RE.sub("", (text or "").strip()).strip(_Q_SUFFIX)
+    t = bare_question(text)
     return f"你是{who}呀。" if t and _WHOAMI_RE.match(t) else ""
 
 
 def _clock_answer(text: str) -> str:
     """纯钟点/日期/星期问句 → 按系统墙钟直答；非此类返回空串（走 LLM）。"""
-    t = _Q_PREFIX_RE.sub("", (text or "").strip()).strip(_Q_SUFFIX)
-    if not t:
-        return ""
-    now = shanghai_now()
-    if _CLOCK_RE.match(t):
-        return f"现在是{_spoken_time(now)}。"
-    if _DATE_RE.match(t):
-        return f"今天是{now.year}年{now.month}月{now.day}日，星期{_WEEKDAY[now.weekday()]}。"
-    if _WEEK_RE.match(t):
-        return f"今天星期{_WEEKDAY[now.weekday()]}，{now.month}月{now.day}日。"
-    return ""
+    kind = clock_question(text)
+    return clock_answer(kind, shanghai_now()) if kind else ""
 
 # 时效兜底（2026-07-12 mode-routing 设计 P1-2）：LLM 判定「必须联网才能正确回答」时只输出
 # 该标记；agent 解析后零播报、经通用 escalate 协议改派 info.search（engine 有界一跳消费）。
@@ -230,7 +206,7 @@ def _system(meta: dict, text: str = "") -> str:
     # 这类时间相对话题参考——没有时刻锚模型会编一个像真的（badcase 2026-07-15）。
     return (
         f"你是车载语音助手「{name}」。今天是{now:%Y年%m月%d日}"
-        f"（星期{_WEEKDAY[now.weekday()]}），现在{now:%H:%M}。"
+        f"（星期{WEEKDAY[now.weekday()]}），现在{now:%H:%M}。"
         # **必须压过对话历史**（2026-07-27 真机）：车里只有一个会话而说话人会换。
         # 上一轮刚管别人叫过「阿灵」，这一轮声纹已认出是泓舟、system 也注了泓舟，
         # 模型照样答「你是阿灵呀，刚才不是说了嘛」——**历史里的称呼比 system 提示更近、更像事实**。

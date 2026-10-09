@@ -106,16 +106,7 @@ def test_clock_answer_patterns():
     for q in ("明天几点有比赛", "几点提醒我吃药", "现在时间还早吗",
               "昨晚比赛几点开的", "讲个笑话", "今天天气怎么样", ""):
         assert _clock_answer(q) == "", q
-
-
-def test_spoken_time_segments():
-    from datetime import datetime
-    from agents.chitchat.src.agent import _spoken_time
-    assert _spoken_time(datetime(2026, 7, 15, 14, 27)) == "下午2点27分"
-    assert _spoken_time(datetime(2026, 7, 15, 0, 5)) == "凌晨12点5分"
-    assert _spoken_time(datetime(2026, 7, 15, 12, 0)) == "中午12点整"
-    assert _spoken_time(datetime(2026, 7, 15, 20, 30)) == "晚上8点30分"
-    assert _spoken_time(datetime(2026, 7, 15, 7, 0)) == "早上7点整"
+    # 口语化时刻与判据本身的用例在 runtime/tests/test_clock_question.py（2026-10-09 迁出）
 
 
 def test_handle_clock_question_skips_llm():

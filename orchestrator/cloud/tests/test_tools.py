@@ -123,3 +123,49 @@ def test_tool_input_errors_are_spoken_in_chinese_and_diagnosed_in_the_error(inte
     assert rejected.error.message == diagnostic
     assert rejected.speech, "失败话术不能为空（聚合器会换成裸「处理失败」，丢掉恢复指引）"
     assert not re.search(r"[A-Za-z]{2,}", rejected.speech), rejected.speech
+
+
+# ── 时钟问句：规划器漏给 / 缩掉问句时按这一步的用户原话作答（2026-10-09，docs/design/2026-10-09-clock-question-tool-input.md）──
+# 核心旅程 P06：规划器两步的槽都是 `{"$text": "{}"}`，装配丢掉未声明键 ⇒ 工具拿到空槽；真实用户「what time is it now」⇒ `{"text": "now"}`。
+# 两次都回「没能换算」。原话就在这一步的 ctx 里（派发经 `step_call_context` 换好）。
+
+def _call_with_words(intent, slots, words, now=datetime(2026, 6, 20, 10, 0, tzinfo=timezone(timedelta(hours=8)))):
+    registry = ToolRegistry(now_fn=lambda: now)
+    return asyncio.run(registry.call(intent, slots, PlanContext(raw_text=words)))
+
+
+def test_datetime_parse_answers_a_dropped_slot_from_the_step_words():
+    response = _call_with_words("datetime.parse", {}, "打开充电口，顺便告诉我今天几号")
+    assert response.status == agent_pb2.ExecuteResponse.OK
+    assert response.speech == "今天是2026年6月20日，星期六。"
+    assert _data(response)["date"] == "2026-06-20"
+
+
+def test_datetime_parse_answers_a_now_slot_from_an_english_clock_question():
+    response = _call_with_words("datetime.parse", {"text": "now"}, "what time is it now")
+    assert response.status == agent_pb2.ExecuteResponse.OK
+    assert response.speech == "现在是上午10点整。"
+    assert _data(response)["iso8601"] == "2026-06-20T10:00:00+08:00"
+
+
+def test_datetime_parse_slot_that_is_itself_a_clock_question_needs_no_words():
+    response = _call_with_words("datetime.parse", {"text": "现在几点了"}, "")
+    assert response.speech == "现在是上午10点整。"
+
+
+def test_datetime_parse_keeps_normalizing_a_time_expression_when_the_words_also_ask_the_time():
+    """槽是正常的时间表达就不看原话：同一句里的另一个问句归别的步。"""
+    response = _call_with_words("datetime.parse", {"text": "明天19:30"}, "明天19:30提醒我开会，顺便告诉我现在几点")
+    assert _data(response)["iso8601"] == "2026-06-21T19:30:00+08:00"
+
+
+def test_datetime_parse_now_without_a_clock_question_normalizes_to_the_current_minute():
+    response = _call_with_words("datetime.parse", {"text": "现在"}, "把现在换成标准时间格式")
+    assert _data(response)["iso8601"] == "2026-06-20T10:00:00+08:00"
+
+
+def test_datetime_parse_empty_slot_without_a_clock_question_still_rejects():
+    response = _call_with_words("datetime.parse", {}, "打开空调")
+    assert response.status == agent_pb2.ExecuteResponse.REJECTED
+    assert response.error.message == "missing datetime text"
+    assert response.speech == "这个时间我没能换算出来，换个说法再试一次。"
