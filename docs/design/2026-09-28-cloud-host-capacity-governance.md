@@ -2,6 +2,9 @@
 
 > 状态：**P0、P1 已实现并在云端启用**（基础设施锚 2026-09-29 起为 `7c34debf`，对应 `1eb2bcf1`；§4.7 规则已修订）。
 > 首次策略回收为手动 apply；发布 `55165e50` 时发布事务内的自动回收已首跑通过。P2 已安装并启用（`a53034b6`，2026-09-28 18:39 CST，主机级 `host-capacity-gc` 与 journald 上限，见 §5）；P3 未启动
+> **P2 修订（2026-10-09）**：按总量封顶适得其反。每一轮真删了记录的 prune 都会让两个项目的下一次构建大面积冷启动，本项目的缓存与 release 镜像因此一起膨胀（§5「P2 修订」）。
+> 经用户批准，已一次性精确清理本项目失效缓存，可用 36.54 → 60.26 GiB。GC 改为：可用低于 target 才回收，一次清到 `prune_to_free_gib`，保底 `reserved_space_gib`，未达标就降一档再试（§4.4）。
+> drone 用户 2026-10-09 已同意（条件即保底与退避两条）。代码与测试已完成，经基础设施锚重批与主机安装授权后才生效
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -75,8 +78,9 @@
 | `backups.keep_all_hours` | 48 | 近期每套都留 |
 | `backups.daily_days` / `backups.weekly_weeks` | 14 / 8 | 更早的按天、按周各留最新一套 |
 | `backups.min_complete_sets` | 3 | 任何时候不少于 3 套完整备份 |
-| `build_cache.max_used_space` | `20GB` | BuildKit 自身口径；主机级，需 drone 共识（§4.4） |
-| `capacity.warn_free_gib` / `capacity.target_free_gib` | 40 / 45 | 在 30 GiB 闸之上留 10–15 GiB 余量 |
+| `build_cache.prune_to_free_gib` | 60 | 2026-10-09 起取代 `max_used_space: 20GB`：可用低于 `target_free_gib` 时一次清到这条线；与 target 之差至少 15 GiB，大于回收后两个项目各一次冷构建的增量（§4.4）；主机级，需 drone 共识 |
+| `build_cache.reserved_space_gib` | 10 | 回收时缓存保底（`--reserved-space`）：可用偏紧的起因常在缓存之外，保底避免把两个项目的缓存整个清空；drone 2026-10-09 提出 |
+| `capacity.warn_free_gib` / `capacity.target_free_gib` | 40 / 45 | 在 30 GiB 闸之上留 10–15 GiB 余量；target 同时是构建缓存回收的触发线 |
 
 ### 4.2 发布产物保留（本项目，发布事务内）
 
@@ -117,23 +121,32 @@ release tag 指向同一镜像时才去，只删标签不删镜像）；退役�
 
 同盘备份防不住主机丢失，这也是本地只需短保留的原因；异机备份另立（§7）。
 
-### 4.4 构建缓存上限（主机级，需与 drone-agent 共识）
+### 4.4 构建缓存回收（主机级，需与 drone-agent 共识；2026-10-09 修订）
 
-- **做法**：主机级 systemd timer `host-capacity-gc`（每小时一次，随机延迟不超过 10 分钟；同一 timer 兼做 §4.5 的 core dump 清理，
-  所以不叫 buildcache）执行 `docker buildx prune --builder default --force --all --max-used-space <cap>`。
-  `cap` 读自 §4.1，经 car-agent 的 `retention.py` 校验。对本项目 release 锁与 drone 的 `/home/ubuntu/drone-agent/stack.lock`
-  各做一次非阻塞 flock 探测，拿到后立即释放；任一被占就跳过本轮（drone 侧 09-28 提出，避免在对方批次或部署中途清缓存）。
-  prune 期间不持有任何锁：两个项目取锁都不等待，car 用 `flock -n`，drone 四处获取方（部署 / 批次、控制台实时运行、任务台监管者、账本）
-  都用 `fcntl.flock(LOCK_EX | LOCK_NB)`。持锁会让对方撞上的获取直接失败。锁文件缺失或不是普通文件时，本轮失败退出、不 prune（drone 已确认）。
-  每轮一行 JSON 写入 journald，失败时 unit 进入 failed。
+- **做法**：主机级 systemd timer `host-capacity-gc` 每小时一次，随机延迟不超过 10 分钟。同一 timer 兼做 §4.5 的 core dump 清理，所以不叫 buildcache。每轮按下面的顺序决定：
+  1. 量 BuildKit 根目录（`/var/lib/docker/buildkit`）所在文件系统的可用空间：`statvfs` 的 `f_bavail`，与构建闸 `df --output=avail` 同口径。本机它与 containerd、`/opt/car-agent` 同属一个文件系统。
+  2. 可用不低于 `capacity.target_free_gib`（45 GiB）时，**完全不调用 prune**，状态记 `not_needed`，同时清除退避状态。
+  3. 退避生效时状态记 `deferred`，并在 JSON 里写 warning，提示需要人工清理缓存以外的数据。退避的条件是：上一次回收后可用仍未达到目标线，而当前可用还不低于「上次回收后可用 − 5 GiB」。不做「隔 24 h 重试」：空间没继续下降时重试，只会削掉保底之上新长出的缓存、让下一次构建冷启动，腾不出多少空间。
+  4. 其余情况执行 `docker buildx prune --builder default --force --all --min-free-space <字节> --reserved-space <字节>`，一次清到可用 ≥ `build_cache.prune_to_free_gib`（60 GiB），缓存至少留 `build_cache.reserved_space_gib`（10 GiB）。回收后若仍低于目标线，把「回收后可用」写进状态文件（systemd `StateDirectory`，`/var/lib/host-capacity-gc/`）。
+  - 三个值都读自 §4.1，经 car-agent 的 `retention.py` 校验。
+  - BuildKit 的 `--min-free-space` 比较的是 `Bfree`，含 root 保留块，本机约 4.9 GiB。所以传入值 = 目标线 + 当轮实测的保留块字节。两个参数都按字节传，避开 `GB` 被按 1024 进制解析的单位坑。
+  - 每轮一行 JSON 写入 journald，记 `available_before` 与 `buildx du` Total；真 prune 时另记 `available_after`、`total_after` 与实际传入的 `--min-free-space`。失败时 unit 进入 failed。
+  - 锁规则不变：
+    - 对本项目 release 锁与 drone 的 `/home/ubuntu/drone-agent/stack.lock` 各做一次非阻塞 flock 探测，拿到后立即释放；要 prune 时任一被占就跳过本轮（drone 侧 09-28 提出，避免在对方批次或部署中途清缓存）。
+    - prune 期间不持有任何锁。两个项目取锁都不等待：car 用 `flock -n`，drone 四处获取方（部署 / 批次、控制台实时运行、任务台监管者、账本）都用 `fcntl.flock(LOCK_EX | LOCK_NB)`，持锁会让对方撞上的获取直接失败。
+    - 锁文件缺失或不是普通文件时，本轮失败退出、不 prune（drone 已确认）。
 - **放在哪**：源码在 `deploy/host/`（[安装清单与步骤](../../deploy/host/README.md)），不在 `deploy/cloud/**` 的基础设施锚内，也不随发布安装。
   主机级配置归两个项目共用；若进本项目的锚，每次调整都要重批锚，还会逼所有工作树先同步 main 才能部署。安装与更新按系统配置逐次授权。
-- **按总量而不按时间**：§1 第 4 条已实测时间过滤会被祖先链锁住；`--max-used-space` 由 BuildKit 按最近使用排序回收到上限，
-  `--all` 覆盖与镜像同层的 shared 记录。
+- **为什么按可用空间触发、而不按总量封顶**（2026-10-09 实测，§5「P2 修订」）：
+  1. **删除会让缓存失效**：任何一轮真删了记录的 prune，都会触发 BuildKit 的 `ReleaseUnreferenced`，把重载失败的缓存键解绑——记录还占盘，却再也命中不了。按总量封顶意味着缓存一到上限就每小时删一点，于是每次发布都冷构建：本项目 8–28 分钟（原约 1 分钟），每次新增约 3.7 GB 缓存；各 release 只共享基础层，每套独占约 2.9 GB。缓存和镜像一起膨胀。
+  2. **上限压不住总量**：`--max-used-space` 只计 Private，与镜像共享的记录不计，Total 一直停在约 35 GB。
+  3. **单用 `--min-free-space` 也不行**：空间充足时 BuildKit 令 keepBytes = 总量，`pruneOnce` 仍删 1 条，照样触发解绑。所以「要不要删」必须由脚本先判断。
+  4. **两条线要拉开距离**：间距要大于回收后两个项目各一次冷构建的增量（本项目约 6.5 GiB），否则回收后第一次冷构建就把可用压回触发线以下、连环触发。`retention.py` 要求至少 15 GiB。
+  5. **保底与退避**：可用偏紧的起因常在缓存之外（镜像、证据、账本），这时只清缓存到不了目标线。不保底会清空两个项目的缓存；不退避会退化成「每小时整清一次」。这两条是 drone 2026-10-09 提出、drone 用户同意的条件。
 - **为什么现在不改 daemon.json**：`builder.gc` 需要重启 dockerd；未开 live-restore 时会停掉两个项目的全部容器（09-27 已发生过），
   而共享主机的 daemon 刚出过 panic。这项列入 P3，与 live-restore、日志轮转放在同一个维护窗口里一次完成。
 - **为什么不放进本项目的发布事务**：缓存是全局的，放进来等于本项目单方面清 drone 的缓存，而且只在我们发布时才会触发。
-- **代价**：上限以外的冷缓存被清，个别构建会重跑对应步骤；上线前后记录构建耗时做对照。
+- **代价**：每次回收后，两个项目的下一次构建都会冷启动。本项目约 20 分钟、新增约 6.5 GiB。按 09-29 → 10-04 未回收期间约 2.3 GB/天的缓存增长估算，回收约每 2–4 天一次。
 
 ### 4.5 主机日志与崩溃转储（主机级，需共识）
 
@@ -250,12 +263,42 @@ timer 下次触发 19:04:57 CST；首轮 `Result=success`，回收 0B（Total �
   首次真实使用即批准本批：锚 `a3346202` → `7c34debf`，只装 `retention.py`，回读一致。之后发布闸对 `1eb2bcf1` dry-run 零阻断；
   保留策略 dry-run 把三个审批上传目录（`48007778`、`887b983c` 与本次）列为「在过期窗口内」，前两个在 10-01 下午后由发布事务回收。
 
+**P2 修订（2026-10-09）**：证据与分析脚本在 `.artifacts/cloud-capacity-20261009/`。
+
+- **现象**：可用 36.54 GiB（warn 档）。构建缓存 `buildx du` Total 34.85 GB，其中 Private 21.45 GB、Shared 13.4 GB。
+  本项目 release 镜像 10.51 GiB（3 套加失败的 `b147b737`）；09-28 时 3 套只有 3.54 GiB。
+  按缓存树归属落盘字节：本项目 974 条 20.39 GiB，drone 67 条 3.38 GiB。
+- **时间线**：
+  - 09-28 → 10-04 GC 每轮回收 0B（Private 未到 20 GiB），本项目发布约 1 分钟。
+  - 10-04 16:01Z 首次非零回收之后，10-05 至 10-09 的 16 次发布构建，加上被本地时限杀掉的 `b147b737`，在「上次构建之后发生过非零回收」的条件下全部从 FROM 之后的第一步重跑，耗时 8–28 分钟。
+  - 对照：唯一一次两次构建之间没有回收的 `2fd8d135` 用了 1 分钟；10-04 首次回收前的 3 次各 1 分钟。
+  - 10-07 那次 29 分钟被时限杀掉，原因也是这个。
+- **机理**：
+  - BuildKit v0.26.2 的 `Controller.Prune` 只要本轮删掉 ≥1 条记录，就调用 `ReleaseUnreferenced`；重载失败（`Exists` 为 false）的结果被 `Release`。
+  - 签名是记录还在、键已解绑：缓存里同一 apt 步骤、同一父记录有 8 份，各 627 MB、use=1。
+  - drone 的 `/opt/drone-venv` 步骤在 10-05 19:01Z、10-09 04:02Z 两次回收前后各重建一份；10-04 之前同类记录各被复用 17–34 次，drone 侧已核实。
+  - 并非全部键都被解绑：个别如 `COPY go.mod`、dashboard 的 `WORKDIR` 活过了回收，但 apt / pip / npm 这些贵的步骤次次重跑。
+  - 两个项目的链都挂在无快照（blob-only）的基础镜像层记录上；具体是哪一步载入失败没有定位，不影响结论与改法。
+- **处置**：
+  - 经用户批准，2026-10-09 08:31–08:35Z 在本项目事务锁内执行，drone 锁只探测（free）。用 `docker buildx prune --all --filter 'id=^(…)$'` 精确删本项目失效缓存 1002 条（快照 20.32 GiB）。
+  - 删除集闭合：集合外没有任何记录以集合内记录为祖先。保留 `source.local` 与 pip 缓存挂载。执行前用只读 `buildx du --filter` 核对命中 1002 条。
+  - 结果：BuildKit 报回收 28.39 GB，剩余 0；可用 36.54 → 60.26 GiB，Total 34.85 → 6.46 GB。镜像、容器、release 未动；`status` 5/5 零 warning。
+- **改法与状态**：
+  - 见 §4.4。策略 `build_cache.max_used_space: 20GB` 改为 `prune_to_free_gib: 60` + `reserved_space_gib: 10`（`deploy/cloud/**`，需重批基础设施锚）。
+  - `host_capacity_gc.py` 改触发、参数与退避状态，service 增加 `StateDirectory`（系统配置，需授权）。
+  - drone 用户已同意。
+
 ## 6. 验收
 
 1. 连续 14 天（或至少 20 次发布）不做人工清理，发布从未被 30 GiB 闸挡住，稳态可用 ≥ 45 GiB。
 2. 任意时刻本项目 release 镜像集 ≤ 3 + pinned；已激活 release 在 `builds/`、`incoming/` 里没有重复源码包；失败产物存活不超过 72 h。
 3. 备份套数与大小符合 GFS 预算，至少 3 套完整备份，最新一套能通过 `backup.sh` 现有的恢复校验。
-4. P2 之后，`buildx du` 的 Total 不超过上限加一次构建的增量（上限 `20GB` 按 20 GiB 解析，约合 du 显示的 21.47GB，见 §5 P2 记录）。
+4. P2 修订之后：
+   - 可用不低于 target 的轮次一律 `not_needed`，不调用 prune；
+   - 两次构建之间没有发生回收时，本项目发布构建 ≤ 2 分钟；
+   - 每次回收后可用 ≥ `prune_to_free_gib`；达不到时进入退避，且有 warning；
+   - 回收间隔以天计，若短于 2 天，先查增长来源再调两条线。
+   （原第 4 条「Total 不超过 20 GiB 上限加一次构建」已作废：`--max-used-space` 不计 Shared，从未成立，见 §5「P2 修订」。）
 5. 每次自动回收都有证据 JSON，抽查可复现；守卫测试覆盖当前版本、保留集、在用镜像、pinned、迁移 fence、compose 工程目录引用、数据卷与 `.env`。
 6. `status` 在低于 40 GiB 时给出 warning；`capacity` 的读数与 ctr 手工核算一致。
 7. 回滚到保留窗口内的上一版：`rollback` dry-run 通过；是否做一次真机回滚演练另行授权（README 记录回滚至今未在真机演练）。
@@ -264,7 +307,7 @@ timer 下次触发 19:04:57 CST；首轮 `Result=success`，回收 0B（Total �
 
 - **删错**：纯函数实现、先 dry-run 对账，路径与 tag 用正则白名单，不用 `-f`，逐对象记证据；首个启用的发布之后立即跑 `status` / `verify` 并核对保留集。
 - **回滚目标变少**：保留 3 个并支持 pinned；要调大 N 只需改声明源（再走一次锚审批）。
-- **缓存上限拖慢构建**：上限按实测调参，发布记录构建耗时做对照。
+- **缓存回收拖慢构建**：每次回收后两个项目各冷构建一次（§4.4 代价）。回收频率与两条线按 GC journal 的实测调；P3 升级 BuildKit 后，要复核「删除即解绑」是否仍成立。
 - **共租协作**：P2 / P3 需要 drone 侧同意；在那之前本项目只治理自己的对象，drone 的增长仍可能让本项目撞闸，所以 P0 预警要先上。
 - **基础设施锚审批成本**：`deploy/cloud/**` 每改一次都要重批（09-22 那次走了三轮）；P1 的改动集中在一次审批里完成。
 - **开放项**：异机备份（同盘备份防不住主机丢失）；是否扩盘；containerd snapshotter 的取舍（改回 overlay2 能去掉「一层三份」，但两个项目都要重建镜像、重启 daemon）。
@@ -274,8 +317,17 @@ timer 下次触发 19:04:57 CST；首轮 `Result=success`，回收 0B（Total �
 1. **只读测量**：`df -h /`；`ctr -n moby snapshots --snapshotter overlayfs usage`（单位为字节）配合 `ctr -n moby images ls` / `content ls`
    （按 `gc.ref.*` 标签连出镜像→快照）；`docker buildx du --builder default` 只看 Total。**不要**调用 `docker buildx history`（会导致 daemon panic），
    **不要**拿 `docker system df` 的 unique / reclaimable 下结论。
-2. **回收顺序**（收益与风险从好到差）：已激活 release 的重复源码与上传包 → 保留窗口外的 release 镜像集（两族 tag）与目录 → 窗口外的备份
-   → 构建缓存按总量回收（`--all --max-used-space`）→ 全清 `buildx prune -af`（下次发布无缓存重建，本项目实测约 75 min）。
+   构建变慢先看 `journalctl -u host-capacity-gc -o cat`：两次构建之间有过非零回收，下一次就会大面积冷启动。
+   缓存按项目归属：`buildx du --verbose` 的 Parents 连出缓存树，按树里各步骤的描述判归属，再用 `ctr … usage -b` 取字节。
+   快照 key 就是 BuildKit 记录 ID；基础镜像层记录没有快照（blob-only）。
+2. **回收顺序**（收益与风险从好到差）：
+   1. 已激活 release 的重复源码与上传包；
+   2. 保留窗口外的 release 镜像集（两族 tag）与目录；
+   3. 窗口外的备份；
+   4. 构建缓存：先精确删已失效的记录（`--all --filter 'id=^(…)$'`，先用只读 `buildx du --filter` 核对命中数），再按可用空间回收（`--all --min-free-space`，它比的是 `Bfree`）；
+   5. 全清 `buildx prune -af`（下次发布无缓存重建，本项目实测约 75 min）。
+
+   注意：任何真删了记录的 prune 都会让两个项目的下一次构建大面积冷启动（§4.4），非必要不手动 prune。
 3. **永远不做**：`docker system prune -a`、`docker image prune -a`、`docker volume prune`、`compose down -v`——它们是全局操作，
    会删掉 drone 的镜像、构建要用的基础镜像，或者数据卷。
 4. **执行纪律**：持 release 锁、先落精确清单；删后核对 current、容器、卷、模型与构建证据，再跑 `status` 和 `verify`；证据放 `.artifacts/cloud-capacity-<date>/`。

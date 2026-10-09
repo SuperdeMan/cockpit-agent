@@ -52,7 +52,7 @@
 - 发布产物与备份只按已批准的保留策略自动轮转：策略唯一来源是 `retention-policy.json`（安装为
   `/opt/car-agent/shared/retention-policy.json`，随基础设施批准锚审批），删除只发生在 `retention.py`，
   每次写证据到 `/opt/car-agent/shared/evidence/retention/`。设计见 `docs/design/2026-09-28-cloud-host-capacity-governance.md`。
-- 构建缓存封顶与 core dump 清理是主机级事项，由 `deploy/host/` 的 `host-capacity-gc` 负责（上限同样读自该策略）。
+- 构建缓存回收与 core dump 清理是主机级事项，由 `deploy/host/` 的 `host-capacity-gc` 负责（触发线、目标线与保底同样读自该策略）。
   它不在本目录的批准锚内，也不随发布安装，见 `deploy/host/README.md`。
 - 策略之外的对象——数据卷、`.env`、业务数据、迁移包、镜像归档、worktree——的清理仍须先列出精确对象并逐项取得批准；
   修改策略本身同样需要授权，并重新审批基础设施锚。

@@ -52,6 +52,10 @@ BUILD_BULK = frozenset({"transport.tar"})
 BACKUP_KINDS = {"postgres": "dump", "redis": "rdb", "observability": "sql.gz"}
 PARTIAL_TTL = timedelta(hours=24)
 TAG_BATCH = 40
+#: 构建缓存回收的目标线（build_cache.prune_to_free_gib）至少要比触发线（capacity.target_free_gib）高出这么多：
+#: 任何真删了记录的 prune 都会让两个项目的下一次构建冷启动，回收后的第一次冷构建本项目就要约 6.5 GiB；
+#: 间距不够时它会把可用压回触发线以下、连环触发（设计 2026-09-28 §4.4，2026-10-09 修订）。
+PRUNE_HEADROOM_MIN_GIB = 15
 
 Runner = Callable[[Sequence[str]], str]
 
@@ -91,17 +95,16 @@ def validate_policy(payload: object) -> dict:
     _int(backups["daily_days"], 0)
     _int(backups["weekly_weeks"], 0)
     _int(backups["min_complete_sets"], 1)
-    if (
-        not isinstance(cache, dict)
-        or set(cache) != {"max_used_space"}
-        or not isinstance(cache["max_used_space"], str)
-        or not re.fullmatch(r"[1-9][0-9]*(MB|GB)", cache["max_used_space"])
-    ):
-        raise RetentionError("retention policy build cache section is invalid")
     if not isinstance(capacity, dict) or set(capacity) != {"warn_free_gib", "target_free_gib"}:
         raise RetentionError("retention policy capacity section is invalid")
     if _int(capacity["target_free_gib"], 1) < _int(capacity["warn_free_gib"], 1):
         raise RetentionError("retention policy capacity target is below the warning line")
+    # 构建缓存只在可用低于 capacity.target_free_gib 时回收：一次清到 prune_to_free_gib，至少留 reserved_space_gib。
+    if not isinstance(cache, dict) or set(cache) != {"prune_to_free_gib", "reserved_space_gib"}:
+        raise RetentionError("retention policy build cache section is invalid")
+    _int(cache["reserved_space_gib"], 0)
+    if _int(cache["prune_to_free_gib"], 1) < capacity["target_free_gib"] + PRUNE_HEADROOM_MIN_GIB:
+        raise RetentionError("retention policy build cache target leaves too little headroom")
     return payload
 
 

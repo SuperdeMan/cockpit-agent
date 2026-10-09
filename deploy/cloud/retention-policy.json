@@ -12,7 +12,8 @@
     "min_complete_sets": 3
   },
   "build_cache": {
-    "max_used_space": "20GB"
+    "prune_to_free_gib": 60,
+    "reserved_space_gib": 10
   },
   "capacity": {
     "warn_free_gib": 40,

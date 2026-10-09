@@ -86,7 +86,9 @@ def test_repository_policy_is_valid_and_is_the_capacity_source():
         lambda p: p["releases"].update(pinned=["not-a-sha"]),
         lambda p: p["backups"].update(min_complete_sets=0),
         lambda p: p["capacity"].update(target_free_gib=10),
-        lambda p: p["build_cache"].update(max_used_space="20 gigs"),
+        lambda p: p["build_cache"].update(prune_to_free_gib=59),  # 与触发线 45 只差 14 GiB
+        lambda p: p["build_cache"].update(reserved_space_gib=-1),
+        lambda p: p["build_cache"].update(max_used_space="20GB"),
         lambda p: p.update(extra=1),
     ],
 )

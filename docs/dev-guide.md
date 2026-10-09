@@ -130,9 +130,15 @@ python scripts/dev_stack.py retention  # 按已批准保留策略的计划（缺
 
 - `status.capacity` 只是提示，不进 `warnings`、不改变 `status` 与退出码（长会话验收要求 status 为 ok 且零 warning）。
 - `docker system df` 在 containerd 镜像存储下的 unique / reclaimable 不可信；构建缓存对已构建镜像是冗余副本，清缓存不伤运行中的镜像；
-  按时间清缓存会被祖先链锁住，要按总量（`--all --max-used-space`）；旧 release 之间高度共享层，删旧版本收益有限。
-- 主机级 `host-capacity-gc` 每小时把构建缓存封顶到策略上限（`build_cache.max_used_space`），并删除 7 天以上的 core dump；
-  car 或 drone 任一方持锁时跳过当轮。在主机上用 `systemctl list-timers host-capacity-gc.timer` 与
+  按时间清缓存会被祖先链锁住；旧 release 之间高度共享层，删旧版本收益有限。
+- **任何真删了记录的 prune 都会让两个项目的下一次构建大面积冷启动**：BuildKit 删除后会解绑缓存键，记录还在盘上，却再也命中不了。
+  发布构建突然从约 1 分钟变成十几分钟时，先看 GC journal 里两次构建之间有没有非零回收；非必要不手动 prune。
+- 主机级 `host-capacity-gc` 每小时检查一次，并删除 7 天以上的 core dump：
+  - 可用低于策略的 `capacity.target_free_gib` 才回收构建缓存，一次清到 `build_cache.prune_to_free_gib`，保底 `build_cache.reserved_space_gib`；
+  - 达不到目标就退避，并写 warning，提示清理缓存以外的数据；
+  - 要回收时 car 或 drone 任一方持锁就跳过当轮。
+
+  在主机上用 `systemctl list-timers host-capacity-gc.timer` 与
   `journalctl -u host-capacity-gc -o cat -n 5` 查看状态和每轮记录；安装、更新与回滚见 [`deploy/host/README.md`](../deploy/host/README.md)。
 - 永远不做 `docker system prune -a`、`docker image prune -a`、`docker volume prune`、`compose down -v`：共享主机上它们会删掉
   drone-agent 的镜像、构建要用的基础镜像或数据卷。

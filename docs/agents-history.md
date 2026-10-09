@@ -10829,3 +10829,21 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 用户明确授权后发布既定候选。首轮仅上传，已完成的 chmod 对应本机 SSH 未退出；核对远端未构建/未切换后，只结束这一条本机连接，保留产物并重试。
 - 第二轮 26 个镜像构建、版本切换与发布检查完成；独立 status / verify、验证后 status 与线上 HMI 样式/字体核对均通过。版本、模型、容量与 artifact 只在 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界) 维护；执行过程见 [T4](design/2026-10-09-hmi-visual-v2-validation-release.md#t4-授权部署与独立验收2026-10-09)。
 - 没有修改环境、schema、CI/CD 或基础设施配置，没有真实车控/支付探针，没有停止共享 Docker；原项目 QA 活项与车机硬件验收边界继续保留。
+
+## 2026-10-09：云主机构建缓存失效清理 + GC 改为按可用空间触发（容量治理 P2 修订）
+
+- 起因：可用 36.54 GiB，已低于 40 GiB 预警线。只读盘点发现构建缓存 `buildx du` Total 34.85 GB，其中本项目 974 条、落盘 20.39 GiB；本项目 release 镜像 10.51 GiB（09-28 时 3 套 3.54 GiB）。
+- 根因：
+  - `host-capacity-gc` 每小时一次「真删了记录」的 prune，会触发 BuildKit `ReleaseUnreferenced` 解绑缓存键，记录还在盘上却命中不了。
+  - 10-04 16:01Z 首次非零回收后，16 次发布构建加上被杀的 `b147b737` 全部从 FROM 后第一步重跑，8–28 分钟；对照 `2fd8d135`（两次构建之间无回收）1 分钟。
+  - 冷构建的签名：同一 apt 步骤、同一父记录在缓存里有 8 份；各 release 只共享基础层，每套独占约 2.9 GB。drone 的 venv 步骤有同样迹象，drone 侧已核实。
+  - 另外 `--max-used-space` 只计 Private，Total 从来没被压住。
+- 清理：用户批准后，08:31–08:35Z 在本项目事务锁内（drone 锁探测空闲），按 ID 正则精确删本项目失效缓存 1002 条（快照 20.32 GiB），保留 source.local 与 pip 缓存挂载。BuildKit 报回收 28.39 GB；可用 36.54 → 60.26 GiB；镜像、容器、release 未动，status 5/5 零 warning。证据在 `.artifacts/cloud-capacity-20261009/`。
+- 改法：
+  - GC 只在可用低于 `capacity.target_free_gib`（45）时回收，一次清到 `build_cache.prune_to_free_gib`（60），保底 `reserved_space_gib`（10）。
+  - 回收后仍未达标就退避，直到可用再降 5 GiB；状态存在 `StateDirectory`。
+  - BuildKit 的 `--min-free-space` 比较的是 Bfree，传参时加回保留块；两个参数都按字节传。
+  - 策略间距不足 15 GiB 由 `retention.py` 拒绝。
+  - drone 侧提出保底与退避两条，drone 用户已同意。
+  - 测试：GC 与策略测试 66 项通过；6 处关键逻辑的变异全部判红。方案见 [容量治理 §4.4 / §5「P2 修订」](design/2026-09-28-cloud-host-capacity-governance.md)。
+- 待办：基础设施锚重批（策略文件与 `retention.py`）和主机 GC 更新都需用户授权。锚更换后，其他工作树需基于含本批的 main 才能部署。
