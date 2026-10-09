@@ -8,7 +8,7 @@ import { Cdp, sleep } from './driver.mjs'
 export const root = resolve(import.meta.dirname, '../..')
 export const base = process.env.HMI_VISUAL_URL || 'http://127.0.0.1:5188'
 export async function withVisualPage(batch, run) {
-  const out = join(root, `.artifacts/hmi-visual-v2/${batch}`)
+  const out = join(root, `.artifacts/hmi-visual-v2/${process.env.HMI_VISUAL_BATCH || batch}`)
   mkdirSync(out, { recursive: true })
   const exe = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(existsSync)
   assert.ok(exe, 'Edge is required')

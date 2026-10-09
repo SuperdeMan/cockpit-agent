@@ -8,6 +8,7 @@ import './shell.css' // Aurora Glass 应用外壳（P1，两栏布局 + 右舞�
 import './cards.css' // Aurora Glass 卡片重皮（P2，覆盖 Cards.tsx 既有语义类）
 import './conversation.css' // visual v2 conversation overrides follow the shell
 import './stage.css'
+import './settings.css'
 import { AuroraPreview } from './components/aurora/AuroraPreview'
 import { IconGallery } from './components/aurora/IconGallery'
 import { VisualTokensPreview } from './components/aurora/VisualTokensPreview'

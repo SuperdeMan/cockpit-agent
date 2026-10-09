@@ -46,7 +46,7 @@ export function StatusBar({
           {privacyCloud && <Icon name="privacy-cloud" size={28} color="var(--au-warn)" title="本次语音使用云端识别" />}
           {privacyCamera && <Icon name="privacy-camera" size={28} color="var(--au-warn)" title="刚拍摄了一帧" />}
         </span>}
-        {driving && <button className="au-driving-toggle" onClick={() => setDriving(false)} title="退出当前行车段">行车中</button>}
+        {driving && <button className="au-driving-toggle" onClick={() => setDriving(false)} title="退出当前行车段"><Icon name="driving" size={28} />行车中</button>}
         <span className="au-num au-sb-clock" title={date}>{hh}:{mm}</span>
         <button
           className={'au-icon-btn' + (settings.ttsEnabled ? ' on' : '')}

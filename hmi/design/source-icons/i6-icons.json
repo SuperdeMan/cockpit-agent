@@ -1,0 +1,10 @@
+{
+  "fileKey": "QNXzATLf4WOKLD1rV1dilp",
+  "exportedAt": "2026-10-09",
+  "icons": [
+    {"name": "driving", "nodeId": "23:351", "source": "driving.svg"},
+    {"name": "developer", "nodeId": "23:356", "source": "developer.svg"}
+  ],
+  "normalization": "Original SVGs preserved. Registry body uses currentColor without the source white stroke opacity; geometry and 1.8 stroke unchanged.",
+  "reusedFromMobile": ["close", "chevron-up", "trash"]
+}

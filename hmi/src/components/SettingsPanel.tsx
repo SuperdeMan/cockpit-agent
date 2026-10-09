@@ -1,15 +1,11 @@
-// 设置面板（P4 · A-7「横屏侧栏式」忠实重建）：玻璃覆盖层 = 顶栏 + 左 236px 导航 + 右内容滚动区。
-// 八分区：语音播报 / 语音输入 / 显示主题 / 当前位置 / 常用地点 / 助手 / 能力开关 / 记忆。
-// 视觉照 Figma Make A-7（inline 样式 + --au-* token，复用 AuroraOrb / 控件库）；
-// 数据/交互一字不改地沿用既有真实接线（useSettings / 音色试听 / 地点 / 记忆 / 定位）。
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSettings } from '../settings'
 import { useDriving } from '../DrivingContext'
 import {
   AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, TTS_PROVIDER_FALLBACK, LLM_PROVIDER_FALLBACK,
   S2S_VOICES, ASR_MODES, ASR_PROVIDER_FALLBACK, DEFAULT_SETTINGS, asrEngineOptions, asrModeOf, pickAsrEngine,
   type Voice, type TtsProviderInfo, type TtsProvider, type LlmProviderInfo, type LlmStatus,
-  type AsrMode, type AsrProvider, type AsrProviderInfo,
+  type AsrMode, type AsrProvider, type AsrProviderInfo, type Msg,
 } from '../types'
 import {
   fetchVoices, fetchTtsProviders, fetchAsrProviders, fetchLlmProviders, setLlmProvider,
@@ -23,7 +19,7 @@ import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
 // 走 MediaRecorder/webm 会让模板落在另一个信道上，主链路的 PCM 探针比不上去（真机实测差 0.2）。
 import { PcmRecorder } from '../pcmRecorder.mjs'
 import { Icon, type IconName } from './Icon'
-import { Toggle, Segmented, TextInput, GhostBtn, DangerBtn } from './controls'
+import { Toggle, Segmented, Select, ListItem, VoiceTile, ConfirmDialog, TextInput, GhostBtn, DangerBtn } from './controls'
 
 const TEAL = 'var(--au-primary)'
 const FG1 = 'var(--au-text)'
@@ -34,162 +30,82 @@ const MONO = 'var(--au-font-mono)'
 // PoC 单用户：与 MemorySection 的 forgetMemory(audioApi,'u1') 同口径（真实身份由网关注入）
 const USER_ID = 'u1'
 
-// ─── 内联线性图标 ───
-function Svg({ size = 14, color = 'currentColor', sw = 2, style, children }: { size?: number; color?: string; sw?: number; style?: CSSProperties; children: ReactNode }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }}>{children}</svg>
-}
-const IcX = (p: { size?: number; color?: string }) => <Svg {...p}><path d="M18 6 6 18M6 6l12 12" /></Svg>
-const IcPlus = (p: { size?: number; color?: string }) => <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>
-const IcChevR = (p: { size?: number; color?: string }) => <Svg {...p}><path d="m9 18 6-6-6-6" /></Svg>
-const IcCheck = (p: { size?: number; color?: string }) => <Svg {...p}><path d="M20 6 9 17l-5-5" /></Svg>
-const IcPencil = (p: { size?: number; color?: string }) => <Svg {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></Svg>
-
-type Section = 'tts' | 'asr' | 'display' | 'location' | 'places' | 'assistant' | 'agents' | 'memory'
+// Icons and sizing come from the shared registry and Visual v2 tokens.
+const IcX = () => <Icon name="close" size={28} />
+const IcCheck = () => <Icon name="check" size={28} />
+const SettingRow = ListItem
+const HR = () => <hr className="au-settings-rule" />
+type Section = 'tts' | 'asr' | 'wake' | 'pipeline' | 'occupants' | 'vision' | 'display' | 'location' | 'assistant' | 'agents' | 'memory' | 'developer'
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
-  { id: 'tts', label: '语音播报', icon: 'voice-output' },
-  { id: 'asr', label: '语音输入', icon: 'voice-input' },
-  { id: 'display', label: '显示主题', icon: 'theme' },
-  { id: 'location', label: '当前位置', icon: 'location' },
-  { id: 'places', label: '常用地点', icon: 'place-home' },
-  { id: 'assistant', label: '助手设置', icon: 'assistant' },
-  { id: 'agents', label: '能力开关', icon: 'capability' },
-  { id: 'memory', label: '记忆', icon: 'memory' },
+  {id:'tts',label:'语音播报',icon:'voice-output'},
+  {id:'asr',label:'语音输入',icon:'voice-input'},
+  {id:'wake',label:'唤醒与连续对话',icon:'chat'},
+  {id:'pipeline',label:'语音链路',icon:'layers'},
+  {id:'occupants',label:'乘员与声纹',icon:'voice-birch'},
+  {id:'vision',label:'看一看',icon:'camera'},
+  {id:'display',label:'显示',icon:'theme'},
+  {id:'location',label:'位置与常用地点',icon:'location'},
+  {id:'assistant',label:'助手',icon:'assistant'},
+  {id:'agents',label:'能力开关',icon:'capability'},
+  {id:'memory',label:'记忆',icon:'memory'},
+  {id:'developer',label:'开发者',icon:'developer'},
 ]
-
-// 玻璃容器（照 A-7 GlassCard，r=20）
-function Glass({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return (
-    <div style={{
-      borderRadius: 20, overflow: 'hidden', background: 'var(--au-glass-bg)',
-      WebkitBackdropFilter: 'blur(var(--au-glass-blur)) saturate(1.15)', backdropFilter: 'blur(var(--au-glass-blur)) saturate(1.15)',
-      border: '1px solid var(--au-fill-2)', borderTop: '1px solid var(--au-glass-bd-top)', borderLeft: '1px solid var(--au-glass-bd-left)',
-      boxShadow: 'var(--au-glass-shadow)', ...style,
-    }}>{children}</div>
-  )
+function SectionHdr({icon,title,sub}:{icon:IconName;title:string;sub?:string}) {
+  return <header className="au-section-header"><span className="au-section-icon"><Icon name={icon} size={32} state="active" /></span>
+    <div><h2>{title}</h2>{sub && <p>{sub}</p>}</div></header>
 }
-const HR = () => <div style={{ height: 1, background: DIV }} />
-
-// ─── 布局原语（照 A-7）───
-function NavItem({ icon, label, active, onClick }: { icon: IconName; label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{
-      width: '100%', padding: '10px 12px', borderRadius: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2,
-      background: active ? 'rgba(70,214,224,.10)' : 'transparent', border: `1px solid ${active ? 'rgba(70,214,224,.22)' : 'transparent'}`,
-      color: active ? TEAL : FG2, textAlign: 'left', transition: 'all .18s', fontFamily: 'inherit',
-    }}>
-      <Icon name={icon} size={18} state={active ? 'active' : 'default'} />
-      <span style={{ fontSize: 13, fontWeight: active ? 600 : 400, flex: 1 }}>{label}</span>
-      {active && <IcChevR size={13} color={TEAL} />}
-    </button>
-  )
+function SettingGroup({title,children}:{title:string;children:ReactNode}) {
+  return <section className="au-setting-group"><h3>{title}</h3>{children}</section>
 }
-function SectionHdr({ icon, title, sub }: { icon: IconName; title: string; sub?: string }) {
-  return (
-    <div style={{ padding: '22px 28px 16px', borderBottom: `1px solid ${DIV}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: sub ? 5 : 0 }}>
-        <Icon name={icon} size={20} state="active" />
-        <h2 style={{ fontSize: 17, fontWeight: 600, margin: 0 }}>{title}</h2>
-      </div>
-      {sub && <div style={{ fontSize: 12.5, color: FG3, paddingLeft: 30, lineHeight: 1.6 }}>{sub}</div>}
-    </div>
-  )
+function ReadStatus({ state, onRetry }: { state: 'loading' | 'ready' | 'fallback'; onRetry: () => void }) {
+  if (state === 'ready') return null
+  return <div className="au-settings-read-state" role="status"><Icon name={state === 'loading' ? 'refresh' : 'warning'} size={28} />
+    <div>{state === 'loading' ? '正在读取设置…' : '暂时未能读取服务配置'}
+      {state === 'fallback' && <p>当前沿用已有选项，已保存的设置没有改动。</p>}</div>
+    {state === 'fallback' && <GhostBtn onClick={onRetry}>重试</GhostBtn>}</div>
 }
-function SettingGroup({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div>
-      <div style={{ padding: '14px 28px 6px', fontSize: 10.5, fontWeight: 600, letterSpacing: '.09em', textTransform: 'uppercase', color: FG3 }}>{title}</div>
-      <div style={{ padding: '0 28px' }}>{children}</div>
-    </div>
-  )
-}
-function SettingRow({ label, sub, children, noBorder = false }: { label: string; sub?: string; children?: ReactNode; noBorder?: boolean }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '15px 0', borderBottom: noBorder ? 'none' : `1px solid ${DIV}` }}>
-      <div style={{ flex: 1, paddingRight: 20, minWidth: 0 }}>
-        <div style={{ fontSize: 14, color: FG1 }}>{label}</div>
-        {sub && <div style={{ fontSize: 12, color: FG3, marginTop: 3, lineHeight: 1.55 }}>{sub}</div>}
-      </div>
-      {children && <div style={{ flexShrink: 0 }}>{children}</div>}
-    </div>
-  )
-}
-
-export function SettingsPanel({
-  audioApi, sessionId, occupantId, location, locationEnabled, locationStatus, onRequestLocation, onLocationEnabledChange, onClose,
-}: {
-  audioApi: string
-  sessionId: string
-  /** 当前识别到的乘员（M-B）。记忆页按它过滤——认不出时是 'primary'，与主链一致。 */
-  occupantId?: string
-  location: { lat: number; lng: number; accuracyM: number; capturedAt: number } | null
-  locationEnabled: boolean
-  locationStatus: string
-  onRequestLocation: () => void
-  onLocationEnabledChange: (enabled: boolean) => void
-  onClose: () => void
+export function SettingsPanel({audioApi,sessionId,occupantId,location,locationEnabled,locationStatus,onRequestLocation,onLocationEnabledChange,onClose,messages=[]}: {
+  audioApi:string;sessionId:string;occupantId?:string;
+  location:{lat:number;lng:number;accuracyM:number;capturedAt:number}|null;
+  locationEnabled:boolean;locationStatus:string;onRequestLocation:()=>void;onLocationEnabledChange:(enabled:boolean)=>void;onClose:()=>void;messages?:Msg[];
 }) {
-  const { settings } = useSettings()
-  // 初始分区默认「语音播报」；`?settings=<id>` 可直达某分区（本地验证用，prod 无参即默认）。
-  const initial = SECTIONS.find((s) => s.id === new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('settings'))?.id ?? 'tts'
-  const [section, setSection] = useState<Section>(initial)
-
-  return (
-    <div className="au-settings-overlay" role="dialog" aria-modal="true">
-      {/* 氛围底 */}
-      <div aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
-        <span style={{ position: 'absolute', bottom: '8%', left: '14%', width: 560, height: 400, borderRadius: '50%', background: 'radial-gradient(circle,rgba(91,140,255,.10),transparent 68%)', filter: 'blur(52px)' }} />
-        <span style={{ position: 'absolute', top: '6%', right: '8%', width: 480, height: 360, borderRadius: '50%', background: 'radial-gradient(circle,rgba(91,233,255,.07),transparent 68%)', filter: 'blur(58px)' }} />
-      </div>
-
-      {/* 顶栏 */}
-      <header style={{ position: 'relative', zIndex: 2, height: 64, padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${DIV}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span className="au-aurora-text" style={{ fontSize: 15, fontWeight: 600 }}>设置</span>
-          <span style={{ fontSize: 13, color: FG3, fontWeight: 300 }}>· {settings.assistantName}助手 · 横屏侧栏</span>
-        </div>
-        <button onClick={onClose} aria-label="关闭设置" style={{ width: 40, height: 40, borderRadius: 12, display: 'grid', placeItems: 'center', cursor: 'pointer', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: FG2 }}>
-          <IcX size={16} />
-        </button>
-      </header>
-
-      {/* 主区：侧栏 + 内容 */}
-      <div style={{ position: 'relative', zIndex: 2, display: 'flex', height: 'calc(100vh - 64px)', padding: '16px 24px', gap: 16, overflow: 'hidden' }}>
-        {/* 左导航 */}
-        <div style={{ width: 236, flexShrink: 0, height: '100%' }}>
-          <Glass style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '20px 16px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{settings.assistantName}</div>
-                <div style={{ fontSize: 11, color: FG3 }}>助手设置</div>
-              </div>
-            </div>
-            <HR />
-            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px' }}>
-              {SECTIONS.map((s) => (
-                <NavItem key={s.id} icon={s.icon} label={s.label} active={section === s.id} onClick={() => setSection(s.id)} />
-              ))}
-            </div>
-            <HR />
-            <div style={{ padding: '10px 10px 12px' }}><ResetButton /></div>
-          </Glass>
-        </div>
-
-        {/* 右内容 */}
-        <div style={{ flex: 1, height: '100%', overflowY: 'auto' }}>
-          <Glass style={{ minHeight: '100%' }}>
-            {section === 'tts' && <TtsSection audioApi={audioApi} />}
-            {section === 'asr' && <AsrSection audioApi={audioApi} />}
-            {section === 'display' && <DisplaySection />}
-            {section === 'location' && <LocationSection location={location} enabled={locationEnabled} status={locationStatus} onRequest={onRequestLocation} onEnabledChange={onLocationEnabledChange} />}
-            {section === 'places' && <PlacesSection audioApi={audioApi} />}
-            {section === 'assistant' && <AssistantSection audioApi={audioApi} />}
-            {section === 'agents' && <AgentsSection />}
-            {section === 'memory' && <MemorySection audioApi={audioApi} sessionId={sessionId} occupantId={occupantId || 'primary'} />}
-          </Glass>
-        </div>
-      </div>
+  const query = new URLSearchParams(window.location.search).get('settings')
+  const initial = query === 'places' ? 'location' : SECTIONS.find(s=>s.id===query)?.id ?? 'tts'
+  const [section,setSection]=useState<Section>(initial)
+  const dialog=useRef<HTMLDivElement>(null)
+  const content=useRef<HTMLDivElement>(null)
+  useEffect(()=>{const previous=document.activeElement as HTMLElement;dialog.current?.querySelector<HTMLButtonElement>('[aria-label="关闭设置"]')?.focus();return()=>previous?.focus()},[])
+  useEffect(()=>{content.current?.scrollTo(0,0)},[section])
+  return <div ref={dialog} className="au-settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-title"
+    onKeyDown={e=>{
+      if(e.key==='Escape'){e.stopPropagation();onClose()}
+      if(e.key==='Tab'){
+        const items=Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),a[href],[tabindex="0"]')??[]).filter(el=>el.offsetParent!==null)
+        const first=items[0],last=items[items.length-1]
+        if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}
+        else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}
+      }
+    }}>
+    <header className="au-settings-header"><h1 id="settings-title">设置</h1><button type="button" className="au-icon-btn" onClick={onClose} aria-label="关闭设置"><IcX /></button></header>
+    <div className="au-settings-body">
+      <nav className="au-settings-nav" aria-label="设置分区">{SECTIONS.map(s=><button key={s.id} type="button" className="au-settings-nav-item" aria-current={section===s.id?'page':undefined} onClick={()=>setSection(s.id)}>
+        <Icon name={s.icon} size={28} state={section===s.id?'active':'default'} /><span>{s.label}</span></button>)}</nav>
+      <div ref={content} className="au-settings-scroll"><main className="au-settings-content" data-section={section}>
+        {section==='tts'&&<TtsSection audioApi={audioApi} />}
+        {section==='asr'&&<AsrSection audioApi={audioApi} />}
+        {section==='wake'&&<WakeSection />}
+        {section==='pipeline'&&<PipelineSection />}
+        {section==='occupants'&&<><SectionHdr icon="voice-birch" title="乘员与声纹" sub="录入、辨认和管理常用乘员的声音" /><OccupantSection audioApi={audioApi} /></>}
+        {section==='vision'&&<><SectionHdr icon="camera" title="看一看" sub="管理问答时的画面采集" /><VisionSection /></>}
+        {section==='display'&&<DisplaySection />}
+        {section==='location'&&<><LocationSection location={location} enabled={locationEnabled} status={locationStatus} onRequest={onRequestLocation} onEnabledChange={onLocationEnabledChange} /><PlacesSection audioApi={audioApi} /></>}
+        {section==='assistant'&&<AssistantSection audioApi={audioApi} />}
+        {section==='agents'&&<AgentsSection />}
+        {section==='memory'&&<MemorySection audioApi={audioApi} sessionId={sessionId} occupantId={occupantId||'primary'} />}
+        {section==='developer'&&<DeveloperSection audioApi={audioApi} messages={messages} />}
+      </main></div>
     </div>
-  )
+  </div>
 }
 
 function ResetButton() {
@@ -198,7 +114,7 @@ function ResetButton() {
   if (confirm) {
     return (
       <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={() => { reset(); setConfirm(false) }} style={{ flex: 1, padding: '9px 0', borderRadius: 12, border: '1px solid rgba(239,68,68,.28)', background: 'rgba(239,68,68,.06)', color: 'var(--au-danger)', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' }}>确认重置</button>
+        <button onClick={() => { reset(); setConfirm(false) }} style={{ flex: 1, padding: '9px 0', borderRadius: 12, border: '1px solid rgba(239,68,68,.28)', background: 'rgba(239,68,68,.06)', color: 'var(--au-danger)', fontSize: 'var(--au-type-caption-size)', cursor: 'pointer', fontFamily: 'inherit' }}>确认重置</button>
         <GhostBtn sm onClick={() => setConfirm(false)}>取消</GhostBtn>
       </div>
     )
@@ -207,7 +123,6 @@ function ResetButton() {
 }
 
 // ─── 1 · 语音播报 ───
-const VOICE_PALETTE = ['#5BE9FF', '#34D399', '#A3E635', '#9A6BFF', '#FF6BD6', '#5B8CFF', '#46D6E0', '#FCD34D', '#FB923C']
 // 音色 → A-8 人格图标；非六大人格（Milo/Dean/MiMo 等）回落 voice-soda（气泡，中性）
 const VOICE_ICON: Record<string, IconName> = {
   冰糖: 'voice-ice', 茉莉: 'voice-jasmine', 苏打: 'voice-soda', 白桦: 'voice-birch', Mia: 'voice-mia', Chloe: 'voice-chloe',
@@ -229,15 +144,20 @@ function TtsSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
   const [providers, setProviders] = useState<TtsProviderInfo[]>(TTS_PROVIDER_FALLBACK)
   const [playing, setPlaying] = useState<string | null>(null)
+  const [readState, setReadState] = useState<'loading' | 'ready' | 'fallback'>('loading')
 
   // 探测后端引擎清单（含各引擎音色 + 可用性）；失败留离线兜底
-  useEffect(() => {
-    fetchTtsProviders(audioApi).then((ps) => { if (ps.length) setProviders(ps) }).catch(() => {/* 离线兜底 */})
+  const load = useCallback(async () => {
+    setReadState('loading')
+    const ps = await fetchTtsProviders(audioApi)
+    if (ps.length) { setProviders(ps); setReadState('ready') } else setReadState('fallback')
   }, [audioApi])
+  useEffect(() => { void load() }, [load])
 
   const cur = providers.find((p) => p.id === settings.ttsProvider) ?? providers[0]
   const voices = cur?.voices ?? VOICE_FALLBACK
   const disabled = !settings.ttsEnabled
+  const ProviderChoice = providers.length > 3 ? Select : Segmented
 
   // 切引擎：换音色集，若当前音色不在新引擎里则回落该引擎默认（首个音色）
   const selectProvider = (pid: string) => {
@@ -257,6 +177,7 @@ function TtsSection({ audioApi }: { audioApi: string }) {
   return (
     <div>
       <SectionHdr icon="voice-output" title="语音播报" sub="控制助手的语音输出方式、引擎与音色偏好" />
+      <ReadStatus state={readState} onRetry={()=>void load()} />
       <SettingGroup title="输出控制">
         <SettingRow label="启用语音播报" sub="关闭后助手仅显示文字，不朗读回答">
           <Toggle on={settings.ttsEnabled} onChange={(v) => update({ ttsEnabled: v })} />
@@ -268,52 +189,15 @@ function TtsSection({ audioApi }: { audioApi: string }) {
       <HR />
       <SettingGroup title="语音引擎">
         <SettingRow label="播报引擎" sub="流式引擎边合成边出声、首音更快；经典引擎整句合成后播放" noBorder={!cur || cur.streaming}>
-          <Segmented value={settings.ttsProvider} onChange={selectProvider}
+          <ProviderChoice value={settings.ttsProvider} onChange={selectProvider}
             options={providers.map((p) => ({ value: p.id, label: p.label.split('·')[0] }))} />
         </SettingRow>
-        {cur && (
-          <div style={{ padding: '2px 2px 14px', fontSize: 11.5, color: FG3, display: 'flex', gap: 6, alignItems: 'center' }}>
-            {cur.streaming
-              ? (cur.available
-                ? <><Icon name="check-circle" size={13} color="var(--au-primary)" /> 流式秒回首音 · {cur.model}{cur.sample_rate ? ` · ${(cur.sample_rate / 1000).toFixed(1)}kHz` : ''}</>
-                : <><Icon name="info" size={13} color="var(--au-warn, #FCD34D)" /> 未检测到该引擎凭据，将无感回退经典批处理</>)
-              : <>经典批处理引擎 · {cur.model || 'mimo-v2.5-tts'}</>}
-          </div>
-        )}
       </SettingGroup>
       <SettingGroup title={`音色选择（${cur?.label ?? ''}）`}>
-        <div style={{ paddingBottom: 20 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, paddingTop: 10 }}>
-            {voices.map((v, i) => {
-              const color = VOICE_PALETTE[i % VOICE_PALETTE.length]
-              const selected = settings.voiceId === v.voice_id
-              const isPlaying = playing === v.voice_id
-              return (
-                <div key={v.voice_id} onClick={() => !disabled && update({ voiceId: v.voice_id })} style={{
-                  padding: '14px 12px', borderRadius: 16, cursor: disabled ? 'default' : 'pointer',
-                  background: selected ? `${color}14` : 'var(--au-fill)',
-                  border: `1px solid ${selected ? color + '50' : 'var(--au-fill-2)'}`, borderTop: `1px solid ${selected ? color + '70' : 'var(--au-line-2)'}`,
-                  transition: 'all .2s', opacity: disabled ? 0.45 : 1, boxShadow: selected ? `0 0 18px ${color}18` : 'none',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <Icon name={voiceIcon(v)} size={20} color={color} />
-                    {selected && <div style={{ width: 16, height: 16, borderRadius: '50%', background: color, display: 'grid', placeItems: 'center' }}><IcCheck size={9} color="#06080F" /></div>}
-                  </div>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: selected ? color : FG1, marginBottom: 2 }}>{v.name}</div>
-                  <div style={{ fontSize: 11, color: FG3, marginBottom: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.description || (v.tags || [v.language, v.gender]).join(' · ')}</div>
-                  <button onClick={(e) => { e.stopPropagation(); !disabled && preview(v.voice_id) }} aria-label={`试听 ${v.name}`} style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 8,
-                    background: isPlaying ? `${color}20` : 'var(--au-fill)', border: `1px solid ${isPlaying ? color + '40' : 'var(--au-fill-2)'}`,
-                    fontSize: 11.5, color: isPlaying ? color : FG3, cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit', transition: 'all .18s',
-                  }}>
-                    {isPlaying ? <span style={{ width: 10, height: 10, border: `1.5px solid ${color}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'au-orb-spin .9s linear infinite' }} /> : <Icon name="play" size={11} color={isPlaying || !disabled ? color : 'var(--au-text-3)'} />}
-                    {isPlaying ? '播放中…' : '试听'}
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </div>
+        <div className="au-voice-grid">{voices.map(v => <VoiceTile key={v.voice_id} name={v.name}
+          description={v.description || (v.tags || [v.language,v.gender]).join(' · ')} icon={voiceIcon(v)}
+          selected={settings.voiceId===v.voice_id} playing={playing===v.voice_id} disabled={disabled}
+          onSelect={()=>update({voiceId:v.voice_id})} onPreview={()=>void preview(v.voice_id)} />)}</div>
       </SettingGroup>
     </div>
   )
@@ -326,9 +210,13 @@ function TtsSection({ audioApi }: { audioApi: string }) {
 function AsrSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
   const [providers, setProviders] = useState<AsrProviderInfo[]>(ASR_PROVIDER_FALLBACK)
-  useEffect(() => {
-    fetchAsrProviders(audioApi).then(setProviders).catch(() => {/* 离线兜底 */})
+  const [readState, setReadState] = useState<'loading' | 'ready' | 'fallback'>('loading')
+  const load = useCallback(async () => {
+    setReadState('loading')
+    const ps = await fetchAsrProviders(audioApi)
+    setProviders(ps); setReadState(ps === ASR_PROVIDER_FALLBACK ? 'fallback' : 'ready')
   }, [audioApi])
+  useEffect(() => { void load() }, [load])
 
   const mode = asrModeOf(providers, settings.asrProvider)
   const engines = asrEngineOptions(providers, mode)
@@ -352,17 +240,18 @@ function AsrSection({ audioApi }: { audioApi: string }) {
   return (
     <div>
       <SectionHdr icon="voice-input" title="语音输入" sub="配置识别方式、引擎、语言、模式与时长" />
+      <ReadStatus state={readState} onRetry={()=>void load()} />
       <SettingGroup title="识别引擎">
-        <SettingRow label="识别方式" sub="实时=边说边上屏（百炼实时模型）；整句=松手后整段上传再出字（MiniMax / MiMo 这类转写接口）">
+        <SettingRow label="识别方式" sub="实时是边说边显示；整句是松手后显示识别结果">
           <Segmented value={mode} onChange={selectMode}
             options={ASR_MODES.map((m) => ({ value: m.id, label: m.label }))} />
         </SettingRow>
-        <SettingRow label={`${modeMeta.label}引擎`} sub={current && !current.available ? '该引擎的凭据未配置，按住说话会自动回退批处理识别' : `${modeMeta.hint}；未配置凭据的引擎置灰`} noBorder>
+        <SettingRow label={`${modeMeta.label}引擎`} sub={current && !current.available ? '该引擎暂不可用，按住说话会回退为整句识别' : '选择识别引擎，暂不可用的选项已停用'} noBorder>
           {engines.length ? (
-            <Segmented sm value={current ? engineKey(current) : ''} onChange={selectEngine}
+            <Select value={current ? engineKey(current) : ''} onChange={selectEngine}
               options={engines.map((e) => ({ value: engineKey(e), label: e.label, disabled: !e.available }))} />
           ) : (
-            <span style={{ fontSize: 13, color: 'var(--au-text-3)' }}>—</span>
+            <span style={{ fontSize: 'var(--au-type-body-size)', color: 'var(--au-text-3)' }}>—</span>
           )}
         </SettingRow>
       </SettingGroup>
@@ -376,21 +265,28 @@ function AsrSection({ audioApi }: { audioApi: string }) {
             options={[{ value: 'hold', label: '按住' }, { value: 'toggle', label: '点按' }]} />
         </SettingRow>
         <SettingRow label="最长聆听时长" sub="超时后自动停止录音" noBorder>
-          <Segmented sm value={settings.listenSeconds} onChange={(v) => update({ listenSeconds: v })}
+          <Select value={settings.listenSeconds} onChange={(v) => update({ listenSeconds: v })}
             options={[{ value: 10, label: '10s' }, { value: 15, label: '15s' }, { value: 30, label: '30s' }, { value: 60, label: '60s' }]} />
         </SettingRow>
       </SettingGroup>
       <HR />
+    </div>
+  )
+}
+
+function WakeSection(){
+  const {settings,update}=useSettings()
+  return <div><SectionHdr icon="chat" title="唤醒与连续对话" sub="管理唤醒词和回答后的聆听方式" />
       <SettingGroup title="语音唤醒 · 连续对话">
         <SettingRow label="免唤醒连续对话" sub="回复播完后保持聆听窗，接着说即自动断句发送，无需再按光球。说「退下吧 / 没事了」可随时退出聆听。唤醒前音频仅在浏览器本地检测、不上传。默认关。">
           <Toggle on={settings.handsFree} onChange={(v) => update({ handsFree: v })} />
         </SettingRow>
-        <SettingRow label="唤醒词" sub="待机时说唤醒词进入聆听，全程免触屏。需先下载本地语音模型（见 README 的 fetch-voice-models）。" noBorder={!settings.handsFree}>
+        <SettingRow label="唤醒词" sub="待机时说唤醒词进入聆听，全程免触屏。需要设备已准备好语音唤醒资源。" noBorder={!settings.handsFree}>
           <Toggle on={settings.wakeWordEnabled} onChange={(v) => update({ wakeWordEnabled: v })} disabled={!settings.handsFree} />
         </SettingRow>
         {settings.handsFree && settings.wakeWordEnabled && (
           <SettingRow label="选择唤醒词" sub="换词后直接说新唤醒词即可生效；命中率以真机为准">
-            <Segmented sm value={settings.wakeWord} onChange={(v) => update({ wakeWord: v })}
+            <Select value={settings.wakeWord} onChange={(v) => update({ wakeWord: v })}
               options={WAKE_WORD_PRESETS.map((p) => ({ value: p.word, label: p.word }))} />
           </SettingRow>
         )}
@@ -400,18 +296,18 @@ function AsrSection({ audioApi }: { audioApi: string }) {
               <Segmented sm value={settings.followupWindowS} onChange={(v) => update({ followupWindowS: v })}
                 options={[{ value: 5, label: '5s' }, { value: 8, label: '8s' }, { value: 15, label: '15s' }]} />
             </SettingRow>
-            <SettingRow label="静音断句" sub="停顿多久判定说完并发送（VAD 静音尾）：0.5s 敏捷 / 0.8s 均衡 / 1.2s 从容。长句易停顿可调大。" noBorder>
-              <Segmented sm value={settings.silenceTailMs} onChange={(v) => update({ silenceTailMs: v })}
-                options={[{ value: 500, label: '0.5s 敏捷' }, { value: 800, label: '0.8s 均衡' }, { value: 1200, label: '1.2s 从容' }]} />
-            </SettingRow>
           </>
         )}
       </SettingGroup>
-      <HR />
+  </div>
+}
+function PipelineSection(){
+  const {settings,update}=useSettings()
+  return <div><SectionHdr icon="layers" title="语音链路" sub="选择语音问答的处理方式，查看原始语音的使用范围" />
       <SettingGroup title="语音链路">
         <SettingRow
           label="端到端语音直连"
-          sub={'闲聊与常识问答由语音大模型直接听、直接答（首音约 0.6 秒，比常规链路快一截，多轮更连贯）。'
+          sub={'闲聊与常识问答由语音大模型直接听、直接答。'
             + '需要执行的事（车控、导航、提醒、支付）和查实时信息的事，一律自动交回常规链路——车辆动作永不经此下发。'
             + '开启后唤醒到说完这段窗口内的原始语音会上传云端处理（常规链路只上传识别后的文字）；未唤醒时不采集。'
             + '切换在下次开启连续对话时生效。默认关。'}
@@ -422,17 +318,12 @@ function AsrSection({ audioApi }: { audioApi: string }) {
         </SettingRow>
         {settings.voicePipeline === 's2s' && (
           <SettingRow label="直连音色" sub="端到端链路的说话人（与上方播报音色是两套引擎；选相近的可减少切回常规链路时的音色差）" noBorder>
-            <Segmented sm value={settings.s2sVoice} onChange={(v) => update({ s2sVoice: v })}
+            <Select value={settings.s2sVoice} onChange={(v) => update({ s2sVoice: v })}
               options={S2S_VOICES.map((v) => ({ value: v, label: v }))} />
           </SettingRow>
         )}
       </SettingGroup>
-      <HR />
-      <OccupantSection audioApi={audioApi} />
-      <HR />
-      <VisionSection />
-    </div>
-  )
+  </div>
 }
 
 // ─── 2.5 · 乘员与声纹（M4 P4）───
@@ -459,7 +350,7 @@ const ENROLL_SECONDS = 4
 const TRY_SECONDS = 4
 
 function OccupantSection({ audioApi }: { audioApi: string }) {
-  const { settings, update } = useSettings()
+  const { settings, update, developerMode, developerOptions } = useSettings()
   const [info, setInfo] = useState<VoiceprintInfo | null>(null)
   const [name, setName] = useState('')
   const [open, setOpen] = useState(false)                 // 录入面板是否展开
@@ -537,7 +428,7 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
       setMsg(`每段都要说满约 ${ENROLL_SECONDS} 秒——太短提不出稳定声纹，请重录。`)
       setClips([null, null, null])
     } else {
-      setMsg('注册失败：' + (r.error || '未知原因'))
+      setMsg(developerMode && developerOptions.rawErrors ? '注册失败：' + (r.error || '未知原因') : '注册失败，请稍后重试')
     }
   }
 
@@ -589,7 +480,7 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
     if (!next) { setMsg('称呼不能为空'); return }
     const r = await renameVoiceprint(audioApi, USER_ID, occ, next)
     setEditing(''); setDraftName('')
-    setMsg(r.ok ? `已改名为「${next}」` : `改名失败：${r.error || '未知原因'}`)
+    setMsg(r.ok ? `已改名为「${next}」` : developerMode && developerOptions.rawErrors ? `改名失败：${r.error || '未知原因'}` : '改名失败，请稍后重试')
     void refresh()
   }
 
@@ -597,8 +488,8 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
     return (
       <SettingGroup title="乘员与声纹">
         <SettingRow label="声纹识别不可用" sub={'服务端未加载声纹模型，本功能已自动停用（其余语音功能不受影响）。'
-          + '管理员可执行 scripts/fetch-voice-models 拉取模型后重启网关。'} noBorder>
-          <span style={{ color: FG3, fontSize: 12 }}>未启用</span>
+} noBorder>
+          <span style={{ color: FG3, fontSize: 'var(--au-type-caption-size)' }}>未启用</span>
         </SettingRow>
       </SettingGroup>
     )
@@ -642,7 +533,7 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
                 setMsg(''); setEditing(''); setTargetOcc(o.occupant_id)
                 setName(o.display_name || ''); setClips([null, null, null]); setOpen(true)
               }}>重录</GhostBtn>
-              <div style={{ width: 76 }}>
+              <div>
                 <DangerBtn onClick={() => remove(o.occupant_id, o.display_name)}>删除</DangerBtn>
               </div>
             </div>
@@ -746,7 +637,7 @@ function DisplaySection() {
 
   return (
     <div>
-      <SectionHdr icon="theme" title="显示主题" sub="界面外观、字号与快捷指令定制" />
+      <SectionHdr icon="theme" title="显示" sub="界面外观、字号与快捷指令定制" />
       <SettingGroup title="外观">
         <SettingRow label="主题" sub="深色适合夜间驾驶，浅色适合晴天">
           <Segmented value={settings.theme} onChange={(v) => update({ theme: v })}
@@ -769,28 +660,29 @@ function DisplaySection() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
             {settings.quickCommands.map((cmd, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, background: 'var(--au-fill)', border: '1px solid var(--au-line-2)' }}>
-                <span style={{ fontSize: 12.5, color: FG2 }}>{cmd}</span>
+                <span style={{ fontSize: 'var(--au-type-caption-size)', color: FG2 }}>{cmd}</span>
                 <button onClick={() => removeCmd(i)} aria-label="删除指令" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, display: 'flex', lineHeight: 1 }}>
-                  <IcX size={11} color={FG3} />
+                  <IcX />
                 </button>
               </div>
             ))}
             {adding ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addCmd(); if (e.key === 'Escape') { setDraft(''); setAdding(false) } }}
+                <input autoFocus={!driving} readOnly={driving} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addCmd(); if (e.key === 'Escape') { setDraft(''); setAdding(false) } }}
                   placeholder="新指令…" maxLength={16}
-                  style={{ width: 130, height: 30, padding: '0 10px', borderRadius: 20, background: 'var(--au-fill)', border: `1px solid ${TEAL}`, color: FG1, fontSize: 12.5, fontFamily: 'inherit', outline: 'none', caretColor: TEAL }} />
-                <button onClick={addCmd} aria-label="确认添加" style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer', background: 'rgba(70,214,224,.14)', border: `1px solid ${TEAL}`, color: TEAL }}><IcCheck size={13} color={TEAL} /></button>
+                  style={{ width: 130, height: 30, padding: '0 10px', borderRadius: 20, background: 'var(--au-fill)', border: `1px solid ${TEAL}`, color: FG1, fontSize: 'var(--au-type-caption-size)', fontFamily: 'inherit', outline: 'none', caretColor: TEAL }} />
+                <button onClick={addCmd} aria-label="确认添加" style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer', background: 'var(--au-primary-soft)', border: `1px solid ${TEAL}`, color: TEAL }}><IcCheck /></button>
               </span>
             ) : settings.quickCommands.length < 8 ? (
-              <button onClick={() => setAdding(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 20, border: '1px dashed var(--au-text-3)', background: 'transparent', color: FG3, fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' }}>
-                <IcPlus size={11} color={FG3} />添加
+              <button onClick={() => setAdding(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 20, border: '1px dashed var(--au-text-3)', background: 'transparent', color: FG3, fontSize: 'var(--au-type-caption-size)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                添加
               </button>
             ) : null}
           </div>
-          <div style={{ fontSize: 11, color: FG3 }}>最多 8 条 · 显示在输入框上方的指令轨</div>
+          <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG3 }}>最多 8 条 · 显示在输入框上方的指令轨</div>
         </div>
       </SettingGroup>
+      <SettingGroup title="本机设置"><SettingRow label="恢复默认设置" sub="恢复此设备的界面与语音偏好，不删除服务端记忆" noBorder><ResetButton /></SettingRow></SettingGroup>
     </div>
   )
 }
@@ -807,7 +699,7 @@ function LocationSection({ location, enabled, status, onRequest, onEnabledChange
 }) {
   return (
     <div>
-      <SectionHdr icon="location" title="当前位置" sub="位置权限与精度设置。精确坐标仅用于导航/就近/天气，不上传服务器、不写入记忆。" />
+      <SectionHdr icon="location" title="位置与常用地点" sub="管理位置权限、定位状态和常用目的地" />
       <SettingGroup title="权限">
         <SettingRow label="启用位置服务" sub="关闭后立即停止发送位置并清除本地坐标，导航/充电站等将不可用" noBorder>
           <Toggle on={enabled} onChange={onEnabledChange} />
@@ -820,13 +712,13 @@ function LocationSection({ location, enabled, status, onRequest, onEnabledChange
             <div style={{ padding: '14px 16px', borderRadius: 14, background: 'var(--au-fill)', border: '1px solid var(--au-fill-2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--au-online)', boxShadow: '0 0 6px var(--au-online)' }} />
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--au-online)' }}>定位已开启</span>
+                <span style={{ fontSize: 'var(--au-type-caption-size)', fontWeight: 600, color: 'var(--au-online)' }}>定位已开启</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 {[['纬度', `${location.lat.toFixed(4)}° N`], ['经度', `${location.lng.toFixed(4)}° E`], ['精度', `±${Math.round(location.accuracyM)}m`], ['更新', relTime(location.capturedAt)]].map(([l, v]) => (
                   <div key={l}>
-                    <div style={{ fontSize: 10.5, color: FG3 }}>{l}</div>
-                    <div style={{ fontFamily: MONO, fontSize: 12.5, color: FG1, marginTop: 2 }}>{v}</div>
+                    <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG3 }}>{l}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 'var(--au-type-caption-size)', color: FG1, marginTop: 2 }}>{v}</div>
                   </div>
                 ))}
               </div>
@@ -834,14 +726,14 @@ function LocationSection({ location, enabled, status, onRequest, onEnabledChange
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0' }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: FG3 }} />
-              <span style={{ fontSize: 13, color: FG3 }}>{enabled ? '定位已开启，尚未获取坐标' : '位置服务已关闭'}</span>
+              <span style={{ fontSize: 'var(--au-type-body-size)', color: FG3 }}>{enabled ? '定位已开启，尚未获取坐标' : '位置服务已关闭'}</span>
             </div>
           )}
           <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
             <GhostBtn onClick={onRequest}>{enabled ? '更新当前位置' : '申请并启用'}</GhostBtn>
-            <span style={{ fontSize: 11.5, color: FG3, flex: 1, lineHeight: 1.5 }}>{status}</span>
+            <span style={{ fontSize: 'var(--au-type-caption-size)', color: FG3, flex: 1, lineHeight: 1.5 }}>{status}</span>
           </div>
-          <div style={{ fontSize: 11, color: FG3, marginTop: 12, lineHeight: 1.6 }}>关闭的是座舱助手对位置的使用；如需撤销浏览器级授权，请在浏览器站点权限中操作。</div>
+          <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG3, marginTop: 12, lineHeight: 1.6 }}>关闭的是座舱助手对位置的使用；如需撤销浏览器级授权，请在浏览器站点权限中操作。</div>
         </div>
       </SettingGroup>
     </div>
@@ -860,7 +752,7 @@ function PlacesSection({ audioApi }: { audioApi: string }) {
 
   return (
     <div>
-      <SectionHdr icon="place-home" title="常用地点" sub="家、公司等常用目的地。说『我家在XX』『把公司设成XX』设置，导航说『回家』『导航去公司』直达。" />
+      <p className="au-setting-note">说「我家在 XX」「把公司设成 XX」设置常用地点；说「回家」「导航去公司」直达。</p>
       <SettingGroup title="地点设置">
         <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 8 }}>
           <GhostBtn sm onClick={load}>{loading ? '刷新中…' : '刷新'}</GhostBtn>
@@ -871,13 +763,13 @@ function PlacesSection({ audioApi }: { audioApi: string }) {
           return (
             <div key={key} style={{ padding: '16px 0', borderBottom: i < PLACE_DEFS.length - 1 ? `1px solid ${DIV}` : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: set ? 'rgba(70,214,224,.12)' : 'var(--au-fill)', border: `1px solid ${set ? 'rgba(70,214,224,.25)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', flexShrink: 0 }}><Icon name={PLACE_ICON[key] ?? 'pin'} size={18} color={set ? 'var(--au-primary)' : 'var(--au-text-2)'} /></div>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: set ? 'var(--au-primary-soft)' : 'var(--au-fill)', border: `1px solid ${set ? 'var(--au-primary-line)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', flexShrink: 0 }}><Icon name={PLACE_ICON[key] ?? 'pin'} size={18} color={set ? 'var(--au-primary)' : 'var(--au-text-2)'} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: FG1, marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 'var(--au-type-body-size)', fontWeight: 600, color: FG1, marginBottom: 4 }}>{label}</div>
                   {set ? (
-                    <div style={{ fontSize: 12.5, color: FG2 }}>{formatPlace(place)}</div>
+                    <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG2 }}>{formatPlace(place)}</div>
                   ) : (
-                    <div style={{ fontSize: 12.5, color: FG3 }}>未设置 · 说『{hint}』即可设置</div>
+                    <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG3 }}>未设置 · 说『{hint}』即可设置</div>
                   )}
                 </div>
               </div>
@@ -910,11 +802,15 @@ function llmHealthDot(h?: import('../types').LlmProviderHealth): { color: string
 function AssistantSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
   const [llm, setLlm] = useState<LlmStatus | null>(null)
+  const [readState, setReadState] = useState<'loading' | 'ready' | 'fallback'>('loading')
 
   // 探测网关厂商清单 + 当前 active；失败留离线兜底
-  useEffect(() => {
-    fetchLlmProviders(audioApi).then((s) => { if (s) setLlm(s) }).catch(() => {/* 离线兜底 */})
+  const load = useCallback(async () => {
+    setReadState('loading')
+    const result = await fetchLlmProviders(audioApi)
+    if (result) { setLlm(result); setReadState('ready') } else setReadState('fallback')
   }, [audioApi])
+  useEffect(() => { void load() }, [load])
 
   const providers: LlmProviderInfo[] = llm?.providers ?? LLM_PROVIDER_FALLBACK
   // 选中厂商：本地显式选定优先，否则跟随网关当前 active（空则第一个）
@@ -942,32 +838,19 @@ function AssistantSection({ audioApi }: { audioApi: string }) {
   ]
   return (
     <div>
-      <SectionHdr icon="assistant" title="助手设置" sub={`个性化${settings.assistantName}的回答风格与底层模型（昵称即时生效，长度/模型经会话透传后端）`} />
-      <SettingGroup title="AI 大脑（LLM 厂商）">
-        <SettingRow label="模型厂商" sub="切换即全局生效、所有服务共用；未配置密钥的厂商置灰不可选。默认跟随部署配置。">
-          <Segmented value={activeProvider} onChange={selectProvider}
+      <SectionHdr icon="assistant" title="助手" sub={`设置${settings.assistantName}的称呼、回答风格和问答引擎`} />
+      <ReadStatus state={readState} onRetry={()=>void load()} />
+      <SettingGroup title="AI 大脑">
+        <SettingRow label="模型厂商" sub="切换后所有会话共用；不可用的服务已停用。未选择时沿用当前服务。">
+          <Select value={activeProvider} onChange={selectProvider}
             options={providers.map((p) => ({ value: p.id, label: p.label.split('·')[0], disabled: !p.available }))} />
         </SettingRow>
-        {llm?.health && (
-          <div style={{ padding: '2px 2px 12px', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-            {providers.filter((p) => p.available).map((p) => {
-              const d = llmHealthDot(llm.health?.[p.id])
-              return (
-                <span key={p.id} title={llm.health?.[p.id]?.last_error || ''}
-                  style={{ fontSize: 11, color: FG3, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: 999, background: d.color, display: 'inline-block' }} />
-                  {p.label.split('·')[0].trim()} {d.text}
-                </span>
-              )
-            })}
-          </div>
-        )}
-        <SettingRow label="具体模型" sub={`${curProv?.label ?? ''} · 当前 ${activeModel || '默认'}`} noBorder>
+        <SettingRow label="具体模型" sub="选择问答模型；未选择时使用当前服务的默认模型" noBorder>
           {curProv && curProv.models.length > 1 ? (
-            <Segmented sm value={activeModel} onChange={selectModel}
+            <Select value={activeModel} onChange={selectModel}
               options={curProv.models.map((m) => ({ value: m.id, label: modelShort(m.label) }))} />
           ) : (
-            <span style={{ fontSize: 13, color: FG3, fontFamily: MONO }}>{activeModel || '—'}</span>
+            <span style={{ fontSize: 'var(--au-type-body-size)', color: FG3, fontFamily: MONO }}>{curProv?.models.find(m=>m.id===activeModel)?.label || '默认模型'}</span>
           )}
         </SettingRow>
       </SettingGroup>
@@ -991,12 +874,11 @@ function AssistantSection({ audioApi }: { audioApi: string }) {
           {models.map((m) => {
             const on = settings.model === m.value
             return (
-              <div key={m.value} style={{ display: 'flex', gap: 12, padding: '10px 14px', borderRadius: 12, background: on ? 'rgba(70,214,224,.07)' : 'var(--au-fill)', border: `1px solid ${on ? 'rgba(70,214,224,.20)' : 'var(--au-fill)'}` }}>
+              <div key={m.value} style={{ display: 'flex', gap: 12, padding: '10px 14px', borderRadius: 12, background: on ? 'var(--au-primary-soft)' : 'var(--au-fill)', border: `1px solid ${on ? 'var(--au-primary-line)' : 'var(--au-fill)'}` }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: on ? TEAL : FG2, marginBottom: 2 }}>{m.name}</div>
-                  <div style={{ fontSize: 11.5, color: FG3 }}>{m.desc}</div>
+                  <div style={{ fontSize: 'var(--au-type-body-size)', fontWeight: 600, color: on ? TEAL : FG2, marginBottom: 2 }}>{m.name}</div>
+                  <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG3 }}>{m.desc}</div>
                 </div>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: FG3, flexShrink: 0, marginTop: 2 }}>{m.latency}</span>
               </div>
             )
           })}
@@ -1011,23 +893,12 @@ function AgentsSection() {
   const { settings, toggleAgent } = useSettings()
   return (
     <div>
-      <SectionHdr icon="capability" title="能力开关" sub="控制各 Agent 的启用状态。核心能力不可关闭（经会话透传，后端按 disabled_agents 过滤）。" />
-      <SettingGroup title="Agent 列表">
+      <SectionHdr icon="capability" title="能力开关" sub="控制各项能力是否启用；核心能力不能关闭。" />
+      <SettingGroup title="能力列表">
         <div style={{ paddingBottom: 8 }}>
-          {AGENT_CATALOG.map((a, i) => {
-            const on = settings.agents[a.id] ?? true
-            return (
-              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: i < AGENT_CATALOG.length - 1 ? `1px solid ${DIV}` : 'none' }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: on ? 'rgba(70,214,224,.10)' : 'var(--au-fill)', border: `1px solid ${on ? 'rgba(70,214,224,.22)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', flexShrink: 0, transition: 'all .2s' }}><Icon name={AGENT_ICON[a.id] ?? 'info'} size={19} state={on ? 'active' : 'default'} /></div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: on ? FG1 : FG3, transition: 'color .2s' }}>{a.label}</div>
-                  <div style={{ fontSize: 11.5, color: FG3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.desc}</div>
-                </div>
-                {a.core && <span style={{ padding: '2px 8px', borderRadius: 6, background: 'rgba(70,214,224,.10)', border: '1px solid rgba(70,214,224,.22)', fontSize: 10, fontWeight: 700, color: TEAL, flexShrink: 0 }}>核心</span>}
-                <Toggle on={on} onChange={() => !a.core && toggleAgent(a.id)} disabled={a.core} />
-              </div>
-            )
-          })}
+          {AGENT_CATALOG.map(a => <SettingRow key={a.id} label={a.label} sub={a.desc + (a.core ? ' · 核心能力，始终开启' : '')}>
+            <Toggle on={settings.agents[a.id] ?? true} onChange={()=>!a.core && toggleAgent(a.id)} disabled={a.core} />
+          </SettingRow>)}
         </div>
       </SettingGroup>
     </div>
@@ -1048,6 +919,8 @@ function MemorySection({ audioApi, sessionId, occupantId }: { audioApi: string; 
   // 默认只看当前乘员（M-B）。此前面板把全部乘员的记忆混在一起列，而「删除」按钮
   // 又是按 scope 删的——看到的是别人的，删掉的是所有人的。
   const [delErr, setDelErr] = useState('')
+  const [deletion, setDeletion] = useState<{ title: string; description: string; run: () => void } | null>(null)
+  useEffect(() => { setDeletion(null) }, [occupantId])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -1060,7 +933,11 @@ function MemorySection({ audioApi, sessionId, occupantId }: { audioApi: string; 
   }, [audioApi, sessionId, occupantId])
   useEffect(() => { load() }, [load])
 
-  const forget = useCallback(async (scope: string) => { await forgetMemory(audioApi, 'u1', scope); load() }, [audioApi, load])
+  const forget = useCallback(async (scope: string) => {
+    const ok = await forgetMemory(audioApi, 'u1', scope)
+    setDelErr(ok ? '' : '清除失败，请稍后重试')
+    load()
+  }, [audioApi, load])
   /** 删这一行：按 item id 精确删（L1）。受管条目引导去声纹设置，不在这里删。 */
   const delItem = useCallback(async (item: { id?: string; managed?: boolean }) => {
     setDelErr('')
@@ -1082,6 +959,8 @@ function MemorySection({ audioApi, sessionId, occupantId }: { audioApi: string; 
   return (
     <div>
       <SectionHdr icon="memory" title="记忆" sub={`${settings.assistantName}记住的会话对话，与从交流中学到的偏好/常去地点/经历（云端硬删，不可恢复）`} />
+      {deletion && <ConfirmDialog title={deletion.title} description={deletion.description} confirmLabel="确认删除"
+        onCancel={() => setDeletion(null)} onConfirm={() => { const action = deletion; setDeletion(null); action.run() }} />}
       <SettingGroup title="记忆开关">
         <SettingRow label="启用个性化记忆" sub="记住偏好与历史以贴合回复；关闭后本轮不读写记忆，已有记忆保留" noBorder>
           <Toggle on={settings.memoryEnabled} onChange={(v) => update({ memoryEnabled: v })} />
@@ -1094,13 +973,13 @@ function MemorySection({ audioApi, sessionId, occupantId }: { audioApi: string; 
         </div>
         <div style={{ paddingBottom: 8 }}>
           {mem.turns.length === 0 ? (
-            <div style={{ padding: '14px 0', fontSize: 13, color: FG3 }}>暂无对话记忆。和助手聊几句后回来看看。</div>
+            <div style={{ padding: '14px 0', fontSize: 'var(--au-type-body-size)', color: FG3 }}>暂无对话记忆。和助手聊几句后回来看看。</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4 }}>
               {mem.turns.map((t, i) => (
                 <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 12px', borderRadius: 10, background: 'var(--au-fill)', border: '1px solid var(--au-fill)' }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: t.role === 'user' ? FG2 : TEAL, flexShrink: 0, width: 32 }}>{t.role === 'user' ? '你' : settings.assistantName}</span>
-                  <span style={{ flex: 1, fontSize: 12.5, color: FG2, lineHeight: 1.55 }}>{t.text}</span>
+                  <span style={{ fontSize: 'var(--au-type-caption-size)', fontWeight: 600, color: t.role === 'user' ? FG2 : TEAL, flexShrink: 0, width: 32 }}>{t.role === 'user' ? '你' : settings.assistantName}</span>
+                  <span style={{ flex: 1, fontSize: 'var(--au-type-caption-size)', color: FG2, lineHeight: 1.55 }}>{t.text}</span>
                 </div>
               ))}
             </div>
@@ -1109,42 +988,98 @@ function MemorySection({ audioApi, sessionId, occupantId }: { audioApi: string; 
       </SettingGroup>
       <HR />
       <SettingGroup title="学到的画像">
-        <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 8 }}>
-          {hasProfile && <GhostBtn sm onClick={() => forget('')}><IcX size={10} /> 清空全部</GhostBtn>}
-        </div>
         <div style={{ paddingBottom: 16 }}>
           {!hasProfile ? (
-            <div style={{ padding: '14px 0', fontSize: 13, color: FG3 }}>还没记住什么。多聊聊偏好（如「我不吃辣」），助手会慢慢学到。</div>
+            <div style={{ padding: '14px 0', fontSize: 'var(--au-type-body-size)', color: FG3 }}>还没记住什么。多聊聊偏好（如「我不吃辣」），助手会慢慢学到。</div>
           ) : (
             <>
-              {profile.preferences.length > 0 && <MemCat title="偏好" items={profile.preferences.map((p) => ({ text: p.text, meta: p.managed ? '声纹称呼（只读）' : (_PROV_LABEL[p.provenance] || p.provenance), onDel: () => delItem(p) }))} />}
-              {profile.places.length > 0 && <MemCat title="常去地点" items={profile.places.map((pl) => ({ text: `${_PLACE_LABEL[pl.key] || pl.key}：${pl.name}`, meta: '高敏', onDel: () => delItem(pl) }))} />}
-              {profile.episodes.length > 0 && <MemCat title="经历" items={profile.episodes.map((ep) => ({ text: `📍 ${ep.text}`, meta: '经历', onDel: () => forget('episodic.general') }))} />}
-              {delErr && <div style={{ fontSize: 12, color: FG3, padding: '6px 0' }}>{delErr}</div>}
+              {profile.preferences.length > 0 && <MemCat title="偏好" items={profile.preferences.map(p => ({ text: p.text, meta: p.managed ? '声纹称呼（只读）' : (_PROV_LABEL[p.provenance] || p.provenance), onDel: p.managed ? undefined : () => setDeletion({title:'删除这条偏好？',description:`「${p.text}」将从云端删除，不能恢复。`,run:()=>void delItem(p)}) }))} />}
+              {profile.places.length > 0 && <MemCat title="常去地点" items={profile.places.map(pl => ({ text: `${_PLACE_LABEL[pl.key] || pl.key}：${pl.name}`, meta: '常去地点 · 高敏', onDel: () => setDeletion({title:'删除这个常去地点？',description:`「${pl.name}」将从云端删除，不能恢复。`,run:()=>void delItem(pl)}) }))} />}
+              {profile.episodes.length > 0 && <MemCat title="经历" items={profile.episodes.map(ep => ({ text: ep.text, meta: '经历' }))} />}
+              {delErr && <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG3, padding: '6px 0' }}>{delErr}</div>}
             </>
           )}
         </div>
       </SettingGroup>
+      <SettingGroup title="危险操作">
+        {profile.episodes.length > 0 && <SettingRow label="清除全部经历" sub="清除当前账号整个经历类别，包含其他乘员的经历；不是只删除上面的一行">
+          <DangerBtn onClick={()=>setDeletion({title:'清除全部经历？',description:'当前账号整个经历类别（包含其他乘员）将从云端删除，不能恢复。偏好与常去地点保留。',run:()=>void forget('episodic.general')})}>清除全部经历</DangerBtn>
+        </SettingRow>}
+        <SettingRow label="清除全部记忆" sub="清除当前账号所有乘员的记忆及关联声纹身份数据；云端删除不能恢复">
+          <DangerBtn onClick={()=>setDeletion({title:'清除全部记忆？',description:'当前账号所有乘员的记忆、会话记录及关联声纹身份数据将从云端删除，不能恢复。',run:()=>void forget('')})}>清除全部</DangerBtn>
+        </SettingRow>
+      </SettingGroup>
       <HR />
       <div style={{ padding: '14px 28px', display: 'flex', gap: 12, alignItems: 'center' }}>
         <GhostBtn onClick={clearLocal}>清除本机缓存</GhostBtn>
-        <span style={{ fontSize: 11.5, color: FG3 }}>仅清空本地缓存，不含设置项与服务端记忆</span>
+        <span style={{ fontSize: 'var(--au-type-caption-size)', color: FG3 }}>仅清空本地缓存，不含设置项与服务端记忆</span>
       </div>
     </div>
   )
 }
 
-function MemCat({ title, items }: { title: string; items: { text: string; meta: string; onDel: () => void }[] }) {
+function MemCat({ title, items }: { title: string; items: { text: string; meta: string; onDel?: () => void }[] }) {
   return (
     <div style={{ marginTop: 12 }}>
-      <div style={{ fontSize: 11, color: FG3, letterSpacing: '.06em', marginBottom: 7 }}>{title}</div>
+      <div style={{ fontSize: 'var(--au-type-caption-size)', color: FG3, letterSpacing: '.06em', marginBottom: 7 }}>{title}</div>
       {items.map((m, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 10, background: 'var(--au-fill)', border: '1px solid var(--au-line)', marginBottom: 6 }}>
-          <span style={{ flex: 1, fontSize: 13, color: FG2, lineHeight: 1.5 }}>{m.text}</span>
-          <span style={{ fontSize: 10.5, color: FG3, flexShrink: 0 }}>{m.meta}</span>
-          <button onClick={m.onDel} aria-label="删除" title="删除" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', flexShrink: 0 }}><IcX size={12} color={FG3} /></button>
+        <div key={i} className="au-memory-item">
+          <span style={{ flex: 1, fontSize: 'var(--au-type-body-size)', color: FG2, lineHeight: 1.5 }}>{m.text}</span>
+          <span style={{ fontSize: 'var(--au-type-caption-size)', color: FG3, flexShrink: 0 }}>{m.meta}</span>
+          {m.onDel && <button className="au-icon-btn" onClick={m.onDel} aria-label={`删除：${m.text}`} title="删除"><Icon name="trash" size={28} /></button>}
         </div>
       ))}
     </div>
   )
+}
+
+function DeveloperSection({ audioApi, messages }: { audioApi: string; messages: Msg[] }) {
+  const { settings, update, developerMode, setDeveloperMode, developerOptions, updateDeveloperOptions } = useSettings()
+  const [tts, setTts] = useState<TtsProviderInfo[] | null>(null)
+  const [llm, setLlm] = useState<LlmStatus | null>(null)
+  const [loading, setLoading] = useState(false)
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    const result = await Promise.allSettled([fetchTtsProviders(audioApi), fetchLlmProviders(audioApi)])
+    if (result[0].status === 'fulfilled') setTts(result[0].value)
+    if (result[1].status === 'fulfilled') setLlm(result[1].value)
+    setLoading(false)
+  }, [audioApi])
+  useEffect(() => { if (developerMode) void refresh() }, [developerMode, refresh])
+  const engine = tts?.find(p => p.id === settings.ttsProvider)
+  return <div><SectionHdr icon="developer" title="开发者" sub="排查模型、语音链路与请求错误；诊断信息默认隐藏" />
+    <SettingGroup title="调试">
+      <SettingRow label="开发者模式" sub="打开后可查看技术详情，也可通过页面参数 ?dev 开启">
+        <Toggle on={developerMode} onChange={setDeveloperMode} />
+      </SettingRow>
+      {developerMode && <>
+        <SettingRow label="显示 trace 角标" sub="在回答旁显示请求标识，便于排查">
+          <Toggle on={developerOptions.trace} onChange={trace => updateDeveloperOptions({trace})} />
+        </SettingRow>
+        <SettingRow label="显示原始错误" sub="错误块和最近错误区显示服务端原文">
+          <Toggle on={developerOptions.rawErrors} onChange={rawErrors => updateDeveloperOptions({rawErrors})} />
+        </SettingRow>
+      </>}
+    </SettingGroup>
+    {developerMode && <>
+      <SettingGroup title="链路">
+        <SettingRow label="TTS 模型"><span className="au-setting-value">{engine?.model || '读不到'}{engine?.sample_rate ? ` · ${(engine.sample_rate / 1000).toFixed(1)} kHz` : ''}</span></SettingRow>
+        <SettingRow label="ASR 模型"><span className="au-setting-value">{settings.asrProvider} · {settings.asrModel}</span></SettingRow>
+        <SettingRow label="LLM 当前模型"><span className="au-setting-value">{llm?.active.provider || '读不到'} · {llm?.active.model || '读不到'}</span></SettingRow>
+        {(llm?.providers || []).map(p => { const health = llmHealthDot(llm?.health?.[p.id]); return <SettingRow key={p.id} label={p.label} sub={developerOptions.rawErrors ? llm?.health?.[p.id]?.last_error : undefined}>
+          <span className="au-setting-value"><span style={{color:health.color}}>●</span> {health.text}</span></SettingRow> })}
+        <SettingRow label="VAD 静音尾" sub="停顿多久判定说完并发送；长句容易停顿时可调大">
+          <Segmented value={settings.silenceTailMs} onChange={silenceTailMs => update({silenceTailMs})}
+            options={[{value:500,label:'500 ms'},{value:800,label:'800 ms'},{value:1200,label:'1200 ms'}]} />
+        </SettingRow>
+        <SettingRow label="语音模型资源" sub="见 hmi/README.md · fetch-voice-models；声纹服务需要管理员准备资源后重启网关">
+          <span className="au-setting-value">未探测</span>
+        </SettingRow>
+        <GhostBtn onClick={()=>void refresh()} disabled={loading}>{loading?'读取中…':'刷新链路信息'}</GhostBtn>
+      </SettingGroup>
+      <SettingGroup title="最近错误">{developerOptions.rawErrors
+        ? <pre className="au-developer-log">{messages.filter(m=>m.error).slice(-8).map(m=>`${m.traceId || '无 trace'}  ${m.text}`).join('\n\n') || '当前会话没有错误记录'}</pre>
+        : <p className="au-setting-note">打开「显示原始错误」后可查看当前会话的错误原文。</p>}</SettingGroup>
+    </>}
+  </div>
 }

@@ -3,6 +3,7 @@
 > 给用 Figma MCP 把设计稿落到 `hmi/`、`mobile/`、`dashboard/` 的人与 Agent。本页只定**规则与指针**，
 > 不复制 token 数值——数值以 §1 的声明源为准；本页与代码冲突时以代码为准，并回改本页。
 > 读数基线：2026-10-02，`main` @ `21b6e4b3`。
+> HMI 已于 2026-10-09 落地 Visual v2，当前画面和差异以 [v2 实施记录](../design/2026-10-08-hmi-visual-v2-implementation-plan.md) 为准；下表旧 Make 资料保留作来源追溯。
 
 ## 0. 硬规则（先读）
 
@@ -30,11 +31,12 @@
 
 | 声明 | 权威位置 | 备注 |
 |---|---|---|
+| HMI 当前设计 | Figma `QNXzATLf4WOKLD1rV1dilp`；[Visual v2 brief](../design/2026-10-08-hmi-visual-redesign-brief.md) | I1–I6 已实现；契约差异与用户裁决在实施记录 §8，Dashboard 未改 |
 | 视觉设计契约 | Figma Make `guidelines/Guidelines.md` v1.0，存于 `docs/design/【新】座舱Agent-HMI-A-*.zip` | 七个 zip 的 `Guidelines.md` 与 `src/styles/theme.css` 字节一致，读 A-1 即可（命令见 §8.2） |
 | 各版本设计源码 | 同一批 zip 的 `src/app/App.tsx`（A-1→A-7 逐版累积导出） | MCP 读 Make 文件只能拿最新版；历史版本只在 zip 里 |
 | 设计稿帧 | Figma 设计文件 `oGlfQSUhriAEs4uH8sJnVe`：页 `0:1`「A-1 Design System」+ 页 `32:190`「A-8 Icon Library」 | ID 与已核实内容见 §8.4 |
 | 交接简报 / 实施计划 | [`2026-06-28-figma-hmi-dashboard-redesign-brief.md`](../design/2026-06-28-figma-hmi-dashboard-redesign-brief.md) / [`2026-06-29-figma-hmi-implementation-plan.md`](../design/2026-06-29-figma-hmi-implementation-plan.md) | 状态矩阵、Figma 组织约定、P0–P6 进度 |
-| HMI token | `hmi/src/aurora.css`（`--au-*`） | `styles.css` 是旧 HUD token，过渡期并存，新代码不用 |
+| HMI token | `hmi/src/aurora.css`（`--au-*`）；冻结源 `hmi/design/visual-v2.tokens.json` | `node hmi/scripts/generate-visual-tokens.mjs --check` 校验；四档 Size 由 `data-drive` × `data-font` 驱动，旧 HUD 键仅兼容 |
 | mobile 色板 | `mobile/src/ui/theme.ts`（`Palette` / `DARK` / `LIGHT` / `AURORA`） | |
 | mobile 尺寸、节律、材质 | `mobile/src/ui/tokens.ts`（`SPACE` `RADIUS` `TYPE` `MOTION` `TARGET` `PILL` `GLASS` `scale()`） | |
 | Dashboard token | `dashboard/src/styles.css` 的 `:root` | Aurora 迁移（P6）未做 |

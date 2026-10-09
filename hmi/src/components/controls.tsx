@@ -1,101 +1,118 @@
-// 设置页通用控件（P4 · A-7「横屏侧栏式」忠实重建）：液态玻璃控件库。
-// inline 样式 + --au-* token，照 Figma Make A-7 源；保留泛型化 API（值≠展示标签，
-// 因真实设置存的是枚举值而非中文标签）。复用于 SettingsPanel 八分区。
-import type { CSSProperties, ReactNode } from 'react'
+// Visual v2 controls. Values and callbacks keep the existing settings contract.
+import { cloneElement, createContext, isValidElement, useContext, useEffect, useId, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
+import { Icon, type IconName } from './Icon'
+import { useDriving } from '../DrivingContext'
 
-const TEAL = 'var(--au-primary)'
-const FG1 = 'var(--au-text)'
-const FG2 = 'var(--au-text-2)'
-
-// 开关：48×28 玻璃滑块，on=交互蓝 + 辉光（§5 非 AI 高亮用 #46D6E0）
-export function Toggle({ on, onChange, disabled = false }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button" role="switch" aria-checked={on} disabled={disabled}
-      onClick={() => !disabled && onChange(!on)}
-      style={{
-        width: 48, height: 28, borderRadius: 14, padding: 0, cursor: disabled ? 'default' : 'pointer',
-        background: on ? (disabled ? 'rgba(70,214,224,.35)' : TEAL) : 'var(--au-fill-2)',
-        border: `1px solid ${on ? (disabled ? 'rgba(70,214,224,.25)' : TEAL) : 'var(--au-line-2)'}`,
-        position: 'relative', transition: 'all .25s ease', opacity: disabled ? 0.45 : 1, flexShrink: 0,
-        boxShadow: on && !disabled ? '0 0 12px rgba(70,214,224,.40)' : 'none',
-      }}>
-      <span style={{ position: 'absolute', top: 3, left: on ? 22 : 2, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .25s ease', boxShadow: '0 1px 4px rgba(0,0,0,.35)' }} />
-    </button>
-  )
-}
-
+const ControlLabel = createContext<string | undefined>(undefined)
 type Opt<T> = { value: T; label: string; disabled?: boolean }
 
-// 分段选择：值为枚举（如 'zh'/'auto'），展示中文标签。option.disabled=true → 置灰不可选。
-export function Segmented<T extends string | number>({
-  value, options, onChange, sm = false,
-}: { value: T; options: Opt<T>[]; onChange: (v: T) => void; sm?: boolean }) {
-  return (
-    <div role="tablist" style={{ display: 'flex', background: 'var(--au-fill)', borderRadius: sm ? 10 : 12, padding: 3, gap: 2 }}>
-      {options.map((o) => {
-        const active = o.value === value
-        const off = o.disabled
-        return (
-          <button
-            key={String(o.value)} role="tab" aria-selected={active} disabled={off}
-            onClick={() => !off && onChange(o.value)}
-            style={{
-              padding: sm ? '5px 10px' : '7px 14px', borderRadius: sm ? 8 : 10, cursor: off ? 'default' : 'pointer',
-              fontSize: sm ? 11.5 : 13, fontWeight: active ? 600 : 400,
-              background: active ? 'var(--au-fill-2)' : 'transparent',
-              border: `1px solid ${active ? 'var(--au-hi)' : 'transparent'}`,
-              color: off ? 'var(--au-text-3)' : active ? FG1 : FG2, opacity: off ? 0.5 : 1,
-              transition: 'all .18s', fontFamily: 'inherit', whiteSpace: 'nowrap',
-            }}>
-            {o.label}
-          </button>
-        )
-      })}
-    </div>
-  )
+export function Toggle({ on, onChange, disabled = false, id }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; id?: string }) {
+  const label = useContext(ControlLabel)
+  return <button id={id} type="button" className="au-toggle" role="switch" aria-checked={on} aria-labelledby={label}
+    disabled={disabled} onClick={() => onChange(!on)}><span className="au-toggle-track"><span /></span></button>
 }
 
-export function TextInput({
-  value, onChange, placeholder, maxLength, width = 200,
-}: { value: string; onChange: (v: string) => void; placeholder?: string; maxLength?: number; width?: number | string }) {
-  return (
-    <input
-      value={value} maxLength={maxLength} placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
-      style={{
-        width, height: 38, padding: '0 14px', boxSizing: 'border-box', borderRadius: 10,
-        background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', borderTop: '1px solid var(--au-hi)',
-        color: FG1, fontSize: 13.5, fontFamily: 'inherit', outline: 'none', caretColor: TEAL,
-        WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)',
-      }}
-    />
-  )
+export function Segmented<T extends string | number>({ value, options, onChange, sm = false }: { value: T; options: Opt<T>[]; onChange: (v: T) => void; sm?: boolean }) {
+  const label = useContext(ControlLabel)
+  return <div role="group" aria-labelledby={label} className={'au-segmented' + (sm ? ' compact' : '')}>
+    {options.map(o => <button key={String(o.value)} type="button" aria-pressed={o.value === value} disabled={o.disabled}
+      onClick={() => onChange(o.value)}>{o.label}</button>)}
+  </div>
 }
 
-export function GhostBtn({ children, onClick, sm = false, style }: { children: ReactNode; onClick?: () => void; sm?: boolean; style?: CSSProperties }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6, padding: sm ? '5px 12px' : '7px 14px',
-        borderRadius: 10, border: '1px solid var(--au-line-2)', background: 'var(--au-fill)',
-        color: FG2, fontSize: sm ? 12 : 13, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .18s', ...style,
-      }}>
-      {children}
+export function Select<T extends string | number>({ value, options, onChange }: { value: T; options: Opt<T>[]; onChange: (v: T) => void }) {
+  const label = useContext(ControlLabel)
+  const id = useId()
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const current = options.find(o => o.value === value)
+  useEffect(() => {
+    if (!open) return
+    const selected = root.current?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]:not(:disabled)')
+    const first = root.current?.querySelector<HTMLButtonElement>('[role="option"]:not(:disabled)')
+    ;(selected || first)?.focus()
+  }, [open])
+  return <div ref={root} className="au-select" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false) }}
+    onKeyDown={e => {
+      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); trigger.current?.focus() }
+      if (open && (e.key === 'Enter' || e.key === ' ') && (e.target as HTMLElement).getAttribute('role') === 'option') {
+        e.preventDefault(); (e.target as HTMLButtonElement).click()
+      }
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        e.preventDefault()
+        if (!open) { setOpen(true); return }
+        const items = Array.from(root.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') ?? [])
+        const at = items.indexOf(document.activeElement as HTMLButtonElement)
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+        items[next]?.focus()
+      }
+    }}>
+    <button ref={trigger} type="button" className="au-select-trigger" aria-labelledby={label ? label + ' ' + id + '-value' : undefined}
+      aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(v => !v)}>
+      <span id={id + '-value'}>{current?.label || '请选择'}</span><Icon name={open ? 'chevron-up' : 'chevron-down'} size={24} />
     </button>
-  )
+    {open && <div id={id} role="listbox" aria-labelledby={label} className="au-select-menu">
+      {options.map(o => <button key={String(o.value)} type="button" role="option" aria-selected={o.value === value} disabled={o.disabled}
+        onClick={() => { onChange(o.value); setOpen(false); trigger.current?.focus() }}>{o.label}{o.value === value && <Icon name="check" size={24} />}</button>)}
+    </div>}
+  </div>
 }
 
+export function TextInput({ value, onChange, placeholder, maxLength, width = 280 }: { value: string; onChange: (v: string) => void; placeholder?: string; maxLength?: number; width?: number | string }) {
+  const label = useContext(ControlLabel)
+  const { driving } = useDriving()
+  return <input className="au-text-field" aria-labelledby={label} readOnly={driving} title={driving ? '行车时请使用语音' : undefined}
+    value={value} maxLength={maxLength} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{ width }} />
+}
+
+export function GhostBtn({ children, onClick, sm = false, style, disabled = false }: { children: ReactNode; onClick?: () => void; sm?: boolean; style?: CSSProperties; disabled?: boolean }) {
+  return <button type="button" className={'au-setting-button' + (sm ? ' compact' : '')} onClick={onClick} style={style} disabled={disabled}>{children}</button>
+}
 export function DangerBtn({ children, onClick }: { children: ReactNode; onClick?: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: '100%', padding: '9px 0', borderRadius: 12, border: '1px solid rgba(239,68,68,.28)',
-        background: 'rgba(239,68,68,.06)', color: 'var(--au-danger)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
-      }}>
-      {children}
+  return <button type="button" className="au-setting-button danger" onClick={onClick}>{children}</button>
+}
+
+export function ListItem({ label, sub, children, noBorder = false, onClick, value, danger = false }: {
+  label: string; sub?: string; children?: ReactNode; noBorder?: boolean; onClick?: () => void; value?: string; danger?: boolean;
+}) {
+  const id = useId()
+  const toggle = isValidElement(children) && children.type === Toggle
+  const content = <><span className="au-setting-copy"><span id={id} className="au-setting-label">{label}</span>
+    {sub && <span className="au-setting-sub">{sub}</span>}</span>
+    {children && <span className="au-setting-control">{toggle ? cloneElement(children as ReactElement<{id?: string}>, {id: id + '-control'}) : children}</span>}
+    {onClick && <span className="au-setting-control">{value}<Icon name="chevron-right" size={24} /></span>}</>
+  const className = 'au-setting-row' + (noBorder ? ' no-border' : '') + (danger ? ' danger' : '')
+  return <ControlLabel.Provider value={id}>{onClick ? <button type="button" className={className} onClick={onClick}>{content}</button>
+    : toggle ? <label className={className} htmlFor={id + '-control'}>{content}</label> : <div className={className}>{content}</div>}</ControlLabel.Provider>
+}
+
+export function VoiceTile({ name, description, icon, selected, playing, disabled, onSelect, onPreview }: {
+  name: string; description: string; icon: IconName; selected: boolean; playing: boolean; disabled: boolean; onSelect: () => void; onPreview: () => void;
+}) {
+  return <article className={'au-voice-tile' + (selected ? ' selected' : '')}>
+    <button type="button" className="au-voice-choice" aria-pressed={selected} disabled={disabled} onClick={onSelect}>
+      <span className="au-voice-head"><Icon name={icon} size={36} />{selected && <Icon name="check-circle" size={28} state="active" />}</span>
+      <span className="au-voice-name">{name}</span><span className="au-voice-description" title={description}>{description}</span>
     </button>
-  )
+    <button type="button" className="au-setting-button au-voice-preview" disabled={disabled} onClick={onPreview} aria-label={'试听 ' + name}>
+      <Icon name="play" size={24} />{playing ? '播放中…' : '试听'}</button>
+  </article>
+}
+
+export function ConfirmDialog({ title, description, confirmLabel, onConfirm, onCancel }: {
+  title: string; description: string; confirmLabel: string; onConfirm: () => void; onCancel: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const id = useId()
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement
+    ref.current?.showModal()
+    return () => { ref.current?.close(); previous?.focus() }
+  }, [])
+  return <dialog ref={ref} className="au-confirm-dialog" role="alertdialog" aria-labelledby={id} aria-describedby={id + '-description'}
+    onKeyDown={e => e.stopPropagation()} onCancel={e => { e.preventDefault(); onCancel() }}>
+    <h2 id={id}>{title}</h2><p id={id + '-description'}>{description}</p>
+    <div className="au-confirm-actions"><GhostBtn onClick={onCancel}>取消</GhostBtn><DangerBtn onClick={onConfirm}>{confirmLabel}</DangerBtn></div>
+  </dialog>
 }

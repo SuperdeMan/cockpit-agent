@@ -103,6 +103,7 @@
 :root[data-drive='on'] .au-conv-panel .chat { mask-image: none; }
 :root[data-drive='on'] .au-conv-panel:has(.chat:empty) { display: none; }
 :root[data-drive='on'] .au-stage-content { left: 0; }
+:root[data-drive='on'] .au-stage-scrim { display: none; }
 :root[data-drive='on'] .au-edge-glow { opacity: .35; }
 .au-edge-glow { z-index: 40; animation-duration: var(--au-glow-breathe); }
 .au-edge-glow.thinking { opacity: .45; }

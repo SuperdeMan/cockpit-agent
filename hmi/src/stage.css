@@ -6,6 +6,7 @@
 .au-stage-caption { color: var(--au-text-2); font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); }
 .au-stage-back { position: absolute; top: 24px; right: 24px; z-index: 5; min-height: var(--au-control-target); padding: 0 24px; border: 1px solid var(--au-line); border-radius: var(--au-r-full); color: var(--au-text); background: var(--au-material-solid); font-size: var(--au-type-label-size); cursor: pointer; }
 .au-idle-stage { height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 48px; gap: 48px; }
+:root[data-drive='on'] .au-idle-stage { width: max-content; max-width: 100%; margin-inline: auto; }
 .au-idle-stage > header,.au-vehicle-stage > header { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; }
 .au-idle-stage h2,.au-vehicle-stage h2 { font-size: var(--au-type-title-size); line-height: var(--au-type-title-line); }
 .au-vehicle-source { padding: 8px 16px; border-radius: var(--au-r-full); background: var(--au-surface-1); color: var(--au-text-2); font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); }

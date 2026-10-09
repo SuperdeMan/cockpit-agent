@@ -7,6 +7,7 @@ import { DrivingProvider, useDrivingProjection } from './DrivingContext'
 import { DrivingSpeechView } from './drivingSpeechView.mjs'
 import { PendingPolicyView } from './pendingPresentation.mjs'
 import { StageViewProvider } from './StageView'
+import { messageTextForView } from './errorPresentation.mjs'
 import {
   buildRequestLocationMeta,
   requestCurrentLocation,
@@ -71,7 +72,7 @@ const genTraceId = () => {
 }
 
 export default function App({ seedMessages, openSettings }: { seedMessages?: Msg[]; openSettings?: boolean } = {}) {
-  const { settings, update } = useSettings()
+  const { settings, update, developerMode, developerOptions } = useSettings()
   const drivingView = useDrivingProjection()
   const drivingSpeechRef = useRef(new DrivingSpeechView())
   const pendingPolicyRef = useRef(new PendingPolicyView())
@@ -980,7 +981,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         onPartial={setComposerPartial} onActivity={setComposerActivity}
         drivingAnswer={isListening ? (handsFreePartial || composerPartial || '正在听…')
           : busy && !latestAssistant?.streaming ? '正在思考…'
-          : drivingSpeech.text || '点光球说话，或按方向盘语音键'}
+          : (latestAssistant?.error ? messageTextForView(latestAssistant, developerMode && developerOptions.rawErrors) : drivingSpeech.text) || '点光球说话，或按方向盘语音键'}
         drivingSource={drivingSpeech.source}
       />
         </section>
@@ -989,6 +990,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
 
       {showSettings && (
         <SettingsPanel
+          messages={messages}
           audioApi={AUDIO_API}
           sessionId={SESSION}
           occupantId={handsFreeRef.current?.occupantId || 'primary'}

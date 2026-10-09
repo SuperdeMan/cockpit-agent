@@ -1,8 +1,10 @@
 # 座舱 HMI（React + TypeScript + Vite）
 
-智能座舱演示前端：「**Aurora Glass · 极光液态座舱**」风格——横屏 1920×1080 两栏布局（左对话流 / 右「上下文舞台」随对话切换场景）。通过 WebSocket 连 Edge Gateway 收发指令（文字或语音），流式展示助手回复、车控动作卡片与多轮确认；通过 HTTP 代理（llm-gateway:50059）做 ASR/TTS 与记忆读取。
+智能座舱演示前端，横屏 1920×1080：全幅情境舞台叠加单一对话面板。通过 WebSocket 连 Edge Gateway 收发指令（文字或语音），展示完整回答、结果证据与多轮确认；通过 HTTP 代理（llm-gateway:50059）做 ASR/TTS 与记忆读取。
 
-> 视觉重构（2026-06-30 已落地）：P0 设计系统 / P1 两栏外壳·舞台 / P2 ~20 卡(A-3~A-5) / P3 对话动态六态(A-6) / P4 设置横屏侧栏(A-7) / P5 浅色主题 / A-4 信息卡按源重建 / A-5 右舞台数据驱动地图 / A-8 图标库（39 设计图标 + 21 补齐，`Icon.tsx`/`icons.gen.ts`/`icons.custom.ts`，**emoji 全替 A-8 线性图标**）/ **语音按钮即小舟光球** / **ASR 流式识别上屏**。**已重建容器 + 真后端全栈 e2e 验证**（天气/POI/股票/新闻/调研/赛事/充电/行程 8 卡族真数据渲染 + 过程区/确认条 + 光球流式上屏）。待做：P5 行车态、P6 Dashboard（均待 Figma 出帧）。本地预览参数：`?aurora` 设计系统沙盒、`?icons` 图标验证台、`?demo[=map|cards|info|states|charge|trip|route]` 卡片/对话态夹具、`?settings[=<分区>]` 设置面板、`?theme=light|dark`。见 `docs/design/2026-06-29-figma-hmi-implementation-plan.md`。
+> HMI Visual v2（2026-10-09）I1–I6 已实现：深浅与四档字阶、只读行车投影、固定确认条、34 类业务卡片、情境舞台、12 节设置及开发者区。设计依据与逐批证据见 [实施记录](../docs/design/2026-10-08-hmi-visual-v2-implementation-plan.md)。本轮为本地 Vite/隔离浏览器验证，**未部署生产**；不转借旧版真栈验收。地图当前为明确标注的底图不可用示意，车型轮廓为占位；Dashboard 不在本轮范围。
+
+预览：`?tokens` 字阶、`?icons` 图标、`?demo[=map|cards|info|states|charge|trip|route|results]`、`?card-gallery=N`（44 份样本）、`?settings[=tts|asr|wake|pipeline|occupants|vision|display|location|assistant|agents|memory|developer]`。加 `&theme=light` 切浅色；大字/大触控/手动行车在「显示」中切换。诊断默认隐藏，`?dev` 或「开发者模式」开启。
 
 ## v2 完整结果阅读（CA2-04）
 
@@ -33,18 +35,21 @@ npm run dev      # http://localhost:5173
 - **设置页**（右上 ⚙）：
   - 语音播报：音色选择/试听、播报与自动播放开关
   - 语音输入：**识别方式（实时=边说边上屏 / 整句=松手后出字）→ 引擎（实时：Qwen3-ASR / Fun-ASR；整句：MiniMax asr-1.0 / MiMo v2.5）**两级，目录来自网关 `/api/asr/stream/info`、与 Android 设置页同一份契约（`types.ts::ASR_*`）；识别语言、麦克风模式（按住/点按）、最长聆听时长。以前的「分块 / 关闭」并进整句（2026-09-14）
-  - 语音唤醒·连续对话：免唤醒开关、唤醒词选择、续问聆听窗、静音断句
+  - 唤醒与连续对话：免唤醒开关、唤醒词选择、续问聆听窗；静音断句参数在开发者区
   - **语音链路**：端到端语音直连开关（默认关）+ 直连音色
-  - 显示主题：深/浅色、字号、大触控、快捷指令编辑
-  - 助手：昵称、回答长度、对话模型（快速/深度/自动）、**AI 大脑（LLM 厂商→模型两级切换：MiMo/MiniMax/DeepSeek/阿里百炼，切即全局生效并持久化 Redis，未配 key 置灰，接 `/api/llm/providers`+`/api/llm/provider`；厂商行下带被动健康点——绿=近窗全成+EWMA 时延/黄=偶发失败/红=高失败或限流/灰=近期未使用，2026-07-17）**；信息卡带 `_prov` 数据真实性徽章（mock=琥珀「模拟数据」醒目 / degraded·cached=灰标 / real=小字来源·取数时间角标，`Cards.tsx::ProvBadge`）
+  - 乘员与声纹、看一看：独立分区，保留既有注册/识别与摄像头接线
+  - 显示：深/浅色、字号、大触控、手动行车、快捷指令编辑
+  - 位置与常用地点：权限、定位观测与地点列表；常用地点仍通过语音设置
+  - 助手：昵称、回答长度、对话模型（快速/深度/自动）、AI 大脑；沿用 `/api/llm/providers` 和 `/api/llm/provider`，切换全局生效
   - 能力开关：各 Agent 开关
-  - 记忆：开关 + **查看会话对话记忆与偏好画像**（接 `/api/memory`）
+  - 记忆：开关、会话与画像；云端删除前确认。偏好/地点按 item ID 删除，经历明确按整个类别清除；清除全部覆盖当前账号所有乘员及关联身份数据
+  - 开发者：模型 ID、采样率、健康/延迟、VAD 参数、资源指引、trace 与原始错误开关；不改变 WS 元数据或共享 Settings 契约
 - 会话级偏好经 WS `meta` 透传后端（`model_pref`/`answer_length`/`assistant_name`/`memory_enabled`）。
 
 ## 结构
 ```
 src/
-  App.tsx            外壳：WS 连接(重连) + 视图路由 + 消息状态机 + 两栏布局
+  App.tsx            外壳：WS 连接(重连) + 视图路由 + 原消息状态机
   settings.tsx       设置仓库（localStorage 持久化 + Context）+ buildMeta()
   audio.ts           录音控制器(消除收音竞态) + StreamingRecognizer(流式识别 WS) + StreamingTtsSession(流式 TTS WS+回退) + 批处理 TTS 队列 + 音色/记忆读取
   pcmPlayer.mjs      流式 TTS PCM 分片调度(jitter 起播/无缝拼接/underrun 重建/barge-in 停,Web Audio 注入)
@@ -60,18 +65,20 @@ src/
   voiceMetrics.mjs   语音语义事件计数(localStorage，供真麦验收)
   types.ts           共享类型 + 能力目录 + 默认值（数据契约，重构不改字段）
   aurora.css         Aurora Glass 设计系统 token 层（--au-*，深空/玻璃/极光/语义色/keyframes）
-  shell.css          应用外壳：1920×1080 两栏栅格 + 状态栏/输入区/欢迎态/气泡
+  shell.css          全幅舞台与单一面板、状态栏、输入区与行车回答条
+  conversation.css   回答/过程/固定确认条与历史滚动
+  stage.css          待机、地图示意、天气、车况、日程、阅读/付款、媒体
+  settings.css       设置覆盖层、ListItem/Select/VoiceTile 与无障碍尺寸
   cards.css          卡片皮（覆盖既有语义类）+ AQI/SoC 等
   styles.css         旧「深空座舱 HUD」token（过渡期与 --au-* 并存，逐步退役）
   demo.ts            本地视觉验证夹具（不进正式主链）
   components/
     aurora/          设计系统 primitives：AuroraOrb(小舟光球三态)/Glass/AuroraBorder/ConfBadge/CatChip/AQISection + 预览沙盒
-    ContextualStage  右「上下文舞台」场景机（待机/天气/地图）
+    ContextualStage  情境舞台（独立只读选择；行车不展示阅读/付款码）
     StatusBar / ChatView / Composer / Cards / SettingsPanel / controls
 ```
 
-设计契约见 Figma Make `guidelines/Guidelines.md`；实施计划与分阶段进度见
-`docs/design/2026-06-29-figma-hmi-implementation-plan.md`。
+当前设计见 [Visual v2 brief](../docs/design/2026-10-08-hmi-visual-redesign-brief.md) 与 [落地规则](../docs/guides/figma-design-system-rules.md)。旧 Make 稿与 2026-06-29 计划只作历史证据。
 本地预览参数：`?aurora`（设计系统沙盒）、`?demo` / `?demo=map` / `?demo=cards`（场景与卡片夹具）。
 
 ## 自检

@@ -28,11 +28,9 @@ export const LOCAL_ICONS = {
   //    同规格（24 盒、1.8 stroke、圆头圆角）。前 15 枚给组件用（展开收起、返回、关闭、外链、复制、电话、星级、足球、删除），
   //    后 8 枚给车控结果 / 场景 / 赛事卡用。共享台账没有同名项（iconsLocal.test 守），本地合并在最后不覆盖谁。
 
-  'chevron-up': { w: 24, h: 24, body: '<path d="M6 15l6-6 6 6"/>' },
   'arrow-left': { w: 24, h: 24, body: '<path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/>' },
   'arrow-right': { w: 24, h: 24, body: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>' },
 
-  close: { w: 24, h: 24, body: '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>' },
   'more-vertical': { w: 24, h: 24, body: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>' },
 
   copy: { w: 24, h: 24, body: '<rect x="8.5" y="8.5" width="12.5" height="12.5" rx="2"/><path d="M15.5 5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8.5a2 2 0 0 0 2 2"/>' },
@@ -41,11 +39,6 @@ export const LOCAL_ICONS = {
 
 
 
-  trash: {
-    w: 24,
-    h: 24,
-    body: '<path d="M4 6.5h16"/><path d="M9 6.5V4.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4.5v2"/><path d="M18.5 6.5l-.9 12.6a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6.5"/><path d="M10 11v5.5"/><path d="M14 11v5.5"/>',
-  },
   'car-window': { w: 24, h: 24, body: '<path d="M3 19h18"/><path d="M5 16V11l4.5-5H19v10H5z"/><path d="M13 6v10"/>' },
   trunk: { w: 24, h: 24, body: '<path d="M3.5 14h17v3.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V14z"/><path d="M5 14l1.6-4h10.8L19 14"/><path d="M12 7V2.5"/><path d="M9.5 5L12 2.5 14.5 5"/>' },
 

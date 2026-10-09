@@ -1,6 +1,7 @@
 // Visual v2 I3: answers are text, confirmations are pinned, evidence uses the shared projection.
 import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../settings'
+import { messageTextForView } from '../errorPresentation.mjs'
 import { useDriving } from '../DrivingContext'
 import type { Msg, ProcessStep } from '../types'
 import { confirmationPresentation } from '../merchantUi.mjs'
@@ -98,12 +99,12 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
 }
 
 function Message({ msg, onAction, retryText }: { msg: Msg; onAction: (text: string) => void; retryText?: string }) {
-  const { developerMode } = useSettings()
+  const { developerMode, developerOptions } = useSettings()
   if (msg.role === 'user') return <div className="au-user-row"><div className="au-user-bubble">{msg.text}</div></div>
   if (msg.rejected) return <div className="au-rejected"><Icon name="info" size={24} />
     已忽略（疑似环境人声）· 如果是对我说的，请再说一遍</div>
   const proactive = msg.text.trim().startsWith('💡')
-  const text = proactive ? msg.text.replace(/^💡\s*/, '') : msg.text.replace(/^出错了：/, '')
+  const text = proactive ? msg.text.replace(/^💡\s*/, '') : messageTextForView(msg, developerMode && developerOptions.rawErrors)
   const kind = msg.proactiveKind || ''
   const alert = kind === 'scene_verify' || (!msg.uiCard && !kind && /预警|拥堵|事故|绕行|路况|危险|注意|提醒您|减速|结冰|临时管制/.test(text))
   const labels: Record<string, string> = { scene_suggest: 'AI 建议', scene_verify: '执行反馈', reminder_fired: '提醒到点' }
@@ -129,9 +130,9 @@ function Message({ msg, onAction, retryText }: { msg: Msg; onAction: (text: stri
 }
 
 function TraceTag({ traceId }: { traceId?: string }) {
-  const { developerMode } = useSettings()
+  const { developerMode, developerOptions } = useSettings()
   const [copied, setCopied] = useState(false)
-  if (!developerMode || !traceId) return null
+  if (!developerMode || !developerOptions.trace || !traceId) return null
   return <button className="au-trace" onClick={() => {
     void navigator.clipboard?.writeText(traceId).then(() => setCopied(true)).catch(() => {})
   }} title={'复制 trace_id ' + traceId}>{copied ? '已复制' : '#' + traceId.slice(0, 8)}</button>
