@@ -287,6 +287,22 @@ def test_forecast_with_city():
     assert "℃" in res.speech
 
 
+def test_forecast_days_slot_in_words_does_not_crash_the_turn():
+    """核心旅程 I01（2026-10-09）：规划器把 `days` 填成「后天」，`int()` 抛 ValueError ⇒ 用户听到「Agent 内部错误」。"""
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.forecast", slots={"city": "广州", "days": "后天"}, raw_text="后天广州会下雨吗"))
+    assert res.status == "ok" and res.ui_card["type"] == "forecast"
+    assert "内部错误" not in res.speech
+
+
+def test_forecast_days_parsing():
+    from agents.info.src.handlers.weather import _forecast_days
+    cases = {"3": 3, "3天": 3, "三天": 3, "后天": 3, "明天": 2, "大后天": 4, "今天": 1, "这周": 7, "未来一周": 7,
+             "": 3, None: 3, "很多天": 3, "99": 7, "0": 3}
+    for raw, want in cases.items():
+        assert _forecast_days(raw) == want, raw
+
+
 def test_forecast_missing_city_asks():
     ctx = make_context(context_values={})
     res = asyncio.run(run_handle(

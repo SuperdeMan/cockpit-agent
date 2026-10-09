@@ -12,7 +12,7 @@ from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
-from runtime.cntime import day_offset_of
+from runtime.cntime import cn_int, day_offset_of
 
 from ._util import _is_coordinate_label, _shanghai_now
 
@@ -193,6 +193,21 @@ def _weather_answer(raw: str, w, today, alerts) -> str:
     return ""
 
 
+def _forecast_days(raw) -> int:
+    """`days` 槽在能力契约里是字符串：规划器会填「3」「三天」「后天」「这周」。数得出的天数照用，日词取到那一天为止
+    （后天 ⇒ 3 天），说「周 / 星期」取 7 天，都认不出按缺省 3 天，上限 7。槽值形状不该把整轮变成「Agent 内部错误」
+    （核心旅程 I01，2026-10-09：`days="后天"` ⇒ `int()` 抛 ValueError，用户听到「Agent 内部错误：ValueError」）。"""
+    text = str(raw or "").strip()
+    offset = day_offset_of(text)
+    if offset is not None:
+        n = offset + 1
+    elif "周" in text or "星期" in text:
+        n = 7
+    else:
+        n = cn_int(re.sub(r"[天日号]$", "", text)) or 3
+    return max(1, min(n, 7))
+
+
 def _forecast_answer(raw: str, forecast) -> str:
     """意图先答：用户问「会不会下雨/下雪、冷不冷、风大不大、适不适合出行」时，先依据
     预报数据给直接回答，随后再接逐日摘要；罗列型问法（「未来三天天气」）不加前导。
@@ -345,7 +360,7 @@ class WeatherMixin:
                                follow_up="请告诉我城市名", missing_slots=["city"])
         display_city = await self._display_city(intent, city, meta)
         name = _spoken_place(display_city, city, meta)
-        days = int(intent.slots.get("days", 3) or 3)
+        days = _forecast_days(intent.slots.get("days"))
         try:
             forecast = await self.weather.forecast(city, days=days, meta=meta)
         except ProviderError as e:
