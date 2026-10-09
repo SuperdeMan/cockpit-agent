@@ -132,6 +132,10 @@ LOCAL_INTENTS = {
 }
 
 
+#: 通用媒体停止兜底认的媒体线索（2026-10-10）：没有这些词、也不是只说「停止 / 关闭」的句子，不在端侧判成停止媒体。
+_MEDIA_STOP_CUES = ("播放", "音乐", "歌", "电台", "广播", "节目", "有声", "声音", "视频", "媒体", "听书",
+                    "故事", "相声", "评书", "小说", "播客")
+
 def _i(name: str, slots: dict, conf: float) -> dict:
     return {"name": name, "slots": slots, "confidence": conf}
 
@@ -1472,7 +1476,12 @@ def _classify_structured(text: str) -> dict | None:
     # 旧序下被判成 `start`——**说「停止播放」把音乐放起来了**（2026-08-27 实测，
     # 与 QA N2 同一次取证扫出）。这一条比 N2 更恶性：N2 是回不到某个终态，
     # 这一条是**反向执行**。
-    if "停止" in t or "停下" in t or "关闭" in t:
+    # ⚠ 2026-10-10（核心旅程 P3 车控批离线扫出）：前面的专项都没接住时，这里曾把任何带「停止 / 停下 / 关闭」的句子
+    # 判成停止媒体（0.93）在端侧执行——「关闭导航」「停止导航」「停止充电」「关闭定位」「关闭儿童锁」都把音乐停了，
+    # 导航、充电照走，用户的话也没上云。兜底只认带媒体线索的说法，或整句只有这个动词（旧行为：音乐放着时说「停止」）。
+    _bare = t.strip(" 吧了啊呀。！!，,")
+    if (("停止" in t or "停下" in t or "关闭" in t)
+            and (any(cue in t for cue in _MEDIA_STOP_CUES) or _bare in ("停止", "停下", "停下来", "关闭"))):
         return _s("app", "control", "stop", "media", conf=0.93)
     if "暂停" in t or "停一下" in t:
         return _s("app", "control", "pause", "media", conf=0.93)

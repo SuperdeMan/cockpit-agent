@@ -63,6 +63,16 @@ _GOLDEN = [
     # 裸「停」仍归 pause（口语，不改）；「暂停」当然还是 pause——三者的分界就是判据。
     ("停止音乐", "media.stop", True),
     ("关闭音乐", "media.stop", True),
+    # ⚠ 2026-10-10 翻面，**留痕**：媒体停止兜底曾把任何带「停止 / 停下 / 关闭」的句子判成停止媒体在端侧执行——
+    # 「关闭导航」「停止导航」「停止充电」把音乐停了、导航充电照走，话也没上云。兜底只认媒体线索或整句只有动词。
+    ("关闭导航", None, False),
+    ("停止导航", None, False),
+    ("停止充电", None, False),
+    ("关闭定位", None, False),
+    ("关闭儿童锁", None, False),
+    ("停止播放", "media.stop", True),
+    ("关闭电台", "media.stop", True),
+    ("停止", "media.stop", True),
     ("暂停音乐", "media.pause", True),
     ("音乐停", "media.pause", True),
     ("播放音乐", "media.play", True),
