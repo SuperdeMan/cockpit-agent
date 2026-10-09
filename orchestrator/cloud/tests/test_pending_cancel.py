@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from orchestrator.cloud.pending_cancel import detect_cancel, is_standalone_cancel
 
 
@@ -189,3 +191,21 @@ def test_negated_cancel_is_not_a_cancel_instruction_object():
     assert cancel_instruction_object("不要取消导航") == ""
     assert cancel_instruction_object("别取消提醒") == ""
     assert cancel_instruction_object("取消导航") == "导航"
+
+
+# ── 否定回指是取消的一部分（2026-10-09 核心旅程 P08）────────────────────────────────
+# 挂起「打开后备箱」时说「算了，先不开了」：剥取消词时「先不」被当弱取消词剥掉，余下「开了」被判成新请求，
+# 规划器被重试一催编出开后备箱。整个分句是否定指令就算这句取消的一部分；别的分句照旧按余量判复合。
+
+@pytest.mark.parametrize("text", ["算了，先不开了", "算了，不开了", "先不开了", "算了不开了", "算了，先不开后备箱了"])
+def test_negated_echo_of_the_pending_is_a_pure_cancel(text):
+    d = detect_cancel(text)
+    assert (d.cancelled, d.compound, d.remainder) == (True, False, ""), text
+
+
+def test_a_positive_clause_after_the_negated_echo_is_still_a_new_request():
+    d = detect_cancel("算了，不开空调了，把车窗打开")
+    assert d.cancelled and d.compound and d.remainder == "把车窗打开"
+    # 否定的不是车控动作（「不买了」）：行为逐字同旧
+    d = detect_cancel("算了咖啡不买了，先去加点油")
+    assert d.compound and d.remainder == "咖啡先去加点油"

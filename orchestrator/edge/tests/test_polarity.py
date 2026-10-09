@@ -26,6 +26,8 @@ from runtime.polarity import is_negated_directive
 @pytest.mark.parametrize("text", [
     "车窗别开", "空调别关", "音乐别停", "别开车窗", "别把天窗打开",
     "先别开空调", "不要开窗", "不许锁车门", "甭开了",
+    # 裸「不」（2026-10-09 核心旅程 P08）：此前端侧判成开空调（0.9）直接执行
+    "先不开空调了", "不开空调了", "空调先不开了", "我不想开空调", "不用开空调", "后备箱先不开了", "不关了", "不打开车窗",
 ])
 def test_negated_directives(text):
     assert is_negated_directive(text) is True, text
@@ -42,6 +44,9 @@ def test_negated_directives(text):
     "别催我，把空调打开",
     # 约束词不是指令否定（nearby 的检索约束，归 G6）
     "不要太辣的餐厅",
+    # 裸「不」的非否定搭配（2026-10-09）：建议句、情绪 / 关心、不知道怎么、不如 / 不过、开车不是车控
+    "要不打开空调吧", "我不开心，放首歌", "不知道怎么开空调", "不如把空调打开", "不过先打开空调",
+    "我不关心这个，把空调打开", "我不开车了",
 ])
 def test_not_negated_directives(text):
     assert is_negated_directive(text) is False, text
@@ -54,6 +59,9 @@ def test_not_negated_directives(text):
     ("空调别关", "hvac.off"),
     ("音乐别停", "media.pause"),
     ("别把天窗打开", "sunroof.open"),
+    ("先不开空调了", "hvac.on"),
+    ("我不想开空调", "hvac.on"),
+    ("后备箱先不开了", "trunk.open"),
 ])
 def test_negated_write_action_is_not_classified_locally(text, forbidden):
     """**不产出**，而不是产出反向意图。

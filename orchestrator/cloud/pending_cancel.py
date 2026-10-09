@@ -33,6 +33,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from runtime.polarity import is_negated_directive
 from runtime.question_shape import POLITE_TAILS, is_non_directive_question
 
 # ── 唯一词表 ──────────────────────────────────────────────────────────
@@ -235,6 +236,25 @@ def _strip_polite_cancel_tail(t: str) -> str | None:
     return body
 
 
+def _drop_negated_echo(t: str) -> str:
+    """去掉整个分句都是否定指令的那几句（「先不开了」「不开后备箱了」）：它们说的是挂起本身，属于这句取消。
+
+    2026-10-09 核心旅程 P08：挂起「打开后备箱」时说「算了，先不开了」，剥取消词时「先不」被当成弱取消词剥掉，
+    余下「开了」被判成一句新请求——规划器先如实给了空步骤，又被重试策略一催，编出了开后备箱（确认门挡住了执行）。
+    判据与端侧否决同一份（`runtime.polarity.is_negated_directive`）；别的分句照旧，「算了，不开空调了，把车窗打开」
+    的后半句仍是新请求。⚠ 已知代价：没有标点隔开的「不开空调了把车窗打开」整句被当成否定，后半句不会按新请求处理。
+    """
+    parts = re.split(r"([，,。；;！!？?])", t)
+    out = []
+    for i in range(0, len(parts), 2):
+        clause = parts[i]
+        sep = parts[i + 1] if i + 1 < len(parts) else ""
+        if clause.strip() and is_negated_directive(clause):
+            continue
+        out.append(clause + sep)
+    return "".join(out)
+
+
 def detect_cancel(text: str) -> CancelDecision:
     """**有挂起**的语境：这句话是不是在取消挂起？复合句的余量是什么？
 
@@ -260,6 +280,7 @@ def detect_cancel(text: str) -> CancelDecision:
     body = _strip_polite_cancel_tail(t)
     if body is not None:
         t = body                               # 「取消好吗」的礼貌尾不是内容
+    t = _drop_negated_echo(t)                 # 「先不开了」是在说挂起本身，不是新请求
     remainder = _WEAK_STRIP_RE.sub("", _STRIP_RE.sub("", t))
     substance = _COMPOUND_ADVERB_RE.sub("", _CANCEL_FILLER_RE.sub("", remainder)).strip()
     if (substance and body is None
