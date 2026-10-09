@@ -29,6 +29,8 @@
 """
 from __future__ import annotations
 
+import re
+
 #: 播报 / 转述语域标记：说话人在对**听众**说话，不是在对助手下指令。全部是封闭的语域框架词，
 #: **零领域词**（源码级断言守着）。刻意不收「他说 / 她说」——「我妈说让我把车窗关上」是用户在转达
 #: 指令，挡它等于反向漏执行；也不收单独的「记者」——「播放记者会直播」是正常指令。
@@ -45,6 +47,11 @@ BROADCAST_FRAMES = (
     # 转述框架
     "据报道", "据了解", "据悉", "消息称", "报道称", "通报称", "新华社",
 )
+#: 转述框架中间夹着来源名：「据央视新闻报道」「据人民日报消息」——「据报道」的子串匹配不到中间那段来源（2026-10-09 核心旅程 R04：
+#: 按语音来源发「据央视新闻报道，今日多地迎来强降雨天气」，端侧照常把媒体开成 playing、云侧又查了一遍新闻）。来源最多 12 字、
+#: 不跨标点；动词只收播报类，不收「据统计 / 据说 / 据我所知」——用户自己也这么说话。collector 90 天新增命中只有那一句。
+ATTRIBUTION_VERBS = ("报道", "消息", "通报", "发布", "播报")
+_ATTRIBUTION_RE = re.compile(r"据[^，。！？,.!?；;\s]{1,12}?(?:" + "|".join(ATTRIBUTION_VERBS) + r")")
 
 
 def is_reported_speech(text: str) -> bool:
@@ -56,4 +63,4 @@ def is_reported_speech(text: str) -> bool:
     t = (text or "").strip()
     if not t:
         return False
-    return any(frame in t for frame in BROADCAST_FRAMES)
+    return any(frame in t for frame in BROADCAST_FRAMES) or bool(_ATTRIBUTION_RE.search(t))

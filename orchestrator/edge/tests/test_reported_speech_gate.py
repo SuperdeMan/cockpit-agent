@@ -24,6 +24,8 @@ from fast_intent import classify, classify_structured, split_and_classify, split
     "各位听众朋友大家好，下面请听一段音乐。",
     "接下来为您播出天气预报，请打开车窗通风。",
     "本台记者提醒您，请打开车窗通风。",     # 第二段单独看是一条干净的本地车控：混合拆分不许执行它
+    # 2026-10-09 核心旅程 R04：转述框架中间夹着来源名，修前混合拆分照常在端侧执行了 media.play（原话不改一个字）
+    "据央视新闻报道，今日多地迎来强降雨天气",
 ])
 def test_broadcast_register_does_not_yield_local_write(text):
     assert classify_structured(text) is None, text

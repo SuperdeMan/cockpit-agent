@@ -11,7 +11,7 @@ import os
 import pytest
 import yaml
 
-from runtime.reported_speech import BROADCAST_FRAMES, is_reported_speech
+from runtime.reported_speech import ATTRIBUTION_VERBS, BROADCAST_FRAMES, is_reported_speech
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _COMMANDS = os.path.join(_ROOT, "orchestrator", "edge", "knowledge", "commands.yaml")
@@ -43,7 +43,7 @@ def test_domain_vocabulary_probe_is_not_empty():
 def test_no_frame_word_is_domain_vocabulary():
     """任一语域标记撞上领域词 = 这份「语域判据」退化成了「新闻词表黑名单」。"""
     vocab = _domain_vocabulary()
-    for frame in BROADCAST_FRAMES:
+    for frame in BROADCAST_FRAMES + ATTRIBUTION_VERBS:      # 转述框架的动词同一条约束（2026-10-09）
         assert frame not in vocab, f"`{frame}` 是 VAL 领域词——判据必须是语域标记"
         for media in ("新闻", "音乐", "歌", "广播", "电台", "视频", "有声书"):
             assert media not in frame, f"`{frame}` 含媒体对象词 `{media}`——那是词表黑名单，不是语域"
@@ -60,6 +60,10 @@ def test_no_frame_word_is_domain_vocabulary():
     "据报道，明天本市将有大到暴雨，请注意开窗通风。",
     "接下来为您播出天气预报。",
     "新华社消息：某地举办音乐节，欢迎收看。",
+    # 2026-10-09 核心旅程 R04：转述框架中间夹着来源名，端侧照常把媒体开成 playing（原话不改一个字）
+    "据央视新闻报道，今日多地迎来强降雨天气",
+    "据人民日报消息，今年国庆高速继续免费",
+    "据交警部门通报，前方路段发生事故",
 ])
 def test_broadcast_register(text):
     assert is_reported_speech(text) is True, text
@@ -73,6 +77,11 @@ def test_broadcast_register(text):
     "播放记者会直播",              # 「记者」单独出现是正常指令
     "我妈说让我把车窗关上",        # 用户转达指令：不是播报
     "给我放首歌", "打开空调", "现在几点了", "",
+    # 「据」开头的日常说法不是转述框架：动词只收播报类
+    "据说这车有座椅加热，帮我打开", "据我所知明天会下雨，把车窗关上", "据统计这车最省油的速度是多少",
+    "播放央视新闻",
+    "根据刚才我们在车上一起商量好的那个计划把这条消息转给老婆",   # 「据」与「消息」隔得太远：不是转述框架
+
 ])
 def test_user_requests_pass(text):
     assert is_reported_speech(text) is False, text
