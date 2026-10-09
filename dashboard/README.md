@@ -60,7 +60,9 @@ npm run build
 # 仓库根：仅离线浏览器，不发业务指令
 node dashboard/visual-qa.mjs
 node dashboard/visual-qa.mjs turns:1440 turns:2560 turns:1280 live:1440 live-done:1920:presentation
+node dashboard/visual-qa.mjs --interactions logs:1280 logs:1440 logs:1679 logs:1680 logs:1920 logs:2560
 ```
 
 浏览器证据保存在 gitignore 的 `.artifacts/dashboard-visual-v2/`，绑定本地基线和改动树；不能替代部署或真实业务验收。
+可用 `DASHBOARD_VISUAL_OUT` 指定独立证据目录。日志交互验证包含长文本、JSON 展开与跨断点缩放，检查列宽稳定、无右侧空列、详情全文和窄屏 trace 入口。
 完整栈 E2E 仍遵守仓库的 remote_safe／remote_mutating 边界。

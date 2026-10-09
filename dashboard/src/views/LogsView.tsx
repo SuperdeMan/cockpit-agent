@@ -1,5 +1,5 @@
 // 全局日志保留每次出现；只有检查器的单轮日志会合并重复。
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { fetchLogs } from '../api'
 import { CodeBlock, EmptyState, ErrorState, SkeletonRow, Table } from '../components/data'
 import { Button, Checkbox, FilterChip, Icon, IconButton, Input, Popover, Segmented } from '../components/ui'
@@ -9,6 +9,15 @@ import type { LogEntry } from '../types'
 import '../logs.css'
 
 const LEVELS = ['', 'INFO', 'WARNING', 'ERROR'] as const
+const TRACE_COLUMN_QUERY = '(min-width: 1680px)'
+function subscribeTraceColumn(onChange: () => void) {
+  const media = window.matchMedia?.(TRACE_COLUMN_QUERY)
+  media?.addEventListener('change', onChange)
+  return () => media?.removeEventListener('change', onChange)
+}
+function traceColumnVisible() {
+  return window.matchMedia?.(TRACE_COLUMN_QUERY).matches ?? true
+}
 type Row = { key: number; log: LogEntry }
 type Filters = { services: string[]; level: string; query: string; limit: number }
 type LogData = { rows: Row[]; pending: Row[]; status: 'loading' | 'ready' | 'error'; error: string; filters: Filters | null }
@@ -54,7 +63,7 @@ function TraceLink({ trace }: { trace: string }) {
   </Button>
 }
 
-function LogTableRow({ log }: { log: LogEntry }) {
+function LogTableRow({ log, showTraceColumn }: { log: LogEntry; showTraceColumn: boolean }) {
   const [open, setOpen] = useState(false)
   const detailId = useId()
   const level = log.level.toUpperCase()
@@ -75,13 +84,13 @@ function LogTableRow({ log }: { log: LogEntry }) {
         aria-expanded={open} aria-controls={detailId} onClick={() => setOpen(value => !value)}>
         <span>{log.msg || '（空消息）'}</span>
       </Button></td>
-      <td className="obs-logs__trace-column">{log.trace_id ? <TraceLink trace={log.trace_id} /> : <span className="muted">—</span>}</td>
+      {showTraceColumn && <td className="obs-logs__trace-column">{log.trace_id ? <TraceLink trace={log.trace_id} /> : <span className="muted">—</span>}</td>}
     </tr>
-    {open && <tr className="obs-log-detail" id={detailId}><td colSpan={5}>
+    {open && <tr className="obs-log-detail" id={detailId}><td colSpan={showTraceColumn ? 5 : 4}>
       <div className="obs-log-detail__body">
         <div className="obs-log-detail__meta"><span>{fmtTime(log.ts)}</span><span>{log.service || '—'}</span>
           {log.logger && <span>{log.logger}</span>}
-          <span className="obs-log-detail__trace">{log.trace_id ? <TraceLink trace={log.trace_id} /> : '无 trace'}</span>
+          {!showTraceColumn && <span className="obs-log-detail__trace">{log.trace_id ? <TraceLink trace={log.trace_id} /> : '无 trace'}</span>}
         </div>
         {code !== null ? <CodeBlock code={code} /> : <p className="obs-log-detail__text">{log.msg || '（空消息）'}</p>}
       </div>
@@ -90,6 +99,9 @@ function LogTableRow({ log }: { log: LogEntry }) {
 }
 
 export function LogsView({ lastLog = null, liveLogs }: LogsViewProps) {
+  // Columns and expanded-row spans must change together: hiding only the cells
+  // leaves a phantom fifth column when a narrow table contains a colspan of five.
+  const showTraceColumn = useSyncExternalStore(subscribeTraceColumn, traceColumnVisible)
   const [services, setServices] = useState<string[]>([])
   const [knownServices, setKnownServices] = useState<string[]>([])
   const [serviceOpen, setServiceOpen] = useState(false)
@@ -234,9 +246,9 @@ export function LogsView({ lastLog = null, liveLogs }: LogsViewProps) {
             description={onlyTrace && data.rows.length ? '当前已加载记录没有 trace，可关闭“只看带 trace”或加载更多。' : '服务上报的结构化日志会显示在这里。'}
             action={filtered ? <Button size="sm" onClick={clear}>清除筛选</Button> : undefined} />
           : <Table className="obs-logs__table" aria-label="全局结构化日志">
-            <colgroup><col className="obs-logs__time-column" /><col className="obs-logs__level-column" /><col className="obs-logs__service-column" /><col /><col className="obs-logs__trace-column" /></colgroup>
-            <thead><tr><th scope="col">时刻</th><th scope="col">级别</th><th scope="col">服务</th><th scope="col">消息</th><th scope="col" className="obs-logs__trace-column">trace</th></tr></thead>
-            <tbody>{visible.map(row => <LogTableRow key={row.key} log={row.log} />)}</tbody>
+            <colgroup><col className="obs-logs__time-column" /><col className="obs-logs__level-column" /><col className="obs-logs__service-column" /><col />{showTraceColumn && <col className="obs-logs__trace-column" />}</colgroup>
+            <thead><tr><th scope="col">时刻</th><th scope="col">级别</th><th scope="col">服务</th><th scope="col">消息</th>{showTraceColumn && <th scope="col" className="obs-logs__trace-column">trace</th>}</tr></thead>
+            <tbody>{visible.map(row => <LogTableRow key={row.key} log={row.log} showTraceColumn={showTraceColumn} />)}</tbody>
           </Table>}
       </div>
       {!follow && data.status === 'ready' && <div className="obs-logs__new" role="status"><Button icon="arrow-down" size="sm" onClick={resume}>

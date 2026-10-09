@@ -7,7 +7,7 @@ import { resolve, join } from 'node:path'
 import { Cdp, sleep } from '../test/hmi_cdp/driver.mjs'
 
 const root = resolve(import.meta.dirname, '..')
-const out = join(root, '.artifacts/dashboard-visual-v2/browser')
+const out = resolve(root, process.env.DASHBOARD_VISUAL_OUT || '.artifacts/dashboard-visual-v2/browser')
 const base = process.env.DASHBOARD_VISUAL_URL || 'http://127.0.0.1:5174'
 const exe = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(existsSync)
 assert.ok(exe, 'Edge is required')
@@ -124,12 +124,88 @@ try {
       }
     }
     if (interactions && name === 'logs') {
+      const layoutChecks = []
+      evidence.at(-1).logLayoutChecks = layoutChecks
+      const logColumns = () => cdp.eval(`({
+        tableWidth: document.querySelector('.obs-logs__table').getBoundingClientRect().width,
+        cells: [...document.querySelector('.obs-log-row').cells]
+          .filter(cell => getComputedStyle(cell).display !== 'none')
+          .map(cell => { const box = cell.getBoundingClientRect(); return { x: box.x, width: box.width } })
+      })`)
+      const assertStableColumns = (actual, expected) => {
+        assert.equal(actual.cells.length, expected.cells.length, 'expansion preserves visible columns')
+        // Long details can introduce a vertical scrollbar; only the flexible
+        // message column may absorb that change in the available table width.
+        const delta = actual.tableWidth - expected.tableWidth
+        actual.cells.forEach((cell, index) => {
+          assert.ok(Math.abs(cell.width - expected.cells[index].width - (index === 3 ? delta : 0)) <= 1, 'expansion must not create an empty column')
+          assert.ok(Math.abs(cell.x - expected.cells[index].x - (index === 4 ? delta : 0)) <= 1, 'column positions stay aligned')
+        })
+      }
+      const assertLogLayout = async label => {
+        const layout = await cdp.eval(`(() => {
+          const table = document.querySelector('.obs-logs__table')
+          const cells = [...document.querySelector('.obs-log-row').cells].filter(cell => getComputedStyle(cell).display !== 'none')
+          const detail = document.querySelector('.obs-log-detail > td')
+          const body = document.querySelector('.obs-log-detail__body')
+          return {
+            width: innerWidth, columns: cells.length, span: detail.colSpan,
+            tableWidth: table.getBoundingClientRect().width,
+            detailWidth: detail.getBoundingClientRect().width,
+            rightGap: table.getBoundingClientRect().right - cells.at(-1).getBoundingClientRect().right,
+            detailOverflow: body.scrollWidth > body.clientWidth + 1,
+            viewportOverflow: document.documentElement.scrollWidth > innerWidth,
+            inlineTrace: !!detail.querySelector('.obs-log-detail__trace .obs-log-trace')
+          }
+        })()`)
+        assert.equal(layout.columns, layout.width >= 1680 ? 5 : 4, label + ': visible columns')
+        assert.equal(layout.span, layout.columns, label + ': expanded detail spans exactly the visible columns')
+        assert.ok(Math.abs(layout.rightGap) <= 1, label + ': no unused column on the right')
+        assert.ok(Math.abs(layout.detailWidth - layout.tableWidth) <= 1, label + ': full-width detail')
+        assert.equal(layout.detailOverflow, false, label + ': long content wraps within the detail')
+        assert.equal(layout.viewportOverflow, false, label + ': no viewport overflow')
+        assert.equal(layout.inlineTrace, layout.width < 1680, label + ': trace remains available on narrow screens')
+        layoutChecks.push({ label, ...layout })
+      }
+      const collapsedColumns = await logColumns()
+      await cdp.eval("document.querySelector('.obs-log-message').click(); true")
+      await cdp.waitFor("!!document.querySelector('.obs-log-detail')")
+      await capture(`logs-expanded-${width}-${size}-${theme}`)
+      assertStableColumns(await logColumns(), collapsedColumns)
+      await assertLogLayout('plain log')
+      await cdp.eval("document.querySelector('.obs-log-message').click(); true")
+      const messages = [
+        'long log: ' + 'unbroken-message-'.repeat(150),
+        JSON.stringify({ message: 'structured log', detail: 'unbroken-value-'.repeat(150) }),
+      ]
+      for (const [index, message] of messages.entries()) {
+        await cdp.eval(`window.dispatchEvent(new CustomEvent('obs-fixture-log',{detail:{ts:1791475800100 + ${index},service:'fixture-stream',level:'INFO',logger:'visual',msg:${JSON.stringify(message)},trace_id:'f17a000000000001',session_id:'fixture'}})); true`)
+        await cdp.waitFor(`[...document.querySelectorAll('.obs-log-message')].some(button=>button.textContent===${JSON.stringify(message)})`)
+        const columns = await logColumns()
+        await cdp.eval(`[...document.querySelectorAll('.obs-log-message')].find(button=>button.textContent===${JSON.stringify(message)}).click(); true`)
+        await cdp.waitFor("!!document.querySelector('.obs-log-detail')")
+        assertStableColumns(await logColumns(), columns)
+        await assertLogLayout(index ? 'JSON log' : 'long text log')
+        const content = await cdp.eval("document.querySelector('.obs-log-detail pre code,.obs-log-detail__text').textContent")
+        assert.equal(content, index ? JSON.stringify(JSON.parse(message), null, 2) : message, 'expanded content is complete')
+        await cdp.eval("document.querySelector('.obs-log-detail').scrollIntoView({block:'nearest'}); true")
+        await capture(`logs-expanded-${index ? 'json' : 'long'}-${width}-${size}-${theme}`)
+        if (index) {
+          // Keep the detail open while crossing both sides of the breakpoint.
+          for (const resizedWidth of [1679, 1680, width]) {
+            await cdp.send('Emulation.setDeviceMetricsOverride', { width: resizedWidth, height: 900, deviceScaleFactor: 1, mobile: false })
+            await cdp.waitFor(`document.querySelector('.obs-log-detail > td').colSpan === ${resizedWidth >= 1680 ? 5 : 4}`)
+            await assertLogLayout('resize open detail to ' + resizedWidth)
+          }
+        }
+        await cdp.eval(`[...document.querySelectorAll('.obs-log-message')].find(button=>button.textContent===${JSON.stringify(message)}).click(); true`)
+      }
       const before = await cdp.eval("document.querySelectorAll('.obs-log-row').length")
       await cdp.eval("document.querySelector('[aria-label=\"暂停跟随\"]').click(); true")
       await cdp.eval(`for(let i=0;i<2;i++) window.dispatchEvent(new CustomEvent('obs-fixture-log',{detail:{ts:1791475800000,service:'fixture-stream',level:'INFO',logger:'visual',msg:'same repeated fixture event',trace_id:'f17a000000000001',session_id:'fixture'}})); true`)
       await cdp.waitFor("document.body.innerText.includes('2 条新日志')")
       assert.equal(await cdp.eval("document.querySelectorAll('.obs-log-row').length"), before, 'pause freezes displayed logs')
-      await capture(`logs-paused-${width}-${theme}`)
+      await capture(`logs-paused-${width}-${size}-${theme}`)
       await cdp.eval("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('2 条新日志')).click(); true")
       await cdp.waitFor(`document.querySelectorAll('.obs-log-row').length===${before + 2}`)
     }
