@@ -118,6 +118,19 @@ def test_minimax_flash_preview_is_pinnable_and_wired_as_thinking_required():
     assert "MiniMax-M3.1-Flash-Preview" in provider.thinking_required and "MiniMax-M3" not in provider.thinking_required
 
 
+def test_request_pin_covers_the_fast_tier_too():
+    """请求级 pin（D2）钉整轮：@fast 也落到被钉型号，降级链仍退厂商快档；没钉具体型号时行为不变。"""
+    rt = _runtime({"LLM_PROVIDER": "minimax", "MINIMAX_API_KEY": "xk", "DEEPSEEK_API_KEY": "dk"})
+    flash = "MiniMax-M3.1-Flash-Preview"
+    assert rt.resolve_models_for("minimax", "@fast", flash) == [flash, "MiniMax-M3"]
+    assert rt.resolve_models_for("minimax", "", flash) == [flash, "MiniMax-M3"]
+    assert rt.resolve_models_for("minimax", "@fast", "MiniMax-M3") == ["MiniMax-M3"]          # 既有 E2E pin 不变
+    assert rt.resolve_models_for("minimax", "@fast", "") == ["MiniMax-M3"]                    # 只钉厂商：不变
+    assert rt.resolve_models_for("deepseek", "@fast", "deepseek-v4-pro") == ["deepseek-v4-pro", "deepseek-v4-flash"]
+    assert rt.resolve_models_for("deepseek", "@fast", "") == ["deepseek-v4-flash"]
+    assert rt.resolve_models_for("deepseek", "@fast", "unknown-model") == ["deepseek-v4-flash"]  # 不认识的 pin 忽略
+
+
 def test_set_active_specific_model():
     rt = _runtime({"LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": "dk"})
     rt.set_active("deepseek", "deepseek-v4-flash")

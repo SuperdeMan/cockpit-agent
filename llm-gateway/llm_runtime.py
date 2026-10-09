@@ -280,7 +280,8 @@ class LLMRuntime:
         norm = _norm_id(pid)
         cfg = self._registry[norm][1]
         known = {m["id"] for m in cfg["models"]}
-        primary = ((model_override if model_override in known else "")
+        pinned = model_override if model_override in known else ""
+        primary = (pinned
                    or (self._active_model if norm == self._active_id else "")
                    or cfg["primary"])
         fast = cfg.get("fast") or primary
@@ -288,7 +289,10 @@ class LLMRuntime:
         if not r or r in ("@primary", "@deep"):
             chosen = primary
         elif r in ("@fast", "@fallback"):
-            chosen = fast
+            # 请求级 pin 钉的是整轮：档位哨兵 @fast 同样落到被钉型号。否则闲聊这类走 @fast 的调用照旧打到厂商快档，
+            # 证据链里混进另一个型号（2026-10-09 M3.1-Flash A/B：闲聊 @fast 落 M3，运行器判 model_drift 叫停；
+            # HMI 手选模型的会话同样如此）。降级链不变：失败照旧退厂商快档，漂移由证据链判。
+            chosen = pinned or fast
         else:
             chosen = r if r in known else primary  # 不认识的具体模型名 → 回落 primary
         out = [chosen]
