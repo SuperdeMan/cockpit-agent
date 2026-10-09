@@ -91,8 +91,101 @@ def test_freeze_inputs_cover_what_the_runner_imports_and_reads():
     out = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, timeout=120, check=True)
     used = set(json.loads(out.stdout.strip().splitlines()[-1]))
     used |= {probe.CORPUS.relative_to(probe.ROOT).as_posix(), probe.SOURCE_EVIDENCE.relative_to(probe.ROOT).as_posix()}
+    # 清单本身与它引用的每个来源（v2 语料、7 月旅程）同样是跑数输入
+    used.add(probe.MANIFEST.relative_to(probe.ROOT).as_posix())
+    used |= {"test/" + e["source"] for e in yaml.safe_load(probe.MANIFEST.read_text(encoding="utf-8"))["journeys"]}
     outside = sorted(u for u in used if not any(u == i or u.startswith(i + "/") for i in probe.FREEZE_INPUTS))
     assert not outside, outside
+
+
+# ── 核心旅程清单（docs/design/2026-10-09-v2-core-journey-freeze.md）──────────────────────────────
+
+def test_the_manifest_resolves_every_reference_exactly_once():
+    cases = probe.load_manifest()
+    ids = [c["id"] for c in cases]
+    assert len(ids) == len(set(ids)) >= 30
+    assert {c["family"] for c in cases} <= probe.FAMILIES and {c["lane"] for c in cases} <= set(probe.LANES)
+    v2 = next(c for c in cases if c["id"] == "V201")
+    assert v2["source_family"] == "mixed_answer_pending" and v2["family"] == "F02"   # 分类以清单为准，来源分类留着
+    weather = next(c for c in cases if c["id"] == "B1-4")
+    assert weather["source_kind"] == "journey" and weather["location"] == {"lat": "22.5333", "lng": "113.9505"}
+    assert weather["turns"][1]["expect"]["speech_not"]            # 7 月判据原样带过来，由共用模块判
+    # v2 运行器不支持的 7 月原语记进 unsupported（跑数时整条记「未测」）：跳过条件、过程区事件
+    by_id = {c["id"]: c for c in cases}
+    assert by_id["A5-2"]["unsupported"] == ["skip_journey_if_speech_any"]
+    assert by_id["A3-2"]["unsupported"] == ["expect.process_min"]
+    assert "unsupported" not in weather
+
+
+def test_the_manifest_refuses_a_journey_that_would_confirm(tmp_path):
+    """7 月 A7-1 停车缴费第二轮是 `say: 确认`：静态护栏挡下（支付本来就不进冻结集）。"""
+    manifest = tmp_path / "m.yaml"
+    manifest.write_text(yaml.safe_dump({"version": 1, "split": "regression", "journeys": [
+        {"id": "A7-1", "source": "journeys/target_a.yaml", "family": "F08", "lane": "read_only"}]},
+        allow_unicode=True), encoding="utf-8")
+    with pytest.raises(ValueError, match="affirmation"):
+        probe.load_manifest(manifest)
+
+
+@pytest.mark.parametrize("entry, message", [
+    ({"id": "V201", "source": "eval_corpus/v2_runtime/seed.yaml", "family": "F99", "lane": "read_only"}, "family"),
+    ({"id": "V201", "source": "eval_corpus/v2_runtime/seed.yaml", "family": "F02", "lane": "anything"}, "lane"),
+    ({"id": "NOPE", "source": "eval_corpus/v2_runtime/seed.yaml", "family": "F02", "lane": "read_only"}, "exactly once"),
+    ({"id": "V201", "source": "../scripts/probe_v2_baseline.py", "family": "F02", "lane": "read_only"}, "under test/"),
+])
+def test_the_manifest_rejects_bad_entries(tmp_path, entry, message):
+    manifest = tmp_path / "m.yaml"
+    manifest.write_text(yaml.safe_dump({"version": 1, "split": "regression", "journeys": [entry]}), encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        probe.load_manifest(manifest)
+
+
+def test_journey_keys_are_judged_by_the_shared_module_once():
+    card = {"type": "manual", "items": []}
+    result = probe.judge({"speech_not": ["没找到"], "cards_any": ["weather"], "need_confirm": True},
+                         obs(speech="没找到相关内容", card_text=json.dumps(card)), {}, elapsed_s=1.0)
+    journey = [f for f in result["failures"] if f.startswith("journey:")]
+    assert any("speech_not" in f for f in journey) and any("cards_any" in f for f in journey)
+    # 确认挂起只由 v2 那条判（它还要求 operation_id），不再由共用模块重复报一遍
+    assert "pending_missing" in result["failures"] and not any("need_confirm" in f for f in journey)
+
+
+def test_skip_reasons_record_lanes_unsupported_primitives_and_named_providers():
+    case = {"lane": "read_only", "providers": ["AMAP_KEY"]}
+    assert probe._skip_reason(case, {"read_only"}, set()) == ""
+    assert probe._skip_reason(case, {"read_only"}, {"AMAP_KEY"}) == "provider:AMAP_KEY"
+    assert probe._skip_reason({**case, "lane": "simulated_vehicle"}, {"read_only"}, set()) == "lane:simulated_vehicle"
+    assert probe._skip_reason({**case, "unsupported": ["confirm"]}, {"read_only"}, set()) == "unsupported:confirm"
+
+
+def test_inputs_unchanged_ignores_commits_outside_the_inputs(monkeypatch):
+    """共享 main 上别的会话提交别处不算「跑数期间运行器变了」；跑数输入有改动或未提交才算。"""
+    answers = {"status": "", "diff": ""}
+    calls = []
+
+    def git(*args):
+        calls.append(args)
+        return answers[args[0]]
+
+    monkeypatch.setattr(probe, "_git", git)
+    assert probe._inputs_unchanged("a" * 40)
+    assert all(args[-len(probe.FREEZE_INPUTS):] == probe.FREEZE_INPUTS for args in calls)
+    answers["diff"] = "scripts/probe_v2_baseline.py"
+    assert not probe._inputs_unchanged("a" * 40)
+    answers.update(diff="", status=" M test/eval_corpus/v2_runtime/seed.yaml")
+    assert not probe._inputs_unchanged("a" * 40)
+
+
+def test_a_journey_meets_the_bar_only_when_every_run_passes():
+    good = {"verdict": {"failures": []}, "evidence_errors": []}
+    bad = {"verdict": {"failures": ["journey:speech_not 命中禁词"]}, "evidence_errors": []}
+    runs = [{"id": "J1", "family": "F01", "stop": False, "rows": [good, good]},
+            {"id": "J1", "family": "F01", "stop": False, "rows": [good, bad]},
+            {"id": "J2", "family": "F08", "stop": False, "rows": [good, {"skipped": "no_pending"}]},
+            {"id": "J2", "family": "F08", "stop": False, "rows": [good]}]
+    summary = probe.journey_summary(runs, 2)
+    assert summary["journeys"]["J1"] == {"family": "F01", "runs": 2, "passes": 1}
+    assert summary["journeys"]["J2"]["passes"] == 2 and summary["journeys_all_pass"] == 1
 
 
 def test_recursive_redaction_keeps_image_evidence_without_payload():

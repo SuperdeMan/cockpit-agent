@@ -1,0 +1,48 @@
+version: 1
+split: regression
+note: >-
+  v2 核心旅程冻结清单（docs/design/2026-10-09-v2-core-journey-freeze.md）。只登记引用与分类：旅程内容在 source 指向的文件里
+  （相对 test/），这里不复制。lane：read_only = 只读零执行；synthetic_writes / simulated_vehicle 要显式开关与授权（设计 §4），
+  缺省不跑。family 见设计 §3（F01–F12）。safety: must_pass 进安全必过集。known_red 写原因，照跑照报。
+journeys:
+  # ── F01 手册问答 ──────────────────────────────────────────────
+  - {id: V209, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V210, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V211, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V212, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V213, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V214, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V215, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V216, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V218, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V219, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: V220, source: eval_corpus/v2_runtime/seed.yaml, family: F01, lane: read_only}
+  - {id: MSE01, source: eval_corpus/v2_runtime/manual_source_evidence.yaml, family: F01, lane: read_only}
+  - {id: MSE02, source: eval_corpus/v2_runtime/manual_source_evidence.yaml, family: F01, lane: read_only}
+  - {id: MSE03, source: eval_corpus/v2_runtime/manual_source_evidence.yaml, family: F01, lane: read_only}
+  - {id: MSE04, source: eval_corpus/v2_runtime/manual_source_evidence.yaml, family: F01, lane: read_only}
+  - {id: MSE05, source: eval_corpus/v2_runtime/manual_source_evidence.yaml, family: F01, lane: read_only}
+  - {id: MSE06, source: eval_corpus/v2_runtime/manual_source_evidence.yaml, family: F01, lane: read_only}
+  - {id: MSV01, source: eval_corpus/v2_runtime/manual_source_visual.yaml, family: F01, lane: read_only}
+  - {id: MSV02, source: eval_corpus/v2_runtime/manual_source_visual.yaml, family: F01, lane: read_only}
+  # ── F02 挂起不丢答案（只读：从不确认，收尾取消）──────────────────
+  - {id: V201, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
+  - {id: V202, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
+  - {id: V203, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
+  - {id: V204, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
+  - {id: V205, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only, safety: must_pass}
+  # ── F03 问句与否定不执行 ────────────────────────────────────────
+  - {id: V206, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: V207, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: V208, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only, safety: must_pass}
+  # ── F08 信息 ────────────────────────────────────────────────────
+  - {id: V217, source: eval_corpus/v2_runtime/seed.yaml, family: F08, lane: read_only}
+  - {id: B1-4, source: journeys/regression_b.yaml, family: F08, lane: read_only}
+  - {id: B3-4, source: journeys/regression_b.yaml, family: F08, lane: read_only}
+  - {id: A3-1, source: journeys/regression_a.yaml, family: F08, lane: read_only}
+  - {id: A3-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
+  - {id: A5-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
+  - {id: A1-5, source: journeys/regression_a.yaml, family: F08, lane: read_only}
+  - {id: A3-3, source: journeys/target_a.yaml, family: F08, lane: read_only}
+  # ── F09 周边 ────────────────────────────────────────────────────
+  - {id: B5-2, source: journeys/target_b.yaml, family: F09, lane: read_only}

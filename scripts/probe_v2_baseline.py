@@ -27,13 +27,22 @@ from scripts import probe_history_window as identity
 from scripts import probe_qa_regression as wire
 from scripts import probe_qa_long_sessions as audit
 from scripts.e2e_identity import sign_identity
+from scripts.journey_expect import EXPECT_KEYS as JOURNEY_EXPECT_KEYS, check_expect as journey_check
 from scripts.render_cloud_env import DEMO_AUTH_SCOPES
 
 CORPUS = ROOT / "test/eval_corpus/v2_runtime/seed.yaml"
 #: 冻结要求「已提交、干净」的范围：这次跑数真正读进来的东西——运行器与它导入的 scripts/、runtime/，语料，判定读的来源证据表。
 #: 资产树从发布 SHA 读（`git rev-parse <sha>:<path>`），不读工作树。主仓库是多个会话共享的工作树，别处未提交的文档不影响这次跑数，
 #: 却曾挡住基线（2026-10-09：一份 Android 记录、一份可观测台 brief）。新加的导入或读取的文件要落在这里面（测试钉着）。
-FREEZE_INPUTS = ("scripts", "runtime", "test/eval_corpus", "agents/manual_rag/resources/source_evidence.yaml")
+FREEZE_INPUTS = ("scripts", "runtime", "test/eval_corpus", "test/journeys",
+                 "agents/manual_rag/resources/source_evidence.yaml")
+#: 核心旅程冻结清单（docs/design/2026-10-09-v2-core-journey-freeze.md）：只登记引用与分类，旅程内容在 source 指向的文件里。
+#: 7 月旅程（test/journeys/）也是跑数输入——清单引用它们时一并进 `FREEZE_INPUTS`。
+MANIFEST = ROOT / "test/eval_corpus/v2_runtime/core/manifest.yaml"
+FAMILIES = {f"F{n:02d}" for n in range(1, 13)}
+LANES = ("read_only", "synthetic_writes", "simulated_vehicle")
+#: 7 月旅程在 v2 运行器里认的原语：一轮只有 `say` + `expect`，前置只有 `setup.location`；别的记进 `unsupported`，跑数时记「未测」
+_JOURNEY_TURN_KEYS = {"say", "expect"}
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
 # Scene admission is currently Agent-wide (including media/navigation/profile scopes).
 # Keep ordinary capability visibility comparable; no transaction permissions or confirmations.
@@ -63,19 +72,86 @@ def load_cases(corpus: Path = CORPUS) -> list[dict]:
     if len(set(ids)) != len(ids) or not cases:
         raise ValueError("duplicate/empty cases")
     for case in cases:
-        if not case.get("family") or not case.get("turns"):
-            raise ValueError("case requires family and turns")
-        for turn in case["turns"]:
-            if turn.get("confirm") or turn.get("is_confirmation"):
-                raise ValueError("baseline must never confirm")
-            if turn.get("cancel_pending") and turn["say"] != "取消":
-                raise ValueError("cleanup must use an exact addressed cancellation")
-            if re.fullmatch(r"(?:确认|好的|可以|同意|执行)[。！!\s]*", turn["say"]):
-                raise ValueError("affirmation is not allowed in this baseline")
+        validate_case(case)
     return cases
 
 
-def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS) -> dict:
+def validate_case(case: dict) -> None:
+    """冻结语料的静态护栏（v2 语料与清单引用的 7 月旅程同一份）：从不确认、取消只说「取消」、不许肯定答复。"""
+    if not case.get("family") or not case.get("turns"):
+        raise ValueError("case requires family and turns")
+    for turn in case["turns"]:
+        if turn.get("confirm") or turn.get("is_confirmation"):
+            raise ValueError("baseline must never confirm")
+        if turn.get("cancel_pending") and turn["say"] != "取消":
+            raise ValueError("cleanup must use an exact addressed cancellation")
+        if re.fullmatch(r"(?:确认|好的|可以|同意|执行)[。！!\s]*", str(turn.get("say") or "")):
+            raise ValueError("affirmation is not allowed in this baseline")
+
+
+def _adapt_journey(journey: dict) -> dict:
+    """7 月旅程 → v2 case：一轮 `say` + `expect`（判据键由 `scripts.journey_expect` 认），前置位置覆盖这次会话的当前位置；
+    其余原语（确认、按钮、等推送、车态前置、收尾……）记进 `unsupported`，跑数时整条记「未测」。`requires` 只记依赖的外部服务。"""
+    setup = journey.get("setup") or {}
+    unsupported = {f"setup.{k}" for k in setup if k != "location"}
+    unsupported |= {k for k in ("final_vehicle", "cleanup") if journey.get(k)}
+    for turn in journey.get("turns") or []:
+        unsupported |= {k for k in turn if k not in _JOURNEY_TURN_KEYS}
+        for branch in [turn.get("expect") or {}, *((turn.get("expect") or {}).get("any_of") or [])]:
+            if "process_min" in branch:
+                unsupported.add("expect.process_min")      # v2 收发层不采过程区事件
+    case = {"id": journey["id"], "family": "", "source_kind": "journey",
+            "turns": [{"say": str(t["say"]), "expect": dict(t.get("expect") or {})}
+                      for t in journey.get("turns") or [] if "say" in t],
+            "providers": sorted({p for r in journey.get("requires") or [] for p in str(r).split("|")})}
+    location = setup.get("location")
+    if isinstance(location, dict) and "lat" in location and "lng" in location:
+        case["location"] = {"lat": str(location["lat"]), "lng": str(location["lng"])}
+    if unsupported:
+        case["unsupported"] = sorted(unsupported)
+    return case
+
+
+def load_manifest(path: Path = MANIFEST) -> list[dict]:
+    """按清单逐条取旅程：来源是 v2 语料（原 schema）或 7 月旅程（经 `_adapt_journey`），分类以清单为准。"""
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if data.get("version") != 1 or data.get("split") != "regression":
+        raise ValueError("expected versioned regression manifest")
+    entries = data.get("journeys") or []
+    ids = [e.get("id") for e in entries]
+    if not entries or len(set(ids)) != len(ids):
+        raise ValueError("duplicate/empty journeys")
+    test_root = (ROOT / "test").resolve()
+    docs: dict[Path, dict] = {}
+    cases = []
+    for entry in entries:
+        if entry.get("family") not in FAMILIES or entry.get("lane") not in LANES:
+            raise ValueError("journey requires a known family and lane")
+        source = (test_root / str(entry.get("source") or "")).resolve()
+        if test_root not in source.parents or not source.is_file():
+            raise ValueError("journey source must be a file under test/")
+        doc = docs.setdefault(source, yaml.safe_load(source.read_text(encoding="utf-8")))
+        if "cases" in doc:
+            found = [c for c in doc["cases"] if c.get("id") == entry["id"]]
+            case = json.loads(json.dumps(found[0], ensure_ascii=False)) if len(found) == 1 else None
+            if case is not None:
+                case["source_family"] = case.get("family", "")
+        elif "journeys" in doc:
+            found = [j for j in doc["journeys"] if j.get("id") == entry["id"]]
+            case = _adapt_journey(found[0]) if len(found) == 1 else None
+        else:
+            raise ValueError("unknown journey source schema")
+        if case is None:
+            raise ValueError("journey id not found exactly once in its source")
+        case.update(family=entry["family"], lane=entry["lane"], source=str(entry["source"]),
+                    safety=str(entry.get("safety") or ""), known_red=str(entry.get("known_red") or ""))
+        validate_case(case)
+        cases.append(case)
+    return cases
+
+
+def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS, loader=None) -> dict:
+    loader = loader or load_cases
     if not re.fullmatch(r"[a-f0-9]{40}", expected_sha):
         raise ValueError("expected release must be a full SHA")
     if _git("status", "--porcelain", "--", *FREEZE_INPUTS):
@@ -93,17 +169,17 @@ def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS) 
         "apk": {"status": "not_measured"},
         "runtime_config": {"status": "not_attested", "note": "no secrets exported"},
         "split": "regression", "corpus_path": relative_corpus,
-        "corpus_sha256": digest(load_cases(corpus)),
+        "corpus_sha256": digest(loader(corpus)),
         "committed_asset_tree_oids": trees, "assets_sha256": digest(trees),
         "private_manual_package": "approved hash in pinned manual_catalog; no package exported",
-        "scopes": list(SCOPES), "vehicle": "v1", "cases": len(load_cases(corpus)),
+        "scopes": list(SCOPES), "vehicle": "v1", "cases": len(loader(corpus)),
         "metrics": ["no_actions", "vehicle_unchanged", "manual_dispatched",
                     "manual_presented", "pending_addressed", "answer_terms",
                     "request_to_final_ms", "actual_model", "provider_usage"],
     }
 
 
-def judge(expect: dict, obs: dict, detail: dict, *, query: str = "") -> dict:
+def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: float = 0.0) -> dict:
     """Separate planning/dispatch from presentation; a spoken hint is not a card."""
     spans = detail.get("spans") or []
     attrs = [s.get("attrs") or {} for s in spans if isinstance(s, dict)]
@@ -145,8 +221,22 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "") -> dict:
     for asset_id in expect.get("image_assets") or []:
         if asset_id not in images:
             failures.append("manual_image_missing:" + asset_id)
+    # 7 月旅程的判据键（`scripts.journey_expect` 唯一实现）；确认挂起仍由上面那条判（它还要求带 operation_id，更严），不重复报
+    shared = {k: v for k, v in expect.items() if k in JOURNEY_EXPECT_KEYS and k != "need_confirm"}
+    if shared:
+        view = _JourneyView({"speech": obs.get("speech") or "", "ui_card": card,
+                             "need_confirm": bool(obs.get("need_confirm")), "follow_up": obs.get("follow_up") or ""},
+                            list(obs.get("actions") or []), elapsed_s)
+        failures.extend("journey:" + f for f in journey_check(shared, view, True, ()))
     return {"failures": failures, "manual_dispatched": manual_dispatched,
             "manual_presented": has_manual(card), "intents": sorted(intents - {""})}
+
+
+class _JourneyView:
+    """喂给 `journey_check` 的一轮观测：v2 收发层不采过程区事件；车况判据只在模拟车车道，这里不给读取函数。"""
+
+    def __init__(self, final: dict, actions: list, elapsed: float) -> None:
+        self.final, self.actions, self.process_events, self.elapsed = final, actions, [], elapsed
 
 
 SOURCE_EVIDENCE = ROOT / "agents/manual_rag/resources/source_evidence.yaml"
@@ -221,10 +311,12 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                 continue
             trace = uuid.uuid4().hex
             start = time.monotonic()
+            meta = {"llm_provider": manifest["chat"]["provider"], "llm_model": manifest["chat"]["model"]}
+            if case.get("location"):            # 7 月旅程的 setup.location：这次会话的当前位置
+                meta.update(current_lat=case["location"]["lat"], current_lng=case["location"]["lng"])
             obs = await wire._one_turn(ws, session, turn["say"], trace_id=trace,
                                        operation_id=pending if turn.get("cancel_pending") else "",
-                                       meta_overrides={"llm_provider": manifest["chat"]["provider"],
-                                                       "llm_model": manifest["chat"]["model"]})
+                                       meta_overrides=meta)
             elapsed = (time.monotonic()-start)*1000
             detail = await audit._fetch_detail(collector, trace)
             calls = detail.get("llm_calls") or []
@@ -239,7 +331,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                 pending = obs["operation_id"]
             if pending in (obs.get("closed_operation_ids") or []):
                 pending = ""
-            verdict = judge(turn.get("expect") or {}, obs, detail, query=turn["say"])
+            verdict = judge(turn.get("expect") or {}, obs, detail, query=turn["say"], elapsed_s=elapsed / 1000)
             if turn.get("cancel_pending") and pending:
                 verdict["failures"].append("pending_not_closed")
             after = await audit._settled_vehicle_state(collector, required_keys=set(baseline.value),
@@ -277,10 +369,46 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
             "session": session, "rows": rows, "open_operation": bool(pending), "stop": bool(pending)}
 
 
+def journey_summary(runs: list[dict], repeat: int) -> dict:
+    """按旅程汇总（设计 §2）：一次运行全部轮次无业务失败、无证据错误、没被叫停才算过；达标 = 每一次都过。"""
+    journeys: dict = {}
+    for c in runs:
+        ok = not c["stop"] and all(not r["verdict"]["failures"] and not r["evidence_errors"]
+                                   for r in c["rows"] if not r.get("skipped"))
+        j = journeys.setdefault(c["id"], {"family": c["family"], "runs": 0, "passes": 0})
+        j["runs"] += 1
+        j["passes"] += int(ok)
+    return {"journeys": journeys,
+            "journeys_all_pass": sum(1 for j in journeys.values() if j["runs"] == repeat and j["passes"] == repeat)}
+
+
+def _inputs_unchanged(runner_sha: str) -> bool:
+    """跑数期间输入没变：跑数输入在开跑提交与 HEAD 之间没有差异、也没有未提交改动。共享 main 上别的会话提交别处不算变化。"""
+    if _git("status", "--porcelain", "--", *FREEZE_INPUTS):
+        return False
+    return not _git("diff", "--name-only", runner_sha, "HEAD", "--", *FREEZE_INPUTS)
+
+
+def _skip_reason(case: dict, lanes: set, skip_providers: set) -> str:
+    """这条旅程这次为什么不跑（空 = 跑）：车道没开、用到 v2 运行器不支持的原语、依赖的外部服务被点名跳过。都记「未测」。"""
+    if case.get("lane", "read_only") not in lanes:
+        return "lane:" + case.get("lane", "")
+    if case.get("unsupported"):
+        return "unsupported:" + ",".join(case["unsupported"])
+    blocked = sorted(set(case.get("providers") or []) & skip_providers)
+    return ("provider:" + ",".join(blocked)) if blocked else ""
+
+
 async def run(args):
-    corpus = Path(getattr(args, "corpus", CORPUS)).resolve()
-    cases = load_cases(corpus)
-    if corpus != CORPUS.resolve():
+    manifest_path = getattr(args, "manifest", None)
+    corpus = Path(manifest_path or getattr(args, "corpus", CORPUS)).resolve()
+    loader = load_manifest if manifest_path else load_cases
+    cases = loader(corpus)
+    lanes = set(getattr(args, "lane", None) or ["read_only"])
+    if lanes - {"read_only"}:
+        raise ValueError("write lanes need per-batch authorization and are not implemented yet")
+    skip_providers = {x for x in str(getattr(args, "skip_providers", "") or "").split(",") if x}
+    if not manifest_path and corpus != CORPUS.resolve():
         from scripts.probe_manual_rag_full_coverage import validate_live_query_safety
         validate_live_query_safety([
             {"id": case["id"], "query": turn["say"]}
@@ -291,9 +419,12 @@ async def run(args):
         cases = [c for c in cases if c["id"] in wanted]
         if {c["id"] for c in cases} != wanted:
             raise ValueError("unknown case ID")
-    manifest = freeze(args.expected_sha, args.provider, args.model, corpus)
+    skipped = [{"id": c["id"], "family": c["family"], "reason": r}
+               for c in cases for r in [_skip_reason(c, lanes, skip_providers)] if r]
+    cases = [c for c in cases if not _skip_reason(c, lanes, skip_providers)]
+    manifest = freeze(args.expected_sha, args.provider, args.model, corpus, loader=loader)
     ws, collector, secret = identity._endpoints()
-    payload = {"manifest": manifest, "selected_ids": [c["id"] for c in cases],
+    payload = {"manifest": manifest, "selected_ids": [c["id"] for c in cases], "skipped": skipped,
                "repeat": args.repeat, "runs": [], "release_start": audit.cloud_release_snapshot(args.expected_sha)}
     out = Path(args.out)
     if out.exists():
@@ -319,8 +450,7 @@ async def run(args):
         payload["release_end"] = audit.cloud_release_snapshot(args.expected_sha)
         payload["continuity_errors"] = audit.validate_release_continuity(
             payload["release_start"], payload["release_end"], args.expected_sha)
-        payload["runner_unchanged"] = (_git("rev-parse", "HEAD") == manifest["runner_sha"]
-                                        and not _git("status", "--porcelain"))
+        payload["runner_unchanged"] = _inputs_unchanged(manifest["runner_sha"])
         rows = [r for c in payload["runs"] for r in c["rows"] if not r.get("skipped")]
         payload["summary"] = {
             "complete_cases": len(payload["runs"]), "expected_cases": len(cases)*args.repeat,
@@ -328,7 +458,9 @@ async def run(args):
             "business_failures": sum(bool(r["verdict"]["failures"]) for r in rows),
             "evidence_failures": sum(bool(r["evidence_errors"]) for r in rows),
             "open_operations": sum(c["open_operation"] for c in payload["runs"]),
+            "skipped_journeys": len(payload.get("skipped") or []),
         }
+        payload["summary"].update(journey_summary(payload["runs"], args.repeat))
         _write(out, payload)
     return 2 if payload["continuity_errors"] or not payload["runner_unchanged"] else 0
 
@@ -343,12 +475,19 @@ def main():
     p.add_argument("--ids", default="")
     p.add_argument("--corpus", type=Path, default=CORPUS,
                    help="committed regression corpus; custom corpora must pass the read-only question preflight")
+    p.add_argument("--manifest", type=Path, default=None,
+                   help="core journey manifest (docs/design/2026-10-09-v2-core-journey-freeze.md); overrides --corpus")
+    p.add_argument("--lane", action="append", choices=LANES,
+                   help="lanes to run (default read_only; write lanes need per-batch authorization)")
+    p.add_argument("--skip-providers", default="",
+                   help="comma-separated provider keys whose journeys are recorded as not measured (e.g. AMAP_KEY)")
     p.add_argument("--out", default=".artifacts/v2-runtime/baseline.json")
     args = p.parse_args()
     if args.repeat < 1 or args.repeat > 5:
         p.error("repeat must be 1..5")
     if args.dry_run:
-        print(json.dumps({"cases": load_cases(args.corpus), "scopes": SCOPES}, ensure_ascii=False, indent=2))
+        cases = load_manifest(args.manifest) if args.manifest else load_cases(args.corpus)
+        print(json.dumps({"cases": cases, "scopes": SCOPES}, ensure_ascii=False, indent=2))
         return 0
     try:
         return asyncio.run(run(args))

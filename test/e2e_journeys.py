@@ -54,6 +54,8 @@ from scripts.e2e_contract import (
     strict_json_loads,
     strict_yaml_load,
 )
+# 一轮判定的唯一实现（与 v2 冻结运行器共用，docs/design/2026-10-09-v2-core-journey-freeze.md §5）；这里只接上本地栈的车况读取
+from scripts.journey_expect import EXPECT_KEYS, card_types, check_expect as _shared_check_expect
 from support.e2e import CaseRecorder, collector_headers
 
 try:
@@ -93,10 +95,6 @@ JOURNEY_KEYS = {"id", "title", "level", "lane", "tags", "requires", "retry",
                 "notes"}
 TURN_KEYS = {"say", "press", "confirm", "cancel", "wait_push", "env", "sleep",
              "expect", "skip_journey_if_speech_any", "new_session", "name"}
-EXPECT_KEYS = {"speech_any", "speech_all", "speech_not", "cards_any",
-               "card_contains", "need_confirm", "follow_up_any", "action",
-               "action_absent", "no_duplicate_action", "process_min",
-               "latency_s", "vehicle", "any_of"}
 PRESS_KEYS = {"button", "text", "from"}
 WAIT_PUSH_KEYS = {"timeout_s", "speech_any", "card_any", "source"}
 SETUP_KEYS = {"vehicle", "say", "location", "docker_stop"}
@@ -264,18 +262,6 @@ def mark_badcase(trace_id: str, note: str) -> None:
                   {"badcase": True, "note": note[:200]})
     except Exception:
         pass  # 观测面不可达不影响测试结论
-
-
-def card_types(card: dict | None) -> list[str]:
-    """收集卡类型，含 card_group 嵌套（items/cards 两种键防御）。"""
-    if not card:
-        return []
-    out = [str(card.get("type", ""))]
-    for key in ("items", "cards"):
-        for sub in card.get(key) or []:
-            if isinstance(sub, dict) and sub.get("type"):
-                out.append(str(sub["type"]))
-    return out
 
 
 def card_buttons(card: dict | None) -> list[dict]:
@@ -457,80 +443,8 @@ async def run_turn(text: str, session: str, meta: dict,
 
 def check_expect(expect: dict, out: TurnOutcome, enforce_latency: bool,
                  default_not: list[str]) -> list[str]:
-    fails: list[str] = []
-    speech = str(out.final.get("speech", "") or "")
-    ctypes = card_types(out.final.get("ui_card"))
-    card_json = json.dumps(out.final.get("ui_card") or {}, ensure_ascii=False)
-
-    def one(exp: dict) -> list[str]:
-        f: list[str] = []
-        if "speech_any" in exp and not any(str(k) in speech for k in exp["speech_any"]):
-            f.append(f"speech_any 未命中 {exp['speech_any']} | speech={speech[:60]}")
-        if "speech_all" in exp:
-            miss = [k for k in exp["speech_all"] if str(k) not in speech]
-            if miss:
-                f.append(f"speech_all 缺 {miss} | speech={speech[:60]}")
-        for k in exp.get("speech_not", []):
-            if str(k) in speech:
-                f.append(f"speech_not 命中禁词 {k!r} | speech={speech[:60]}")
-        if "cards_any" in exp and not any(t in exp["cards_any"] for t in ctypes):
-            f.append(f"cards_any 未命中 {exp['cards_any']} | 实际={ctypes}")
-        if "card_contains" in exp:
-            miss = [k for k in exp["card_contains"] if str(k) not in card_json]
-            if miss:
-                f.append(f"card_contains 缺 {miss}")
-        if "need_confirm" in exp and bool(out.final.get("need_confirm")) != bool(exp["need_confirm"]):
-            f.append(f"need_confirm={out.final.get('need_confirm')} 期望 {exp['need_confirm']}")
-        if "follow_up_any" in exp:
-            fu = str(out.final.get("follow_up", "") or "")
-            if not any(str(k) in fu for k in exp["follow_up_any"]):
-                f.append(f"follow_up_any 未命中 {exp['follow_up_any']} | {fu[:40]}")
-        if "action" in exp:
-            specs = exp["action"] if isinstance(exp["action"], list) else [exp["action"]]
-            for spec in specs:
-                hit = None
-                for a in out.actions:
-                    if str(a.get("type", "")) != str(spec.get("type", "")):
-                        continue
-                    payload = a.get("payload") or {}
-                    if any(k not in payload for k in spec.get("payload_has", [])):
-                        continue
-                    pm = spec.get("payload_match", {})
-                    if any(str(pm[k]) not in json.dumps(payload.get(k, ""), ensure_ascii=False)
-                           for k in pm):
-                        continue
-                    hit = a
-                    break
-                if hit is None:
-                    f.append(f"action 未命中 {spec} | 实际类型={[a.get('type') for a in out.actions]}")
-        for atype in exp.get("action_absent", []):
-            if any(a.get("type") == atype for a in out.actions):
-                f.append(f"不该出现的动作 {atype} 出现了")
-        for atype in exp.get("no_duplicate_action", []):
-            n = sum(1 for a in out.actions if a.get("type") == atype)
-            if n > 1:
-                f.append(f"动作 {atype} 重复 {n} 次")
-        if "process_min" in exp and len(out.process_events) < int(exp["process_min"]):
-            f.append(f"过程区事件 {len(out.process_events)} < {exp['process_min']}")
-        if "latency_s" in exp and enforce_latency and out.elapsed > float(exp["latency_s"]):
-            f.append(f"时延 {out.elapsed:.1f}s 超预算 {exp['latency_s']}s")
-        if "vehicle" in exp:
-            st = vehicle_state()
-            for k, v in exp["vehicle"].items():
-                if st.get(k) != v:
-                    f.append(f"车况 {k}={st.get(k)!r} 期望 {v!r}")
-        if "any_of" in exp:
-            subs = [one(s) for s in exp["any_of"]]
-            if all(subs):
-                f.append("any_of 全部分支未满足: " + " || ".join(
-                    ";".join(s)[:80] for s in subs))
-        return f
-
-    fails.extend(one(expect))
-    for k in default_not:                     # 全局红线独立于用例 expect
-        if k in speech:
-            fails.append(f"全局禁词命中 {k!r} | speech={speech[:60]}")
-    return fails
+    """判据唯一实现在 `scripts.journey_expect`；本地栈的车况由 `vehicle_state()` 读（只在判据写了 `vehicle` 时才读）。"""
+    return _shared_check_expect(expect, out, enforce_latency, default_not, vehicle_reader=vehicle_state)
 
 
 # ───────────────────────── 旅程执行 ─────────────────────────
