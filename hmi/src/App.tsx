@@ -960,6 +960,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       </aside>
       <div className="au-stage-scrim" aria-hidden />
       <StatusBar connection={connectionState} onOpenSettings={() => setShowSettings(true)}
+        hasDemoData={seedMessages !== undefined}
         privacyMic={composerActivity.mic || !!handsFreeRef.current?.enabled}
         privacyCloud={composerActivity.cloud || handsFreeOrb === 'listening'} cameraFrameAt={cameraFrameAt} />
       <main className="au-main">

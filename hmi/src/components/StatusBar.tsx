@@ -10,12 +10,14 @@ export function StatusBar({
   connection,
   onOpenSettings,
   privacyMic = false, privacyCloud = false, cameraFrameAt = 0,
+  hasDemoData = false,
 }: {
   connection: string
   onOpenSettings: () => void
   privacyMic?: boolean
   privacyCloud?: boolean
   cameraFrameAt?: number
+  hasDemoData?: boolean
 }) {
   const { settings, update } = useSettings()
   const { driving, setDriving } = useDriving()
@@ -35,6 +37,7 @@ export function StatusBar({
     <header className="au-statusbar">
       <div className="au-sb-brand">
         <span className="au-sb-name">{settings.assistantName}</span>
+        {hasDemoData && <span className="au-demo-badge" title="本页包含本地视觉夹具">含示例数据</span>}
         <span className={'au-conn ' + connection} role="status" aria-label={connectionLabel} title={connectionLabel}>
           <span className="au-conn-dot" />
           {connection !== 'open' && <span>{connectionLabel}</span>}

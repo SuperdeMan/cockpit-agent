@@ -23,6 +23,7 @@
 }
 .au-sb-brand, .au-sb-actions { display: flex; align-items: center; gap: var(--au-space-16); }
 .au-sb-brand { gap: var(--au-space-12); }
+.au-demo-badge { padding: 6px 16px; border-radius: var(--au-r-full); background: var(--au-warn-soft); color: var(--au-warn); font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); white-space: nowrap; }
 .au-sb-name { font-size: var(--au-type-title-size); line-height: var(--au-type-title-line); font-weight: 700; }
 .au-conn { display: flex; align-items: center; gap: 12px; color: var(--au-text-2); font-size: var(--au-type-caption-size); }
 .au-conn-dot { width: 12px; height: 12px; border-radius: var(--au-r-full); background: var(--au-online); }
