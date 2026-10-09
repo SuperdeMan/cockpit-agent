@@ -1,7 +1,7 @@
 # Observability Dashboard
 
 独立于 HMI 的座舱 Agent 排查与演示工作台，React 18 + TypeScript + Vite。Visual v2 的设计来源、分批实施与验证记录见
-[实施计划](../docs/design/2026-10-09-dashboard-visual-v2-implementation-plan.md)。本次代码改动尚未部署，云端仍兼容旧 collector 接口。
+[实施计划](../docs/design/2026-10-09-dashboard-visual-v2-implementation-plan.md)。本批已获授权发布；当前 release 与 status/verify 统一看 [QA 交接 §2](../docs/reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。新 collector 仍兼容旧数组接口。
 
 - **轮次**：扁平列表、筛选与会话分组；trace/前缀不受默认时间窗限制。检查器聚合结局、事实、规划、LLM、日志与原始记录。
 - **实况**：指令台、本句共轴链路、历史摘要、只读车况、模拟环境、Agent 六态。完成只表示请求取得最终结果；车身变化证据来自 `val.execute.changes`。

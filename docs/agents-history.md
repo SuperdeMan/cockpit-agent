@@ -10886,3 +10886,11 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   - `ff9bce82` verify `20261009T105656Z-ff9bce8.json`，P06 3/5（派到工具的 3/3 答对，另 2 次误派天气）、R07 5/5，真实用户原句答对。
 - 两次精确 SHA 全量：11278 / 35（`2464356a`）、11339 / 35（`ff9bce82`），五道门禁通过；CI 除 mobile 外全绿（mobile 自 `81a133ba` 红，另一工作流）。
 - 顺带读出：Jev 自 10-09 起全部 451（[Jev §13](design/2026-10-04-jev-decide-integration.md)）。
+
+## 2026-10-09：Dashboard Visual v2 授权推送、部署与独立验证
+
+- 用户明确授权后提交并推送本批；发布代码 `72d30457d9bbb68e6442143b47fc8b923f6397fb`。未包含另一个任务的 Android 实施记录。
+- 发布前补 dashboard Docker 镜像的仓库相对布局与三份共享图标数据；实际导入闭包及两个负控通过，避免“HTML健康但应用缺模块”。
+- clean 隔离工作树 dry-run 无阻断，26 个镜像完成构建；独立 status/verify 与线上只读接口、资源、浏览器检查通过。精确 release、provider/model、artifact、容量只维护 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)，本批详情见 [实施计划 §9.5](design/2026-10-09-dashboard-visual-v2-implementation-plan.md#95-2026-10-09-授权发布)。
+- 线上静态资源按实际发布归档逐字节核对，并再绑 Git blob：两份字体一致，SVG 仅因 Git archive 的 CRLF/LF 转换而字节不同，文本与 Git 一致。
+- 发布后文档回写单独提交，不把文档 HEAD 当生产 SHA；项目 QA 仍非全绿。

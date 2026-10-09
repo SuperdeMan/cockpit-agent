@@ -1,6 +1,6 @@
 # 座舱 Agent 可观测台视觉 v2 · 实施计划
 
-- **状态**：B1–B6 已实施并完成本地验证（2026-10-09）；用户已授权提交、推送与部署。发布进度见 §9.5，历史本地证据见 §9.4。
+- **状态**：B1–B6 已提交、推送并完成授权部署及独立验证（2026-10-09）。发布记录见 §9.5，当前 release/status/verify 统一看 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 - **依据**：
   - [设计 Brief](2026-10-09-dashboard-visual-redesign-brief.md)（已批准，§16 九项全部按推荐；检查点① 用户已确认）；
   - Figma「座舱 Agent 可观测台 · Visual v2」`wmGLdb9ZAU5AT1RtSlSDT2`。09 Handoff 页有 token ↔ CSS（H-01）、组件 ↔ 代码（H-02）、差异清单 D（H-03）、接口依赖 C（H-04）。
@@ -221,7 +221,7 @@ M1–M6 期间对 brief 做了以下细化，实施按这一版：
 - C5 已补当前 collector 真实返回的四个字段；C10 已实现。C8 采用读态 `error → err` 兼容，**SDK 写入方未改**，历史行不重写。
 - `zero_usage_calls` 只计 `status=ok` 且输入/输出 tokens 均为 0 的调用；旧接口缺 C9 时显示“未上报分组”，不把分组数冒充调用数。
 - AST 对账确认 `_SCHEMA` 及 `insert_turn/insert_span/insert_llm/insert_log/set_badcase/set_gold/cleanup/_ensure_column` 与基线一致；无表结构变更或迁移。
-- 2026-10-09 只读核对当前云端：`/api/meta` 为 404，搜索仍返回旧数组，详情仍有 `llm.call.meta`；C5 字段已存在。前端对应降级均保留。本次未发真实指令、未重放真实轮次、未写模拟环境。
+- 2026-10-09 发布前只读核对：`/api/meta` 为 404，搜索仍返回旧数组，详情仍有 `llm.call.meta`；C5 字段已存在。前端对应降级均保留。本地实施阶段未发真实指令、未重放真实轮次、未写模拟环境；发布后检查见 §9.5。
 - 未归属调用、模型用量缺报等上游数据问题仍独立，不因界面改造而关闭。
 
 ### 9.3 设计落地说明
@@ -234,7 +234,7 @@ M1–M6 期间对 brief 做了以下细化，实施按这一版：
 
 ### 9.4 验证与复现
 
-本地验证基线为 `2464356a0f379d67b95a2a609c3bfe7843129e00` **加本次未提交改动**，不是 release SHA。
+最终本地浏览器验证记录的基线为 `ff9bce828fb58459b8979f2ba8263f746c4bd250` **加本次未提交改动**，不是 release SHA；实施期间 main 从 `2464356a` 前进，按最终 artifact 的 `baseSha` 和输入摘要登记。
 浏览器证据另绑定 119 个输入文件的 SHA-256 摘要：`b559c140f0186c3ab90b4d9758e14aad9ffa5a8f13c0e375fe786d102c030680`；运行前后摘要相同。
 
 | 检查 | 结果 / artifact |
@@ -254,11 +254,16 @@ M1–M6 期间对 brief 做了以下细化，实施按这一版：
 node dashboard/visual-qa.mjs --interactions components components:1920:presentation turns turns:1440 turns:2560 turns:1280 live live:1440 live-done:1920:presentation live-running live-pending live-disabled:1440 live-failed live-unreachable logs logs:1440 usage usage:1440 token-first token-invalid token-not-configured token-unreachable empty error content-off disconnected missing legacy
 ```
 
-此结论限本地前端与 collector 查询，不替代真实 Provider 旅程、云端发布或整项目 QA。后续如需上线，仍按项目规则单独批准 push 与部署。
+上述结论限本地前端与 collector 查询，不替代真实 Provider 旅程或整项目 QA。后续授权发布的独立证据见 §9.5。
 
 ### 9.5 2026-10-09 授权发布
 
 - 用户已明确授权“提交推送并部署”。本轮只提交 dashboard、collector 查询及配套文档；不包含其他任务的 Android 实施记录改动。
 - 发布前发现原 dashboard 镜像把源码平铺在 `/app`，且未包含共享图标，无法解析本批新增的跨目录导入。应用 Dockerfile 改为 `/app/dashboard`，只复制三份受控的 HMI/mobile 图标数据，保持仓库相对布局；不改 Compose 或运行配置。
 - `imageLayout.test.ts` 从实际运行入口遍历相对导入，按 Docker COPY/WORKDIR 计算镜像位置。3 条通过，包括去掉共享文件复制、退回旧工作目录的两条反向验证。
-- 精确提交、部署与独立 status/verify 结果将在发布完成后登记；旧 §9.4 读数不转借给新 release。
+- 发布代码提交 `72d30457d9bbb68e6442143b47fc8b923f6397fb` 已推送 `origin/main`；本轮部署前线上为 `ff9bce828fb58459b8979f2ba8263f746c4bd250`。干净隔离工作树只复制 `dev-stack.local`，未复制 `.env`。dry-run 无阻断，沿用已有基础设施批准锚；本轮未申请新的 Compose、CI/CD、schema 或主机配置变更。
+- 精确代码提交重新验证：dashboard **18 文件 / 156 passed**、TypeScript/Vite build 通过；collector **105 passed / 1 skipped / 1 warning**，skip/warning 原因同 §9.4。日志在 `.artifacts/dashboard-visual-v2/release-72d30457-{tests,build,collector-tests}.log`，不沿用 §9.4 的未提交树结果。
+- 26 个镜像完成构建，独立 status 与 verify 通过；精确运行 SHA、验收 artifact、provider/model 与容量只登记在 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)，不把 `submitted` 当发布验收。
+- 线上专项只读检查前后均锁定上述 release：`/api/meta` 无令牌 401、带令牌返回采集/保留/调试和查询功能；分页 envelope 与默认数组两种响应均正确；详情无伪 span、`error` 读态兼容正常；汇总含两项 C9 计数；三份共享图标模块和渲染入口可访问。字体与标识的线上字节和实际发布 `source.tar` 一致；SVG 的 Git blob 与归档只差 CRLF/LF（已额外验证文本一致），两份字体与 Git blob 也逐字节一致。
+- 经线上服务跑匿名令牌门和离线轮次的深/浅 **4 个浏览器组合**通过，零运行异常/外部数据请求，确认容器内模块依赖完整。证据：`.artifacts/dashboard-visual-v2/release/online-checks.json`、`online-browser-72d30457/`。不重放真实轮次，不设置模拟环境。
+- 部署完成后的状态回写为独立纯文档提交；允许 `origin/main` 领先实际 release，后续不得将文档提交的 SHA 当成运行版本。
