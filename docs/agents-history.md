@@ -10894,3 +10894,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - clean 隔离工作树 dry-run 无阻断，26 个镜像完成构建；独立 status/verify 与线上只读接口、资源、浏览器检查通过。精确 release、provider/model、artifact、容量只维护 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)，本批详情见 [实施计划 §9.5](design/2026-10-09-dashboard-visual-v2-implementation-plan.md#95-2026-10-09-授权发布)。
 - 线上静态资源按实际发布归档逐字节核对，并再绑 Git blob：两份字体一致，SVG 仅因 Git archive 的 CRLF/LF 转换而字节不同，文本与 Git 一致。
 - 发布后文档回写单独提交，不把文档 HEAD 当生产 SHA；项目 QA 仍非全绿。
+
+## 2026-10-09：Dashboard 日志展开右侧空列修复
+
+- 用户反馈全局日志展开后右半边留白；1440px 浏览器复现消息列 1054 → 527px，原因是隐藏 trace 列后详情仍跨 5 列。`b2222c63` 用同一响应式状态控制实际列与详情跨度，展开中缩放窗口也保持一致，窄屏仍有 trace 入口。
+- 该提交 dashboard 156 tests、build 和本地 18 个浏览器组合 / 108 次布局检查通过；旧实现的展开断言已证明会失败。
+- 延续本轮授权完成推送、部署及独立验证；线上日志夹具 8 组合 / 48 次检查通过，前后运行版本固定。详细修复见 [实施计划 §9.6](design/2026-10-09-dashboard-visual-v2-implementation-plan.md#96-2026-10-09-日志展开空列修复)，精确发布与验证记录只维护 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。

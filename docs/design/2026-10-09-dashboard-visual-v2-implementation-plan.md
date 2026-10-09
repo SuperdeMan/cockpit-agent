@@ -267,3 +267,11 @@ node dashboard/visual-qa.mjs --interactions components components:1920:presentat
 - 线上专项只读检查前后均锁定上述 release：`/api/meta` 无令牌 401、带令牌返回采集/保留/调试和查询功能；分页 envelope 与默认数组两种响应均正确；详情无伪 span、`error` 读态兼容正常；汇总含两项 C9 计数；三份共享图标模块和渲染入口可访问。字体与标识的线上字节和实际发布 `source.tar` 一致；SVG 的 Git blob 与归档只差 CRLF/LF（已额外验证文本一致），两份字体与 Git blob 也逐字节一致。
 - 经线上服务跑匿名令牌门和离线轮次的深/浅 **4 个浏览器组合**通过，零运行异常/外部数据请求，确认容器内模块依赖完整。证据：`.artifacts/dashboard-visual-v2/release/online-checks.json`、`online-browser-72d30457/`。不重放真实轮次，不设置模拟环境。
 - 部署完成后的状态回写为独立纯文档提交；允许 `origin/main` 领先实际 release，后续不得将文档提交的 SHA 当成运行版本。
+
+### 9.6 2026-10-09 日志展开空列修复
+
+- 用户反馈全局日志点击展开后右侧出现大片空白。已在 1440px 浏览器复现：窄屏通过 CSS 隐藏 trace 列，但详情仍为 `colSpan=5`，浏览器补出第五列，消息列从 1054px 缩为 527px。展开前后的列宽断言在旧实现上失败，截图保留于 `.artifacts/dashboard-log-expand/before/`。
+- 修复提交 `b2222c634362beeeb0e962ae41823a906498827e`：同一响应式状态控制 colgroup、表头、数据列和详情跨列数；窄屏 trace 入口移入详情。保持详情展开跨越 1680px 断点时也同步更新，不改变日志查询、逐条保留或跟随语义。
+- 该提交的 dashboard **18 文件 / 156 tests** 与 TypeScript/Vite build 通过；浏览器 **18 个组合 / 108 次布局检查**通过，覆盖 1024/1280/1440/1679/1680/1920/2560、深浅主题、工作台/演示尺寸、长文本与 JSON 全文、跨断点缩放，以及暂停/恢复。允许长内容引入竖向滚动条，但不允许多出空列或正文横向溢出。
+- 本地证据：`.artifacts/dashboard-log-expand/release-{tests,build,browser}.log` 和 `release-b2222c63/browser/evidence.json`；后者绑定精确代码提交及源码摘要。沿用本轮“提交推送并部署”授权，发布与线上验收结果登记在 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
+- dry-run 无阻断，独立 status / verify 通过；从线上服务加载离线日志夹具，1440/1679/1680/1920 深浅 **8 个组合 / 48 次布局检查**通过，前后运行版本固定为该提交，空列宽度为 0。证据：`.artifacts/dashboard-log-expand/online-checks.json` 与 `online-b2222c63/browser/`；不读取真实日志正文或执行真实业务写入。

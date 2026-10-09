@@ -1,7 +1,7 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-10-09（Dashboard Visual v2 授权上线并完成独立验证；HMI 与后端历史读数保留原 SHA，QA 活项不因此关闭）
+> 更新时间：2026-10-09（Dashboard 日志展开空列修复已上线并完成独立验证；HMI 与后端历史读数保留原 SHA，QA 活项不因此关闭）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
@@ -27,13 +27,13 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
-| 当前生产 release | `72d30457d9bbb68e6442143b47fc8b923f6397fb`，2026-10-09 上线 Dashboard Visual v2 B1–B6、collector 只读查询补充和共享图标打包；前版 / 回退基线 `ff9bce828fb58459b8979f2ba8263f746c4bd250`。无 schema、Compose、CI/CD 或基础设施变更；发布记录见 [实施计划 §9.5](../design/2026-10-09-dashboard-visual-v2-implementation-plan.md#95-2026-10-09-授权发布) |
-| 当前 status / verify | release = running = `72d30457d9bbb68e6442143b47fc8b923f6397fb`，status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261009T110932Z-72d3045.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`，时间 `2026-10-09T11:09:32.292160Z` |
-| 本轮 Dashboard 线上专项 | 前后 release 固定：运维访问门、`/api/meta`、分页与旧数组、详情投影、C9 计数通过；共享图标依赖可加载，字体/标识字节与实际发布归档一致；线上匿名令牌门与离线轮次深浅 4 组合通过。`.artifacts/dashboard-visual-v2/release/online-checks.json`；未发车控或商户写，不替代业务旅程验收 |
-| 本轮代码与本地证据 | `72d30457`：dashboard 18 文件 / 156 tests、TypeScript/Vite build 通过；collector 105 passed / 1 skipped / 1 warning（可选 OpenTelemetry 缺失、既有 Starlette/httpx 弃用）。只读查询未改 schema/写路径；镜像相对导入闭包含两条反向检查。此前 153 tests / 56 个浏览器组合属于未提交实施树，独立记录在实施计划 §9.4，不转借为 release 的重跑结果 |
+| 当前生产 release | `b2222c634362beeeb0e962ae41823a906498827e`，2026-10-09 修复 Dashboard 日志展开后的右侧空列；前版 / 回退基线 `72d30457d9bbb68e6442143b47fc8b923f6397fb`（Visual v2 B1–B6、collector 只读查询和共享图标打包）。无 schema、Compose、CI/CD 或基础设施变更；修复记录见 [实施计划 §9.6](../design/2026-10-09-dashboard-visual-v2-implementation-plan.md#96-2026-10-09-日志展开空列修复) |
+| 当前 status / verify | release = running = `b2222c634362beeeb0e962ae41823a906498827e`，status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261009T114015Z-b2222c6.json`，`e2e_remote_safe` / `minimax:MiniMax-M3`，时间 `2026-10-09T11:40:15.044625Z` |
+| 本轮 Dashboard 线上专项 | 前后 release 固定为 `b2222c63`：从线上服务加载离线日志夹具，1440/1679/1680/1920 深浅 **8 组合 / 48 次布局检查**通过；正文/JSON 完整、跨断点缩放正常，右侧空列宽度为 0。`.artifacts/dashboard-log-expand/online-checks.json`。前版 `72d30457` 的接口与静态资源专项保留在实施计划 §9.5，不转借为本次重跑结果；不替代真实业务旅程验收 |
+| 本轮代码与本地证据 | `b2222c63`：dashboard **18 文件 / 156 tests**、TypeScript/Vite build、本地 **18 个浏览器组合 / 108 次布局检查**通过；`.artifacts/dashboard-log-expand/release-{tests,build,browser}.log` 与 `release-b2222c63/browser/evidence.json`。旧实现的 1440px 展开断言已实证失败（消息列 1054 → 527px）。collector 105 passed / 1 skipped / 1 warning 仅属前版 `72d30457`，本次没有后端改动、未重跑；原始实施树证据继续独立保留于 §9.4 |
 | HMI 线上资源（历史 6280cdb0） | 5 项只读核对通过：v2 token/设置样式、示例标识组件，以及两份自托管字体；字体字节 SHA-256 与候选 git blob 一致，前后 release 固定。`.artifacts/hmi-visual-v2/release-prep/live-assets.json`；不代替车机触控/GPU/可读性验收 |
 | HMI 本地证据（历史 6280cdb0） | 候选 HMI 严格类型检查 0 错误、388 tests、Vite build 通过；88 组大字卡片、12 组高度布局及对话/舞台/设置回归通过。Android 相关 64 项与 0 类型错误属于 `3e2da487`，其唯一源码注解的 JS 产物未变。没有给本 release 借用旧后端全量/长会话数字；详见 [验证记录](../design/2026-10-09-hmi-visual-v2-validation-release.md) |
-| 本轮容量 | 发布后只读检查可用 `66,186,162,176` 字节（约 61.6 GiB），capacity.level = ok；高于 30 GiB 构建闸及 40 GiB 提示线。发布事务使用已有保留策略，未作主机级配置变更 |
+| 本轮容量 | 发布后只读检查可用 `66,359,808,000` 字节（约 61.8 GiB），capacity.level = ok；高于 30 GiB 构建闸及 40 GiB 提示线。发布事务使用已有保留策略，未作主机级配置变更 |
 | 容量处置（2026-10-09，发布后） | 经用户批准，在本项目事务锁内按 ID 精确删本项目失效构建缓存 1002 条（快照 20.32 GiB），可用 36.54 → 60.26 GiB（`64,699,183,104` 字节）；镜像、容器、release、卷未动，status 5/5 零 warning。根因是 P2 每小时的删除型 prune 让 BuildKit 解绑缓存键、每次发布冷构建；GC 改为按可用空间触发（drone 用户已同意），经用户批准已上线：基础设施锚 `ef2be611` → `abe367c4`（`b9d7819b`，只换策略与 `retention.py`），主机 GC 17:13 CST 更新，systemd 首轮 `not_needed`；其他工作树需基于含 `b9d7819b` 的 main 才能部署。见 [容量治理 §5「P2 修订」](../design/2026-09-28-cloud-host-capacity-governance.md)；`.artifacts/cloud-capacity-20261009/` |
 | 源码与文档起点 | 研究采纳起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；运行时首批版本见下行；后续纯文档提交允许领先 production |
 | 历史 CA2-11 发布 | `b38e5afc1a6683416830199a31f2e7a6adda1816`，2026-10-02 激活：CA2-11，车端写能力 durable、SQLite 操作日志（命名卷 `car-agent-edge-operations`）、`EdgeCall.operation_query`、云端超时恢复；用户逐项批准车端 schema 摘要 `4103bc98…` 与基础设施锚 `3a24c39a…`，无 .env / CI/CD 变更。前一版 `9d6b05099a84eced72da1587b5b9b232b48b3d08`：车端遇到延后条件句（「如果…就…」「低于…时…」）整句上云、不再拆句就地执行，判据与云端规划器共用 `runtime/deferred_condition.py`；无 schema / .env / CI/CD 变更。前一版 `a772e783d10857d210bcb24619dae12def26e454`：CA2-10，声明了 state_match 的步带每次派发的观测关联键、车端只给本次改动的样本打标并回回执，ResultBundle 行新增 `evidence`；proto 只增字段，无 schema / .env / CI/CD 变更。前一版 `56c5519fcd664193e47572cc6cf1a25a33cfc0bb`：CA2-09，确认/补槽/澄清/取消先认领挂起、确认绑定车辆与最终参数、车端比对确认时的挡位；无 schema / .env / CI/CD 变更。前一版 `fec77afb3fa45a6e39e78e6cb0f5bf8ef4307ceb`：CA2-08 切片 D，task_ledger 加 `operation JSONB NOT NULL DEFAULT '{}'`（用户逐项授权，摘要 `55c23829…cdb23`）+ mcp-bridge 两项演示写工具 durable；.env/token/CI/CD 未改，未做数据迁移。前一版 `753c1a4903f1343e8c3853ec835b98c34b841c8f` 为 CA2-08 机制（惰性）+ 发布闸 schema 批准通道。前一版 `01cf47cd4455ea1912a4e61c16fe183e86d4d295`，2026-09-28 21:16 CST 激活；相对 `b095caca` 只改文档与 README（排除 `.md` 后零差异），应用代码与 `b095caca` 相同。`b095caca46a4a4188e2b26927327117c62326acb`（19:27 激活）是 CA2-07 Cloud/Agent 权限视图；再前一版 `55165e50` 为容量治理 P1、应用仍沿用 `7b346c90`。来源签名保持启用，.env/token/schema 未因这两版修改 |
