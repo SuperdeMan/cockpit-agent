@@ -2,7 +2,7 @@
 
 智能座舱演示前端，横屏 1920×1080：全幅情境舞台叠加单一对话面板。通过 WebSocket 连 Edge Gateway 收发指令（文字或语音），展示完整回答、结果证据与多轮确认；通过 HTTP 代理（llm-gateway:50059）做 ASR/TTS 与记忆读取。
 
-> HMI Visual v2（2026-10-09）I1–I6 已实现：深浅与四档字阶、只读行车投影、固定确认条、34 类业务卡片、情境舞台、12 节设置及开发者区。设计依据与逐批证据见 [实施记录](../docs/design/2026-10-08-hmi-visual-v2-implementation-plan.md)。本轮为本地 Vite/隔离浏览器验证，**未部署生产**；不转借旧版真栈验收。地图当前为明确标注的底图不可用示意，车型轮廓为占位；Dashboard 不在本轮范围。
+> HMI Visual v2（2026-10-09）I1–I6 已实现并经授权上线：深浅与四档字阶、只读行车投影、固定确认条、34 类业务卡片、情境舞台、12 节设置及开发者区。设计依据与逐批证据见 [实施记录](../docs/design/2026-10-08-hmi-visual-v2-implementation-plan.md)，当前发布与独立验收见 [QA 交接 §2](../docs/reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。地图当前为明确标注的底图不可用示意，车型轮廓为占位；车机硬件验收仍单列，Dashboard 不在本轮范围。
 
 预览：`?tokens` 字阶、`?icons` 图标、`?demo[=map|cards|info|states|charge|trip|route|results]`、`?card-gallery=N`（44 份样本）、`?settings[=tts|asr|wake|pipeline|occupants|vision|display|location|assistant|agents|memory|developer]`。加 `&theme=light` 切浅色；大字/大触控/手动行车在「显示」中切换。诊断默认隐藏，`?dev` 或「开发者模式」开启。
 

@@ -1,6 +1,7 @@
 # HMI Visual v2 · 后续验证与发布准备
 
 - 日期：2026-10-09。
+- 状态：类型清理、视觉复查、授权部署与独立验收已完成；当前发布数字统一见 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 - 起点：`a49662fa69644566de6527406601cf0d0ac6e644`，I1–I6 已合入，未部署生产。
 - 用户明确要求三项都做：视觉/交互残项复查、22 个既有 TypeScript 错误清理、生产发布准备；实际部署另行授权。
 - 继续保持 `types.ts` 与 `App.tsx.handleEvent` 原文不变，不加 UI 依赖，不改后端语义。共享工作树的其它改动不纳入。
@@ -27,7 +28,7 @@
 
 ## T3 · 生产发布准备
 
-- **dry-run 已通过，待实际部署授权**。部署候选是 T2 的 `6280cdb0ddd8291440e83a90aab693dfc9bcd522`；此后的本文件更新仅是准备记录，不改变发布候选。
+- **部署前 dry-run 已通过，已按用户后续授权执行**。部署候选是 T2 的 `6280cdb0ddd8291440e83a90aab693dfc9bcd522`；此后的本文件更新仅是过程记录，不改变发布候选。
 - 只读 status 与 dry-run 的基线一致：`b64fa70ac27bd565102ccb151b300ea66e5d9f77`，运行 release 一致，5 个入口健康。健康检查不替代业务验收。
 - 干净隔离工作树：`D:/car-agent-hmi-v2-release-wt`，detached 在候选 SHA；仅复制 `dev-stack.local`，未复制 `.env`。主工作树他人的两个未提交文件未动。
 - dry-run 返回 `status=dry_run`、`blocking_changes=[]`；发布锁可用，运行项目/共享脚本/受控模型均就绪。目标与已批准基础设施摘要均为 `ef2be6118821dec9950481759318535fc512905aadaadd5bdf93b320ce2b09d4`，不需要新增基础设施、Compose、schema 或 CI/CD 批准。
@@ -35,7 +36,7 @@
 - dry-run 可用磁盘 **34,459,168,768 字节（约 32.1 GiB）**，高于 30 GiB 构建闸，但仍在 40 GiB 预警线以下；可用内存 **5,663,436,800 字节**。没有手动清理镜像/数据或改保留策略。
 - 产物：隔离树 `.artifacts/releases/6280cdb0ddd8291440e83a90aab693dfc9bcd522/`，包含 `manifest.json`、`source.tar`、`transport.tar` 和 `checksums.sha256`。source SHA-256：`83748a12eba8422149ba3ecb50fe1ea9f7fc3092887adfa1104135d4d341bc5f`；manifest 同时绑定候选与部署基线。
 - 准备记录 JSON：隔离树 `.artifacts/hmi-v2-release-dry-run.json`；便于复核的副本在主树 `.artifacts/hmi-visual-v2/release-prep/`。
-- **未执行 `--apply`**。取得本轮人工授权后，在该干净隔离树运行：
+- 用户于 2026-10-09 明确回复「授权」，随后在该干净隔离树执行以下命令；过程与结果见 T4：
 
 ```powershell
 python scripts/dev_stack.py target show
@@ -44,3 +45,12 @@ python scripts/dev_stack.py deploy --sha 6280cdb0ddd8291440e83a90aab693dfc9bcd52
 
 - apply 会重新 preflight；基线或批准材料漂移时按工具拒绝结果重新准备，不绕过。返回 submitted 后，仍须回主工作树独立执行 `status` / `verify`，记录实际 release 与验收 artifact；不得把本地夹具结果写成生产验收。
 - 回退基线已明确为 `b64fa70ac27bd565102ccb151b300ea66e5d9f77`；回退也是生产动作，未经授权不执行。真实地图底图、车型线稿与车机触控/GPU 可读性仍按原交付边界单列。
+
+## T4 授权部署与独立验收（2026-10-09）
+
+- 已按授权部署 T2 候选，权威 release/status/verify 与容量快照见 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。没有使用后来文档提交替换候选，没有增加批准摘要或绕过发布检查。
+- 首次执行完成上传后，本机 SSH 停在 `chmod` 的连接收尾。只读核对上传文件大小与权限、远端无对应 chmod 进程、无目标构建目录且 current 未变后，仅结束该条已核对的本机 SSH（未停止远端服务/共享 Docker，未删除上传产物）。首轮退出码 1，日志保留。
+- 以显式关闭标准输入的后台客户端重试同一 SHA，继续使用两小时客户端时限；第二轮完成 26 个镜像、版本切换与发布事务检查，退出码 0、返回 `submitted`。这次重试约 25 分钟，不把 submitted 当作验收结论。
+- 随后独立 status / verify 均通过，并在 verify 完成后再次核对运行版本及告警。统一验证绑定本次 release，实际 Provider/模型为 `minimax / MiniMax-M3`；没有执行真实车控、下单或付款探针。
+- 线上 HMI 5 项只读资源核对通过；两份字体逐字节哈希对账候选 Git 内容，资源检查前后 release 一致。仅证明已部署的前端资源与受控候选相符，硬件验收边界保留。
+- 本地留证目录 `.artifacts/hmi-visual-v2/release-prep/`：`apply-attempt-1.result.json` / `apply-attempt-1.json`、`apply-attempt-2.result.json` / `apply-attempt-2.json`、`post-deploy-status.json`、`verify.result.json` / `verify.stdout`、`final-status.json`、`live-assets.json`。统一 verify 的权威 artifact 在 QA 交接 §2。

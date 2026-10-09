@@ -10823,3 +10823,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 用户追加要求视觉复查、类型清理、发布准备三项都做。类型批 `3e2da487`：16 个 JS 模块补声明、补 AQI 导出类型，PCM 上传显式复制当前视图；两端类型检查均为 0，HMI 388 项、Android 相关 64 项通过。Android 唯一源码注解的 JavaScript 产物逐字未变。
 - 视觉复查批：88 组大字卡片、12 组高度布局，以及确认/历史/舞台/设置/外壳回归通过；补齐旧 demo 页「含示例数据」提示。Vite preview 与云端同入口的 Vite dev 分别验证。
 - 发布仍只到准备阶段；候选、dry-run、容量和实际部署边界只在 [后续验证与发布准备](design/2026-10-09-hmi-visual-v2-validation-release.md) 维护。
+
+## 2026-10-09：HMI Visual v2 授权上线
+
+- 用户明确授权后发布既定候选。首轮仅上传，已完成的 chmod 对应本机 SSH 未退出；核对远端未构建/未切换后，只结束这一条本机连接，保留产物并重试。
+- 第二轮 26 个镜像构建、版本切换与发布检查完成；独立 status / verify、验证后 status 与线上 HMI 样式/字体核对均通过。版本、模型、容量与 artifact 只在 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界) 维护；执行过程见 [T4](design/2026-10-09-hmi-visual-v2-validation-release.md#t4-授权部署与独立验收2026-10-09)。
+- 没有修改环境、schema、CI/CD 或基础设施配置，没有真实车控/支付探针，没有停止共享 Docker；原项目 QA 活项与车机硬件验收边界继续保留。
