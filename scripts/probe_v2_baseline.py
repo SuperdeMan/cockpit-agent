@@ -1,8 +1,11 @@
 """CA2-01/JV00: frozen, synthetic, zero-execution baseline for the v2 migration.
 
 Reuses the established signed identity, WS turn, trace-settling and release probes.
-Never confirms an operation or restores a changed vehicle. An unexpected action or
-vehicle difference stops the run. Raw artifacts stay in .artifacts, not in Git.
+The read-only lane never confirms an operation or restores a changed vehicle: an unexpected
+action or vehicle difference stops the run. The write lanes (core journey freeze §12, user's
+long-term authorization 2026-10-09) confirm only declared turns, write only this run's
+synthetic users or the simulated vehicle v1, and must clean up and verify afterwards.
+Raw artifacts stay in .artifacts, not in Git.
 """
 from __future__ import annotations
 
@@ -45,6 +48,18 @@ _FREEZE_PATHSPEC = FREEZE_INPUTS + tuple(f":(exclude){p}" for p in FREEZE_EXCLUD
 MANIFEST = ROOT / "test/eval_corpus/v2_runtime/core/manifest.yaml"
 FAMILIES = {f"F{n:02d}" for n in range(1, 13)}
 LANES = ("read_only", "synthetic_writes", "simulated_vehicle")
+#: 写车道（冻结设计 §12）：R1 只写本次运行的合成签名用户，R2 只动模拟车 v1。用户 2026-10-09 给了长期授权（§9），每次跑数把授权记录写进报告。
+WRITE_LANES = ("synthetic_writes", "simulated_vehicle")
+LANE_AUTHORIZATION = {
+    "basis": "docs/design/2026-10-09-v2-core-journey-freeze.md §9：用户 2026-10-09「P3给长期授权」",
+    "scope": "本次运行的合成签名用户（R1）；模拟车 v1（R2）",
+}
+#: R1 收尾在云端容器里删、回读为零的数据类 → compose 服务名（程序见 `_DATA_CLEANUP_PROGRAMS`）
+DATA_STORES = {"memory": "memory", "scene": "scene-orchestrator-agent", "reminder": "reminder-agent"}
+#: 本次运行的合成用户 id：`e2e-v2-<12 位十六进制>-<旅程>-r<遍>`；清理只认这个形状且以本次 run 打头
+_RUN_ID_RE = re.compile(r"e2e-v2-[0-9a-f]{12}")
+_SYNTHETIC_USER_RE = re.compile(r"e2e-v2-[0-9a-f]{12}-[a-z0-9-]+-r\d+")
+_AFFIRMATION_RE = re.compile(r"(?:确认|好的|可以|同意|执行)[。！!\s]*")
 #: 7 月旅程在 v2 运行器里认的原语：一轮只有 `say` + `expect`，前置只有 `setup.location`；别的记进 `unsupported`，跑数时记「未测」
 _JOURNEY_TURN_KEYS = {"say", "expect"}
 #: 条目级 meta 只认这些键：F12 受话与拒识要按语音来源发（`voice_*` / `ptt`，与编排 `is_voice_input_source` 同一口径）。
@@ -84,7 +99,9 @@ def load_cases(corpus: Path = CORPUS) -> list[dict]:
 
 
 def validate_case(case: dict) -> None:
-    """冻结语料的静态护栏（v2 语料与清单引用的 7 月旅程同一份）：从不确认、取消只说「取消」、不许肯定答复。"""
+    """冻结语料的静态护栏（v2 语料与清单引用的 7 月旅程同一份）：只读车道从不确认、取消只说「取消」、不许肯定答复。
+    写车道（§12）的确认只能是旅程声明的那一轮：`confirm: true`、原话只说「确认」、紧跟一轮期望挂起确认；
+    R2 旅程声明自己可能改动的车态键与收尾话轮，R1 旅程声明要清理核对的数据类。"""
     if not case.get("family") or not case.get("turns"):
         raise ValueError("case requires family and turns")
     meta = case.get("meta") or {}
@@ -93,13 +110,44 @@ def validate_case(case: dict) -> None:
     source = str(meta.get("input_source") or "")
     if "input_source" in meta and not (source.startswith("voice_") or source == "ptt"):
         raise ValueError("input_source must be a voice source (voice_* or ptt)")
+    lane = case.get("lane") or "read_only"
+    if lane not in LANES:
+        raise ValueError("unknown lane")
+    write = lane in WRITE_LANES
+    previous: dict = {}
     for turn in case["turns"]:
-        if turn.get("confirm") or turn.get("is_confirmation"):
-            raise ValueError("baseline must never confirm")
-        if turn.get("cancel_pending") and turn["say"] != "取消":
-            raise ValueError("cleanup must use an exact addressed cancellation")
-        if re.fullmatch(r"(?:确认|好的|可以|同意|执行)[。！!\s]*", str(turn.get("say") or "")):
-            raise ValueError("affirmation is not allowed in this baseline")
+        if turn.get("is_confirmation"):
+            raise ValueError("declare a confirmation turn with confirm: true")
+        if turn.get("confirm"):
+            if not write:
+                raise ValueError("baseline must never confirm")
+            if turn.get("say") != "确认" or not (previous.get("expect") or {}).get("need_confirm"):
+                raise ValueError("a confirmation turn says exactly 确认, right after a turn that expects need_confirm")
+        else:
+            if turn.get("cancel_pending") and turn["say"] != "取消":
+                raise ValueError("cleanup must use an exact addressed cancellation")
+            if _AFFIRMATION_RE.fullmatch(str(turn.get("say") or "")):
+                raise ValueError("affirmation is not allowed outside a declared confirmation turn")
+        previous = turn
+    if lane == "simulated_vehicle":
+        keys = case.get("vehicle_keys")
+        if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and k for k in keys):
+            raise ValueError("simulated_vehicle journeys declare the vehicle_keys they may change")
+        cleanup = case.get("cleanup") or []
+        if not isinstance(cleanup, list):
+            raise ValueError("cleanup is a list of turns")
+        for turn in cleanup:
+            if (not isinstance(turn, dict) or set(turn) - {"say", "confirm"} or not str(turn.get("say") or "").strip()
+                    or _AFFIRMATION_RE.fullmatch(str(turn["say"]))):
+                raise ValueError("cleanup turns are {say, confirm?}; a needed confirmation is declared, not said")
+    elif case.get("vehicle_keys") or case.get("cleanup"):
+        raise ValueError("only simulated_vehicle journeys take vehicle_keys / cleanup")
+    if lane == "synthetic_writes":
+        stores = case.get("data_cleanup")
+        if not isinstance(stores, list) or not stores or set(stores) - set(DATA_STORES):
+            raise ValueError("synthetic_writes journeys declare data_cleanup from memory / scene / reminder")
+    elif case.get("data_cleanup"):
+        raise ValueError("only synthetic_writes journeys take data_cleanup")
 
 
 def _adapt_journey(journey: dict) -> dict:
@@ -192,8 +240,12 @@ def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS, 
     }
 
 
-def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: float = 0.0) -> dict:
-    """Separate planning/dispatch from presentation; a spoken hint is not a card."""
+def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: float = 0.0,
+          lane: str = "read_only", vehicle_after: dict | None = None) -> dict:
+    """Separate planning/dispatch from presentation; a spoken hint is not a card.
+
+    写车道（§12）：动作只能是这一轮声明的 `actions_allowed`，`actions_required` 必须都出现，
+    `vehicle_values` 是这一轮之后车态应有的值；只读车道出现任何动作都是失败。"""
     spans = detail.get("spans") or []
     attrs = [s.get("attrs") or {} for s in spans if isinstance(s, dict)]
     intents = set(str((detail.get("turn") or {}).get("intents") or "").split(","))
@@ -212,7 +264,15 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: 
         return isinstance(c, dict) and (c.get("type") == "manual" or any(
             has_manual(x) for x in c.get("items", []) if isinstance(x, dict)))
     failures = []
-    if obs.get("actions"):
+    actions = [str(a) for a in obs.get("actions") or []]
+    if lane in WRITE_LANES:
+        allowed = {str(a) for a in expect.get("actions_allowed") or []}
+        failures.extend("undeclared_action:" + a for a in actions if a not in allowed)
+        failures.extend("action_missing:" + str(a) for a in expect.get("actions_required") or [] if str(a) not in actions)
+        for key, wanted in (expect.get("vehicle_values") or {}).items():
+            if not audit._vehicle_value_matches((vehicle_after or {}).get(key), wanted):
+                failures.append("vehicle_value:" + str(key))
+    elif actions:
         failures.append("unexpected_action")
     if obs.get("error") or "Agent 内部错误" in str(obs.get("speech") or ""):
         failures.append("technical_failure")
@@ -286,6 +346,145 @@ def judge_source_evidence(query: str, obs: dict, detail: dict, card: dict) -> li
     return failures
 
 
+def vehicle_restore_diff(baseline: dict, final: dict) -> list[str]:
+    """R2 收尾后的逐键核对：与跑前快照不同的键（任何一键不同即判失败）。"""
+    return sorted(k for k in set(baseline) | set(final)
+                  if not audit._vehicle_value_matches(final.get(k), baseline.get(k)))
+
+
+def data_leftovers(result: dict, stores: list[str]) -> dict:
+    """R1 清理回读：每类数据删后剩多少、或为什么没能核对。没有回读结果也算没清干净。"""
+    out = {}
+    for store in stores:
+        r = result.get(store)
+        if not isinstance(r, dict):
+            out[store] = "no_result"
+        elif r.get("error"):
+            out[store] = "error:" + str(r["error"])[:60]
+        elif not isinstance(r.get("left"), int) or isinstance(r.get("left"), bool):
+            out[store] = "no_count"
+        elif r["left"]:
+            out[store] = r["left"]
+    return out
+
+
+#: 每类数据在自己的容器里删、回读：只认 argv[1] 给的那一个用户 id，只打印计数。
+_DATA_CLEANUP_PROGRAMS = {
+    "memory": r'''
+import asyncio, json, os, sys
+import grpc
+sys.path.insert(0, "/app/gen/python")
+from cockpit.memory.v1 import memory_pb2 as m, memory_pb2_grpc
+USER = sys.argv[1]
+
+
+async def main():
+    async with grpc.aio.insecure_channel("127.0.0.1:" + os.getenv("MEMORY_PORT", "50053")) as channel:
+        stub = memory_pb2_grpc.MemoryStub(channel)
+        ok = (await stub.ForgetUser(m.ForgetUserRequest(user_id=USER), timeout=10)).ok
+        data = json.loads((await stub.ExportUser(m.ExportUserRequest(user_id=USER), timeout=10)).json or "{}")
+    left = (len(data.get("memories") or []) + len(data.get("relations") or [])
+            + sum(1 for v in (data.get("profile") or {}).values() if v))
+    print(json.dumps({"done": bool(ok), "left": left}))
+
+
+asyncio.run(main())
+''',
+    "scene": r'''
+import asyncio, json, sys
+sys.path.insert(0, "/app")
+from agents.scene_orchestrator.src.store import DISABLED, ENABLED, SceneStore
+USER = sys.argv[1]
+
+
+async def main():
+    store = SceneStore()
+    if not await store.init() or not store.pg_ok:
+        print(json.dumps({"error": "store_unavailable"}))
+        return
+    scenes = await store.list(USER, statuses=(ENABLED, DISABLED))
+    done = sum([await store.delete(USER, s.id) for s in scenes])
+    left = len(await store.list(USER, statuses=(ENABLED, DISABLED)))
+    print(json.dumps({"done": done, "left": left}))
+
+
+asyncio.run(main())
+''',
+    "reminder": r'''
+import asyncio, json, sys
+sys.path.insert(0, "/app")
+from agents.reminder.src.store import ACTIVE, ReminderStore
+USER = sys.argv[1]
+
+
+async def main():
+    store = ReminderStore()
+    if not await store.init() or not store.pg_ok:
+        print(json.dumps({"error": "store_unavailable"}))
+        return
+    async with store._pool.acquire() as conn:
+        occupants = [r["occupant_id"] for r in await conn.fetch(
+            "SELECT DISTINCT occupant_id FROM reminder_item WHERE user_id=$1", USER)]
+    done = 0
+    for occupant in occupants:
+        done += await store.cancel_all(USER, occupant_id=occupant)
+    async with store._pool.acquire() as conn:
+        left = await conn.fetchval(
+            "SELECT COUNT(*) FROM reminder_item WHERE user_id=$1 AND status=ANY($2)", USER, list(ACTIVE))
+    print(json.dumps({"done": done, "left": int(left or 0)}))
+
+
+asyncio.run(main())
+''',
+}
+
+#: 远端驱动：按 compose 服务标签找到唯一容器，载荷走 stdin（不进 argv），只回传每类的计数。
+_DATA_CLEANUP_REMOTE = r'''
+import json, subprocess, sys
+programs = __PROGRAMS__
+user = sys.argv[1]
+out = {}
+for store, (service, payload) in programs.items():
+    ids = subprocess.check_output(["docker", "ps", "-q", "--filter", "label=com.docker.compose.service=" + service],
+                                  timeout=20).decode().split()
+    if len(ids) != 1:
+        out[store] = {"error": "containers:%d" % len(ids)}
+        continue
+    try:
+        lines = subprocess.check_output(["docker", "exec", "-i", ids[0], "python", "-", user],
+                                        input=payload.encode(), timeout=60).decode().strip().splitlines()
+        out[store] = json.loads(lines[-1]) if lines else {"error": "no_output"}
+    except Exception as exc:
+        out[store] = {"error": type(exc).__name__}
+print(json.dumps(out))
+'''
+
+
+def _ssh_config():
+    import os
+    from scripts.cloud_release_lib import SshConfig
+    return SshConfig(os.environ["CAR_AGENT_DEPLOY_HOST"], os.environ.get("CAR_AGENT_DEPLOY_USER", "ubuntu"),
+                     Path(os.environ["CAR_AGENT_SSH_IDENTITY"]), os.environ.get("CAR_AGENT_SSH_KEX_ALGORITHMS"))
+
+
+def cleanup_synthetic_data(user: str, run_id: str, stores: list[str], *, runner=None, ssh=None) -> dict:
+    """R1 收尾：在云端容器里删本次运行这个合成用户的数据并回读（§12.1）。不是本次 run 的合成用户一律拒绝。"""
+    if (not _RUN_ID_RE.fullmatch(run_id) or not _SYNTHETIC_USER_RE.fullmatch(user)
+            or not user.startswith(run_id + "-")):
+        raise ValueError("cleanup only touches this run's synthetic users")
+    if not stores or set(stores) - set(DATA_STORES):
+        raise ValueError("unknown data store")
+    programs = {store: (DATA_STORES[store], _DATA_CLEANUP_PROGRAMS[store]) for store in stores}
+    remote = _DATA_CLEANUP_REMOTE.replace("__PROGRAMS__", repr(programs))
+    argv = (ssh or _ssh_config()).ssh_argv("sudo python3 - " + user)
+    proc = (runner or subprocess.run)(argv, input=remote.encode(), capture_output=True, timeout=300)
+    lines = proc.stdout.decode("utf-8", "replace").strip().splitlines() if proc.returncode == 0 else []
+    try:
+        return json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        return {}
+
+
 def _redact(value):
     if isinstance(value, dict):
         return {k: (f"[image:{len(v)} chars]" if k == "data_uri" and isinstance(v, str)
@@ -304,6 +503,10 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
     import websockets
     user = f"{run_id}-{case['id'].lower()}-r{repeat}"
     session = user + "-session-1"
+    lane = case.get("lane") or "read_only"
+    write = lane in WRITE_LANES
+    allowed_keys = set(case.get("vehicle_keys") or []) if lane == "simulated_vehicle" else set()
+    case_failures: list[str] = []
     token = sign_identity(secret, run_id=run_id, user_id=user, vehicle_id="v1",
                           scopes=list(SCOPES), timeout_s=1800)
     pending = ""
@@ -328,8 +531,10 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
             if case.get("location"):            # 7 月旅程的 setup.location：这次会话的当前位置
                 meta.update(current_lat=case["location"]["lat"], current_lng=case["location"]["lng"])
             meta.update(case.get("meta") or {})  # 条目级 meta（校验过：只有语音来源）
+            # 写车道声明的确认轮与客户端确认按钮同形：点名那条挂起、带 is_confirmation（§12.3）
             obs = await wire._one_turn(ws, session, turn["say"], trace_id=trace,
-                                       operation_id=pending if turn.get("cancel_pending") else "",
+                                       operation_id=pending if (turn.get("cancel_pending") or turn.get("confirm")) else "",
+                                       is_confirmation=bool(turn.get("confirm")),
                                        meta_overrides=meta)
             elapsed = (time.monotonic()-start)*1000
             detail = await audit._fetch_detail(collector, trace)
@@ -345,16 +550,22 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                 pending = obs["operation_id"]
             if pending in (obs.get("closed_operation_ids") or []):
                 pending = ""
-            verdict = judge(turn.get("expect") or {}, obs, detail, query=turn["say"], elapsed_s=elapsed / 1000)
+            # 只读车道等车态回到快照才算稳定；写车道车态本来就会变，只等它稳定
+            after = await audit._settled_vehicle_state(collector, required_keys=set(baseline.value),
+                                                       expected=None if write else baseline.value,
+                                                       include_unmanaged=True)
+            verdict = judge(turn.get("expect") or {}, obs, detail, query=turn["say"], elapsed_s=elapsed / 1000,
+                            lane=lane, vehicle_after=after.value)
             if turn.get("cancel_pending") and pending:
                 verdict["failures"].append("pending_not_closed")
-            after = await audit._settled_vehicle_state(collector, required_keys=set(baseline.value),
-                                                       expected=baseline.value, include_unmanaged=True)
             changed = {k for k in baseline.value.keys() | after.value.keys()
                        if baseline.value.get(k) != after.value.get(k)}
             if not after.settled:
                 evidence_errors.append("vehicle_not_settled")
-            if changed:
+            undeclared = sorted(changed - allowed_keys)
+            if write and undeclared:
+                verdict["failures"].append("vehicle_changed_undeclared:" + ",".join(undeclared))
+            elif changed and not write:
                 verdict["failures"].append("vehicle_changed")
             # Store only this synthetic request's trace, never signed URL/token or account config.
             obs = _redact(obs)
@@ -366,6 +577,10 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                          "vehicle_before": baseline.value, "vehicle_after": after.value,
                          "trace": _redact(detail)})
             print(f"{case['id']} r{repeat} t{n}: {verdict['failures']} {evidence_errors}", flush=True)
+            if write:
+                if evidence_errors or (changed - allowed_keys):
+                    break                      # 停止取样，但写车道照样走收尾与核对（车态与数据必须复位）
+                continue
             if obs.get("actions") or changed or evidence_errors:
                 # Stop all business sampling. Only cancel a known pending operation;
                 # never confirm it or issue inverse vehicle commands to hide a difference.
@@ -379,16 +594,68 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                         pending = ""
                 return {"id": case["id"], "family": case["family"], "repeat": repeat,
                         "session": session, "rows": rows, "open_operation": bool(pending), "stop": True}
-    return {"id": case["id"], "family": case["family"], "repeat": repeat,
-            "session": session, "rows": rows, "open_operation": bool(pending), "stop": bool(pending)}
+        if write:
+            pending = await _write_lane_cleanup(ws, session, case, lane, pending, manifest, rows)
+    if write:
+        case_failures.extend(await _verify_write_lane(case, lane, user, run_id, collector, baseline.value, rows))
+    stop = bool(pending) or (write and (bool(case_failures) or any(r.get("evidence_errors") for r in rows)))
+    return {"id": case["id"], "family": case["family"], "repeat": repeat, "lane": lane,
+            "session": session, "rows": rows, "open_operation": bool(pending), "stop": stop,
+            "case_failures": case_failures}
+
+
+async def _write_lane_cleanup(ws, session, case, lane, pending, manifest, rows) -> str:
+    """R2 收尾话轮（旅程声明，经规划与 VAL 执行；声明了要确认的按挂起的 operation_id 确认），最后取消残留挂起。"""
+    meta = {"llm_provider": manifest["chat"]["provider"], "llm_model": manifest["chat"]["model"]}
+    if pending:
+        out = await wire._one_turn(ws, session, "取消", operation_id=pending, meta_overrides=meta)
+        rows.append({"turn": "cleanup", "say": "取消", "cleanup": True, "observation": _redact(out)})
+        if pending in (out.get("closed_operation_ids") or []):
+            pending = ""
+    for turn in (case.get("cleanup") or []) if lane == "simulated_vehicle" else []:
+        out = await wire._one_turn(ws, session, turn["say"], meta_overrides=meta)
+        rows.append({"turn": "cleanup", "say": turn["say"], "cleanup": True, "observation": _redact(out)})
+        if turn.get("confirm") and out.get("need_confirm") and out.get("operation_id"):
+            done = await wire._one_turn(ws, session, "确认", operation_id=out["operation_id"],
+                                        is_confirmation=True, meta_overrides=meta)
+            rows.append({"turn": "cleanup", "say": "确认", "cleanup": True, "observation": _redact(done)})
+        elif out.get("need_confirm") and out.get("operation_id"):
+            pending = out["operation_id"]     # 收尾话轮意外挂起：不确认，交给下面的取消
+    if pending:
+        out = await wire._one_turn(ws, session, "取消", operation_id=pending, meta_overrides=meta)
+        rows.append({"turn": "cleanup", "say": "取消", "cleanup": True, "observation": _redact(out)})
+        if pending in (out.get("closed_operation_ids") or []):
+            pending = ""
+    return pending
+
+
+async def _verify_write_lane(case, lane, user, run_id, collector, baseline: dict, rows) -> list[str]:
+    """收尾核对（§12）：R2 车态与跑前快照逐键一致；R1 每类合成数据删后回读为零。任何一项不成立都判失败。"""
+    failures = []
+    if lane == "simulated_vehicle":
+        final = await audit._settled_vehicle_state(collector, attempts=24, required_keys=set(baseline),
+                                                   expected=baseline, include_unmanaged=True)
+        diff = vehicle_restore_diff(baseline, final.value)
+        if diff:
+            failures.append("vehicle_not_restored:" + ",".join(diff))
+        rows.append({"turn": "verify", "cleanup": True, "vehicle_after": final.value, "vehicle_diff_keys": diff})
+    if lane == "synthetic_writes":
+        stores = list(case.get("data_cleanup") or [])
+        result = await asyncio.to_thread(cleanup_synthetic_data, user, run_id, stores)
+        leftovers = data_leftovers(result, stores)
+        if leftovers:
+            failures.append("data_not_cleaned:" + json.dumps(leftovers, ensure_ascii=False, sort_keys=True))
+        rows.append({"turn": "verify", "cleanup": True, "data_cleanup": result})
+    return failures
 
 
 def journey_summary(runs: list[dict], repeat: int) -> dict:
     """按旅程汇总（设计 §2）：一次运行全部轮次无业务失败、无证据错误、没被叫停才算过；达标 = 每一次都过。"""
     journeys: dict = {}
     for c in runs:
-        ok = not c["stop"] and all(not r["verdict"]["failures"] and not r["evidence_errors"]
-                                   for r in c["rows"] if not r.get("skipped"))
+        ok = not c["stop"] and not c.get("case_failures") and all(
+            not r["verdict"]["failures"] and not r["evidence_errors"]
+            for r in c["rows"] if not r.get("skipped") and "verdict" in r)
         j = journeys.setdefault(c["id"], {"family": c["family"], "runs": 0, "passes": 0})
         j["runs"] += 1
         j["passes"] += int(ok)
@@ -419,8 +686,7 @@ async def run(args):
     loader = load_manifest if manifest_path else load_cases
     cases = loader(corpus)
     lanes = set(getattr(args, "lane", None) or ["read_only"])
-    if lanes - {"read_only"}:
-        raise ValueError("write lanes need per-batch authorization and are not implemented yet")
+    # 写车道要显式点名（--lane），授权依据见 LANE_AUTHORIZATION（冻结设计 §9：用户 2026-10-09 长期授权）
     skip_providers = {x for x in str(getattr(args, "skip_providers", "") or "").split(",") if x}
     if not manifest_path and corpus != CORPUS.resolve():
         from scripts.probe_manual_rag_full_coverage import validate_live_query_safety
@@ -440,6 +706,10 @@ async def run(args):
     ws, collector, secret = identity._endpoints()
     payload = {"manifest": manifest, "selected_ids": [c["id"] for c in cases], "skipped": skipped,
                "repeat": args.repeat, "runs": [], "release_start": audit.cloud_release_snapshot(args.expected_sha)}
+    if lanes & set(WRITE_LANES):
+        # 授权记录进报告（§12.3）：依据、范围、这次点名的写车道与时间
+        payload["lane_authorization"] = {**LANE_AUTHORIZATION, "lanes": sorted(lanes & set(WRITE_LANES)),
+                                         "at": datetime.now(timezone.utc).isoformat()}
     out = Path(args.out)
     if out.exists():
         raise ValueError("output already exists; use a new run artifact")
@@ -465,13 +735,15 @@ async def run(args):
         payload["continuity_errors"] = audit.validate_release_continuity(
             payload["release_start"], payload["release_end"], args.expected_sha)
         payload["runner_unchanged"] = _inputs_unchanged(manifest["runner_sha"])
-        rows = [r for c in payload["runs"] for r in c["rows"] if not r.get("skipped")]
+        # 收尾与核对行（写车道）不带逐轮判定，只统计被测轮
+        rows = [r for c in payload["runs"] for r in c["rows"] if not r.get("skipped") and "verdict" in r]
         payload["summary"] = {
             "complete_cases": len(payload["runs"]), "expected_cases": len(cases)*args.repeat,
             "measured_turns": len(rows),
             "business_failures": sum(bool(r["verdict"]["failures"]) for r in rows),
             "evidence_failures": sum(bool(r["evidence_errors"]) for r in rows),
             "open_operations": sum(c["open_operation"] for c in payload["runs"]),
+            "cleanup_failures": sum(bool(c.get("case_failures")) for c in payload["runs"]),
             "skipped_journeys": len(payload.get("skipped") or []),
         }
         payload["summary"].update(journey_summary(payload["runs"], args.repeat))

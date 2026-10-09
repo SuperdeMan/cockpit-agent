@@ -106,3 +106,9 @@ journeys:
      known_red: "回声风格命中播报语域，但规划器首轮给了闲聊；云侧确定性拒识只在两轮空手时生效（防误拒「主持人 / 为大家 / 据了解」开头的闲聊问句；90 天真实流量语域命中为零，量不出扩规则的收益与误伤）"}
   - {id: R07, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
   - {id: R08, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  # P3 写车道首批（§12，用户 2026-10-09 长期授权）：先跑通机制，再补 F04 / F05 / F10 / F11 配额
+  - {id: K01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F05, lane: simulated_vehicle}
+  - {id: C01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
+  - {id: C02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
+  - {id: N01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
+  - {id: E01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}

@@ -314,3 +314,144 @@ def test_source_visual_questions_pass_the_unchanged_read_only_preflight():
     result = validate_live_query_safety([
         {"id": case["id"], "query": turn["say"]} for case in cases for turn in case["turns"]])
     assert result["fast_intent_none"] == 2
+
+
+# ── P3 写车道（冻结设计 §12，用户 2026-10-09 长期授权）──────────────────────────────
+
+def _r2(**extra):
+    case = {"id": "W1", "family": "F05", "lane": "simulated_vehicle", "vehicle_keys": ["trunk"],
+            "turns": [{"say": "打开后备箱", "expect": {"need_confirm": True}},
+                      {"say": "确认", "confirm": True, "expect": {"actions_required": ["trunk.open"],
+                                                                 "actions_allowed": ["trunk.open"]}}],
+            "cleanup": [{"say": "关闭后备箱", "confirm": True}]}
+    case.update(extra)
+    return case
+
+
+def test_write_lane_confirms_only_the_declared_turn():
+    probe.validate_case(_r2())
+    with pytest.raises(ValueError, match="never confirm"):
+        probe.validate_case(_r2(lane="read_only", vehicle_keys=None, cleanup=None))
+    bad_say = _r2()
+    bad_say["turns"][1]["say"] = "好的"
+    with pytest.raises(ValueError, match="says exactly"):
+        probe.validate_case(bad_say)
+    no_prompt = _r2()
+    no_prompt["turns"][0]["expect"] = {}
+    with pytest.raises(ValueError, match="says exactly"):
+        probe.validate_case(no_prompt)
+    undeclared = _r2()
+    undeclared["turns"][1].pop("confirm")
+    with pytest.raises(ValueError, match="affirmation"):
+        probe.validate_case(undeclared)
+    flagged = _r2()
+    flagged["turns"][1]["is_confirmation"] = True
+    with pytest.raises(ValueError, match="confirm: true"):
+        probe.validate_case(flagged)
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"vehicle_keys": []}, "vehicle_keys"),
+    ({"cleanup": [{"say": "确认"}]}, "cleanup turns"),
+    ({"cleanup": [{"say": "关闭后备箱", "operation_id": "x"}]}, "cleanup turns"),
+    ({"data_cleanup": ["memory"]}, "only synthetic_writes"),
+])
+def test_simulated_vehicle_declares_its_keys_and_cleanup(change, message):
+    with pytest.raises(ValueError, match=message):
+        probe.validate_case(_r2(**change))
+
+
+def test_synthetic_writes_declares_known_stores_and_read_only_takes_no_write_fields():
+    base = {"id": "W2", "family": "F10", "lane": "synthetic_writes",
+            "turns": [{"say": "提醒我明天上午九点开会", "expect": {}}]}
+    probe.validate_case({**base, "data_cleanup": ["reminder"]})
+    for stores in ([], ["reminder", "payments"], None):
+        with pytest.raises(ValueError, match="data_cleanup"):
+            probe.validate_case({**base, "data_cleanup": stores})
+    read_only = {"id": "R", "family": "F01", "turns": [{"say": "空调怎么开", "expect": {}}]}
+    for extra in ({"cleanup": [{"say": "关闭空调"}]}, {"vehicle_keys": ["hvac_on"]}, {"data_cleanup": ["memory"]}):
+        with pytest.raises(ValueError, match="only"):
+            probe.validate_case({**read_only, **extra})
+
+
+def test_write_lane_judges_declared_actions_and_vehicle_values():
+    expect = {"actions_allowed": ["trunk.open"], "actions_required": ["trunk.open"], "vehicle_values": {"trunk": "open"}}
+    ok = probe.judge(expect, obs(actions=["trunk.open"]), {}, lane="simulated_vehicle", vehicle_after={"trunk": "open"})
+    assert ok["failures"] == []
+    extra = probe.judge(expect, obs(actions=["trunk.open", "window.open"]), {}, lane="simulated_vehicle",
+                        vehicle_after={"trunk": "open"})
+    assert extra["failures"] == ["undeclared_action:window.open"]
+    missing = probe.judge(expect, obs(actions=[]), {}, lane="simulated_vehicle", vehicle_after={"trunk": "closed"})
+    assert missing["failures"] == ["action_missing:trunk.open", "vehicle_value:trunk"]
+    # 只读车道照旧：出现任何动作都是失败
+    assert probe.judge({}, obs(actions=["trunk.open"]), {})["failures"] == ["unexpected_action"]
+
+
+def test_vehicle_restore_diff_names_every_key_that_did_not_come_back():
+    baseline = {"trunk": "closed", "hvac_on": False, "volume": 30}
+    assert probe.vehicle_restore_diff(baseline, dict(baseline)) == []
+    assert probe.vehicle_restore_diff(baseline, {**baseline, "trunk": "open"}) == ["trunk"]
+    assert probe.vehicle_restore_diff(baseline, {"trunk": "closed", "hvac_on": False}) == ["volume"]
+
+
+@pytest.mark.parametrize("result, leftovers", [
+    ({"memory": {"done": True, "left": 0}}, {}),
+    ({"memory": {"done": True, "left": 2}}, {"memory": 2}),
+    ({"memory": {"error": "containers:0"}}, {"memory": "error:containers:0"}),
+    ({}, {"memory": "no_result"}),
+    ({"memory": {"done": True}}, {"memory": "no_count"}),
+    ({"memory": {"done": True, "left": False}}, {"memory": "no_count"}),
+])
+def test_data_leftovers_treats_anything_but_a_zero_count_as_not_cleaned(result, leftovers):
+    assert probe.data_leftovers(result, ["memory"]) == leftovers
+
+
+class _Ssh:
+    def ssh_argv(self, command):
+        return ["ssh", "host", command]
+
+
+class _Proc:
+    def __init__(self, returncode, stdout):
+        self.returncode, self.stdout = returncode, stdout.encode()
+
+
+RUN = "e2e-v2-0123456789ab"
+
+
+@pytest.mark.parametrize("user", [
+    "e2e-v2-ffffffffffff-w1-r1",          # 别的 run
+    "real-user-1",                        # 真实用户形状
+    RUN + "-w1-r1; rm -rf /",             # 注入
+    RUN + "-W1-r1",                       # 形状不符
+])
+def test_data_cleanup_refuses_anyone_but_this_runs_synthetic_users(user):
+    with pytest.raises(ValueError, match="this run"):
+        probe.cleanup_synthetic_data(user, RUN, ["memory"], runner=lambda *a, **k: _Proc(0, "{}"), ssh=_Ssh())
+
+
+def test_data_cleanup_sends_only_the_requested_programs_over_stdin_and_reads_counts():
+    seen = {}
+
+    def runner(argv, input, capture_output, timeout):
+        seen.update(argv=argv, input=input.decode())
+        return _Proc(0, 'noise\n{"reminder": {"done": 1, "left": 0}}\n')
+
+    result = probe.cleanup_synthetic_data(RUN + "-w2-r1", RUN, ["reminder"], runner=runner, ssh=_Ssh())
+    assert result == {"reminder": {"done": 1, "left": 0}}
+    assert seen["argv"][-1] == "sudo python3 - " + RUN + "-w2-r1"
+    assert "reminder-agent" in seen["input"] and "cancel_all" in seen["input"]
+    assert "ForgetUser" not in seen["input"] and "scene-orchestrator-agent" not in seen["input"]
+    failed = probe.cleanup_synthetic_data(RUN + "-w2-r1", RUN, ["reminder"],
+                                          runner=lambda *a, **k: _Proc(255, "partial"), ssh=_Ssh())
+    assert failed == {} and probe.data_leftovers(failed, ["reminder"]) == {"reminder": "no_result"}
+
+
+def test_a_write_lane_run_with_a_cleanup_failure_does_not_pass():
+    row = {"verdict": {"failures": []}, "evidence_errors": []}
+    runs = [{"id": "W1", "family": "F05", "stop": False, "rows": [row], "case_failures": []},
+            {"id": "W1", "family": "F05", "stop": False, "rows": [row, {"turn": "verify", "cleanup": True}],
+             "case_failures": ["vehicle_not_restored:trunk"]}]
+    summary = probe.journey_summary(runs, 2)
+    assert summary["journeys"]["W1"] == {"family": "F05", "runs": 2, "passes": 1}
+    assert summary["journeys_all_pass"] == 0

@@ -1,0 +1,46 @@
+version: 1
+split: regression
+note: >-
+  P3 写车道首批（docs/design/2026-10-09-v2-core-journey-freeze.md §12，用户 2026-10-09 长期授权）：先每类两三条跑通机制再补配额。
+  R2 模拟车（F04 车控 / F05 确认写）：旅程声明可能改动的车态键与收尾话轮，运行器跑后按跑前快照逐键核对；
+  确认轮只能是声明的那一轮（`confirm: true`、原话「确认」、紧跟期望挂起确认的一轮）。
+  R1 合成数据（F10 提醒 / F11 记忆）：只写本次运行的合成签名用户，跑后在云端容器里删除并回读为零。
+cases:
+  - id: K01
+    family: confirm_write_once
+    vehicle_keys: [trunk]
+    turns:
+      - {say: "打开后备箱", expect: {need_confirm: true, speech_any: ["后备箱"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open"], actions_allowed: ["trunk.open"],
+                                            vehicle_values: {trunk: open}}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}
+  - id: C01
+    family: control_toggle
+    vehicle_keys: [ambient_light]
+    turns:
+      - {say: "打开氛围灯", expect: {actions_required: ["ambient_light.on"], actions_allowed: ["ambient_light.on"],
+                                  vehicle_values: {ambient_light: true}}}
+    cleanup:
+      - {say: "关闭氛围灯"}
+  - id: C02
+    family: control_toggle_then_question
+    vehicle_keys: [fragrance]
+    turns:
+      - {say: "打开香氛", expect: {actions_required: ["fragrance.on"], actions_allowed: ["fragrance.on"],
+                                vehicle_values: {fragrance: true}}}
+      - {say: "香氛现在开着吗", expect: {actions_allowed: [], speech_not: ["关着", "没有开"]}}
+    cleanup:
+      - {say: "关闭香氛"}
+  - id: N01
+    family: reminder_create_then_list
+    data_cleanup: [reminder]
+    turns:
+      - {say: "提醒我明天上午九点开会", expect: {speech_any: ["开会", "提醒"], speech_not: ["没听清"]}}
+      - {say: "我有哪些提醒", expect: {speech_any: ["开会"]}}
+  - id: E01
+    family: memory_remember_then_recall
+    data_cleanup: [memory]
+    turns:
+      - {say: "记住我喜欢喝拿铁", expect: {speech_not: ["没听清"]}}
+      - {say: "我平时喜欢喝什么", expect: {speech_any: ["拿铁"]}}
