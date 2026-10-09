@@ -70,7 +70,8 @@ journeys:
   - {id: P07, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P08, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P09, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
-  - {id: P10, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass,
+  - {id: P10, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
+  - {id: P13, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only,
      known_red: "执行审计只列已执行的动作，不提在等确认的「打开油箱盖」（答「这次对话里我还没有执行过任何操作」：真话但没答到问的事）；产品缺口"}
   - {id: P11, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P12, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
