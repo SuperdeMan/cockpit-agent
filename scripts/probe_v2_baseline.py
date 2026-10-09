@@ -30,6 +30,10 @@ from scripts.e2e_identity import sign_identity
 from scripts.render_cloud_env import DEMO_AUTH_SCOPES
 
 CORPUS = ROOT / "test/eval_corpus/v2_runtime/seed.yaml"
+#: 冻结要求「已提交、干净」的范围：这次跑数真正读进来的东西——运行器与它导入的 scripts/、runtime/，语料，判定读的来源证据表。
+#: 资产树从发布 SHA 读（`git rev-parse <sha>:<path>`），不读工作树。主仓库是多个会话共享的工作树，别处未提交的文档不影响这次跑数，
+#: 却曾挡住基线（2026-10-09：一份 Android 记录、一份可观测台 brief）。新加的导入或读取的文件要落在这里面（测试钉着）。
+FREEZE_INPUTS = ("scripts", "runtime", "test/eval_corpus", "agents/manual_rag/resources/source_evidence.yaml")
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
 # Scene admission is currently Agent-wide (including media/navigation/profile scopes).
 # Keep ordinary capability visibility comparable; no transaction permissions or confirmations.
@@ -74,7 +78,7 @@ def load_cases(corpus: Path = CORPUS) -> list[dict]:
 def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS) -> dict:
     if not re.fullmatch(r"[a-f0-9]{40}", expected_sha):
         raise ValueError("expected release must be a full SHA")
-    if _git("status", "--porcelain"):
+    if _git("status", "--porcelain", "--", *FREEZE_INPUTS):
         raise ValueError("freeze requires committed, clean inputs")
     corpus = corpus.resolve()
     relative_corpus = corpus.relative_to(ROOT).as_posix()

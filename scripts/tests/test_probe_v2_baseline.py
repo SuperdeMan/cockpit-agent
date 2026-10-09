@@ -53,6 +53,48 @@ def test_freeze_refuses_dirty_inputs(monkeypatch):
         probe.freeze("a"*40, "minimax", "MiniMax-M3")
 
 
+def test_freeze_checks_only_the_inputs_of_the_run(monkeypatch):
+    """共享工作树里别的会话未提交的文档不挡基线：状态只按跑数输入的路径查（2026-10-09 实测被两份文档挡住）。"""
+    calls = []
+
+    def git(*args):
+        calls.append(args)
+        return "" if args[0] == "status" else "0" * 40
+
+    monkeypatch.setattr(probe, "_git", git)
+    monkeypatch.setattr(probe, "load_cases", lambda corpus=probe.CORPUS: [])
+    try:
+        probe.freeze("a" * 40, "minimax", "MiniMax-M3")
+    except Exception:
+        pass                                        # 只看状态查询的参数，后面的组装不在本用例
+    status = next(c for c in calls if c[0] == "status")
+    assert status[:3] == ("status", "--porcelain", "--") and set(status[3:]) == set(probe.FREEZE_INPUTS)
+
+
+def test_freeze_inputs_cover_what_the_runner_imports_and_reads():
+    """运行器导入的仓库模块、读取的语料与来源证据表都要落在冻结输入里——新加一处 `agents/` 导入而忘了算进去，这里会红。"""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    # 独立进程里只导入运行器：同一测试进程里别的用例早已导入的 agents/、orchestrator/ 不能算成运行器的输入
+    root = os.path.abspath(probe.ROOT)
+    program = (
+        "import json, os, sys\n"
+        f"root = {root!r}\n"
+        "sys.path[:0] = [root, os.path.join(root, 'gen', 'python')]\n"
+        "import scripts.probe_v2_baseline\n"
+        "files = [getattr(m, '__file__', '') or '' for m in list(sys.modules.values())]\n"
+        "print(json.dumps(sorted({os.path.relpath(f, root).replace(os.sep, '/') for f in files"
+        " if f and os.path.abspath(f).startswith(root)})))\n")
+    out = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, timeout=120, check=True)
+    used = set(json.loads(out.stdout.strip().splitlines()[-1]))
+    used |= {probe.CORPUS.relative_to(probe.ROOT).as_posix(), probe.SOURCE_EVIDENCE.relative_to(probe.ROOT).as_posix()}
+    outside = sorted(u for u in used if not any(u == i or u.startswith(i + "/") for i in probe.FREEZE_INPUTS))
+    assert not outside, outside
+
+
 def test_recursive_redaction_keeps_image_evidence_without_payload():
     source = {"items": [{"images": [{"data_uri": "data:private", "sha256": "proof"}]}]}
     result = probe._redact(source)
