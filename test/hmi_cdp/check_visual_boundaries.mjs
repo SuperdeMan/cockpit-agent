@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 const root = path.resolve(import.meta.dirname, '../..')
 const base = '92e1332b1073b8b8deb7df18371092181e9079d5'
 const batch = process.argv[2] || 'i2'
-assert.match(batch, /^i[1-6]$/)
+assert.match(batch, /^(i[1-6]|followup-(types|visual))$/)
 const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' })
 const normalize = text => text.replace(/\r\n/g, '\n')
 const tracked = new Set(git(['ls-tree', '-r', '--name-only', base, 'hmi/src']).trim().split('\n'))
@@ -58,4 +58,4 @@ for (const diagnostic of after) {
   assert.ok(at >= 0, 'New TypeScript diagnostic: ' + JSON.stringify(diagnostic))
   available.splice(at, 1)
 }
-console.log(`PASS: handleEvent and types.ts unchanged; TypeScript baseline ${before.length}, current ${after.length}, no new errors (not a clean typecheck)`)
+console.log(`PASS: handleEvent and types.ts unchanged; TypeScript baseline ${before.length}, current ${after.length}, no new errors (${after.length ? 'not a clean typecheck' : 'full typecheck passed'})`)

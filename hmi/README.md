@@ -88,8 +88,9 @@ src/
 用于 Android 的请求撤回；hooks 不进线上 JSON，HMI 现有单参数 send 保持兼容。
 `onSent` 只证明写入 socket，不证明业务执行；详细边界见 `docs/conventions.md` §9.33。
 ```bash
-npx tsc --noEmit -p tsconfig.json   # 类型检查
-npx vite build                      # 生产构建
+npm run typecheck  # 严格类型检查；2026-10-09 后续批清理完既有 22 项错误
+npm test           # 纯逻辑与契约测试
+npm run build      # 生产构建
 ```
 
 

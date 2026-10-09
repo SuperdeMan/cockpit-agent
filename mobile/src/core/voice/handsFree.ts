@@ -431,7 +431,7 @@ export class HandsFreeController {
     const meta = this.deps.getSessionMeta?.() ?? { sessionId: this.deps.getSessionId() }
     const s2sCfg = this.deps.getS2sConfig?.() ?? {}
     const alive = () => this.epoch === epoch && !this.disposed && this.s2s === client
-    const client = new S2SClient({
+    const client: S2SClient = new S2SClient({
       // 注入传输适配器：真实 send 才报上行；撤回后屏蔽旧 WS 的消息与发送。
       // 共享 S2SClient 的模型/聚包/播放实现保持原样。
       wsFactory: (url: string) => this.s2sSocket(url, alive, client),

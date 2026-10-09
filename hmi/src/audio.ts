@@ -1276,7 +1276,7 @@ export async function enrollVoiceprint(
   samples: (Blob | Int16Array)[], mime = 'pcm16le', occupantId = '',
 ): Promise<{ ok: boolean; occupant_id?: string; error?: string; self_consistency?: number }> {
   const fd = new FormData()
-  for (const s of samples) fd.append('sample', s instanceof Blob ? s : new Blob([s]))
+  for (const s of samples) fd.append('sample', s instanceof Blob ? s : new Blob([s.slice()]))
   try {
     const r = await fetch(
       `${apiBase}/api/voiceprint/enroll?user_id=${encodeURIComponent(userId)}`
@@ -1305,7 +1305,7 @@ export async function identifySpeaker(
   try {
     const r = await fetch(
       `${apiBase}/api/voiceprint/identify?user_id=${encodeURIComponent(userId)}&format=${mime}`,
-      { method: 'POST', body: clip instanceof Blob ? clip : new Blob([clip]), headers: memoryAuth() })
+      { method: 'POST', body: clip instanceof Blob ? clip : new Blob([clip.slice()]), headers: memoryAuth() })
     return await r.json()
   } catch {
     return { occupant_id: 'primary', decision: 'error' }

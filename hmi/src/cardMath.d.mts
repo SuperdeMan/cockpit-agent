@@ -1,4 +1,6 @@
 export type PriceDirection = 'up' | 'down' | 'flat'
+export type AirQualityTone = 'excellent' | 'good' | 'light' | 'moderate' | 'heavy' | 'severe' | 'unknown'
+export function airQualityBadge(aqi: unknown, category?: string): { tone: AirQualityTone; label: string }
 
 export type KlineInput = {
   date: string
