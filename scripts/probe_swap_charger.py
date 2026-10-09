@@ -1,9 +1,13 @@
 """CA2-19 真栈探针：「换一个充电站」与导航续航提醒——会对模拟车 v1 发导航动作（用户 2026-10-07 授权）。
 
-合成的已签名 E2E 用户、车辆 v1；每个套件一个会话，最后一轮「取消导航」收尾，不留活动路线。不发车控、商户写或支付。
+合成的已签名 E2E 用户、车辆 v1；每个套件一个会话，有导航的套件最后一轮「取消导航」收尾，不留活动路线。不发车控、商户写或支付。
 - `swap`：导航去深圳北站并在附近找充电桩 → 「换一个充电站」→ 取消导航。
   判据看动作载荷：第二轮的导航动作目的地不变、原充电站不在途经点里、换上的站离原站不远、话术报出新站名。
 - `range`：导航去厦门火车站（模拟车电量不够跑完全程）→ 话术带电量读数的续航提醒 → 取消导航。
+- `swap2`（2026-10-08 接续）：路线上放两个充电站 →「换一个充电站」先反问换哪一个、不改路线 →「换第二个」续接：
+  第一个站留着、第二个换成一个新站、目的地不变、话术报出新站名 → 取消导航。前置没放成两个站就判前置失败，不算换站对错。
+- `unrouted`（2026-10-08 接续）：没有活动路线时找站 →「换一个充电站」→「再换一个充电站」：每轮推荐的三个站都不是推荐过的，
+  都推荐过了就如实说；全程不发导航动作。
 逐轮打印判定并写 JSON 证据；前后各核一次云端发布 SHA。
 """
 from __future__ import annotations
@@ -31,9 +35,14 @@ SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payme
 #: 换上的站离原站多远以内算「同一处补电」（目的地附近选站，原站与新站都在目的地周边）
 SWAP_MAX_KM = 6.0
 
+#: `swap2` 放第二个充电站的那句——**暂定**，还没在真栈上试过（2026-10-08 写套件时高德搜索日配额用尽）；前置没放成两个站时
+#: 判定会报「前置没成」，那时换一种说法再跑，试定后改这里并在设计文档 §9.4 记下
+SECOND_CHARGER = "途经再加一个充电站"
 SUITES = {
     "swap": ("导航去深圳北站，在附近找个充电桩", "换一个充电站", "取消导航"),
     "range": ("导航去厦门火车站", "取消导航"),
+    "swap2": ("导航去深圳北站，在附近找个充电桩", SECOND_CHARGER, "换一个充电站", "换第二个", "取消导航"),
+    "unrouted": ("帮我找个附近的充电站", "换一个充电站", "再换一个充电站"),
 }
 
 
@@ -129,6 +138,71 @@ def _judge_swap(turns: list[dict]) -> list[str]:
     return problems
 
 
+def _judge_swap2(turns: list[dict]) -> list[str]:
+    """`swap2` 套件：两个充电站时先反问，「换第二个」只换第二个。"""
+    from runtime.charger_swap import is_charger_name
+
+    setup, second_setup, ask, answer, cancel = turns
+    navs = _navigates(second_setup["actions"]) or _navigates(setup["actions"])
+    if not navs:
+        return ["前置没成：前两轮没有导航动作"]
+    route = navs[-1]
+    waypoints = [str(w.get("name") or "") for w in route.get("waypoints") or []]
+    chargers = [n for n in waypoints if is_charger_name(n)]
+    second_setup["route_waypoints"] = waypoints
+    if len(chargers) < 2:
+        return [f"前置没成：路线上只有 {len(chargers)} 个充电站 {waypoints}"]
+    problems = []
+    if _navigates(ask["actions"]):
+        problems.append("「换一个充电站」没反问就改了路线")
+    if "换哪一个" not in ask["speech"]:
+        problems.append("「换一个充电站」没问换哪一个")
+    nav = _navigates(answer["actions"])
+    if len(nav) != 1:
+        return problems + ["「换第二个」没有导航动作"]
+    payload = nav[0]
+    if payload.get("destination") != route.get("destination"):
+        problems.append(f"目的地变了：{route.get('destination')} → {payload.get('destination')}")
+    names = [str(w.get("name") or "") for w in payload.get("waypoints") or []]
+    if chargers[0] not in names:
+        problems.append(f"第一个充电站「{chargers[0]}」被换掉了")
+    if chargers[1] in names:
+        problems.append(f"第二个充电站「{chargers[1]}」还在途经点里")
+    new = [n for n in names if n not in waypoints]
+    answer["swapped_station"] = new
+    if len(new) != 1:
+        problems.append(f"换站后新站不是恰好一个：{names}")
+    elif _plain(new[0]) not in _plain(answer["speech"]):
+        problems.append("话术没报出新站名")
+    if not any(a.get("type") == "navigate_cancel" for a in cancel["actions"] if isinstance(a, dict)):
+        problems.append("收尾没有取消导航")
+    return problems
+
+
+def _judge_unrouted(turns: list[dict]) -> list[str]:
+    """`unrouted` 套件：没有活动路线时连着换站，推荐过的不再推荐（卡片前三个就是这一轮推荐的站）。"""
+    problems: list[str] = []
+    seen: list[str] = []
+    for index, turn in enumerate(turns, start=1):
+        if _navigates(turn["actions"]):
+            problems.append(f"第 {index} 轮发了导航动作")
+        card = turn.get("card") or {}
+        top = ([_plain(i.get("name")) for i in (card.get("items") or [])[:3] if i.get("name")]
+               if card.get("type") == "charging_list" else [])
+        turn["recommended"] = top
+        if not top:
+            if index == 1:
+                problems.append("第一轮没推荐充电站")
+            elif "都推荐过了" not in turn["speech"]:
+                problems.append(f"第 {index} 轮既没推荐新站，也没说都推荐过了")
+            continue
+        repeated = [n for n in top if n in seen]
+        if repeated:
+            problems.append(f"第 {index} 轮又推荐了推荐过的站：{repeated}")
+        seen += top
+    return problems
+
+
 def _judge_range(turns: list[dict]) -> list[str]:
     """`range` 套件的判定：导航动作照发，话术带电量读数的续航提醒。"""
     problems = []
@@ -163,7 +237,8 @@ async def probe(expected_sha: str, suite: str) -> dict:
         for text in SUITES[suite]:
             obs = await _turn(ws, session, text)
             result["turns"].append({"say": text, **obs})
-    result["problems"] = (_judge_swap if suite == "swap" else _judge_range)(result["turns"])
+    judge = {"swap": _judge_swap, "range": _judge_range, "swap2": _judge_swap2, "unrouted": _judge_unrouted}[suite]
+    result["problems"] = judge(result["turns"])
     result["release_end"] = audit.cloud_release_snapshot(expected_sha)
     result["continuity_errors"] = audit.validate_release_continuity(
         result["release_start"], result["release_end"], expected_sha)
