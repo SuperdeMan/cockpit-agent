@@ -66,7 +66,10 @@ _PROVIDER_SPECS: dict[str, dict] = {
         "auth_style": "bearer", "token_param": "max_completion_tokens", "thinking_style": "mimo",
         "primary_env": "MINIMAX_LLM_MODEL", "primary": "MiniMax-M3",
         "fast": "MiniMax-M3",
-        "models": [("MiniMax-M3", "MiniMax-M3")],
+        "models": [("MiniMax-M3", "MiniMax-M3"), ("MiniMax-M3.1-Flash-Preview", "MiniMax-M3.1 Flash（预览）")],
+        # 关不掉思考的型号（2026-10-09 实测：thinking.type=disabled 直接 400「requires adaptive thinking」）。
+        # 调用方要关思考时改发 reasoning_effort=low，见 providers.OpenAICompatibleProvider._build_body。
+        "thinking_required": ("MiniMax-M3.1-Flash-Preview",),
     },
     "deepseek": {
         # DeepSeek v4-pro/flash 是推理模型（reasoning_content 占 completion 预算）——真栈探测确认它
@@ -181,7 +184,8 @@ class LLMRuntime:
                 provider = OpenAICompatibleProvider(
                     key, base_url=base_url, auth_style=spec["auth_style"],
                     disable_thinking=True,  # 全局默认关；复杂任务经 meta thinking=on 动态开
-                    token_param=spec["token_param"], thinking_style=spec["thinking_style"])
+                    token_param=spec["token_param"], thinking_style=spec["thinking_style"],
+                    thinking_required_models=spec.get("thinking_required", ()))
                 self._registry[pid] = (provider, cfg)
 
         if anthropic_key:

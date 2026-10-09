@@ -343,7 +343,8 @@ class OpenAICompatibleProvider(BaseProvider):
                  auth_style: str = "api-key", disable_thinking: bool = True,
                  token_param: str = "max_completion_tokens", thinking_style: str = "mimo",
                  embed_url: str = "", embed_model: str = "", embed_api_key: str = "",
-                 embed_auth_style: str = "bearer", embed_dimensions: int = 0):
+                 embed_auth_style: str = "bearer", embed_dimensions: int = 0,
+                 thinking_required_models=()):
         self.api_key = api_key
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.auth_style = (auth_style or "api-key").lower()
@@ -356,6 +357,10 @@ class OpenAICompatibleProvider(BaseProvider):
         #     "none" → 不发任何思考键（DeepSeek 等默认非思考服务商）
         self.token_param = (token_param or "max_completion_tokens").strip()
         self.thinking_style = (thinking_style or "mimo").strip().lower()
+        #   thinking_required_models —— 关不掉思考的型号（如 MiniMax-M3.1-Flash-Preview：发 thinking.type=disabled
+        #     直接 400，错误码 2013「requires adaptive thinking」，2026-10-09 实测）。调用方要「关」时对它们改发最低思考档
+        #     `reasoning_effort: "low"`，输出预算按开思考给足（思考与正文共用 completion 预算）。
+        self.thinking_required = frozenset(thinking_required_models or ())
         # 向量化（embedding）端点/鉴权/维度独立于 chat——embedding 常用另一服务商（如百炼）。
         # 默认从 chat 端点推导；embed_api_key 缺省回退 chat key；auth 默认 bearer（OpenAI 风格）。
         self.embed_url = embed_url or self.base_url.replace("/chat/completions", "/embeddings")
@@ -393,8 +398,9 @@ class OpenAICompatibleProvider(BaseProvider):
     def _build_body(self, messages, model, temperature, max_tokens, thinking, stream: bool) -> dict:
         """按 per-provider 差异（token_param/thinking_style）构造 chat/completions 请求体。"""
         disable = self._resolve_thinking(thinking)
-        # 开思考时给足 token：reasoning 占预算，content 容易被饿空/截断；下限抬到 2048。
-        max_out = (max_tokens or 512) if disable else max((max_tokens or 512), 2048)
+        required = model in self.thinking_required
+        # 开思考时给足 token：reasoning 占预算，content 容易被饿空/截断；下限抬到 2048。关不掉思考的型号同理。
+        max_out = (max_tokens or 512) if (disable and not required) else max((max_tokens or 512), 2048)
         body = {
             "model": model,
             "messages": messages,
@@ -406,7 +412,9 @@ class OpenAICompatibleProvider(BaseProvider):
             # MiMo/MiniMax 等推理模型：默认把 token 预算几乎全花在 reasoning_content 上，导致
             # 结构化任务（Planner JSON、聚合改写、接地合成）的 content 被饿成空/截断——关思考拿干净、
             # 确定、低延迟 content。开思考时不发本键（回原生思考态），reasoning_content 留服务端不下发。
-            if disable:
+            if disable and required:
+                body["reasoning_effort"] = "low"     # 关不掉思考：最低档（实测比原生思考快、条件句少想几百 token）
+            elif disable:
                 body["thinking"] = {"type": "disabled"}
         elif self.thinking_style == "qwen":
             # DashScope 兼容模式 qwen3：思考经 enable_thinking 显式控制（结构化任务须置 false）。

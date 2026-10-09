@@ -24,6 +24,21 @@ def test_build_body_mimo_style():
     assert "thinking" not in on and on["max_completion_tokens"] == 2048 and on["stream"] is True
 
 
+def test_build_body_thinking_required_model_gets_lowest_effort_instead_of_disabled():
+    """关不掉思考的型号（MiniMax-M3.1-Flash-Preview，2026-10-09 实测 thinking.type=disabled → 400 / 2013）：
+    调用方要关思考时改发 reasoning_effort=low、预算按开思考给足；同一提供方的其他型号逐字不变。"""
+    p = OpenAICompatibleProvider("k", token_param="max_completion_tokens", thinking_style="mimo",
+                                 thinking_required_models=("MiniMax-M3.1-Flash-Preview",))
+    flash = p._build_body(_MSG, "MiniMax-M3.1-Flash-Preview", 0.3, 800, thinking=None, stream=False)
+    assert "thinking" not in flash and flash["reasoning_effort"] == "low"
+    assert flash["max_completion_tokens"] == 2048
+    on = p._build_body(_MSG, "MiniMax-M3.1-Flash-Preview", 0.3, 800, thinking=True, stream=True)
+    assert "thinking" not in on and "reasoning_effort" not in on          # 开思考：原生自适应
+    m3 = p._build_body(_MSG, "MiniMax-M3", 0.3, 800, thinking=None, stream=False)
+    assert m3["thinking"] == {"type": "disabled"} and "reasoning_effort" not in m3
+    assert m3["max_completion_tokens"] == 800
+
+
 def test_build_body_none_thinking_style():
     # thinking_style="none"：不发任何思考键（用服务商默认）。注：DeepSeek 真栈探测发现其推理模型
     # 认 thinking:{type:disabled}，故 deepseek 实际走 mimo 风格（见 llm_runtime._PROVIDER_SPECS）。
@@ -91,6 +106,16 @@ def test_switch_provider_and_unknown_model_falls_back():
     assert rt.resolve_models("mimo-v2.5")[0] == "deepseek-v4-pro"
     with pytest.raises(ValueError):        # 切到未配 key 的厂商 → 拒绝
         rt.set_active("qwen")
+
+
+def test_minimax_flash_preview_is_pinnable_and_wired_as_thinking_required():
+    rt = _runtime({"LLM_PROVIDER": "minimax", "MINIMAX_API_KEY": "xk"})
+    by_id = {p["id"]: p for p in rt.status()["providers"]}
+    assert "MiniMax-M3.1-Flash-Preview" in {m["id"] for m in by_id["minimax"]["models"]}
+    assert rt.resolve_models("") == ["MiniMax-M3"]                       # 缺省仍是 M3，不随接入切换
+    assert rt.resolve_models("MiniMax-M3.1-Flash-Preview") == ["MiniMax-M3.1-Flash-Preview", "MiniMax-M3"]  # 按请求指定，失败退 M3
+    provider = rt.provider_entry("minimax")[1]
+    assert "MiniMax-M3.1-Flash-Preview" in provider.thinking_required and "MiniMax-M3" not in provider.thinking_required
 
 
 def test_set_active_specific_model():
