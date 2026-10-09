@@ -998,7 +998,8 @@ obs.debug.vehicle.set       # 仅开发环境量：车速/电量/挡位/位置
 
 `observability-collector` 订阅这些事件：内存聚合供实时 WS 推流，并把
 turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期、badcase 豁免），
-经 REST 提供给独立 `dashboard`（会话→轮次→详情三级下钻）。事件不改 gRPC 契约；
+经 REST 提供给独立 `dashboard`（Visual v2 代码采用扁平轮次列表与检查器；本地验证及部署边界见
+[实施记录](../design/2026-10-09-dashboard-visual-v2-implementation-plan.md#9-实施记录)）。事件不改 gRPC 契约；
 完整 payload 与安全边界见 `docs/design/2026-06-15-observability-dashboard.md`（首版）与
 `docs/design/2026-07-10-dashboard-badcase-observability-redesign.md`（badcase 贯通）。
 collector 的合法主体是运维者：除 `/healthz`、`/metrics`、`/api/agents` 外，读写都要运维令牌（`runtime/obs_access.py`，

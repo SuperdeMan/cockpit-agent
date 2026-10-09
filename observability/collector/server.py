@@ -7,7 +7,7 @@ import logging
 import os
 import time
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -15,7 +15,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from . import otel_bridge
 from .db import ObsDB
 from .metrics_export import render_prometheus_metrics
+from .query_projection import trace_view
 from .store import CollectorStore
+from observability.redact import content_capture_enabled
 from runtime import obs_access
 from runtime.vehicle_state import LEGACY_VEHICLE
 
@@ -74,7 +76,8 @@ class Hub:
             if initial:
                 message = {"type": "snapshot", "vehicle_id": vehicle_id,
                            "vehicle_state": observation["state"], "vehicle_observation": observation,
-                           "agents": store.agents, "traces": store.snapshot_traces(30)}
+                           "agents": store.agents,
+                           "traces": [trace_view(trace) for trace in store.snapshot_traces(30)]}
             else:
                 before, after = (previous or {}).get("state", {}), observation["state"]
                 changes = [{"key": k, "old": before.get(k), "new": after.get(k)}
@@ -147,6 +150,17 @@ def create_app(
     async def healthz():
         return {"status": "ok", "nats": app.state.nc is not None}
 
+    @app.get("/api/meta")
+    async def meta():
+        # Runtime configuration is not a tombstone: a missing trace cannot be
+        # labeled expired from the current retention window alone.
+        return {
+            "content_capture": content_capture_enabled(),
+            "retention_days": float(os.getenv("OBS_RETENTION_DAYS", "7")),
+            "debug_vehicle_control": os.getenv("DEBUG_VEHICLE_CONTROL", "true").lower() == "true",
+            "query_features": ["turn_filters", "turn_pagination", "session_pagination"],
+        }
+
     @app.get("/api/vehicle/state")
     async def vehicle_state(vehicle_id: str = LEGACY_VEHICLE):
         return app.state.store.vehicle_states.snapshot(vehicle_id)
@@ -157,11 +171,12 @@ def create_app(
 
     @app.get("/api/traces")
     async def traces(limit: int = 50):
-        return app.state.store.snapshot_traces(limit)
+        return [trace_view(trace) for trace in app.state.store.snapshot_traces(limit)]
 
     @app.get("/api/traces/{trace_id}")
     async def trace(trace_id: str):
-        return app.state.store.traces.get(trace_id) or {"error": "not found"}
+        value = app.state.store.traces.get(trace_id)
+        return trace_view(value) if value else {"error": "not found"}
 
     @app.get("/api/agents")
     async def agents():
@@ -170,8 +185,11 @@ def create_app(
     # ── 会话/轮次（badcase 排查主视图数据源，SQLite 持久） ──────────────
 
     @app.get("/api/sessions")
-    async def sessions(limit: int = 50, q: str = ""):
-        return await asyncio.to_thread(app.state.db.sessions, limit, q)
+    async def sessions(limit: int = 50, q: str = "",
+                       offset: int = Query(0, ge=0), paginated: bool = False,
+                       origin: str = ""):
+        return await asyncio.to_thread(app.state.db.sessions, limit, q,
+                                       offset=offset, paginated=paginated, origin=origin)
 
     @app.get("/api/sessions/{session_id}/turns")
     async def session_turns(session_id: str, limit: int = 200):
@@ -186,10 +204,21 @@ def create_app(
     @app.get("/api/search")
     async def search(q: str = "", status: str = "", session: str = "",
                      badcase: int = -1, since: int = 0, until: int = 0,
-                     limit: int = 50):
+                     limit: int = 50,
+                     offset: int = Query(0, ge=0), paginated: bool = False,
+                     origin: str = "", category: str = "", outcome: str = "",
+                     edge_disagreement: bool | None = None,
+                     actionability_disagreement: bool | None = None,
+                     degraded: bool | None = None, has_warnings: bool | None = None,
+                     labeled: bool | None = None,
+                     min_duration_ms: float = Query(0, ge=0)):
         return await asyncio.to_thread(
             app.state.db.search_turns, q, status, session,
-            None if badcase < 0 else bool(badcase), since, until, limit)
+            None if badcase < 0 else bool(badcase), since, until, limit,
+            offset=offset, paginated=paginated, origin=origin, category=category,
+            outcome=outcome, edge_disagreement=edge_disagreement,
+            actionability_disagreement=actionability_disagreement, degraded=degraded,
+            has_warnings=has_warnings, labeled=labeled, min_duration_ms=min_duration_ms)
 
     @app.post("/api/turns/{trace_id}/badcase")
     async def mark_badcase(trace_id: str, body: dict):

@@ -38,9 +38,7 @@ test('renders spans of a trace in order', () => {
 
   expect(screen.getByText('route.local')).toBeTruthy()
   expect(screen.getByText('val.execute')).toBeTruthy()
-  expect(
-    document.querySelector('[data-node="val.execute"]')?.className,
-  ).toContain('trace-node--val')
-  expect(screen.getByText('hvac_on: false → true')).toBeTruthy()
-  expect(screen.getByText('hvac_temp: 24 → 26')).toBeTruthy()
+  expect(screen.getByRole('region', { name: 'VAL泳道' })).toBeTruthy()
+  expect(screen.getByText('hvac_on false → true')).toBeTruthy()
+  expect(screen.getByText('hvac_temp 24 → 26')).toBeTruthy()
 })

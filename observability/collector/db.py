@@ -16,6 +16,10 @@ import sqlite3
 import threading
 import time
 
+from runtime.outcome import category_of
+
+from .query_projection import degraded_mode, origin_of, span_view
+
 PERSONAL_DATA_TARGETS = (
     {
         "id": "observability_raw_content",
@@ -113,6 +117,27 @@ def _rows_to_dicts(cursor) -> list[dict]:
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
+_WARNING_PREDICATE = "UPPER(level) IN ('WARN','WARNING','ERROR','CRITICAL','FATAL')"
+_WARNING_COUNT = ("(SELECT COUNT(*) FROM logs WHERE logs.trace_id=turns.trace_id "
+                  f"AND {_WARNING_PREDICATE})")
+_TURN_SELECT = ("SELECT turns.*, obs_category(outcome) AS outcome_category, "
+                "obs_origin(session_id) AS origin, "
+                f"{_WARNING_COUNT} AS warning_count FROM turns")
+
+
+def _page_bounds(limit: int, offset: int) -> tuple[int, int]:
+    # Preserve the pre-existing limit semantics for legacy callers, including
+    # SQLite's negative/unlimited limit. Only offset is new.
+    return int(limit), max(int(offset), 0)
+
+
+def _add_choices(clauses: list[str], params: list, expression: str, value: str) -> None:
+    choices = list(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
+    if choices:
+        clauses.append(f"{expression} IN ({','.join('?' for _ in choices)})")
+        params.extend(choices)
+
+
 def _plan_summary_of(attrs: dict) -> tuple[str, str, str, str]:
     """cloud.planning span attrs → (intents 逗号串, plan_mode, edge_nlu, actionability)。
 
@@ -168,6 +193,11 @@ class ObsDB:
         if parent and self.path != ":memory:":
             os.makedirs(parent, exist_ok=True)
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        # SQLite calls the same Python declarations used for response projection;
+        # no copied category CASE table and no persisted derived columns.
+        self._conn.create_function("obs_category", 1, category_of, deterministic=True)
+        self._conn.create_function("obs_origin", 1, origin_of, deterministic=True)
+        self._conn.create_function("obs_degraded", 1, degraded_mode, deterministic=True)
         self._lock = threading.Lock()
         with self._lock:
             if self.path != ":memory:":
@@ -330,37 +360,51 @@ class ObsDB:
 
     # ── 查询（REST API） ────────────────────────────────────────────────
 
-    def sessions(self, limit: int = 50, q: str = "") -> list[dict]:
+    def sessions(self, limit: int = 50, q: str = "", *, offset: int = 0,
+                 paginated: bool = False, origin: str = "") -> list[dict] | dict:
         """会话列表：起止时间/轮数/错误数/拒识数/badcase 数，按最近活跃倒序。
         q 非空时保留命中的会话——按会话 id 前缀，或按轮次文本（原话/话术 LIKE）。"""
-        sql = ("SELECT session_id, MIN(ts) AS first_ts, MAX(ts) AS last_ts, "
+        limit, offset = _page_bounds(limit, offset)
+        sql = ("SELECT session_id, obs_origin(session_id) AS origin, "
+               "(SELECT first.user_text FROM turns AS first "
+               "WHERE first.session_id=turns.session_id "
+               "ORDER BY first.ts ASC, first.trace_id ASC LIMIT 1) AS first_user_text, "
+               "MIN(ts) AS first_ts, MAX(ts) AS last_ts, "
                "COUNT(*) AS turns, "
                "SUM(CASE WHEN status IN ('err','timeout','empty') THEN 1 ELSE 0 END) AS errors, "
                "SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) AS rejected, "
                "SUM(badcase) AS badcases FROM turns")
         params: list = []
+        clauses: list[str] = []
         if q:
-            sql += (" WHERE session_id LIKE ? OR session_id IN "
-                    "(SELECT DISTINCT session_id FROM turns "
-                    "WHERE user_text LIKE ? OR speech LIKE ?)")
+            clauses.append("(session_id LIKE ? OR session_id IN "
+                           "(SELECT DISTINCT session_id FROM turns "
+                           "WHERE user_text LIKE ? OR speech LIKE ?))")
             like = f"%{q}%"
             params += [f"{q}%", like, like]
-        sql += " GROUP BY session_id ORDER BY last_ts DESC LIMIT ?"
-        params.append(int(limit))
+        _add_choices(clauses, params, "obs_origin(session_id)", origin)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        sql += where + " GROUP BY session_id ORDER BY last_ts DESC, session_id ASC LIMIT ? OFFSET ?"
         with self._lock:
-            return _rows_to_dicts(self._conn.execute(sql, params))
+            rows = _rows_to_dicts(self._conn.execute(sql, [*params, limit, offset]))
+            if not paginated:
+                return rows
+            total = self._conn.execute(
+                "SELECT COUNT(*) FROM (SELECT session_id FROM turns" + where
+                + " GROUP BY session_id)", params).fetchone()[0]
+        return {"items": rows, "total": total, "limit": limit, "offset": offset}
 
     def session_turns(self, session_id: str, limit: int = 200) -> list[dict]:
         with self._lock:
             return _rows_to_dicts(self._conn.execute(
-                "SELECT * FROM turns WHERE session_id=? ORDER BY ts ASC LIMIT ?",
+                _TURN_SELECT + " WHERE session_id=? ORDER BY ts ASC, trace_id ASC LIMIT ?",
                 (session_id, int(limit))))
 
     def turn_detail(self, trace_id: str) -> dict | None:
         """轮次详情 = turn + spans + llm_calls + logs（badcase 排查一屏所需的全部）。"""
         with self._lock:
             rows = _rows_to_dicts(self._conn.execute(
-                "SELECT * FROM turns WHERE trace_id=?", (trace_id,)))
+                _TURN_SELECT + " WHERE trace_id=?", (trace_id,)))
             turn = rows[0] if rows else None
             spans = _rows_to_dicts(self._conn.execute(
                 "SELECT * FROM spans WHERE trace_id=? ORDER BY ts ASC, id ASC",
@@ -387,37 +431,65 @@ class ObsDB:
             meta = pin_meta.get(int(call.get("id") or 0), {})
             call["pinned"] = bool(meta.get("pinned"))
             call["requested_tier"] = str(meta.get("requested_tier") or "")
-        return {"turn": turn, "spans": spans, "llm_calls": llm_calls, "logs": logs}
+        visible_spans = [span_view(span) for span in spans if span.get("node") != "llm.call.meta"]
+        return {"turn": turn, "spans": visible_spans, "llm_calls": llm_calls, "logs": logs}
 
     def search_turns(self, q: str = "", status: str = "", session_id: str = "",
                      badcase: bool | None = None, since: int = 0, until: int = 0,
-                     limit: int = 50) -> list[dict]:
-        sql = "SELECT * FROM turns WHERE 1=1"
+                     limit: int = 50, *, offset: int = 0, paginated: bool = False,
+                     origin: str = "", category: str = "", outcome: str = "",
+                     edge_disagreement: bool | None = None,
+                     actionability_disagreement: bool | None = None,
+                     degraded: bool | None = None, has_warnings: bool | None = None,
+                     labeled: bool | None = None,
+                     min_duration_ms: float = 0) -> list[dict] | dict:
+        limit, offset = _page_bounds(limit, offset)
+        clauses: list[str] = []
         params: list = []
         if q:
             # trace_id 前缀直达：HMI 复制的短 id 粘进搜索框即可定位
-            sql += " AND (user_text LIKE ? OR speech LIKE ? OR trace_id LIKE ?)"
+            clauses.append("(user_text LIKE ? OR speech LIKE ? OR trace_id LIKE ?)")
             like = f"%{q}%"
             params += [like, like, f"{q}%"]
         if status:
-            sql += " AND status=?"
+            clauses.append("status=?")
             params.append(status)
         if session_id:
-            sql += " AND session_id=?"
+            clauses.append("session_id=?")
             params.append(session_id)
         if badcase is not None:
-            sql += " AND badcase=?"
+            clauses.append("badcase=?")
             params.append(1 if badcase else 0)
         if since:
-            sql += " AND ts>=?"
+            clauses.append("ts>=?")
             params.append(int(since))
         if until:
-            sql += " AND ts<=?"
+            clauses.append("ts<=?")
             params.append(int(until))
-        sql += " ORDER BY ts DESC LIMIT ?"
-        params.append(int(limit))
+        _add_choices(clauses, params, "obs_origin(session_id)", origin)
+        _add_choices(clauses, params, "obs_category(outcome)", category)
+        _add_choices(clauses, params, "outcome", outcome)
+        for expression, flag in (
+            ("substr(edge_nlu,-2)='!='", edge_disagreement),
+            ("substr(actionability,-2)='!='", actionability_disagreement),
+            ("obs_degraded(plan_mode)", degraded),
+            (f"{_WARNING_COUNT}>0", has_warnings),
+            ("gold_intents!=''", labeled),
+        ):
+            if flag is not None:
+                clauses.append(f"({expression})=?")
+                params.append(int(flag))
+        if min_duration_ms > 0:
+            clauses.append("duration_ms>=?")
+            params.append(float(min_duration_ms))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        sql = _TURN_SELECT + where + " ORDER BY ts DESC, trace_id DESC LIMIT ? OFFSET ?"
         with self._lock:
-            return _rows_to_dicts(self._conn.execute(sql, params))
+            rows = _rows_to_dicts(self._conn.execute(sql, [*params, limit, offset]))
+            if not paginated:
+                return rows
+            total = self._conn.execute("SELECT COUNT(*) FROM turns" + where, params).fetchone()[0]
+        return {"items": rows, "total": total, "limit": limit, "offset": offset}
 
     def set_badcase(self, trace_id: str, flag: bool, note: str = "") -> bool:
         with self._lock:
@@ -505,6 +577,10 @@ class ObsDB:
                        COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                        COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
                        SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors,
+                       SUM(CASE WHEN fallback != 0 THEN 1 ELSE 0 END) AS fallback_calls,
+                       SUM(CASE WHEN status='ok' AND COALESCE(prompt_tokens, 0)=0
+                                     AND COALESCE(completion_tokens, 0)=0
+                                THEN 1 ELSE 0 END) AS zero_usage_calls,
                        ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
                        MAX(ts) AS last_ts
                 FROM llm_calls WHERE ts >= ?

@@ -1,0 +1,20 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Brand/Mark" clip-path="url(#clip0_0_107)">
+<path id="Vector" d="M18 0.75H6C3.10051 0.75 0.75 3.10051 0.75 6V18C0.75 20.8995 3.10051 23.25 6 23.25H18C20.8995 23.25 23.25 20.8995 23.25 18V6C23.25 3.10051 20.8995 0.75 18 0.75Z" fill="url(#paint0_linear_0_107)"/>
+<path id="Vector_2" d="M3.75 13.5H7.125L9.1875 8.25L12.1875 17.25L14.4375 10.5L15.9375 13.5H19.3125" stroke-width="1.875" stroke-linecap="round" stroke-linejoin="round" stroke="url(#paint1_linear_0_107)"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_107" x1="0.75" y1="0.75" x2="23.25" y2="23.25" gradientUnits="userSpaceOnUse">
+<stop stop-color="#0E1728"/>
+<stop offset="1" stop-color="#081018"/>
+</linearGradient>
+<linearGradient id="paint1_linear_0_107" x1="3.75" y1="8.25" x2="19.3125" y2="8.25" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5BE9FF"/>
+<stop offset="0.55" stop-color="#5B8CFF"/>
+<stop offset="1" stop-color="#9A6BFF"/>
+</linearGradient>
+<clipPath id="clip0_0_107">
+<rect width="24" height="24" fill="white"/>
+</clipPath>
+</defs>
+</svg>

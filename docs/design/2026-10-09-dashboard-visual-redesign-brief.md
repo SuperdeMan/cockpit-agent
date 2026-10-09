@@ -3,7 +3,7 @@
 - **状态**：已批准（2026-10-09，§16 九项全部按推荐）。设计阶段 M0–M6 已完成（2026-10-09）：
   - 检查点① 经用户确认，②–⑤ 截图留证；
   - 实施计划草案：[2026-10-09-dashboard-visual-v2-implementation-plan.md](2026-10-09-dashboard-visual-v2-implementation-plan.md)；
-  - 代码还没动。
+  - 代码实施进度与验证统一看上述实施计划 §9；不把本地结果当成已部署。
 - **进度**：Figma 文件「座舱 Agent 可观测台 · Visual v2」（`wmGLdb9ZAU5AT1RtSlSDT2`）。
   - M4 Screens 完成，检查点④ 截图留证：
     - 04 Turns 19 帧、05 Live 7 帧、06 Logs · Usage 8 帧、07 States · Access 8 帧，各有深浅两套；

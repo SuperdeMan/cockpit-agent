@@ -8,7 +8,7 @@
 ## 0. 硬规则（先读）
 
 1. **先认端，再翻译**。HMI = DOM + CSS 变量 `--au-*`；mobile = React Native + `Palette` / `tokens.ts`；
-   Dashboard 仍是旧「深空 HUD」皮。三端共享的是判据与图标数据（`@shared/*` 白名单），**不共享 UI 组件**
+   Dashboard Visual v2 使用桌面工作台尺度与 `--obs-*`（本地实施/部署状态看实施记录）。三端共享的是判据与图标数据（`@shared/*` 白名单），**不共享 UI 组件**
    （`AGENTS.md` §1、`docs/conventions.md` §9.33）。同一张 Figma 帧在 HMI 与 mobile 各写一份实现。
 2. **Figma 给的代码是参考稿，不是代码**。`get_design_context` 默认产出 React + Tailwind；Figma Make 源是
    Tailwind v4 + shadcn/Radix + lucide-react + MUI + motion。**三端都没有这些依赖，禁止为落稿引入**，
@@ -31,7 +31,7 @@
 
 | 声明 | 权威位置 | 备注 |
 |---|---|---|
-| HMI 当前设计 | Figma `QNXzATLf4WOKLD1rV1dilp`；[Visual v2 brief](../design/2026-10-08-hmi-visual-redesign-brief.md) | I1–I6 已实现；契约差异与用户裁决在实施记录 §8，Dashboard 未改 |
+| HMI 当前设计 | Figma `QNXzATLf4WOKLD1rV1dilp`；[Visual v2 brief](../design/2026-10-08-hmi-visual-redesign-brief.md) | I1–I6 已实现；契约差异与用户裁决在实施记录 §8；Dashboard 独立看下方入口 |
 | 视觉设计契约 | Figma Make `guidelines/Guidelines.md` v1.0，存于 `docs/design/【新】座舱Agent-HMI-A-*.zip` | 七个 zip 的 `Guidelines.md` 与 `src/styles/theme.css` 字节一致，读 A-1 即可（命令见 §8.2） |
 | 各版本设计源码 | 同一批 zip 的 `src/app/App.tsx`（A-1→A-7 逐版累积导出） | MCP 读 Make 文件只能拿最新版；历史版本只在 zip 里 |
 | 设计稿帧 | Figma 设计文件 `oGlfQSUhriAEs4uH8sJnVe`：页 `0:1`「A-1 Design System」+ 页 `32:190`「A-8 Icon Library」 | ID 与已核实内容见 §8.4 |
@@ -39,7 +39,7 @@
 | HMI token | `hmi/src/aurora.css`（`--au-*`）；冻结源 `hmi/design/visual-v2.tokens.json` | `node hmi/scripts/generate-visual-tokens.mjs --check` 校验；四档 Size 由 `data-drive` × `data-font` 驱动，旧 HUD 键仅兼容 |
 | mobile 色板 | `mobile/src/ui/theme.ts`（`Palette` / `DARK` / `LIGHT` / `AURORA`） | |
 | mobile 尺寸、节律、材质 | `mobile/src/ui/tokens.ts`（`SPACE` `RADIUS` `TYPE` `MOTION` `TARGET` `PILL` `GLASS` `scale()`） | |
-| Dashboard token | `dashboard/src/styles.css` 的 `:root` | Aurora 迁移（P6）未做 |
+| Dashboard token | `dashboard/src/tokens.css`；冻结对账 `dashboard/design/visual-v2.tokens.json` | [Visual v2 实施记录](../design/2026-10-09-dashboard-visual-v2-implementation-plan.md)；Figma `wmGLdb9ZAU5AT1RtSlSDT2` |
 | 图标数据 | `hmi/src/components/icons.gen.ts`（A-8 导出，勿手改）+ `icons.custom.ts`（同规格补充）；mobile 专有 `mobile/src/ui/icons.local.ts` | mobile 经 `@shared/*` 读前两份 |
 | 卡片 / 消息契约 | `hmi/src/types.ts` | 两端唯一真相源 |
 | mobile 交互与材质制度 | [`2026-08-29-mobile-ux-v2-presence-redesign.md`](../design/2026-08-29-mobile-ux-v2-presence-redesign.md) | §5.11 材质、§6 行车档、§10.1 光球十条不变量 |
@@ -102,11 +102,12 @@ const p = usePalette(settings) // 深 / 浅 / 跟随系统 + 大字档
 （alpha 先按底色合成）而比契约值更亮或更深，由 `mobile/test/theme.test.ts` 守；字阶整体降到手机尺度
 （`TYPE.display` 32，契约 Display 48）。Figma 新值过不了这组测试时保留代码值，并把结论反馈给设计。
 
-### 2.3 Dashboard：旧 HUD token
+### 2.3 Dashboard：Visual v2 token
 
-`dashboard/src/styles.css` 自有一套：`--bg-0…2`、`--glass`、`--stroke`、`--ink/-2/-3`、`--teal` 等实色、链路节点色
-`--n-edge/cloud/val/llm/tool/wait`、字体 Chakra Petch + Space Mono。Aurora 迁移（P6）**等 Figma B 帧**；出帧前改
-Dashboard 只用这套变量，不混入 `--au-*`。节点 → 颜色的唯一映射在 `dashboard/src/components/spanMeta.ts`。
+`dashboard/src/tokens.css` 定义 `--obs-*`：Color 深浅、Size 工作台/演示、Space、Radius、Motion。
+Inter + JetBrains Mono latin 子集及许可证从 HMI 复用，中文使用系统字体；图表不使用极光或泳道分类色。
+`src/tokens.test.ts` 对账冻结快照与 HMI 同源角色，按五种底及状态软底逐层合成验证对比度。
+节点分泳道只认 `src/laneOf.ts`，状态色只表达异常与选中；旧 `spanMeta.ts` 仅作兼容转发。
 
 ### 2.4 Figma → 代码映射
 
@@ -212,9 +213,10 @@ mobile/src/features/cards/  CardRenderer（REGISTRY 全量卡型 + 兜底卡 + �
 
 ### 3.3 Dashboard
 
-`dashboard/src/components/*`（CommandBar / TracePanel / SpanWaterfall / VehicleState / Dynamics / TurnDetailPanel / AgentList）
-与 `views/*`，全局 CSS 类（`panel__tag` 式 BEM 命名）。车辆状态面板**配置驱动**：分组、标签、图标、渲染类型只改
-`components/vehicle-config.ts`。debug 滑块只设环境量，视觉上必须和真实车控回显区分开。
+`dashboard/src/components/ui/`、`data/`、`shell/`、`inspector/`、`timeline/`、`live/` 与 `views/*`；React 18 + 全局 CSS。
+旧 CommandBar / TracePanel / SpanWaterfall / Dynamics / TurnDetailPanel 保留兼容入口，不再拥有第二套呈现实现。
+结局显示、泳道、车况分别只在 `outcomeDisplay.ts`、`laneOf.ts`、`components/vehicle-config.ts` 声明。
+debug 滑块只设环境量，与只读车况回显使用不同样式；深浅及演示档切 `data-theme` / `data-size`。
 
 ### 3.4 组件文档 = 预览夹具
 
@@ -285,8 +287,8 @@ import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 4. 改了共享文件（`icons.gen.ts` / `icons.custom.ts`）要两端验证：HMI 构建 + mobile `npm test`（含 `sharedAllowlist.test.ts`）。
 5. 保持设计源一致：新图标推回 Figma A-8 页（`use_figma`，需要对该文件有编辑权限），做不到就在交付说明里登记「代码有、Figma 无」。
 
-现存 emoji：HMI 天气卡的雪 / 雾 / 霾 / 沙尘仍回落 emoji（A-8 没出这些图标）；Dashboard `vehicle-config.ts` 的 `icon` 全是 emoji（P6 未迁）。
-这些是待清偿项，不是范例。
+Dashboard 已将车况与操作图标换成注册表数据；专用新增项在 `dashboard/src/components/ui/icons.local.ts`，逐项标 Figma 来源节点。
+其余端的历史 emoji 不作为新增图标的范例，是否仍存在需按当前代码核对。
 
 ## 6. 资产
 
@@ -400,7 +402,9 @@ agent 写画布（`use_figma`）**必须是 Full 座席**，且对目标文件�
 | Make 文件（代码 + `Guidelines.md` + `theme.css`） | `IYsuxZHzG7t2PXtvHOT41N`（`get_metadata` / `get_variable_defs` 不支持 Make 文件） |
 | Android Visual v3（mobile 重构，方向 B） | `1jdZ6Cwp8pEtQJJUwg6NHS`：01 Audit `1:2`、02 Foundations `1:3`、03 Components `1:4`（组件板 `7:2`）、M1 样张 `1:5`、04 Phone `1:6`、05 Voice & Presence `1:7`、06 Cards `1:8`、07 Adaptive `1:9`、08 Driving `1:10`、09 Motion `1:11`、10 Handoff `1:12`；落地按[实施计划](../design/2026-10-03-android-visual-v3-implementation-plan.md) |
 
-未出帧：A-8 行车态、B-1…B-4 Dashboard。HMI P5 行车态与 P6 Dashboard 等帧再做。
+Dashboard 已有独立 Visual v2 设计文件 `wmGLdb9ZAU5AT1RtSlSDT2`（00–09 页，09 Handoff 五张表），
+当前按 [2026-10-09 实施计划](../design/2026-10-09-dashboard-visual-v2-implementation-plan.md) 落地，不再等待旧 B-1…B-4 提示词稿。
+其它 HMI 历史缺帧按该端当前实施记录核对。
 
 ### 8.5 写画布（`use_figma`）的坑
 

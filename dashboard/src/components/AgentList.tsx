@@ -1,80 +1,38 @@
+import { useEffect, useState } from 'react'
+import { isFixture, observationNow } from '../fixtures'
 import type { AgentInfo } from '../types'
+import { Duration, EmptyState, Tag } from './data'
+import { Button } from './ui'
 
-function toPercent(value?: number): number | null {
-  return value === undefined ? null : Math.round(value * 100)
+type AgentState = 'healthy' | 'offline' | 'circuit-open' | 'half-open' | 'degraded' | 'no-metrics'
+function stateOf(agent: AgentInfo): AgentState {
+  if (agent.healthy === false) return 'offline'
+  if (agent.circuit === 'open') return 'circuit-open'
+  if (agent.circuit === 'half_open' || agent.circuit === 'half-open') return 'half-open'
+  if (agent.degrade && agent.degrade > 0) return 'degraded'
+  return !agent.count ? 'no-metrics' : 'healthy'
 }
+const ORDER: Record<AgentState, number> = { offline: 0, 'circuit-open': 1, 'half-open': 2, degraded: 3, healthy: 4, 'no-metrics': 5 }
+const LABEL: Record<AgentState, string> = { healthy: '健康', offline: '离线', 'circuit-open': '熔断中', 'half-open': '半开探测', degraded: '降级', 'no-metrics': '启动后无调用' }
 
+export function AgentTile({ id, agent, now }: { id: string; agent: AgentInfo; now: number }) {
+  const state = stateOf(agent)
+  const tone = state === 'offline' || state === 'circuit-open' ? 'critical' : state === 'half-open' || state === 'degraded' ? 'warn' : 'neutral'
+  const age = agent.last_seen === undefined ? null : Math.max(0, Math.floor((now - agent.last_seen) / 1000))
+  const label = state === 'healthy' && agent.healthy === undefined ? '健康未上报' : LABEL[state]
+  return <div className="agent-tile" data-agent={id} data-state={state}>
+    <div className="row"><strong className="grow">{id}</strong>{agent.kind && <span className="mono muted">{agent.kind}</span>}</div>
+    <div className="agent-tile__metrics"><Tag tone={tone}>{label}</Tag>{agent.count !== undefined && agent.count > 0 && <><span>{agent.count} 次</span><Duration ms={agent.avg_ms} /><span>{agent.error_rate === undefined ? '错误率 —' : (agent.error_rate * 100).toFixed(1) + '%'}</span></>}
+      <span className="agent-tile__meta">{age === null ? '未上报时间' : age < 60 ? age + ' 秒前' : Math.floor(age / 60) + ' 分钟前'}</span>{agent.degrade !== undefined && <span>降级 {agent.degrade}</span>}{agent.llm_tokens !== undefined && <span>{agent.llm_tokens} tokens</span>}</div>
+  </div>
+}
 export function AgentList({ agents }: { agents: Record<string, AgentInfo> }) {
-  const ids = Object.keys(agents).sort()
-  return (
-    <section className="panel">
-      <div className="panel__head">
-        <div className="panel__title">
-          <h2>Agent 运行状态</h2>
-          <span className="en">Agents</span>
-        </div>
-        <span className="panel__tag">{ids.length} 个</span>
-      </div>
-      <div className="panel__body">
-        {ids.length === 0 && <p className="empty">等待 agent 上报…</p>}
-        <div className="agents">
-          {ids.map((id) => {
-            const agent = agents[id]
-            const down = agent.healthy === false
-            const errorPct = toPercent(agent.error_rate)
-            return (
-              <div
-                key={id}
-                data-agent={id}
-                className={'arow' + (down ? ' arow--down' : '')}
-              >
-                <span className="arow__name">{id}</span>
-                {agent.kind && (
-                  <span
-                    className={'kind' + (agent.kind.includes('edge') ? ' edge' : '')}
-                  >
-                    {agent.kind}
-                  </span>
-                )}
-                <span className="arow__health">
-                  <i />
-                  {down ? '离线' : '健康'}
-                </span>
-                <span className="arow__metrics">
-                  {agent.count !== undefined && (
-                    <span>
-                      <b>{agent.count}</b> 调用
-                    </span>
-                  )}
-                  {agent.avg_ms !== undefined && (
-                    <span>
-                      <b>{agent.avg_ms}</b>ms
-                    </span>
-                  )}
-                  {errorPct !== null && (
-                    <span className={errorPct > 0 ? 'warn' : ''}>{errorPct}%</span>
-                  )}
-                  {down && agent.fail_count ? (
-                    <span className="err">fail×{agent.fail_count}</span>
-                  ) : null}
-                  {agent.circuit && agent.circuit !== 'closed' ? (
-                    <span className="err">熔断{agent.circuit === 'open' ? '开' : '半开'}</span>
-                  ) : null}
-                  {agent.route_hits ? <span>hint×{agent.route_hits}</span> : null}
-                  {agent.degrade ? (
-                    <span className="warn">降级×{agent.degrade}</span>
-                  ) : null}
-                  {agent.llm_tokens ? (
-                    <span>
-                      <b>{agent.llm_tokens}</b>tok
-                    </span>
-                  ) : null}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </section>
-  )
+  const [all, setAll] = useState(false)
+  const [now, setNow] = useState(observationNow)
+  useEffect(() => { if (isFixture()) return; const timer = setInterval(() => setNow(Date.now()), 10000); return () => clearInterval(timer) }, [])
+  const ids = Object.keys(agents).sort((a, b) => ORDER[stateOf(agents[a])] - ORDER[stateOf(agents[b])] || a.localeCompare(b))
+  const healthy = ids.length > 0 && ids.every(id => agents[id].healthy === true)
+  return <section className="panel agent-panel"><div className="panel__head"><div className="row wrap"><h2>Agent</h2><span className="caption">{ids.length} 个{healthy ? ' · 全部健康' : ''}</span></div>{ids.length > 6 && <Button size="sm" kind="ghost" onClick={() => setAll(!all)}>{all ? '收起' : '查看全部 ' + ids.length}</Button>}</div>
+    <div className="panel__body">{!ids.length ? <EmptyState title="等待 Agent 上报" /> : <div className="agent-grid">{ids.slice(0, all ? undefined : 6).map(id => <AgentTile key={id} id={id} agent={agents[id]} now={now} />)}</div>}</div>
+  </section>
 }

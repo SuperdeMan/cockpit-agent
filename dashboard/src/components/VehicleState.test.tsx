@@ -4,7 +4,7 @@ import { VehicleState } from './VehicleState'
 
 test('a fresh temperature does not invent a missing HVAC switch state', () => {
   render(<VehicleState state={{ hvac_temp: 26 }} changed={new Set()} label="模拟车况" />)
-  expect(screen.getByText('未知')).toBeTruthy()
+  expect(document.querySelector('[data-key="hvac"]')?.textContent).toContain('未知')
   expect(screen.queryByText('OFF')).toBeNull()
   expect(screen.getByText('模拟车况')).toBeTruthy()
 })
@@ -83,4 +83,25 @@ test('translates driving mode codes to 中文', () => {
 
   const card = document.querySelector('[data-key="driving_mode"]')
   expect(card?.textContent).toContain('运动')
+})
+
+test('unknown keys retain their original name and unmodeled label', () => {
+  render(<VehicleState state={{ experimental_flag: true }} changed={new Set()} />)
+  expect(screen.getByText('experimental_flag')).toBeTruthy()
+  expect(screen.getByText('未建模')).toBeTruthy()
+  expect(document.querySelector('[data-key="experimental_flag"]')?.getAttribute('data-kind')).toBe('unmodeled')
+})
+
+test('unavailable or expired observations never become a zero percentage', () => {
+  render(<VehicleState state={{ window: 70 }} changed={new Set()} signals={{ window: { quality: 'good', expires_at_ms: Date.now() - 100 } }} />)
+  const card = document.querySelector('[data-key="window"]')
+  expect(card?.textContent).toContain('读不到')
+  expect(card?.textContent).not.toContain('0%')
+  expect(card?.getAttribute('data-kind')).toBe('unavailable')
+})
+
+test('a signal absent from the value projection still has an unavailable tile', () => {
+  render(<VehicleState state={{}} changed={new Set()} signals={{ warning_light: { quality: 'unavailable', source_kind: 'simulated', authenticated: true } }} />)
+  expect(document.querySelector('[data-key="warning_light"]')?.textContent).toContain('读不到')
+  expect(screen.queryByText('关')).toBeNull()
 })

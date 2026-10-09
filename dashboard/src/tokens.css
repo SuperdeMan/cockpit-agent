@@ -1,0 +1,177 @@
+/* Figma Visual v2 H-01. Export fixture: ../design/visual-v2.tokens.json. */
+@font-face { font-family: Inter; src: url('/fonts/Inter-latin.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('/fonts/JetBrainsMono-latin.woff2') format('woff2'); font-weight: 100 800; font-display: swap; }
+:root {
+  --obs-font: Inter, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --obs-font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  --obs-space-2: 2px;
+  --obs-space-4: 4px;
+  --obs-space-6: 6px;
+  --obs-space-8: 8px;
+  --obs-space-12: 12px;
+  --obs-space-16: 16px;
+  --obs-space-24: 24px;
+  --obs-space-32: 32px;
+  --obs-space-48: 48px;
+  --obs-r-xs: 4px;
+  --obs-r-sm: 6px;
+  --obs-r-md: 8px;
+  --obs-r-lg: 12px;
+  --obs-r-full: 999px;
+  --obs-dur-fast: 120ms;
+  --obs-dur-base: 200ms;
+  --obs-dur-slow: 320ms;
+  --obs-dur-changed-hold: 2500ms;
+  --obs-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --obs-ease-decel: cubic-bezier(0, 0, 0, 1);
+}
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --obs-bg: #06080f;
+  --obs-surface-1: #0a0e1a;
+  --obs-surface-2: #121829;
+  --obs-overlay-hover: #ffffff0f;
+  --obs-overlay-pressed: #ffffff1a;
+  --obs-text: #fffffff0;
+  --obs-text-2: #ffffffb2;
+  --obs-text-3: #ffffff80;
+  --obs-icon: #ffffffb2;
+  --obs-line: #ffffff1a;
+  --obs-line-2: #ffffff29;
+  --obs-accent: #46d6e0;
+  --obs-accent-soft: #46d6e024;
+  --obs-accent-line: #46d6e03d;
+  --obs-accent-on: #06080f;
+  --obs-good: #2bd46e;
+  --obs-good-soft: #2bd46e29;
+  --obs-pending: #8ea2ff;
+  --obs-pending-soft: #8ea2ff29;
+  --obs-warn: #f5a524;
+  --obs-warn-soft: #f59e0b29;
+  --obs-warn-fill: #f59e0b;
+  --obs-critical: #f26464;
+  --obs-critical-soft: #f2646429;
+  --obs-neutral: #ffffffb2;
+  --obs-neutral-soft: #ffffff1a;
+  --obs-data-bar: #7d8db3;
+  --obs-data-grid: #ffffff0f;
+  --obs-data-axis: #ffffff29;
+  --obs-sim-hatch: #ffffff1a;
+  --obs-sim-line: #f59e0b66;
+  --obs-focus: #46d6e0;
+  --obs-shadow: #00000066;
+  --obs-scrim: #00000099;
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --obs-bg: #edf1fa;
+  --obs-surface-1: #ffffff;
+  --obs-surface-2: #f5f7fc;
+  --obs-overlay-hover: #0a0e1a0a;
+  --obs-overlay-pressed: #0a0e1a12;
+  --obs-text: #0a0e1aeb;
+  --obs-text-2: #0a0e1aa8;
+  --obs-text-3: #0a0e1a7a;
+  --obs-icon: #0a0e1aa8;
+  --obs-line: #0a0e1a1a;
+  --obs-line-2: #0a0e1a29;
+  --obs-accent: #0369a1;
+  --obs-accent-soft: #0369a11a;
+  --obs-accent-line: #0369a12e;
+  --obs-accent-on: #ffffff;
+  --obs-good: #166534;
+  --obs-good-soft: #1665341a;
+  --obs-pending: #3b4fc0;
+  --obs-pending-soft: #3b4fc01a;
+  --obs-warn: #92400e;
+  --obs-warn-soft: #b453091f;
+  --obs-warn-fill: #92400e;
+  --obs-critical: #c62828;
+  --obs-critical-soft: #c628281a;
+  --obs-neutral: #0a0e1aa8;
+  --obs-neutral-soft: #0a0e1a12;
+  --obs-data-bar: #5f6f93;
+  --obs-data-grid: #0a0e1a12;
+  --obs-data-axis: #0a0e1a29;
+  --obs-sim-hatch: #0a0e1a1a;
+  --obs-sim-line: #92400e66;
+  --obs-focus: #0369a1;
+  --obs-shadow: #0a0e1a1f;
+  --obs-scrim: #0a0e1a7a;
+}
+:root, [data-size="workbench"] {
+  --obs-type-display-size: 28px;
+  --obs-type-display-line: 34px;
+  --obs-type-headline-size: 20px;
+  --obs-type-headline-line: 28px;
+  --obs-type-title-size: 16px;
+  --obs-type-title-line: 24px;
+  --obs-type-body-size: 14px;
+  --obs-type-body-line: 22px;
+  --obs-type-body-sm-size: 13px;
+  --obs-type-body-sm-line: 20px;
+  --obs-type-label-size: 13px;
+  --obs-type-label-line: 20px;
+  --obs-type-caption-size: 12px;
+  --obs-type-caption-line: 18px;
+  --obs-type-micro-size: 11px;
+  --obs-type-micro-line: 16px;
+  --obs-type-mono-size: 13px;
+  --obs-type-mono-line: 20px;
+  --obs-type-mono-sm-size: 12px;
+  --obs-type-mono-sm-line: 18px;
+  --obs-type-mono-xs-size: 11px;
+  --obs-type-mono-xs-line: 16px;
+  --obs-size-control-md: 32px;
+  --obs-size-control-sm: 24px;
+  --obs-size-row-list: 56px;
+  --obs-size-row-table: 32px;
+  --obs-size-row-timeline: 24px;
+  --obs-size-bar-height: 12px;
+  --obs-size-marker-size: 8px;
+  --obs-size-icon-sm: 16px;
+  --obs-size-icon-md: 20px;
+  --obs-size-topbar-height: 48px;
+  --obs-size-pane-list: 440px;
+  --obs-size-pane-detail: 360px;
+}
+[data-size="presentation"] {
+  --obs-type-display-size: 36px;
+  --obs-type-display-line: 44px;
+  --obs-type-headline-size: 26px;
+  --obs-type-headline-line: 34px;
+  --obs-type-title-size: 20px;
+  --obs-type-title-line: 28px;
+  --obs-type-body-size: 18px;
+  --obs-type-body-line: 28px;
+  --obs-type-body-sm-size: 16px;
+  --obs-type-body-sm-line: 24px;
+  --obs-type-label-size: 16px;
+  --obs-type-label-line: 24px;
+  --obs-type-caption-size: 15px;
+  --obs-type-caption-line: 22px;
+  --obs-type-micro-size: 14px;
+  --obs-type-micro-line: 20px;
+  --obs-type-mono-size: 16px;
+  --obs-type-mono-line: 24px;
+  --obs-type-mono-sm-size: 15px;
+  --obs-type-mono-sm-line: 22px;
+  --obs-type-mono-xs-size: 14px;
+  --obs-type-mono-xs-line: 20px;
+  --obs-size-control-md: 40px;
+  --obs-size-control-sm: 32px;
+  --obs-size-row-list: 68px;
+  --obs-size-row-table: 40px;
+  --obs-size-row-timeline: 32px;
+  --obs-size-bar-height: 16px;
+  --obs-size-marker-size: 10px;
+  --obs-size-icon-sm: 20px;
+  --obs-size-icon-md: 24px;
+  --obs-size-topbar-height: 56px;
+  --obs-size-pane-list: 480px;
+  --obs-size-pane-detail: 400px;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --obs-dur-fast: 0ms; --obs-dur-base: 0ms; --obs-dur-slow: 0ms; }
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

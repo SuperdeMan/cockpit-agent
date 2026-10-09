@@ -63,6 +63,11 @@ export type Turn = {
   plan_mode?: string // 规划输出通道（toolcall|…|toolcall_degraded）
   gold_intents?: string // 人工标注的正确落域
   outcome?: string // 终态账本（评审 W13）：cloud.outcome 的 kind（runtime/outcome.py 词表）
+  outcome_category?: string
+  origin?: string
+  warning_count?: number
+  edge_nlu?: string
+  actionability?: string
 }
 
 export type SessionSummary = {
@@ -73,6 +78,8 @@ export type SessionSummary = {
   errors: number
   rejected: number
   badcases: number
+  first_user_text?: string
+  origin?: string
 }
 
 export type LlmCall = {
@@ -86,6 +93,8 @@ export type LlmCall = {
   // （QA I-057：MiniMax 529 时静默切 DeepSeek，可观测里看不出这一跳换过）。
   provider?: string
   fallback?: number | boolean
+  pinned?: number | boolean
+  requested_tier?: string
   prompt_tokens: number
   completion_tokens: number
   latency_ms: number
@@ -119,6 +128,8 @@ export type LlmSummaryGroup = {
   errors: number
   avg_latency_ms: number
   last_ts: number
+  fallback_calls?: number
+  zero_usage_calls?: number
 }
 
 export type LlmSummary = {
@@ -131,4 +142,24 @@ export type TurnDetail = {
   spans: Span[]
   llm_calls: LlmCall[]
   logs: LogEntry[]
+}
+
+export type CollectorMeta = {
+  content_capture: boolean
+  retention_days: number
+  debug_vehicle_control: boolean
+  query_features?: string[]
+}
+
+export type Page<T> = { items: T[]; total?: number; limit: number; offset: number }
+
+export type VehicleSignal = {
+  value?: unknown
+  quality?: string
+  source_kind?: string
+  source_id?: string
+  observed_at_ms?: number
+  expires_at_ms?: number
+  authenticated?: boolean
+  [key: string]: unknown
 }

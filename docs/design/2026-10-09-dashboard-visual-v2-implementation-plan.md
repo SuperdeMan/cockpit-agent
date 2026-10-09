@@ -1,6 +1,6 @@
 # 座舱 Agent 可观测台视觉 v2 · 实施计划
 
-- **状态**：草案（2026-10-09）。设计阶段 M0–M6 已完成，代码还没动。
+- **状态**：B1–B6 已实施并完成本地验证（2026-10-09）；用户已授权提交、推送与部署。发布进度见 §9.5，历史本地证据见 §9.4。
 - **依据**：
   - [设计 Brief](2026-10-09-dashboard-visual-redesign-brief.md)（已批准，§16 九项全部按推荐；检查点① 用户已确认）；
   - Figma「座舱 Agent 可观测台 · Visual v2」`wmGLdb9ZAU5AT1RtSlSDT2`。09 Handoff 页有 token ↔ CSS（H-01）、组件 ↔ 代码（H-02）、差异清单 D（H-03）、接口依赖 C（H-04）。
@@ -21,7 +21,7 @@
 - `types.ts` 只补 C5 列出的、collector 已经返回的字段；collector 的写路径和表结构都不改。
 - 不引入组件库、图表库、动效库。时间线用 DOM + CSS 绝对定位来画。
 
-行为变更共 4 条，都已在 brief §15 拍板：D11 单轮日志合并、D12 重放前确认、D16 去掉 armed、D21 列表键盘。其中 D21 的「列表 ↑↓ 移动、Enter 打开」brief 写的是「实施时再确认」，做到 B6 时先问一句再合入。
+行为变更共 4 条：D11 单轮日志合并、D12 重放前确认、D16 去掉 armed、D21 列表键盘。D21 已在 2026-10-09 实施会话取得用户确认：↑↓ 只移动焦点，Enter 打开；鼠标点击保留。
 
 C10（深链与离线夹具）建议在 B1 就做：没有夹具，就没法把实现和 Figma 截图逐帧对照。
 
@@ -200,4 +200,65 @@ M1–M6 期间对 brief 做了以下细化，实施按这一版：
 
 ## 9. 实施记录
 
-（未开始）
+### 9.1 2026-10-09 本地工作树交付
+
+已逐项读取 09 Handoff 五张表，并按本批节点取得高保真结构与截图。实现保留 React 18、全局 CSS 和既有网络通道，无新增 npm 依赖；HMI/mobile 源文件未改。
+
+| 批 / 差异 | 已实现 |
+|---|---|
+| B1 / D1–D3、D22 | `tokens.css` 与 Figma 冻结快照；34 个颜色 × 深浅、34 个尺寸 × 工作台/演示、间距/圆角/动效；自托管字体和许可证；ui/data 原语、37 种结局显示映射；深链与离线夹具 |
+| B2 / D4–D6 | 五页签、全局 trace 跳转、栈标识、连接状态、主题/演示/菜单；令牌门四态；HTTP 失败与空态分离；新旧令牌及旧 WS 迟到回调隔离 |
+| B3 / D7–D9、D11–D13 | 扁平轮次、会话分组、服务端筛选与旧接口降级、真实加载数量；检查器五页签、会话前后导航、badcase/标注弹层、自由 intent、JSON 导出；非连续重复日志合并；重放确认与独立 replay 会话 |
+| B4 / D10 | `laneOf.ts` 单源、DOM/CSS 泳道图、零时长标记、LLM/日志共轴、轮次外区域、真实“现在”线、可折叠外部服务、详情与等价列表；原轮/重放轮共用相对刻度 |
+| B5 / D14–D18 | 本句与历史分离；指令六态加具体失败原因；完成中性；只从当前 trace 新到 `val.execute.changes` 触发 2.5 秒变化提示；详情防串轮并补拉晚到日志/LLM；九种车况 Kind；模拟环境不自算安全阈值；Agent 六态 |
+| B6 / D19–D21 | 日志远端搜索、多服务选择、按出现次数保留事件、暂停与新日志缓存、trace 跳转；用量五卡、占比、未归属置顶、未上报独立表达；页签/芯片/分段方向键、用户确认的列表 ↑↓ / Enter、焦点还原、减少动效及窄屏抽屉 |
+
+旧 `SessionsView` / `BadcasesView` / `TurnDetailPanel` / `SpanWaterfall` / `TracePanel` / `Dynamics` / `CommandBar` 保留兼容入口，运行路径复用新实现，不维护第二套组件行为。
+
+### 9.2 接口与契约边界
+
+- C1–C4、C6、C7、C9 已在 collector **只读查询**实现。原接口默认继续返回数组；`paginated=1` 才返回 `items/total/limit/offset`。`/api/meta` 仍需运维令牌。
+- C5 已补当前 collector 真实返回的四个字段；C10 已实现。C8 采用读态 `error → err` 兼容，**SDK 写入方未改**，历史行不重写。
+- `zero_usage_calls` 只计 `status=ok` 且输入/输出 tokens 均为 0 的调用；旧接口缺 C9 时显示“未上报分组”，不把分组数冒充调用数。
+- AST 对账确认 `_SCHEMA` 及 `insert_turn/insert_span/insert_llm/insert_log/set_badcase/set_gold/cleanup/_ensure_column` 与基线一致；无表结构变更或迁移。
+- 2026-10-09 只读核对当前云端：`/api/meta` 为 404，搜索仍返回旧数组，详情仍有 `llm.call.meta`；C5 字段已存在。前端对应降级均保留。本次未发真实指令、未重放真实轮次、未写模拟环境。
+- 未归属调用、模型用量缺报等上游数据问题仍独立，不因界面改造而关闭。
+
+### 9.3 设计落地说明
+
+- 1280 抽屉按实施计划与 Figma R-03；1440 车况三列按本计划 §5 的最新细化。数据量超过可视区域时滚动，未隐藏观测字段。
+- Figma 缓存 token 数示例没有对应契约，只显示缓存命中布尔；不存在的 trace 只写“没找到”，当前保留天数不能证明某条记录已清理。
+- 专用新增图标直接导出 Figma 原节点，保存在 dashboard 本地图标扩展；共享表只读导入，未为本台重写 HMI/mobile。
+- 减少动效关闭淡入与过渡；“刚变”信息仍保持 2.5 秒，期间不循环闪动。原型中的“完成”不作为执行成功证明。
+- HTTP/WS 令牌不进 URL/localStorage/日志；旧令牌响应和退订连接不能污染新访问状态；离线夹具在 REST、WS、重放、环境设置入口处截断外呼。
+
+### 9.4 验证与复现
+
+本地验证基线为 `2464356a0f379d67b95a2a609c3bfe7843129e00` **加本次未提交改动**，不是 release SHA。
+浏览器证据另绑定 119 个输入文件的 SHA-256 摘要：`b559c140f0186c3ab90b4d9758e14aad9ffa5a8f13c0e375fe786d102c030680`；运行前后摘要相同。
+
+| 检查 | 结果 / artifact |
+|---|---|
+| dashboard `npm test` | **17 文件 / 153 passed**；`.artifacts/dashboard-visual-v2/dashboard-tests.log` |
+| dashboard `npm run build` | TypeScript + Vite 通过；`dashboard-build.log` |
+| collector `python -X utf8 -m pytest -q -rs observability/collector/tests` | **105 passed / 1 skipped / 1 warning**；skip 为未安装可选 OpenTelemetry，warning 为既有 Starlette/httpx 弃用；`collector-tests.log` |
+| 浏览器主帧 | **56 个不同组合通过（58 次检查，含 2 次同组合重复）**；深浅、演示、1280/1440/1920/2560、正常/空/失败/未授权/未采集/断连/缺失/旧接口；`browser/evidence.json` |
+| 浏览器交互 | span 选中详情、时间线列表、检查器各页签、重放取消初始焦点、确认后两条时间线同刻度、抽屉 Escape 回焦、暂停时缓存两条相同文本事件并逐条恢复、debug disabled 控件不可写 |
+| 浏览器断言 | 零外部请求/资源、零运行异常、零页面横向溢出、零嵌套按钮、按钮有名称、减少动效下无运行中动画 |
+| 品牌与视觉 | token 全模式逐项对账、HMI 同源角色对账、五种底和软底的 alpha 合成对比度、字体/许可证字节一致；已查看主要页面、详情、对照与抽屉截图 |
+| 只读真接口形状 | `live-contract-shapes.json`，仅保存字段与状态，不保存原话或令牌，不作为业务 E2E |
+
+复现入口与夹具参数见 [dashboard/README.md](../../dashboard/README.md)。最终矩阵命令：
+
+```powershell
+node dashboard/visual-qa.mjs --interactions components components:1920:presentation turns turns:1440 turns:2560 turns:1280 live live:1440 live-done:1920:presentation live-running live-pending live-disabled:1440 live-failed live-unreachable logs logs:1440 usage usage:1440 token-first token-invalid token-not-configured token-unreachable empty error content-off disconnected missing legacy
+```
+
+此结论限本地前端与 collector 查询，不替代真实 Provider 旅程、云端发布或整项目 QA。后续如需上线，仍按项目规则单独批准 push 与部署。
+
+### 9.5 2026-10-09 授权发布
+
+- 用户已明确授权“提交推送并部署”。本轮只提交 dashboard、collector 查询及配套文档；不包含其他任务的 Android 实施记录改动。
+- 发布前发现原 dashboard 镜像把源码平铺在 `/app`，且未包含共享图标，无法解析本批新增的跨目录导入。应用 Dockerfile 改为 `/app/dashboard`，只复制三份受控的 HMI/mobile 图标数据，保持仓库相对布局；不改 Compose 或运行配置。
+- `imageLayout.test.ts` 从实际运行入口遍历相对导入，按 Docker COPY/WORKDIR 计算镜像位置。3 条通过，包括去掉共享文件复制、退回旧工作目录的两条反向验证。
+- 精确提交、部署与独立 status/verify 结果将在发布完成后登记；旧 §9.4 读数不转借给新 release。

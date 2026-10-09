@@ -1,274 +1,62 @@
-import { useEffect, useRef, useState } from 'react'
-
-import { connectObs } from './api'
-import { BadcasesView } from './views/BadcasesView'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { authorize, fetchHealth, fetchMeta, getAccessState, operatorToken, subscribeAccess } from './api'
+import { useObservation } from './useObservation'
+import { navigate, useRoute } from './navigation'
+import { fixtureName, FIXTURE_TRACE, isFixture } from './fixtures'
+import { FixtureGallery } from './FixtureGallery'
+import { TopBar } from './components/shell/TopBar'
+import { TokenGate } from './components/shell/TokenGate'
+import { Banner } from './components/data'
+import { Button } from './components/ui'
+import { TurnsView } from './views/TurnsView'
 import { LiveView } from './views/LiveView'
-import { LlmView } from './views/LlmView'
 import { LogsView } from './views/LogsView'
-import { SessionsView } from './views/SessionsView'
-import type {
-  AgentInfo,
-  LogEntry,
-  Span,
-  Trace,
-  Turn,
-  VehicleState as VehicleStateMap,
-} from './types'
-
-type ViewKey = 'sessions' | 'live' | 'logs' | 'llm' | 'badcases'
-
-const NAV: ReadonlyArray<readonly [ViewKey, string, string]> = [
-  ['sessions', '会话', '轮次下钻 / badcase 定位'],
-  ['live', '总览', '实时链路 / 车辆 / Agent'],
-  ['logs', '日志', '结构化日志检索'],
-  ['llm', 'LLM', '消耗归属（caller×model）'],
-  ['badcases', '收藏', 'badcase 列表与重放'],
-]
-
-function observationLabel(signals: Record<string, unknown>) {
-  const metadata = Object.values(signals).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-  if (!metadata.length) return '等待车况'
-  const source = metadata.every((m) => m.source_kind === 'simulated') ? '模拟车况'
-    : metadata.some((m) => m.source_kind === 'simulated' || m.source_kind === 'sandbox') ? '包含模拟数据' : '车辆状态'
-  return metadata.some((m) => m.quality !== 'good') ? source + ' · 部分状态待更新' : source
-}
+import { LlmView } from './views/LlmView'
+import type { CollectorMeta } from './types'
+import './shell.css'
 
 export default function App() {
-  const [view, setView] = useState<ViewKey>('sessions')
-  const [connected, setConnected] = useState(false)
-  const [vehicle, setVehicle] = useState<VehicleStateMap>({})
-  const [vehicleLabel, setVehicleLabel] = useState('等待车况')
-  const versionedState = useRef(false)
-  const [changed, setChanged] = useState<Set<string>>(new Set())
-  const [traces, setTraces] = useState<Trace[]>([])
-  const [agents, setAgents] = useState<Record<string, AgentInfo>>({})
-  const [lastTurn, setLastTurn] = useState<Turn | null>(null)
-  const [lastLog, setLastLog] = useState<LogEntry | null>(null)
-  const [turnTick, setTurnTick] = useState(0)
-  const [clock, setClock] = useState('--:--:--')
-  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-
+  return fixtureName() === 'components' ? <FixtureGallery /> : <Observatory />
+}
+function Observatory() {
+  const access = useSyncExternalStore(subscribeAccess, getAccessState)
+  const route = useRoute()
+  const [retry, setRetry] = useState(0)
+  const [listOpen, setListOpen] = useState(false)
+  const [meta, setMeta] = useState<CollectorMeta | null>(null)
+  const [metaError, setMetaError] = useState('')
+  const [nats, setNats] = useState<boolean>()
+  const obs = useObservation(access === 'authenticated', retry)
   useEffect(() => {
-    const tick = () => setClock(new Date().toTimeString().slice(0, 8))
-    tick()
-    const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
-  }, [])
-
-  useEffect(() => {
-    const flash = (keys: string[]) => {
-      setChanged((previous) => {
-        const next = new Set(previous)
-        keys.forEach((key) => next.add(key))
-        return next
-      })
-      keys.forEach((key) => {
-        clearTimeout(timers.current[key])
-        timers.current[key] = setTimeout(() => {
-          setChanged((previous) => {
-            const next = new Set(previous)
-            next.delete(key)
-            return next
-          })
-        }, 2500)
-      })
-    }
-
-    const disconnect = connectObs({
-      onConn: (online) => {
-        setConnected(online)
-        if (!online) { setVehicle({}); setVehicleLabel('车况待更新') }
-      },
-      onSnapshot: (snapshot) => {
-        if (snapshot.vehicle_id && snapshot.vehicle_id !== 'v1') return
-        const observation = snapshot.vehicle_observation
-        if (observation?.version === 2 && observation.vehicle_id === 'v1') {
-          versionedState.current = true
-          setVehicle(observation.state)
-          setVehicleLabel(observationLabel(observation.signals))
-        } else if (!versionedState.current && !observation) {
-          setVehicle(snapshot.vehicle_state || {})
-          setVehicleLabel('模拟车况 · 更新时效未知')
-        }
-        setTraces((snapshot.traces || []).slice(0, 30))
-        setAgents(snapshot.agents || {})
-      },
-      onStateChange: (event) => {
-        if (event.vehicle_id && event.vehicle_id !== 'v1') return
-        if (event.observation?.version === 2 && event.observation.vehicle_id === 'v1') {
-          versionedState.current = true
-          setVehicle(event.observation.state)
-          setVehicleLabel(observationLabel(event.observation.signals))
-          flash(event.changes.map((change) => change.key))
-          return
-        }
-        if (versionedState.current || event.observation) return
-        setVehicle((previous) => {
-          const next = { ...previous }
-          event.changes.forEach((change) => {
-            next[change.key] = change.new
-          })
-          return next
-        })
-        flash(event.changes.map((change) => change.key))
-      },
-      onSpan: (span: Span) => {
-        setTraces((previous) => {
-          const index = previous.findIndex((t) => t.trace_id === span.trace_id)
-          if (index >= 0) {
-            const current = previous[index]
-            if (current.spans.some((item) => item.span_id === span.span_id)) {
-              return previous
-            }
-            const updated = {
-              ...current,
-              spans: [...current.spans, span],
-              updated: span.ts,
-            }
-            return [
-              updated,
-              ...previous.filter((_, idx) => idx !== index),
-            ].slice(0, 30)
-          }
-          return [
-            {
-              trace_id: span.trace_id,
-              spans: [span],
-              started: span.ts,
-              updated: span.ts,
-            },
-            ...previous,
-          ].slice(0, 30)
-        })
-      },
-      onTurn: (turn) => {
-        setLastTurn(turn)
-        setTurnTick((n) => n + 1)
-      },
-      onLog: setLastLog,
-      onHealth: (event) => {
-        const agentId = typeof event.agent_id === 'string' ? event.agent_id : ''
-        if (!agentId) return
-        setAgents((previous) => ({
-          ...previous,
-          [agentId]: {
-            ...previous[agentId],
-            healthy:
-              typeof event.healthy === 'boolean'
-                ? event.healthy
-                : previous[agentId]?.healthy,
-            fail_count:
-              typeof event.fail_count === 'number'
-                ? event.fail_count
-                : previous[agentId]?.fail_count,
-            last_seen:
-              typeof event.last_seen === 'number'
-                ? event.last_seen
-                : previous[agentId]?.last_seen,
-            deployment:
-              typeof event.deployment === 'string'
-                ? event.deployment
-                : previous[agentId]?.deployment,
-            kind:
-              typeof event.kind === 'string'
-                ? event.kind
-                : previous[agentId]?.kind,
-          },
-        }))
-      },
-      onMetric: (event) => {
-        const agentId = typeof event.agent_id === 'string' ? event.agent_id : ''
-        if (!agentId) return
-        setAgents((previous) => ({
-          ...previous,
-          [agentId]: {
-            ...previous[agentId],
-            count:
-              typeof event.count === 'number'
-                ? event.count
-                : previous[agentId]?.count,
-            avg_ms:
-              typeof event.avg_ms === 'number'
-                ? event.avg_ms
-                : previous[agentId]?.avg_ms,
-            error_rate:
-              typeof event.error_rate === 'number'
-                ? event.error_rate
-                : previous[agentId]?.error_rate,
-            circuit:
-              typeof event.circuit === 'string'
-                ? event.circuit
-                : previous[agentId]?.circuit,
-            route_hits:
-              typeof event.route_hits === 'number'
-                ? event.route_hits
-                : previous[agentId]?.route_hits,
-            degrade:
-              typeof event.degrade === 'number'
-                ? event.degrade
-                : previous[agentId]?.degrade,
-            llm_tokens:
-              typeof event.llm_tokens === 'number'
-                ? event.llm_tokens
-                : previous[agentId]?.llm_tokens,
-          },
-        }))
-      },
-    })
-
-    return () => {
-      disconnect()
-      Object.values(timers.current).forEach(clearTimeout)
+    if (operatorToken() && !isFixture()) void authorize()
+    else if (fixtureName()?.startsWith('token-') && fixtureName() !== 'token-first') void authorize()
+    if (isFixture() && !new URLSearchParams(location.search).has('view')) {
+      const name = fixtureName() || ''
+      navigate({ view: name.startsWith('live') ? 'live' : name === 'logs' ? 'logs' : name === 'usage' ? 'llm' : 'turns',
+        trace: ['turns', 'content-off', 'missing'].includes(name) ? FIXTURE_TRACE : '' }, true)
     }
   }, [])
-
-  return (
-    <div className="hud">
-      <div className="hud-bg" aria-hidden="true" />
-
-      <header className="hud-top">
-        <div className="hud-brand">
-          <div className="hud-mark" aria-hidden="true">
-            <i />
-          </div>
-          <div>
-            <p className="eyebrow">Cockpit Observability</p>
-            <h1>座舱 Agent 可观测台</h1>
-          </div>
-        </div>
-        <nav className="hud-nav" aria-label="视图切换">
-          {NAV.map(([key, label, hint]) => (
-            <button
-              key={key}
-              className={'hud-nav__item' + (view === key ? ' hud-nav__item--on' : '')}
-              onClick={() => setView(key)}
-              title={hint}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-        <div className="hud-status">
-          <span className="hud-clock">{clock} · LIVE</span>
-          <span className={'badge' + (connected ? '' : ' offline')}>
-            <i />
-            Collector {connected ? '已连接' : '重连中'}
-          </span>
-        </div>
-      </header>
-
-      {view === 'live' && (
-        <LiveView vehicle={vehicle} changed={changed} vehicleLabel={vehicleLabel} traces={traces} agents={agents} />
-      )}
-      {view === 'sessions' && <SessionsView lastTurn={lastTurn} />}
-      {view === 'logs' && <LogsView lastLog={lastLog} />}
-      {view === 'llm' && <LlmView lastTurn={lastTurn} />}
-      {view === 'badcases' && <BadcasesView turnTick={turnTick} />}
-
-      <footer className="hud-foot">
-        <span>Observability Channel · Best-Effort</span>
-        <span>Car-Agent · Phase 1</span>
-      </footer>
+  useEffect(() => {
+    if (access !== 'authenticated') return
+    let alive = true
+    fetchMeta().then(value => { if (alive) { setMeta(value); setMetaError('') } }).catch(error => { if (alive) setMetaError(error.message) })
+    fetchHealth().then(value => { if (alive) setNats(value.nats) }).catch(() => { if (alive) setNats(undefined) })
+    return () => { alive = false }
+  }, [access, retry])
+  if (access !== 'authenticated') return <TokenGate state={access} />
+  return <div className="observatory" data-list-open={listOpen}>
+    <TopBar view={route.view} connected={obs.connected} nats={nats} onList={() => setListOpen(true)} />
+    <div className="app-banners">
+      {isFixture() && <div className="fixture-label">离线夹具 · 示例数据 · 所有操作仅在本页演示</div>}
+      {!obs.connected && <Banner tone="warn" action={<Button size="sm" onClick={() => setRetry(n => n + 1)}>重连</Button>}>实时通道重连中 · 数据可能滞后</Banner>}
+      {metaError && <Banner tone="warn" action={<Button size="sm" onClick={() => setRetry(n => n + 1)}>重试</Button>}>读取采集配置失败：{metaError}</Banner>}
+      {meta?.content_capture === false && <Banner>内容未采集 · 原话、话术、规划与模型输入输出不可查看，链路形状仍可排查</Banner>}
     </div>
-  )
+    <div className="app-content">
+      {(route.view === 'turns' || route.view === 'badcases') && <TurnsView key={route.view} lastTurn={obs.lastTurn} traceId={route.trace} query={route.query} saved={route.view === 'badcases'} meta={meta} listOpen={listOpen} onCloseList={() => setListOpen(false)} />}
+      {route.view === 'live' && <LiveView {...obs} meta={meta} />}
+      {route.view === 'logs' && <LogsView lastLog={obs.lastLog} liveLogs={obs.liveLogs} />}
+      {route.view === 'llm' && <LlmView lastTurn={obs.lastTurn} />}
+    </div>
+  </div>
 }

@@ -10851,3 +10851,13 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   - 随即更新主机 GC 脚本与 service：旧文件备份在 `/var/backups/host-capacity-gc/20261009T091348Z/`；`daemon-reload`，未重启 dockerd。
   - systemd 首轮 `not_needed`、零错误；保留策略 dry-run 与 `status` 正常。
   - 锚更换后，其他工作树需基于含 `b9d7819b` 的 main 才能部署。
+
+## 2026-10-09：Dashboard Visual v2 本地实施与验收
+
+- 已按 Figma 09 Handoff 五表完成 B1–B6；当前入口与唯一实施证据见 [实施计划 §9](design/2026-10-09-dashboard-visual-v2-implementation-plan.md#9-实施记录)。
+- 运行路径改为 token/基础件、令牌门、扁平轮次与检查器、统一泳道时间线、本句实况、日志跟随和用量盲区；D21 方向键移动/Enter 打开在本轮单独取得用户确认。
+- collector 只增只读投影、筛选/分页/meta/汇总；历史 `error` 在查询侧兼容，schema、写入、清理与迁移方法不变。当前云端仍为旧接口，本地已保留降级。
+- 审查修复旧授权/WS迟到回调、trace查找被24小时过滤挡住、弹层裁切、跨轮实况证据和晚到LLM/日志、无动作依据的“刚变”、已发请求超时被误称连不上等问题。
+- 本地基线 `2464356a0f379d67b95a2a609c3bfe7843129e00` 加未提交改动：dashboard 152 passed 与构建通过；collector 105 passed/1可选依赖skip；浏览器56个主帧组合及交互验收通过。精确源摘要、artifact和限制只维护实施计划 §9。
+- 未提交、未推送、未部署；未修改 HMI/mobile、环境变量或 CI/CD，未发真实业务指令。此批不改变项目“QA仍非全绿”的结论。
+- 最终目检补正待确认夹具：只保留云端规划/NEED_CONFIRM/挂起记录，不混入导航示例调用；增加夹具语义回归后最终 dashboard 为 153 passed，构建及 56 个不同浏览器组合再次通过。初轮152读数保留为历史，最终源摘要与证据以实施计划 §9 为准。

@@ -138,7 +138,9 @@ def test_llm_request_pin_is_persisted_via_existing_span_contract():
 
     assert detail["llm_calls"][0]["pinned"] is True
     assert detail["llm_calls"][0]["requested_tier"] == "MiniMax-M3"
-    assert any(span["node"] == "llm.call.meta" for span in detail["spans"])
+    assert all(span["node"] != "llm.call.meta" for span in detail["spans"])
+    # The read projection hides the transport metadata, not its evidence row.
+    assert db._conn.execute("SELECT COUNT(*) FROM spans WHERE node='llm.call.meta'").fetchone()[0] == 1
 
 
 def test_non_planning_span_does_not_touch_turns():

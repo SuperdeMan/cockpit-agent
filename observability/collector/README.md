@@ -26,6 +26,32 @@ python -m observability.collector.main
 - 既有 `/api/traces*`、`/api/agents`、`/api/vehicle/state`、`/metrics`、`WS /stream` 不变
   （`/stream` 增播 `turn`/`llm`/`log` 事件类型）
 
+### Dashboard Visual v2 只读查询（2026-10-09）
+
+只扩充查询，不改表结构、采集写路径或保留策略。旧版 `/api/search`、`/api/sessions`
+默认仍返回数组；传 `paginated=1` 才返回 `{items,total,limit,offset}`。`total` 是同一组筛选
+在分页前的总数（分别为轮次、会话），不是当前页条数；`limit` 保留原有语义，`offset >= 0`。
+
+| 接口 | 新增契约 |
+|---|---|
+| `/api/search` | `origin`、`category`、`outcome` 支持逗号分隔多选；同参数内 OR，不同参数间 AND。可选布尔 `edge_disagreement`、`actionability_disagreement`、`degraded`、`has_warnings`、`labeled`；`min_duration_ms >= 0`；`offset`、`paginated`。原 `q/status/session/badcase/since/until/limit` 保留 |
+| 轮次查询 | search / session turns / detail / export 的 turn 均带 `outcome_category`（直接调用 `runtime.outcome.category_of`）、`origin`、`warning_count` |
+| `/api/sessions` | 行带 `first_user_text`（按时间及 trace ID 取该会话首句）、`origin`；支持 `origin` 多选与 `offset/paginated`。文本命中某轮仍返回整个会话的计数和首句 |
+| `/api/turns/{trace_id}` 与 export | 先从 `llm.call.meta` 合并 `pinned/requested_tier`，再从返回的 spans 隐藏它；历史 `error` span 只在查询副本映射为 `err`，持久行保留原值 |
+| `/api/llm/summary` | 每个 caller × model 分组增加 `fallback_calls` 与 `zero_usage_calls`。后者仅计 `status=ok` 且输入、输出 token 都为 0 的成功调用，不表示真实消耗为零；失败调用独立计入 `errors` |
+| `/api/meta` | 受运维令牌保护；返回 `content_capture: bool`、`retention_days: number`、`debug_vehicle_control: bool`、`query_features: ["turn_filters", "turn_pagination", "session_pagination"]` |
+
+`origin` 唯一前缀表在 `query_projection.py`：`hmi/app/dashboard/replay/test/probe/release/unknown`。
+它只描述会话命名空间，不证明身份；合成前缀与 HMI / App / 指令台 / 重放 / E2E / 发布探针
+有生产方对账测试。未登记的前缀显示 `unknown`。
+
+分歧读取既有 `!=` 后缀；`degraded` 覆盖 `_degraded` / `_fallback`（包括后续限定后缀）及
+`_salvage*` 通道；`has_warnings` 与 `warning_count` 同数 WARN / WARNING / ERROR /
+CRITICAL / FATAL 日志；`labeled` 指非空 `gold_intents`。这些筛选不把 `status=ok` 等同于业务成功。
+
+`/api/meta` 的配置只反映当前运行时，不能证明任意缺失 trace 曾存在或已被清理。
+未知 trace 仍返回 `{"error":"not found"}`；不从保留天数推断「已过保留期」。
+
 ## 持久化与保留
 
 - SQLite（stdlib，WAL）四张表：`turns` / `spans` / `llm_calls` / `logs`；
