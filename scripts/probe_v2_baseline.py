@@ -36,6 +36,10 @@ CORPUS = ROOT / "test/eval_corpus/v2_runtime/seed.yaml"
 #: 却曾挡住基线（2026-10-09：一份 Android 记录、一份可观测台 brief）。新加的导入或读取的文件要落在这里面（测试钉着）。
 FREEZE_INPUTS = ("scripts", "runtime", "test/eval_corpus", "test/journeys",
                  "agents/manual_rag/resources/source_evidence.yaml")
+#: 输入目录里的测试不进跑数（运行器不导入它们）：别的会话常在改它们（2026-10-09 P1 跑数期间，容量回收与保留策略的测试改了一半），
+#: 不该判成「跑数输入变了」。
+FREEZE_EXCLUDES = ("scripts/tests", "runtime/tests")
+_FREEZE_PATHSPEC = FREEZE_INPUTS + tuple(f":(exclude){p}" for p in FREEZE_EXCLUDES)
 #: 核心旅程冻结清单（docs/design/2026-10-09-v2-core-journey-freeze.md）：只登记引用与分类，旅程内容在 source 指向的文件里。
 #: 7 月旅程（test/journeys/）也是跑数输入——清单引用它们时一并进 `FREEZE_INPUTS`。
 MANIFEST = ROOT / "test/eval_corpus/v2_runtime/core/manifest.yaml"
@@ -163,7 +167,7 @@ def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS, 
     loader = loader or load_cases
     if not re.fullmatch(r"[a-f0-9]{40}", expected_sha):
         raise ValueError("expected release must be a full SHA")
-    if _git("status", "--porcelain", "--", *FREEZE_INPUTS):
+    if _git("status", "--porcelain", "--", *_FREEZE_PATHSPEC):
         raise ValueError("freeze requires committed, clean inputs")
     corpus = corpus.resolve()
     relative_corpus = corpus.relative_to(ROOT).as_posix()
@@ -394,9 +398,9 @@ def journey_summary(runs: list[dict], repeat: int) -> dict:
 
 def _inputs_unchanged(runner_sha: str) -> bool:
     """跑数期间输入没变：跑数输入在开跑提交与 HEAD 之间没有差异、也没有未提交改动。共享 main 上别的会话提交别处不算变化。"""
-    if _git("status", "--porcelain", "--", *FREEZE_INPUTS):
+    if _git("status", "--porcelain", "--", *_FREEZE_PATHSPEC):
         return False
-    return not _git("diff", "--name-only", runner_sha, "HEAD", "--", *FREEZE_INPUTS)
+    return not _git("diff", "--name-only", runner_sha, "HEAD", "--", *_FREEZE_PATHSPEC)
 
 
 def _skip_reason(case: dict, lanes: set, skip_providers: set) -> str:

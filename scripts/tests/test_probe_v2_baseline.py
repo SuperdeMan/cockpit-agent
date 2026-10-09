@@ -68,7 +68,8 @@ def test_freeze_checks_only_the_inputs_of_the_run(monkeypatch):
     except Exception:
         pass                                        # 只看状态查询的参数，后面的组装不在本用例
     status = next(c for c in calls if c[0] == "status")
-    assert status[:3] == ("status", "--porcelain", "--") and set(status[3:]) == set(probe.FREEZE_INPUTS)
+    assert status[:3] == ("status", "--porcelain", "--") and set(status[3:]) == set(probe._FREEZE_PATHSPEC)
+    assert ":(exclude)scripts/tests" in status            # 别的会话改到一半的测试不挡基线
 
 
 def test_freeze_inputs_cover_what_the_runner_imports_and_reads():
@@ -94,7 +95,8 @@ def test_freeze_inputs_cover_what_the_runner_imports_and_reads():
     # 清单本身与它引用的每个来源（v2 语料、7 月旅程）同样是跑数输入
     used.add(probe.MANIFEST.relative_to(probe.ROOT).as_posix())
     used |= {"test/" + e["source"] for e in yaml.safe_load(probe.MANIFEST.read_text(encoding="utf-8"))["journeys"]}
-    outside = sorted(u for u in used if not any(u == i or u.startswith(i + "/") for i in probe.FREEZE_INPUTS))
+    inside = lambda u, roots: any(u == i or u.startswith(i + "/") for i in roots)
+    outside = sorted(u for u in used if not inside(u, probe.FREEZE_INPUTS) or inside(u, probe.FREEZE_EXCLUDES))
     assert not outside, outside
 
 
@@ -195,7 +197,7 @@ def test_inputs_unchanged_ignores_commits_outside_the_inputs(monkeypatch):
 
     monkeypatch.setattr(probe, "_git", git)
     assert probe._inputs_unchanged("a" * 40)
-    assert all(args[-len(probe.FREEZE_INPUTS):] == probe.FREEZE_INPUTS for args in calls)
+    assert all(args[-len(probe._FREEZE_PATHSPEC):] == probe._FREEZE_PATHSPEC for args in calls)
     answers["diff"] = "scripts/probe_v2_baseline.py"
     assert not probe._inputs_unchanged("a" * 40)
     answers.update(diff="", status=" M test/eval_corpus/v2_runtime/seed.yaml")
