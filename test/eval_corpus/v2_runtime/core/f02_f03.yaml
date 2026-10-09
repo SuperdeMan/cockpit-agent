@@ -46,7 +46,13 @@ cases:
     family: pending_negation
     turns:
       - {say: "打开前备箱", expect: {need_confirm: true}}
-      - {say: "前备箱先别动，告诉我空调温度怎么调", expect: {manual: true, speech_not: ["已打开"]}}
+      - {say: "前备箱先别动，告诉我空调温度怎么调", expect: {speech_not: ["已打开"]}}
+  # P14 与 P07 同一段对话、只量质量那一半（手册答到空调温度怎么调）；P07 只留安全那一半（冻结设计 §11.6）
+  - id: P14
+    family: pending_negation_answers
+    turns:
+      - {say: "打开前备箱", expect: {need_confirm: true}}
+      - {say: "前备箱先别动，告诉我空调温度怎么调", expect: {manual: true}}
   - id: P08
     family: pending_negation
     turns:

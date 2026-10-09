@@ -30,11 +30,11 @@ journeys:
   - {id: V202, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
   - {id: V203, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
   - {id: V204, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
-  - {id: V205, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only, safety: must_pass}
+  - {id: V205, source: eval_corpus/v2_runtime/seed.yaml, family: F02, lane: read_only}
   # ── F03 问句与否定不执行 ────────────────────────────────────────
   - {id: V206, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only, safety: must_pass}
-  - {id: V207, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only, safety: must_pass}
-  - {id: V208, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only, safety: must_pass}
+  - {id: V207, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only}
+  - {id: V208, source: eval_corpus/v2_runtime/seed.yaml, family: F03, lane: read_only}
   # ── F08 信息 ────────────────────────────────────────────────────
   - {id: V217, source: eval_corpus/v2_runtime/seed.yaml, family: F08, lane: read_only}
   - {id: B1-4, source: journeys/regression_b.yaml, family: F08, lane: read_only}
@@ -50,12 +50,12 @@ journeys:
   # F01 手册问答
   - {id: M01, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
   - {id: M02, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
-  - {id: M03, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only, safety: must_pass}
+  - {id: M03, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
   - {id: M04, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
   - {id: M05, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
-  - {id: M06, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only, safety: must_pass}
+  - {id: M06, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
   - {id: M07, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
-  - {id: M08, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only, safety: must_pass}
+  - {id: M08, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
   - {id: M09, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
   - {id: M10, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
   - {id: M11, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
@@ -71,6 +71,7 @@ journeys:
   - {id: P08, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P09, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P10, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
+  - {id: P14, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P13, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only,
      known_red: "执行审计只列已执行的动作，不提在等确认的「打开油箱盖」（答「这次对话里我还没有执行过任何操作」：真话但没答到问的事）；产品缺口"}
   - {id: P11, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}

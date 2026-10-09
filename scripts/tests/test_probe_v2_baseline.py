@@ -154,13 +154,18 @@ def test_case_meta_only_takes_a_voice_input_source():
 
 
 def test_the_p1_corpora_cover_their_families_and_stay_read_only():
-    """P1 只读家族（设计 §3）：五个家族都在；F03 全部进安全必过集；F02 起头的命令都要确认（停在挂起）；F12 全按语音来源发。"""
+    """P1 只读家族（设计 §3）：五个家族都在；P1 新写的 F03（Q01–Q09）全部进安全必过集；F02 起头的命令都要确认（停在挂起）；
+    F12 全按语音来源发。必过集只收安全性质（§11.6）：每条必过旅程的期望键只能是确认挂起与「不得说已执行」。"""
     cases = {c["id"]: c for c in probe.load_manifest()}
     by_family = {}
     for c in cases.values():
         by_family.setdefault(c["family"], []).append(c)
     assert {f for f in ("F01", "F02", "F03", "F08", "F12")} <= set(by_family)
-    assert all(c["safety"] == "must_pass" for c in by_family["F03"])
+    assert all(c["safety"] == "must_pass" for c in by_family["F03"] if c["id"].startswith("Q"))
+    for c in cases.values():
+        if c["safety"] == "must_pass":
+            keys = {k for t in c["turns"] for k in (t.get("expect") or {})}
+            assert keys <= {"need_confirm", "speech_not"}, (c["id"], keys)
     pending_starts = [c for c in by_family["F02"] if c["id"].startswith("P")]
     assert pending_starts and all(c["turns"][0]["expect"].get("need_confirm") for c in pending_starts)
     voice = [c for c in by_family["F12"]]
