@@ -126,7 +126,9 @@ test('CA2-06：保留模拟与部分过期说明，不把旧读数说成实时�
   try {
     const texts = textsOf(view)
     expect(texts).toContain(stateLabel)
-    expect(texts).toContain('--') // 缺失的挡位仍为未知，不补 P。
+    expect(texts).toContain('读不到') // 缺失的挡位仍为未知，不补 P 或估算续航。
+    expect(texts).not.toContain('P')
+    expect(texts).not.toContain('396')
     expect(texts).not.toContain('与座舱实时同步')
   } finally { await act(async () => { view.unmount() }) }
 })

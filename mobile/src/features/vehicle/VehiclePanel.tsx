@@ -1,7 +1,7 @@
 // 车况镜像（M1-7 立，M3-2 完整化；打磨批 C 补齐键表与值枚举）：vehicle_state 帧的镜像展示。
 // 三格指标（电量/续航/挡位）复用 `@shared/vehicleStage.mjs::stageMetrics`——
-// **推导住在共享模块**，两端不各算一份：续航是「有 range_km 就直用、没有就按满电折算」，
-// 缺数据一律 '--' 而不是假装 62%（那条纪律是 HMI 侧写的，App 抄它的结论不抄它的代码）。
+// **投影住在共享模块**，两端不各算一份：续航只读 range_km，没有就显示「读不到」，
+// 不从电量估算续航，也不替缺失读数补数值或单位。
 //
 // 键表（评审 P20 / V6）：**声明源是 `orchestrator/edge/knowledge/commands.yaml` 的对象清单**——这里不是第二份表，
 // 是那份表的中文展示映射，由 `test/vehiclePanel.test.ts` 逐 id 对账 display_name（漂了当场红）；

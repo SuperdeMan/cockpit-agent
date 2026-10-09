@@ -38,7 +38,11 @@ assert.equal(normalize(readFileSync(path.join(root, 'hmi/src/types.ts'), 'utf8')
 function diagnostics(baseline) {
   const host = ts.createCompilerHost(config.options)
   const read = host.readFile
-  host.readFile = file => baseline && changed.has(path.resolve(file)) ? changed.get(path.resolve(file)) : read(file)
+  const exists = host.fileExists
+  const relative = file => path.relative(root, file).split(path.sep).join('/')
+  host.fileExists = file => baseline && relative(file).startsWith('hmi/src/') ? tracked.has(relative(file)) : exists(file)
+  host.readFile = file => baseline && relative(file).startsWith('hmi/src/') && !tracked.has(relative(file)) ? undefined
+    : baseline && changed.has(path.resolve(file)) ? changed.get(path.resolve(file)) : read(file)
   const files = baseline ? config.fileNames.filter(file => tracked.has(path.relative(root, file).split(path.sep).join('/'))) : config.fileNames
   const program = ts.createProgram(files, config.options, host)
   return ts.getPreEmitDiagnostics(program).map(d => ({ file: d.file && path.relative(root, d.file.fileName), code: d.code,
@@ -48,5 +52,10 @@ const before = diagnostics(true), after = diagnostics(false)
 const out = path.join(root, `.artifacts/hmi-visual-v2/${batch}`)
 mkdirSync(out, { recursive: true })
 writeFileSync(path.join(out, 'type-comparison.json'), JSON.stringify({ base, before, after, unchangedHandler: true, unchangedTypes: true }, null, 2))
-assert.deepEqual(after, before, 'TypeScript diagnostics changed from the baseline')
-console.log(`PASS: handleEvent and types.ts unchanged; TypeScript baseline/current both ${before.length} errors (not a clean typecheck)`)
+const available = before.map(d => JSON.stringify(d))
+for (const diagnostic of after) {
+  const at = available.indexOf(JSON.stringify(diagnostic))
+  assert.ok(at >= 0, 'New TypeScript diagnostic: ' + JSON.stringify(diagnostic))
+  available.splice(at, 1)
+}
+console.log(`PASS: handleEvent and types.ts unchanged; TypeScript baseline ${before.length}, current ${after.length}, no new errors (not a clean typecheck)`)

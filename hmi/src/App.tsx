@@ -6,6 +6,7 @@ import { useSettings, buildMeta } from './settings'
 import { DrivingProvider, useDrivingProjection } from './DrivingContext'
 import { DrivingSpeechView } from './drivingSpeechView.mjs'
 import { PendingPolicyView } from './pendingPresentation.mjs'
+import { StageViewProvider } from './StageView'
 import {
   buildRequestLocationMeta,
   requestCurrentLocation,
@@ -951,9 +952,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
 
   return (
     <DrivingProvider value={drivingView}>
+    <StageViewProvider>
     <div className="au-app" data-drive={drivingView.driving ? 'on' : 'off'}>
       <aside className="au-stage">
-        <ContextualStage messages={messages} vehicle={vehState} vehicleLabel={vehStateLabel} />
+        <ContextualStage messages={messages} vehicle={vehState} vehicleLabel={vehStateLabel} onAction={send} />
       </aside>
       <div className="au-stage-scrim" aria-hidden />
       <StatusBar connection={connectionState} onOpenSettings={() => setShowSettings(true)}
@@ -999,6 +1001,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         />
       )}
     </div>
+    </StageViewProvider>
     </DrivingProvider>
   )
 }

@@ -20,11 +20,11 @@ export function drivingCardSummary(card) {
     case 'route_plan': title = card.cancelled ? '导航已取消' : card.destination || title; main = card.cancelled ? '' : card.duration_min; unit = '分钟'; fields = [present(card.distance_km) ? card.distance_km+' km' : '']; break
     case 'charging_route': title = card.destination || title; main = card.distance_km; unit = 'km'; fields = [card.soc ? '当前电量 '+card.soc : '', card.stops?.length === 0 ? '全程无需补电' : '']; break
     case 'poi_list': case 'place_list': title = card.items?.[0]?.name || title; main = card.items?.[0]?.distance_km; unit = 'km'; fields = [card.items?.[0]?.address]; break
-    case 'reminder_card': title = card.title || title; main = card.time_display; fields = [card.location]; break
+    case 'reminder_card': title = card.item?.title || title; main = card.item?.time_display; fields = [card.item?.recur_label]; break
     case 'payment_qr': case 'payment_receipt': case 'parking_fee': title = [card.merchant, title].filter(Boolean).join(' · '); main = card.amount; fields = card.type === 'payment_qr' ? [Number(card.expires_at_ms)>0 ? new Date(Number(card.expires_at_ms)).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})+' 到期' : '', '行车中不出付款码，停车后再付'] : []; break
     default: fields = ['停车后查看详细结果']
   }
   const button = card.type === 'route_plan' && card.destination && !card.cancelled ? {label:'开始导航',text:'导航去'+card.destination}
-    : card.type === 'reminder_card' && card.buttons?.[0]?.send_text ? {label:card.buttons[0].label,text:card.buttons[0].send_text} : undefined
+    : card.type === 'reminder_card' && card.actions?.[0]?.send_text ? {label:card.actions[0].label,text:card.actions[0].send_text} : undefined
   return { title, main: present(main) ? String(main) : '', unit: present(main) ? unit : '', fields: fields.filter(present).map(String).slice(0,2), button }
 }

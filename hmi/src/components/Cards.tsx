@@ -26,6 +26,8 @@ import { AQISection } from './aurora'
 import { Icon, type IconName } from './Icon'
 import { CardHeader, MetricTile, CardEmpty, NumericText } from './CardParts'
 import { cardTitle, drivingCardSummary, present } from '../cardPresentation.mjs'
+import { useStageView } from '../StageView'
+import { STAGE_CARD_TYPES } from '../stagePresentation.mjs'
 
 // AI 出品角标（照 A-4「AI · X」）：小极光点 + 虹彩文字，标识 AI 生成内容（§5）。
 function AIBadge({ label }: { label: string }) {
@@ -121,7 +123,8 @@ function weatherGlyph(text: string, size: number, color = 'var(--au-text-2)') { 
 
 // ─── 卡片渲染入口 ───
 
-export function CardRenderer({ card, onAction, driving = false }: { card: UiCard; onAction?: (text: string) => void; driving?: boolean }) {
+export function CardRenderer({ card, onAction, driving = false, stage = false }: { card: UiCard; onAction?: (text: string) => void; driving?: boolean; stage?: boolean }) {
+  const stageView = useStageView()
   const prov = (card as { _prov?: Provenance })._prov
   const mockChannel = 'channel' in card && card.channel === 'mock' && prov?.mode !== 'mock'
   if (driving) {
@@ -140,11 +143,14 @@ export function CardRenderer({ card, onAction, driving = false }: { card: UiCard
   if (card.type === 'card_group') return <div className="au-card-group">{card.items.map((child, i) => i === 0
     ? <CardRenderer key={i} card={child} onAction={onAction} />
     : <details key={i}><summary>{cardTitle(child)}<ProvBadge prov={(child as { _prov?: Provenance })._prov} /></summary><CardRenderer card={child} onAction={onAction} /></details>)}<ProvBadge prov={prov} /></div>
-  return <div className="au-card-host" data-card-type={card.type}>
+  return <div className={'au-card-host' + (stage ? ' stage-card' : stageView ? ' has-stage-view' : '')} data-card-type={card.type}>
     {['news_list','search_list','poi_list','place_list'].includes(card.type) && 'items' in card && Array.isArray(card.items) && card.items.length === 0
       ? <section className="au-card"><CardHeader icon="info" title={cardTitle(card)} /><CardEmpty>没查到相关结果，可以换个关键词再试试。</CardEmpty></section>
       : <CardContent card={card} onAction={onAction} />}
     <div className="au-card-provenance"><ProvBadge prov={prov} />{mockChannel && <span className="au-prov mock">模拟数据</span>}</div>
+    {!stage && stageView && STAGE_CARD_TYPES.includes(card.type) && <button className="au-stage-link" onClick={() => stageView.open(card)}>
+      {card.type === 'payment_qr' ? '在舞台显示付款码' : card.type === 'manual' ? '在舞台查看原图' : '在舞台查看'}<Icon name="chevron-right" size={24} state="active" />
+    </button>}
   </div>
 }
 function CardContent({card,onAction}: {card: UiCard;onAction?: (text:string)=>void}) {
@@ -198,7 +204,7 @@ function CardContent({card,onAction}: {card: UiCard;onAction?: (text:string)=>vo
 
 // 数据真实性徽章（`_prov`，conventions §9.3）：mock=醒目琥珀「模拟数据」、degraded/cached=灰标、
 // real=不打扰小字角标（来源 · 取数时间）。治理 P1 试点：weather / place 族 / search_result。
-function ProvBadge({ prov }: { prov?: Provenance }) {
+export function ProvBadge({ prov }: { prov?: Provenance }) {
   if (!prov) return null
   const pill = (bg: string, fg: string, text: string, title?: string) => (
     <span title={title} className="cv-prov-badge-1" style={{ background: bg, color: fg }}>{text}</span>

@@ -1,0 +1,74 @@
+/* Visual v2 I5 — one full stage with a safe content area beside the conversation. */
+.au-stage { background: radial-gradient(ellipse at 76% 55%,var(--au-primary-soft),transparent 54%),var(--au-stage); }
+.au-stage-content { right: 24px; overflow: hidden; }
+.au-stage-content h2 { margin: 0; font-size: var(--au-type-headline-size); line-height: var(--au-type-headline-line); }
+.au-stage-content h3 { margin: 24px 0 16px; font-size: var(--au-type-title-size); line-height: var(--au-type-title-line); }
+.au-stage-caption { color: var(--au-text-2); font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); }
+.au-stage-back { position: absolute; top: 24px; right: 24px; z-index: 5; min-height: var(--au-control-target); padding: 0 24px; border: 1px solid var(--au-line); border-radius: var(--au-r-full); color: var(--au-text); background: var(--au-material-solid); font-size: var(--au-type-label-size); cursor: pointer; }
+.au-idle-stage { height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 48px; gap: 48px; }
+.au-idle-stage > header,.au-vehicle-stage > header { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; }
+.au-idle-stage h2,.au-vehicle-stage h2 { font-size: var(--au-type-title-size); line-height: var(--au-type-title-line); }
+.au-vehicle-source { padding: 8px 16px; border-radius: var(--au-r-full); background: var(--au-surface-1); color: var(--au-text-2); font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); }
+.au-idle-body { display: flex; align-items: center; gap: 64px; flex-wrap: wrap; }
+.au-battery-dial { width: 380px; height: 380px; padding: 12px; border-radius: 50%; flex: none; }
+.au-battery-dial > div { width: 100%; height: 100%; border-radius: 50%; background: var(--au-stage); display: flex; align-items: baseline; justify-content: center; align-content: center; flex-wrap: wrap; gap: 8px; }
+.au-battery-dial strong { font-size: var(--au-type-num-xl-size); line-height: var(--au-type-num-xl-line); }
+.au-battery-dial.unavailable strong { font-size: var(--au-type-headline-size); }
+.au-battery-dial span { font-size: var(--au-type-num-l-size); color: var(--au-text-2); }
+.au-battery-dial small { flex-basis: 100%; text-align: center; font-size: var(--au-type-body-size); color: var(--au-text-2); }
+.au-idle-metrics { display: grid; gap: 48px; }
+.au-idle-metrics label { font-size: var(--au-type-body-size); color: var(--au-text-2); }
+.au-idle-metrics strong { font-size: var(--au-type-num-xl-size); line-height: var(--au-type-num-xl-line); }
+.au-idle-metrics .unavailable { font-size: var(--au-type-title-size); }
+.au-idle-metrics span { margin-left: 12px; font-size: var(--au-type-body-size); color: var(--au-text-2); }
+.au-weather-stage { height: 100%; padding: 64px; overflow-y: auto; }
+.au-weather-main { display: flex; align-items: baseline; gap: 16px; margin-top: 24px; }
+.au-weather-main strong { font-size: var(--au-type-num-hero-size); line-height: var(--au-type-num-hero-line); letter-spacing: -4px; }
+.au-weather-main .unavailable { font-size: var(--au-type-headline-size); line-height: var(--au-type-headline-line); letter-spacing: 0; }
+.au-weather-main > span { font-size: var(--au-type-num-l-size); color: var(--au-text-2); }
+.au-stage-forecast { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin: 24px 0; }
+.au-stage-forecast > div { padding: 24px; background: var(--au-surface-1); border: 1px solid var(--au-line); border-radius: var(--au-r-2xl); }
+.au-stage-forecast label { font-size: var(--au-type-caption-size); color: var(--au-text-2); }
+.au-stage-forecast > div > div { display: flex; gap: 12px; align-items: center; font-size: var(--au-type-body-size); margin: 12px 0; }
+.au-stage-forecast strong { font-size: var(--au-type-num-m-size); line-height: var(--au-type-num-m-line); }
+.au-map-stage { height: 100%; overflow-y: auto; padding: 32px 24px; display: flex; flex-direction: column; gap: 16px; }
+.au-stage-map-notice { display: inline-flex; align-items: center; gap: 12px; padding: 12px 20px; border-radius: var(--au-r-full); color: var(--au-warn); background: var(--au-material-solid); font-size: var(--au-type-caption-size); }
+.au-map-stage h2 { font-size: var(--au-type-title-size); margin-top: 20px; }
+.au-stage-map-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--au-text-2); font-size: var(--au-type-body-size); line-height: var(--au-type-body-line); }
+.au-stage-map-svg { width: 100%; min-height: 340px; max-height: 54vh; flex: 1; background: var(--au-map-land); border-radius: var(--au-r-2xl); }
+.au-map-details { padding: 20px 24px; border-radius: var(--au-r-2xl); background: var(--au-material-solid); }
+.au-map-details > div { display: flex; gap: 16px; align-items: baseline; padding: 12px 0; font-size: var(--au-type-body-size); line-height: var(--au-type-body-line); }
+.au-map-details b { color: var(--au-primary); }
+.au-map-details span { flex: 1; }
+.au-map-details small { max-width: 45%; font-size: var(--au-type-caption-size); color: var(--au-text-2); }
+.au-map-details p { font-size: var(--au-type-body-size); }
+.au-agenda-stage { height: 100%; padding: 48px; overflow-y: auto; }
+.au-agenda-group { margin-top: 32px; }
+.au-agenda-group h3 { color: var(--au-text-2); }
+.au-agenda-item { display: flex; gap: 24px; align-items: flex-start; padding: 24px 0; border-bottom: 1px solid var(--au-line); font-size: var(--au-type-body-size); line-height: var(--au-type-body-line); }
+.au-agenda-item > span { flex: 1; border-left: 4px solid var(--au-primary); padding-left: 24px; }
+.au-agenda-item time { max-width: 32%; }
+.au-agenda-item small { display: block; color: var(--au-text-2); font-size: var(--au-type-caption-size); }
+.au-agenda-item label { font-size: var(--au-type-caption-size); color: var(--au-text-2); }
+.au-agenda-item[data-status='done'],.au-agenda-item[data-status='cancelled'] { opacity: .65; }
+.au-stage-document { margin: 24px 0; height: calc(100% - 48px); padding: 40px; overflow-y: auto; border-radius: var(--au-r-4xl); background: var(--au-material-solid); }
+.au-stage-document-label { color: var(--au-text-2); font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); padding-right: 220px; margin-bottom: 24px; }
+.au-stage-document .au-card-host > .card,.au-stage-document .au-card-host > .au-card { border: 0; background: transparent; }
+.au-stage-document .cv-research-report-card-view-5 { font-size: var(--au-type-headline-size); line-height: var(--au-type-headline-line); }
+.au-stage-document.payment { max-width: 720px; margin: 40px auto; height: auto; max-height: calc(100% - 80px); }
+.payment .cv-payment-qr-card-view-4 { font-family: var(--au-font-mono); font-size: var(--au-type-num-xl-size); line-height: var(--au-type-num-xl-line); }
+.payment img[alt='付款码'] { width: 360px; height: 360px; max-width: 100%; background: white; }
+.has-stage-view[data-card-type='payment_qr'] .cv-payment-qr-card-view-6 { display: none; }
+.au-stage-link { display: inline-flex; align-items: center; gap: 8px; min-height: var(--au-control-target); border: 0; padding: 0 8px; background: transparent; color: var(--au-primary); font-family: var(--au-font-ui); font-size: var(--au-type-label-size); cursor: pointer; }
+.au-vehicle-stage { padding: 48px; height: 100%; overflow-y: auto; }
+.au-vehicle-layout { display: flex; gap: 48px; align-items: center; margin: 32px 0; }
+.au-vehicle-layout > svg { width: 42%; max-height: 65vh; }
+.au-vehicle-layout > div { flex: 1; }
+.au-vehicle-reading { padding: 24px 0; border-bottom: 1px solid var(--au-line); font-size: var(--au-type-body-size); line-height: var(--au-type-body-line); }
+.au-vehicle-reading span { color: var(--au-text-2); display: block; margin-bottom: 8px; }
+.au-media-stage { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; padding: 48px; }
+.au-media-cover { width: 300px; height: 300px; border-radius: var(--au-r-4xl); background: var(--au-surface-2); display: grid; place-items: center; }
+.au-media-controls { display: flex; gap: 24px; }
+.au-media-controls button { min-height: var(--au-control-target); padding: 0 24px; background: var(--au-surface-2); border: 0; border-radius: var(--au-r-full); color: var(--au-text); font-family: var(--au-font-ui); font-size: var(--au-type-label-size); cursor: pointer; }
+:root[data-drive='on'] .au-stage-content { padding-left: 24px; }
+@media(max-height:760px) { .au-battery-dial { width: 280px; height: 280px; } .au-idle-stage { padding: 32px; gap: 32px; } .au-stage-map-svg { min-height: 240px; } }
