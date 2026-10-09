@@ -44,3 +44,146 @@ cases:
     turns:
       - {say: "记住我喜欢喝拿铁", expect: {speech_not: ["没听清"]}}
       - {say: "我平时喜欢喝什么", expect: {speech_any: ["拿铁"]}}
+  # ── 第二批（2026-10-10）：F04 车控开关逐对象各一条（动作名取自端侧分类器离线结果，车态值由标定跑钉）──
+  - id: C03
+    family: control_toggle
+    vehicle_keys: [window]
+    turns:
+      - {say: "打开车窗", expect: {actions_required: ["window.open"], actions_allowed: ["window.open"]}}
+    cleanup:
+      - {say: "关闭车窗"}
+  - id: C04
+    family: control_toggle
+    vehicle_keys: [sunroof]
+    turns:
+      - {say: "打开天窗", expect: {actions_required: ["sunroof.open"], actions_allowed: ["sunroof.open"]}}
+    cleanup:
+      - {say: "关闭天窗"}
+  - id: C05
+    family: control_toggle
+    vehicle_keys: [seat_heating]
+    turns:
+      - {say: "打开座椅加热", expect: {actions_required: ["seat.heating.on"], actions_allowed: ["seat.heating.on"]}}
+    cleanup:
+      - {say: "关闭座椅加热"}
+  - id: C06
+    family: control_toggle
+    vehicle_keys: [seat_ventilation]
+    turns:
+      - {say: "打开座椅通风", expect: {actions_required: ["seat.ventilation.on"], actions_allowed: ["seat.ventilation.on"]}}
+    cleanup:
+      - {say: "关闭座椅通风"}
+  - id: C07
+    family: control_toggle
+    vehicle_keys: [steering_wheel_heating]
+    turns:
+      - {say: "打开方向盘加热", expect: {actions_required: ["steering_wheel.heating.open"], actions_allowed: ["steering_wheel.heating.open"]}}
+    cleanup:
+      - {say: "关闭方向盘加热"}
+  - id: C08
+    family: control_toggle
+    vehicle_keys: [rear_view_mirror_heating]
+    turns:
+      - {say: "打开后视镜加热", expect: {actions_required: ["rear_view_mirror.heating.open"], actions_allowed: ["rear_view_mirror.heating.open"]}}
+    cleanup:
+      - {say: "关闭后视镜加热"}
+  - id: C09
+    family: control_toggle
+    vehicle_keys: [rear_defogger]
+    turns:
+      - {say: "打开后除雾", expect: {actions_required: ["rear_defogger.open"], actions_allowed: ["rear_defogger.open"]}}
+    cleanup:
+      - {say: "关闭后除雾"}
+  - id: C10
+    family: control_toggle
+    vehicle_keys: [front_defogger]
+    turns:
+      - {say: "打开前除雾", expect: {actions_required: ["front_defogger.open"], actions_allowed: ["front_defogger.open"]}}
+    cleanup:
+      - {say: "关闭前除雾"}
+  - id: C11
+    family: control_toggle
+    vehicle_keys: [wiper]
+    turns:
+      - {say: "打开雨刮", expect: {actions_required: ["wiper.on"], actions_allowed: ["wiper.on"]}}
+    cleanup:
+      - {say: "关闭雨刮"}
+  - id: C12
+    family: control_toggle
+    vehicle_keys: [headlight]
+    turns:
+      - {say: "打开大灯", expect: {actions_required: ["headlight.on"], actions_allowed: ["headlight.on"]}}
+    cleanup:
+      - {say: "关闭大灯"}
+  - id: C13
+    family: control_toggle
+    vehicle_keys: [warning_light]
+    turns:
+      - {say: "打开双闪", expect: {actions_required: ["warning_light.open"], actions_allowed: ["warning_light.open"]}}
+    cleanup:
+      - {say: "关闭双闪"}
+  - id: C14
+    family: control_toggle
+    vehicle_keys: [volume]
+    turns:
+      - {say: "把音量调到20", expect: {actions_required: ["volume.set"], actions_allowed: ["volume.set"]}}
+    cleanup:
+      - {say: "把音量调到30"}
+  - id: C15
+    family: control_toggle
+    vehicle_keys: [volume_muted]
+    turns:
+      - {say: "静音", expect: {actions_required: ["volume.mute"], actions_allowed: ["volume.mute"]}}
+    cleanup:
+      - {say: "取消静音"}
+  - id: C16
+    family: control_toggle
+    vehicle_keys: [rear_view_mirror]
+    turns:
+      - {say: "折叠后视镜", expect: {actions_required: ["rear_view_mirror.fold"], actions_allowed: ["rear_view_mirror.fold"]}}
+    cleanup:
+      - {say: "展开后视镜"}
+  - id: C17
+    family: control_compound
+    vehicle_keys: [seat_heating, steering_wheel_heating]
+    turns:
+      - {say: "打开座椅加热和方向盘加热", expect: {actions_required: ["seat.heating.on", "steering_wheel.heating.open"],
+                                       actions_allowed: ["seat.heating.on", "steering_wheel.heating.open"]}}
+    cleanup:
+      - {say: "关闭座椅加热和方向盘加热"}
+  # 回归哨兵（2026-10-10 两处端侧修复）：放在写车道是为了「真执行了也能复位」——缺陷复现时动作不在声明里，判失败
+  - id: C18
+    family: negated_control_sentinel
+    vehicle_keys: [hvac_on, hvac_temp, cabin_temp]
+    turns:
+      - {say: "先不开空调了", expect: {actions_allowed: [], speech_not: ["已打开", "已为您打开", "已开启"]}}
+    cleanup:
+      - {say: "关闭空调"}
+  - id: C19
+    family: close_other_object_sentinel
+    vehicle_keys: [media]
+    turns:
+      - {say: "关闭导航", expect: {actions_allowed: ["navigate_cancel", "navigation.cancel"]}}
+  # ── 第二批：F05 确认写 ──
+  - id: K02
+    family: confirm_write_once
+    vehicle_keys: [door_lock]
+    turns:
+      - {say: "解锁车门", expect: {need_confirm: true, speech_any: ["车门", "解锁"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["door_lock.open"], actions_allowed: ["door_lock.open"]}}
+    cleanup:
+      - {say: "锁车", confirm: true}
+  # ── 第二批：F10 提醒 / F11 记忆（R1）──
+  - id: N02
+    family: reminder_create_then_cancel
+    data_cleanup: [reminder]
+    turns:
+      - {say: "明天早上八点提醒我带伞", expect: {speech_any: ["带伞"], speech_not: ["没听清"]}}
+      - {say: "取消带伞的提醒", expect: {speech_not: ["没听清", "没有找到"]}}
+      - {say: "我有哪些提醒", expect: {speech_not: ["带伞"]}}
+  - id: E02
+    family: memory_fact_recall
+    data_cleanup: [memory]
+    turns:
+      - {say: "记住我老婆的生日是五月二十号", expect: {speech_not: ["没听清"]}}
+      - {say: "我老婆生日是哪天", expect: {speech_any: ["五月二十", "5月20"]}}
