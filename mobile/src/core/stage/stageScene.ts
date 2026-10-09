@@ -9,7 +9,7 @@ import type { Msg, UiCard } from '@shared/types.ts'
 
 import { splitCardGroup } from '../cards/cardGroup'
 
-export const STAGE_MAP_TYPES = ['poi_list', 'poi_detail', 'route_plan', 'charging_route', 'trip_itinerary'] as const
+export const STAGE_MAP_TYPES = ['poi_list', 'poi_detail', 'place_list', 'place_detail', 'route_plan', 'charging_route', 'trip_itinerary'] as const
 export const STAGE_AGENDA_TYPES = ['reminder_list', 'reminder_card'] as const
 
 export type StageScene = { kind: 'idle' } | { kind: 'weather' | 'map' | 'agenda' | 'focus'; card: UiCard }

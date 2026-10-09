@@ -83,6 +83,13 @@ export const ICON_CUSTOM = {
   settings: { w: 24, h: 24, body: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>' },
 "driving": { w: 24, h: 24, body: "<path d=\"M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M12 14.5C13.3807 14.5 14.5 13.3807 14.5 12C14.5 10.6193 13.3807 9.5 12 9.5C10.6193 9.5 9.5 10.6193 9.5 12C9.5 13.3807 10.6193 14.5 12 14.5Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n<path d=\"M12 14.5V21M9.60005 11.3L3.30005 9.59998M14.4 11.3L20.7001 9.59998\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>" },
 "developer": { w: 24, h: 24, body: "<path d=\"M8 8L4 12L8 16M16 8L20 12L16 16M14 5L10 19\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>" },
+  // ── 自 mobile icons.local 提升（2026-10-09）：mobile 与 dashboard 两端共用；Android Visual v3 补画，24 盒、1.8 描边 ──
+  'arrow-left': { w: 24, h: 24, body: '<path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/>' },
+  'arrow-right': { w: 24, h: 24, body: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>' },
+  'more-vertical': { w: 24, h: 24, body: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>' },
+  copy: { w: 24, h: 24, body: '<rect x="8.5" y="8.5" width="12.5" height="12.5" rx="2"/><path d="M15.5 5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8.5a2 2 0 0 0 2 2"/>' },
+  'car-window': { w: 24, h: 24, body: '<path d="M3 19h18"/><path d="M5 16V11l4.5-5H19v10H5z"/><path d="M13 6v10"/>' },
+  trunk: { w: 24, h: 24, body: '<path d="M3.5 14h17v3.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V14z"/><path d="M5 14l1.6-4h10.8L19 14"/><path d="M12 7V2.5"/><path d="M9.5 5L12 2.5 14.5 5"/>' },
 } as const
 
 export type CustomIconName = keyof typeof ICON_CUSTOM

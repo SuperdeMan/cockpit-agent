@@ -254,8 +254,10 @@ debug 滑块只设环境量，与只读车况回显使用不同样式；深浅�
 
 ## 5. 图标
 
-注册表：`icons.gen.ts`（A-8 的 39 个）+ `icons.custom.ts`（21 个同规格补充）；mobile 再合并 `icons.local.ts`
-（8 个本地）。总览看 HMI `?icons`。
+注册表：`icons.gen.ts`（A-8 的 39 个）+ `icons.custom.ts`（53 个同规格补充）；mobile 再合并 `icons.local.ts`
+（4 个 mobile 独有），dashboard 再合并自己的 `dashboard/src/components/ui/icons.local.ts`（37 个）。总览看 HMI `?icons`（2026-10-09 计数）。
+两个以上客户端都用的图标进 `icons.custom.ts`，**不跨目录引用别的客户端的本地表**：CI 各客户端 job 只装自己的依赖，
+dashboard 曾引用 mobile 的 `icons.local.ts`，vite 要按 mobile 的 tsconfig（继承 expo）转换它，CI 上整片失败。
 
 规格：
 

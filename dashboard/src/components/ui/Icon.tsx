@@ -1,12 +1,13 @@
 import type { CSSProperties } from 'react'
 import { ICON_DATA } from '../../../../hmi/src/components/icons.gen'
 import { ICON_CUSTOM } from '../../../../hmi/src/components/icons.custom'
-import { LOCAL_ICONS } from '../../../../mobile/src/ui/icons.local'
 import { DASHBOARD_ICONS } from './icons.local'
 
-export type IconName = keyof typeof ICON_DATA | keyof typeof ICON_CUSTOM | keyof typeof LOCAL_ICONS | keyof typeof DASHBOARD_ICONS
+export type IconName = keyof typeof ICON_DATA | keyof typeof ICON_CUSTOM | keyof typeof DASHBOARD_ICONS
 
-const ICONS = { ...ICON_DATA, ...ICON_CUSTOM, ...LOCAL_ICONS, ...DASHBOARD_ICONS }
+// 只读 HMI 共享台账 + 本地补充。不跨目录引用 mobile：CI 的 dashboard job 不装 mobile 依赖，
+// 转换 mobile 文件要解析它继承 expo 的 tsconfig，直接失败（2026-10-09 CI 连红的根因）。
+const ICONS = { ...ICON_DATA, ...ICON_CUSTOM, ...DASHBOARD_ICONS }
 export const ICON_NAMES = Object.keys(ICONS) as IconName[]
 
 /** Only trusted, source-controlled SVG data reaches this component. */

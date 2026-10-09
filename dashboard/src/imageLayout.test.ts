@@ -52,7 +52,7 @@ test('the Docker COPY layout contains the runtime relative-import closure', () =
   const files = checkRuntimeImports(recipe)
   expect(files.has('hmi/src/components/icons.gen.ts')).toBe(true)
   expect(files.has('hmi/src/components/icons.custom.ts')).toBe(true)
-  expect(files.has('mobile/src/ui/icons.local.ts')).toBe(true)
+  expect([...files].some(file => file.startsWith('mobile/'))).toBe(false)   // 不跨目录引用 mobile（CI 不装它的依赖）
 })
 test('missing shared icon copies fail the same import-closure check', () => {
   expect(() => checkRuntimeImports(recipe.replace(/^COPY (?:hmi|mobile)\/.*\r?\n/gm, ''))).toThrow(/image import/)

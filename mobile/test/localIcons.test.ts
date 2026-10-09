@@ -7,7 +7,7 @@ import { LOCAL_ICONS } from '@/ui/icons.local'
 
 // 评审 P15 点名的八枚里 warning（icons.gen）与 chat / clock / pin（icons.custom）共享台账已经有，直接复用；本地只补真缺的四枚 + 待办方框
 const NEW_ICONS = ['square'] as const
-const REUSED_SHARED = ['warning', 'chat', 'clock', 'pin', 'landmark', 'dining', 'hotel', 'refresh', 'check', 'snowflake', 'seat-heat', 'arrow-down', 'camera', 'bolt', 'football', 'trophy', 'layers', 'lock', 'external-link', 'chevron-down', 'star', 'star-filled', 'star-half'] as const
+const REUSED_SHARED = ['warning', 'chat', 'clock', 'pin', 'landmark', 'dining', 'hotel', 'refresh', 'check', 'snowflake', 'seat-heat', 'arrow-down', 'camera', 'bolt', 'football', 'trophy', 'layers', 'lock', 'external-link', 'chevron-down', 'star', 'star-filled', 'star-half', 'arrow-left', 'arrow-right', 'more-vertical', 'copy', 'car-window', 'trunk'] as const
 
 test('本地新图标齐全，24×24，body 是 svg 路径片段', () => {
   for (const name of NEW_ICONS) {

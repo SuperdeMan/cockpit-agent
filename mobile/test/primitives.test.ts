@@ -166,8 +166,10 @@ describe('补画图标：本地合并在最后，不得与共享台账同名（�
   })
   test('v3 补画的 23 枚都在，且是 24 盒', () => {
     const v3 = ['chevron-down', 'chevron-up', 'arrow-left', 'arrow-right', 'arrow-down', 'close', 'more-vertical', 'external-link', 'copy', 'phone', 'star', 'star-filled', 'star-half', 'football', 'trash', 'car-window', 'trunk', 'seat-heat', 'lock', 'unlock', 'snowflake', 'layers', 'trophy']
+    // 这些图标有的已提升进共享台账（HMI v2 与 2026-10-09 的 dashboard 共用），按 Icon.tsx 同一合并顺序查合并后的表
+    const merged: Record<string, { w: number; h: number; body: string }> = { ...ICON_DATA, ...ICON_CUSTOM, ...LOCAL_ICONS }
     for (const k of v3) {
-      const d = (LOCAL_ICONS as Record<string, { w: number; h: number; body: string }>)[k]
+      const d = merged[k]
       expect(d).toBeDefined()
       expect([d.w, d.h]).toEqual([24, 24])
       expect(d.body.length).toBeGreaterThan(10)
