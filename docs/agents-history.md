@@ -10846,4 +10846,8 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   - 策略间距不足 15 GiB 由 `retention.py` 拒绝。
   - drone 侧提出保底与退避两条，drone 用户已同意。
   - 测试：GC 与策略测试 66 项通过；6 处关键逻辑的变异全部判红。方案见 [容量治理 §4.4 / §5「P2 修订」](design/2026-09-28-cloud-host-capacity-governance.md)。
-- 待办：基础设施锚重批（策略文件与 `retention.py`）和主机 GC 更新都需用户授权。锚更换后，其他工作树需基于含本批的 main 才能部署。
+- 上线（用户批准）：
+  - 提交 `b9d7819b`，在其临时干净 worktree 里跑 `infra-approval`：锚聚合 `ef2be611` → `abe367c4`，只换策略与 `retention.py`。
+  - 随即更新主机 GC 脚本与 service：旧文件备份在 `/var/backups/host-capacity-gc/20261009T091348Z/`；`daemon-reload`，未重启 dockerd。
+  - systemd 首轮 `not_needed`、零错误；保留策略 dry-run 与 `status` 正常。
+  - 锚更换后，其他工作树需基于含 `b9d7819b` 的 main 才能部署。

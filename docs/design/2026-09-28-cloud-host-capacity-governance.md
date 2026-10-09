@@ -1,10 +1,10 @@
 # 云主机容量治理：发布产物保留、构建缓存上限与容量可观测
 
-> 状态：**P0、P1 已实现并在云端启用**（基础设施锚 2026-09-29 起为 `7c34debf`，对应 `1eb2bcf1`；§4.7 规则已修订）。
+> 状态：**P0、P1 已实现并在云端启用**（基础设施锚 2026-10-09 起为 `abe367c4`，对应 `b9d7819b`；§4.7 规则已修订）。
 > 首次策略回收为手动 apply；发布 `55165e50` 时发布事务内的自动回收已首跑通过。P2 已安装并启用（`a53034b6`，2026-09-28 18:39 CST，主机级 `host-capacity-gc` 与 journald 上限，见 §5）；P3 未启动
 > **P2 修订（2026-10-09）**：按总量封顶适得其反。每一轮真删了记录的 prune 都会让两个项目的下一次构建大面积冷启动，本项目的缓存与 release 镜像因此一起膨胀（§5「P2 修订」）。
 > 经用户批准，已一次性精确清理本项目失效缓存，可用 36.54 → 60.26 GiB。GC 改为：可用低于 target 才回收，一次清到 `prune_to_free_gib`，保底 `reserved_space_gib`，未达标就降一档再试（§4.4）。
-> drone 用户 2026-10-09 已同意（条件即保底与退避两条）。代码与测试已完成，经基础设施锚重批与主机安装授权后才生效
+> drone 用户 2026-10-09 已同意（条件即保底与退避两条）。**已上线**：`b9d7819b` 经用户批准，基础设施锚 `ef2be611` → `abe367c4`（只换策略与 `retention.py`）；主机 GC 于 17:13 CST 更新，systemd 首轮 `not_needed`
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -287,6 +287,17 @@ timer 下次触发 19:04:57 CST；首轮 `Result=success`，回收 0B（Total �
   - 见 §4.4。策略 `build_cache.max_used_space: 20GB` 改为 `prune_to_free_gib: 60` + `reserved_space_gib: 10`（`deploy/cloud/**`，需重批基础设施锚）。
   - `host_capacity_gc.py` 改触发、参数与退避状态，service 增加 `StateDirectory`（系统配置，需授权）。
   - drone 用户已同意。
+- **上线（2026-10-09，用户批准）**：
+  - 提交 `b9d7819b`。`infra-approval` 在该提交的临时干净 worktree 里 prepare：变化源文件只有策略与 `retention.py`，三项本地锚校验通过。
+  - 09:12Z apply：锚聚合 `ef2be611` → `abe367c4`，主机侧备份在 `shared/evidence/infrastructure-approvals/b9d7819b…-abe367c4`。
+  - 09:13Z 更新主机 GC：
+    - 暂存文件与提交 blob 的 sha256 一致；先 verify 暂存 unit，旧脚本与旧 service 备份到 `/var/backups/host-capacity-gc/20261009T091348Z/`。
+    - 安装后 verify 与 `daemon-reload` 均通过，未重启 dockerd 与 journald。
+    - `--dry-run` 判定 `not_needed`。
+  - 09:14Z 手动触发一轮：`Result=success`，`not_needed`，`available_before` = 64,684,396,544 B，零错误零 warning。`StateDirectory` 已建（root 0700，空）。
+  - 锚 apply 到脚本更新之间没有轮次落在过渡窗口里（上一轮 17:05 CST、下一轮 18:03 CST）。
+  - 收尾：保留策略 dry-run 用新 `retention.py` 正常；`status` 5/5 零 warning。审批材料在本地 `.artifacts/infrastructure-approval/b9d7819b…/`。
+  - 首次真回收时，要对照 `available_after` 与目标线（60 GiB）的偏差，确认 Bfree 换算无误。
 
 ## 6. 验收
 
