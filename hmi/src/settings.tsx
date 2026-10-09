@@ -50,12 +50,19 @@ type Ctx = {
   update: (patch: Partial<Settings>) => void
   toggleAgent: (id: string) => void
   reset: () => void
+  developerMode: boolean
+  setDeveloperMode: (enabled: boolean) => void
 }
 
 const SettingsContext = createContext<Ctx | null>(null)
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(load)
+  const [developerMode, setDeveloperMode] = useState(() => {
+    try { return new URLSearchParams(window.location.search).has('dev') || localStorage.getItem('cockpit.visual.developer') === 'true' }
+    catch { return false }
+  })
+  useEffect(() => { localStorage.setItem('cockpit.visual.developer', String(developerMode)) }, [developerMode])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
@@ -72,12 +79,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const value = useMemo<Ctx>(
     () => ({
       settings,
+      developerMode, setDeveloperMode,
       update: (patch) => setSettings((s) => ({ ...s, ...patch })),
       toggleAgent: (id) =>
         setSettings((s) => ({ ...s, agents: { ...s.agents, [id]: !s.agents[id] } })),
       reset: () => setSettings(DEFAULT_SETTINGS),
     }),
-    [settings],
+    [settings, developerMode],
   )
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>

@@ -6,6 +6,7 @@ import './styles.css'
 import './aurora.css' // Aurora Glass 设计系统层（P0，--au-* 与旧 token 并存，非破坏）
 import './shell.css' // Aurora Glass 应用外壳（P1，两栏布局 + 右舞台）
 import './cards.css' // Aurora Glass 卡片重皮（P2，覆盖 Cards.tsx 既有语义类）
+import './conversation.css' // visual v2 conversation overrides follow the shell
 import { AuroraPreview } from './components/aurora/AuroraPreview'
 import { IconGallery } from './components/aurora/IconGallery'
 import { VisualTokensPreview } from './components/aurora/VisualTokensPreview'

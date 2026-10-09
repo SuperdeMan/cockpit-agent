@@ -255,7 +255,7 @@ test('shows merchant-specific confirmation copy from confirmation_context', () =
 test('preserves the existing vehicle-control confirmation copy by default', () => {
   assert.deepEqual(confirmationPresentation(''), {
     kind: 'vehicle',
-    label: '已泊车',
+    label: '车辆操作',
     detail: '危险操作需二次确认',
     confirmLabel: '确认',
   })

@@ -9,6 +9,8 @@
     "M4"
   ],
   "modules": [
+    { "file": "controlNames.mjs", "phase": "M4", "purpose": "车控对象展示名；继续由 controlNames.test 对账 commands.yaml" },
+    { "file": "controlResult.mjs", "phase": "M4", "purpose": "两端共用动作与 ResultBundle 证据的只读投影" },
     {
       "file": "drivingMode.mjs",
       "phase": "M4",

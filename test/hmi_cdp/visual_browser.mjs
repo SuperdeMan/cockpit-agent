@@ -13,7 +13,7 @@ export async function withVisualPage(batch, run) {
   const exe = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(existsSync)
   assert.ok(exe, 'Edge is required')
   const port = 9339
-  const browser = spawn(exe, ['--headless=new', '--no-first-run', '--force-device-scale-factor=1',
+  const browser = spawn(exe, ['--headless=new', '--no-first-run', '--disable-extensions', '--disable-features=Translate,EdgeTranslate', '--force-device-scale-factor=1',
     `--remote-debugging-port=${port}`, `--user-data-dir=${join(out, 'browser-profile')}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' })
   const cdp = new Cdp()
   try {

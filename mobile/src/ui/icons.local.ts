@@ -15,13 +15,13 @@ export const LOCAL_ICONS = {
   //    共享台账已有（直接复用，本地不再画一份——同名会被 Icon.tsx 的合并顺序静默覆盖），
   //    这里只补真缺的：⟳ → refresh、📷 → camera、⚡ → bolt、✅ → check、☐ → square。同 lucide 线性规格。
   /** 处理中（Dock 长任务、过程区折叠条） */
-  refresh: { w: 24, h: 24, body: '<path d="M21 12a9 9 0 0 1-9 9 9.8 9.8 0 0 1-6.7-2.8L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 9-9 9.8 9.8 0 0 1 6.7 2.8L21 8"/><path d="M21 3v5h-5"/>' },
+
   /** 看图问答角标（气泡 / 语音层转写前缀） */
   camera: { w: 24, h: 24, body: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>' },
   /** 补电 / 充电（充电路线卡、行程卡的充电停靠） */
   bolt: { w: 24, h: 24, body: '<path d="M4 14a1 1 0 0 1-.8-1.6l9-12A.5.5 0 0 1 13 .7V9h7a1 1 0 0 1 .8 1.6l-9 12a.5.5 0 0 1-.9-.3V14z"/>' },
   /** 完成（无需补电） */
-  check: { w: 24, h: 24, body: '<path d="M20 6 9 17l-5-5"/>' },
+
   /** 待办方框（提醒段 / 提醒卡） */
   square: { w: 24, h: 24, body: '<rect width="18" height="18" x="3" y="3" rx="2"/>' },
   // ── Android Visual v3（方向 B）补画的 23 枚：Figma「小舟随行 · Android Visual v3」03 Components 图标板逐值回写，
@@ -31,7 +31,7 @@ export const LOCAL_ICONS = {
   'chevron-up': { w: 24, h: 24, body: '<path d="M6 15l6-6 6 6"/>' },
   'arrow-left': { w: 24, h: 24, body: '<path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/>' },
   'arrow-right': { w: 24, h: 24, body: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>' },
-  'arrow-down': { w: 24, h: 24, body: '<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>' },
+
   close: { w: 24, h: 24, body: '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>' },
   'more-vertical': { w: 24, h: 24, body: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>' },
   'external-link': { w: 24, h: 24, body: '<path d="M18 13.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5.5"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/>' },
@@ -56,14 +56,10 @@ export const LOCAL_ICONS = {
   },
   'car-window': { w: 24, h: 24, body: '<path d="M3 19h18"/><path d="M5 16V11l4.5-5H19v10H5z"/><path d="M13 6v10"/>' },
   trunk: { w: 24, h: 24, body: '<path d="M3.5 14h17v3.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V14z"/><path d="M5 14l1.6-4h10.8L19 14"/><path d="M12 7V2.5"/><path d="M9.5 5L12 2.5 14.5 5"/>' },
-  'seat-heat': {
-    w: 24,
-    h: 24,
-    body: '<path d="M6.5 4.5A1.5 1.5 0 0 1 8 3h1.5A1.5 1.5 0 0 1 11 4.5V13h5a2 2 0 0 1 2 2v2H8a1.5 1.5 0 0 1-1.5-1.5v-11z"/><path d="M9 17v3.5"/><path d="M16 17v3.5"/><path d="M14.5 3.5c-1 1 1 2 0 3s1 2 0 3"/><path d="M18 3.5c-1 1 1 2 0 3s1 2 0 3"/>',
-  },
+
   lock: { w: 24, h: 24, body: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/><path d="M12 15v2.5"/>' },
   unlock: { w: 24, h: 24, body: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 7.6-1.8"/><path d="M12 15v2.5"/>' },
-  snowflake: { w: 24, h: 24, body: '<path d="M12 2.5v19"/><path d="M3.8 7.25l16.4 9.5"/><path d="M3.8 16.75l16.4-9.5"/><path d="M9.6 4.2L12 6l2.4-1.8"/><path d="M9.6 19.8L12 18l2.4 1.8"/>' },
+
   layers: { w: 24, h: 24, body: '<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12.5l9 5 9-5"/><path d="M3 16.5l9 5 9-5"/>' },
   trophy: {
     w: 24,

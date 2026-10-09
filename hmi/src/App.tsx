@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSettings, buildMeta } from './settings'
 import { DrivingProvider, useDrivingProjection } from './DrivingContext'
 import { DrivingSpeechView } from './drivingSpeechView.mjs'
+import { PendingPolicyView } from './pendingPresentation.mjs'
 import {
   buildRequestLocationMeta,
   requestCurrentLocation,
@@ -72,6 +73,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const { settings, update } = useSettings()
   const drivingView = useDrivingProjection()
   const drivingSpeechRef = useRef(new DrivingSpeechView())
+  const pendingPolicyRef = useRef(new PendingPolicyView())
   const [messages, setMessages] = useState<Msg[]>(seedMessages ?? [])
   const [connected, setConnected] = useState(false)
   const [connectionState, setConnectionState] = useState('connecting')
@@ -89,6 +91,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const [pendingOps, setPendingOps] = useState<Array<{ id: string; ts: number }>>([])
   // 位置授权征询是**纯前端**确认（没有 operation_id、不上行），单独一格。
   const [pendingLocationText, setPendingLocationText] = useState<string | null>(null)
+  const [pendingLocationMessageId, setPendingLocationMessageId] = useState<string>()
   // seedMessages 演示态：末条待确认时给它一个本地 id，确认条才渲染得出来。
   const [seedConfirm] = useState(
     () => !!(seedMessages && seedMessages.length && seedMessages[seedMessages.length - 1].needConfirm),
@@ -187,6 +190,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       onMessage: (data: any) => {
         drivingView.observe(data)
         drivingSpeechRef.current.observe(data, requestsRef.current)
+        pendingPolicyRef.current.observe(data, requestsRef.current)
         handleEvent(data)
       },
       onStatus: (s: string) => {
@@ -863,8 +867,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     }
     if (shouldRequestLocationConsent(text, settingsRef.current.locationEnabled)) {
       setPendingLocationText(text)
+      const locationMessageId = uid()
+      setPendingLocationMessageId(locationMessageId)
       setMessages((m) => [...m, {
-        id: uid(),
+        id: locationMessageId,
         role: 'assistant',
         text: '这个请求需要使用当前位置，以便提供准确结果。是否允许座舱助手获取当前位置？您也可以拒绝后直接告诉我城市或地点。',
         needConfirm: true,
@@ -888,6 +894,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     if (pendingLocationText) {
       const text = pendingLocationText
       setPendingLocationText(null)
+      setPendingLocationMessageId(undefined)
       if (reply === '确认') {
         void enableLocation().then((position) => {
           if (position) dispatch(text, false, position)
@@ -956,6 +963,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         <section className={'au-panel' + (messages.length === 0 ? ' compact' : '')}>
         <ChatView messages={messages} awaitConfirm={awaitConfirm}
           livePendingOps={pendingOps.map((o) => o.id)}
+          pendingPolicy={pendingPolicyRef.current}
+          localConfirmation={pendingLocationText !== null ? 'location' : seedConfirm ? 'demo' : undefined}
+          localMessageId={pendingLocationMessageId}
           onConfirm={confirm} onQuick={send} partialUser={handsFreePartial || composerPartial} />
       <Composer
         audioApi={AUDIO_API}

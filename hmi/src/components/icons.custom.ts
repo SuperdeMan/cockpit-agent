@@ -3,6 +3,16 @@
 // 后续将经 use_figma 推回 Figma A-8 页，保持设计源一致（见 docs/design 实施计划）。
 // 形态取标准线性图标语汇，与 Figma 导出的 39 个视觉一致。
 export const ICON_CUSTOM = {
+  // Visual v2 I3: exact shared dialog/control icon paths.
+  refresh: { w: 24, h: 24, body: '<path d="M21 12a9 9 0 0 1-9 9 9.8 9.8 0 0 1-6.7-2.8L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 9-9 9.8 9.8 0 0 1 6.7 2.8L21 8"/><path d="M21 3v5h-5"/>' },
+  check: { w: 24, h: 24, body: '<path d="M20 6 9 17l-5-5"/>' },
+  'arrow-down': { w: 24, h: 24, body: '<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>' },
+  'seat-heat': {
+    w: 24,
+    h: 24,
+    body: '<path d="M6.5 4.5A1.5 1.5 0 0 1 8 3h1.5A1.5 1.5 0 0 1 11 4.5V13h5a2 2 0 0 1 2 2v2H8a1.5 1.5 0 0 1-1.5-1.5v-11z"/><path d="M9 17v3.5"/><path d="M16 17v3.5"/><path d="M14.5 3.5c-1 1 1 2 0 3s1 2 0 3"/><path d="M18 3.5c-1 1 1 2 0 3s1 2 0 3"/>',
+  },
+  snowflake: { w: 24, h: 24, body: '<path d="M12 2.5v19"/><path d="M3.8 7.25l16.4 9.5"/><path d="M3.8 16.75l16.4-9.5"/><path d="M9.6 4.2L12 6l2.4-1.8"/><path d="M9.6 19.8L12 18l2.4 1.8"/>' },
   // Visual v2 I2: Figma privacy vectors (28 -> registry 24); shared mobile send/stop.
   'privacy-mic': { w: 24, h: 24, body: '<g transform="scale(0.8571428571)"><g><path d="M13.4167 3.5C15.3497 3.5 16.9167 5.067 16.9167 7V12.8333C16.9167 14.7663 15.3497 16.3333 13.4167 16.3333C11.4837 16.3333 9.91667 14.7663 9.91667 12.8333V7C9.91667 5.067 11.4837 3.5 13.4167 3.5Z" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"/><path d="M5.25 12.8333C5.25 14.9993 6.11041 17.0765 7.64196 18.608C9.17351 20.1396 11.2507 21 13.4167 21C15.5826 21 17.6598 20.1396 19.1914 18.608C20.7229 17.0765 21.5833 14.9993 21.5833 12.8333" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"/><path d="M13.4167 21V24.5" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"/><path d="M23.3333 7.58333C24.622 7.58333 25.6667 6.53867 25.6667 5.25C25.6667 3.96134 24.622 2.91667 23.3333 2.91667C22.0447 2.91667 21 3.96134 21 5.25C21 6.53867 22.0447 7.58333 23.3333 7.58333Z" fill="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"/></g></g>' },
   'privacy-cloud': { w: 24, h: 24, body: '<g transform="scale(0.8571428571)"><g><path d="M8.16667 21H7C5.76232 21.0774 4.54461 20.6599 3.61474 19.8394C2.68487 19.0189 2.11902 17.8627 2.04167 16.625C1.96431 15.3873 2.38179 14.1696 3.20226 13.2397C4.02273 12.3099 5.17899 11.744 6.41667 11.6667C6.56975 10.0894 7.25347 8.6108 8.35601 7.47259C9.45855 6.33437 10.9147 5.60393 12.4862 5.40071C14.0578 5.19749 15.6518 5.53352 17.0076 6.35385C18.3634 7.17417 19.4008 8.43025 19.95 9.91667C21.4197 9.93214 22.8231 10.5308 23.8515 11.581C24.8798 12.6312 25.4488 14.0469 25.4333 15.5167C25.4179 16.9864 24.8192 18.3898 23.769 19.4181C22.7188 20.4465 21.3031 21.0155 19.8333 21H18.6667" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"/><path d="M14 14V23.3333M17.5 17.5L14 14L10.5 17.5" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"/></g></g>' },

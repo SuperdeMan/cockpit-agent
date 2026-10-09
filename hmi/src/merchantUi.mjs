@@ -257,7 +257,7 @@ export function confirmationPresentation(context = '', cardType = '') {
   }
   return {
     kind: 'vehicle',
-    label: '已泊车',
+    label: '车辆操作',
     detail: '危险操作需二次确认',
     confirmLabel: '确认',
   }

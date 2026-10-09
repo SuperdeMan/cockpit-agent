@@ -27,7 +27,7 @@
 .au-conn { display: flex; align-items: center; gap: 12px; color: var(--au-text-2); font-size: var(--au-type-caption-size); }
 .au-conn-dot { width: 12px; height: 12px; border-radius: var(--au-r-full); background: var(--au-online); }
 .au-conn.connecting .au-conn-dot { background: var(--au-warn); }
-.au-conn.closed .au-conn-dot { background: var(--au-text-3); }
+.au-conn.closed .au-conn-dot { background: var(--au-danger); }
 .au-sb-clock { font-size: var(--au-type-num-m-size); line-height: var(--au-type-num-m-line); }
 .au-icon-btn, .au-driving-toggle {
   min-height: var(--au-control-target); min-width: var(--au-control-target); border-radius: var(--au-r-full);

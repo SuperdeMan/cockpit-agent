@@ -32,14 +32,15 @@ const renderCard = (card) => renderToStaticMarkup(
   React.createElement(CardRenderer, { card, onAction: () => {} }),
 )
 
-const renderConfirmation = (uiCard) => renderToStaticMarkup(
+const renderConfirmation = (uiCard, extra = {}) => renderToStaticMarkup(
   React.createElement(SettingsProvider, null,
     React.createElement(DrivingProvider, { value: { driving: false, manual: false, observe: () => {}, setDriving: () => {} } },
     React.createElement(ChatView, {
       messages: [{
-        id: 'm1', role: 'assistant', text: '请确认。', needConfirm: true, uiCard,
+        id: 'm1', role: 'assistant', text: '请确认。', needConfirm: true, operationId: 'op1', uiCard, ...extra,
       }],
       awaitConfirm: true,
+      livePendingOps: ['op1'],
       onConfirm: () => {},
       onQuick: () => {},
     }),
@@ -143,9 +144,16 @@ test('renders the real Luckin mcp_order cancellation fixture with only global co
   assert.doesNotMatch(html, /已泊车|危险操作/)
 })
 
-test('preserves the existing parked vehicle confirmation by default', () => {
+test('vehicle confirmation describes the operation without inventing a parked state', () => {
   const html = renderConfirmation(undefined)
-  assert.match(html, /已泊车/)
+  assert.doesNotMatch(html, /已泊车|已停车/)
+  assert.match(html, /车辆操作/)
+  assert.match(html, /危险操作需二次确认/)
+})
+
+test('an action waiting for confirmation is never presented as executed', () => {
+  const html = renderConfirmation(undefined, { actions: [{ type: 'vehicle.control', require_confirm: true, payload: { command: 'trunk.open' } }] })
+  assert.doesNotMatch(html, /已执行|已核实/)
   assert.match(html, /危险操作需二次确认/)
 })
 

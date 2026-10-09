@@ -28,7 +28,8 @@ export function StatusBar({
   const mm = String(now.getMinutes()).padStart(2, '0')
   const date = `周${WEEK[now.getDay()]} · ${now.getMonth() + 1}月${now.getDate()}日`
   const privacyCamera = cameraFrameAt > 0 && now.getTime() - cameraFrameAt < 10_000
-  const connectionLabel = connection === 'open' ? '已连接' : connection === 'connecting' ? '连接中' : '连接已断开'
+  // Visual v2 copy explicitly accepted by the user on 2026-10-09; this is not a new capability signal.
+  const connectionLabel = connection === 'open' ? '已连接' : connection === 'connecting' ? '正在连接…' : '云端未连接 · 车控仍可用'
 
   return (
     <header className="au-statusbar">
