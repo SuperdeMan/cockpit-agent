@@ -104,7 +104,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
   `VEHICLE_STATE_TRUST` 是公钥/身份/TTL 策略；`VEHICLE_STATE_KEY_ID` 与 `VEHICLE_STATE_PRIVATE_KEY` 仅给 edge。签名不提升来源的 simulated 属性。
   缺失/过期信号不填 `0/P/OFF`，新信号不能刷新旧信号；接入与配置审查见 [CA2-06/12](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。
 
-## 4. 当前真实状态（2026-09-28）
+## 4. 当前真实状态（2026-10-10）
 
 ### 4.0 发布快照
 
@@ -112,11 +112,12 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 [QA/发布交接 §2](docs/reviews/2026-08-30-qa-closeout-handoff.md)。`origin/main` 可因纯文档提交领先生产；
 引用现场状态前重新核对。`5/5 endpoint healthy` 只说明健康度，不能替代业务验收。
 
-- 本仓仍是 Phase 1 工程化 PoC；CA2-02–05 的步骤范围、服务端身份、ResultBundle 与能力契约首版已实现，
-  验证进度见 [首批记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。Jev Decide、T1e 与真实车辆驱动未实现。
-- CA2-06/12 已完成兼容发布与来源签名真栈复验；云端观测已验签，来源仍为 simulated，不代表实车或动作因果证明。
-  证据与接续看 [本包记录](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)，不把连接身份认证当观测来源认证。
-- Android 包身份与设备验收看 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)，不得用服务端 SHA 代替 APK 身份。
+- 本仓仍是 Phase 1 工程化 PoC。v2 首版已部署 CA2-02–12、15、17、19，CA2-21 核心旅程冻结在建；
+  Jev 在线决策、T1e、真实车辆驱动与量产账号未实现。逐包状态只看 [路线图](docs/roadmap.md)，本节不再逐包登记。
+- CA2-06/12 的车态观测已验签，来源仍为 simulated，不代表实车或动作因果证明；不把连接身份认证当观测来源认证，
+  证据与接续看 [本包记录](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。
+- 三端视觉：HMI Visual v2（含高德真实地图舞台）与可观测台 Visual v2 已发布；Android Visual v3 在设备包里，
+  包身份与设备验收看 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)，不得用服务端 SHA 代替 APK 身份。
 - 历史手册基线 `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 的读数只属该 SHA，
   完整发布流水已迁到 [入口状态快照](docs/history/2026-09-26-entry-status-snapshot.md)，不再往本节堆批次。
 
@@ -124,13 +125,24 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 **QA 仍非全绿**。旧开发批闭合不代表当前发布或 v2 已验收。现有问题继续在
 [QA 交接页](docs/reviews/2026-08-30-qa-closeout-handoff.md)、各轮修复记录和 Android 总表维护；
-v2 的可重复旅程、故障矩阵与模型收益门槛见 [实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
+v2 的可重复旅程以 [核心旅程冻结](docs/design/2026-10-09-v2-core-journey-freeze.md)（目标 200 条 × 5 次、≥95% 的旅程五次全达标）为尺子，
+故障矩阵与模型收益门槛见 [实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 
 ### 4.2 当前活项与其他可接工作
 
-| 主题 | 启动条件 / 唯一接续入口 |
+逐条修复与发布 SHA 只在 [QA 交接](docs/reviews/2026-08-30-qa-closeout-handoff.md) §1–§2 与 [agents-history](docs/agents-history.md) 登记；本表只放现状与唯一接续入口。
+
+| 主题 | 现状 / 唯一接续入口 |
 |---|---|
-| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-02–07/12 首版已落地；CA2-08–11 首版已部署（[持久准入](docs/design/2026-10-01-v2-durable-operation-admission.md) / [确认绑定](docs/design/2026-10-02-v2-confirmation-binding.md) / [结果证据](docs/design/2026-10-02-v2-effect-evidence.md) / [车端日志](docs/design/2026-10-02-v2-vehicle-operation-log.md)），CA2-15 S1 / S2（记忆 / 声纹端点按 token 主体、删除与在途写入同代际失效、乘员只认声音证明与隐私投影、一个偏好维度只说一个现行的话、偏好证据按会话计，[CA2-15](docs/design/2026-10-02-v2-memory-identity-governance.md)）已部署，S3b 暂不做（用户决定）；collector 调试面要运维令牌（[调试面访问](docs/design/2026-10-03-v2-collector-access.md)，`7a3b38f9`）；CA2-17 S1 共享商户账号与支付归属已部署（[MCP 桥委托](docs/design/2026-10-03-v2-mcp-bridge-delegation.md)，`ab576883`），S2 第三方文本不当权威已部署（`2c01b786`），S3 工具指纹调用期复核与出口约束已部署（`f21f96f7`，麦当劳点餐按用户批准重钉后恢复）；CA2-19 S1 车况不编、带时效与来源（[能源与健康闭环](docs/design/2026-10-04-v2-energy-health-journeys.md)，`48e35f83`）、S2 解释告警不宣布故障已排除（`85d3353e`）、S3 选站可追溯与路线会话对齐（`aef9537a`）、S4 导航迁严格契约并读得到电量（`ec18b3ac`）、S5「换一个充电站」由导航原位换站（`75fc1f7e`）已部署，接续「换第二个」挂起续接与无路线时排除推荐过的站（`3f322eca` / `56935030`）；发布闸 compose 文件改为一次性摘要批准（`ccfb2e8b`，[运维指南](docs/dev-guide.md)）；步骤 span 带错误码与契约拒绝原因码（`40e75e69`）；带导航词的具名地点不由搜索自己导、交给导航到目的地（[设计](docs/design/2026-10-04-local-destination-ranking.md) §11，`c713b42f`）；R0 残余「挂起轮不吞失败步、手册生成守住步骤预算」（[设计](docs/design/2026-10-04-suspend-failure-and-manual-budget.md)，`a2d7f8e3`）、「闲聊兜底遇到本车功能问句交给有把握的手册」（[设计](docs/design/2026-10-04-chitchat-defers-to-confident-manual.md)，`eaf97270`，含 SDK 内部调用丢 data 的修复）、手册路由与生成不继承复杂任务的思考开关（`35182c01`）、完整的信息问题不再被澄清成选动作（[设计](docs/design/2026-10-04-information-question-not-clarified.md)，`35132adc`）、远处地标不被近处借名地点顶替（[设计](docs/design/2026-10-04-destination-borrowed-name.md)，`add65549`；点选候选回云端 `5b22d2e4`）、本地具名目的地按城市范围综合排序（[设计](docs/design/2026-10-04-local-destination-ranking.md)，`b84628b5`；带类目词的通称取近处那家且不悄悄跨城 `9dc94f28`；模型猜名去掉原话里的城市不落到本地同名点 `8ffc8bff`；估算与导航用同样多的候选 `ee5ce497`；「XX海滩」按两个字的锚词取主干 `91a0c855`；「城市 + 俗称」对上官方全称 `2a509984`；「取消导航」整句确定性落 `navigation.cancel` `b147b737`；「换一个充电站」整句确定性落 `charging.find` `5f68cf3b`）、手册检索剥回忆式开头（[设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §9，`8ffc8bff`；生成不接收回忆式开头 `ee5ce497`）、工具通道重试丢步时用抢救计划（[设计](docs/design/2026-10-04-planner-salvage-retry-floor.md)，`9dc94f28`；只少收尾右花括号的计划补上 `ee5ce497`）、场景定义问（[设计](docs/design/2026-10-05-scene-describe.md)，`4e3ffb14`；闲聊兜底先问场景认领 `2fd8d135`）已部署。R0、正式身份和设备验收仍分项，Jev 受话 shadow 已上线 `3f948538`（只观测不改结果，范围含真实用户，[执行计划](docs/design/2026-10-04-jev-decide-integration.md)） |
+| v2 主线排序 | [路线图](docs/roadmap.md) → [实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)；R0、正式身份与设备验收仍分项签收 |
+| 持久执行与证据（CA2-08–11） | 首版已部署：[持久准入](docs/design/2026-10-01-v2-durable-operation-admission.md) / [确认绑定](docs/design/2026-10-02-v2-confirmation-binding.md) / [结果证据](docs/design/2026-10-02-v2-effect-evidence.md) / [车端日志](docs/design/2026-10-02-v2-vehicle-operation-log.md)；车端日志的后台同步与补偿未做 |
+| 记忆与身份治理（CA2-15） | S1 / S2 / S3a 与记忆质量遗留已部署，S3b 暂不做（用户决定）：[CA2-15](docs/design/2026-10-02-v2-memory-identity-governance.md)；collector 调试面要运维令牌：[调试面访问](docs/design/2026-10-03-v2-collector-access.md) |
+| MCP 委托与外源隔离（CA2-17） | S1–S3 已部署，麦当劳点餐按用户批准重钉指纹后恢复：[MCP 桥委托](docs/design/2026-10-03-v2-mcp-bridge-delegation.md) |
+| 能源与健康闭环（CA2-19） | S1–S5 与「换第二个」续接、无路线换站已部署：[能源与健康闭环](docs/design/2026-10-04-v2-energy-health-journeys.md) |
+| 核心旅程冻结（CA2-21） | 清单与运行器已落地，只读 / 合成写 / 模拟车车道分批标定；首份 200 × 5 报告尚未产出：[冻结设计](docs/design/2026-10-09-v2-core-journey-freeze.md) |
+| 导航 / 手册 / 规划的 R0 残余 | 修复按条目登记在 QA 交接；目的地解析见 [本地目的地排序](docs/design/2026-10-04-local-destination-ranking.md) 与 [借名歧义](docs/design/2026-10-04-destination-borrowed-name.md)，规划重试见 [抢救计划](docs/design/2026-10-04-planner-salvage-retry-floor.md) |
+| Jev 判别层 | JV01 网关契约已部署、缺省关闭；受话 shadow 曾上线，2026-10-10 用户决定暂停云端外呼（`DECISION_ENABLED=false`，国内出口被地区拦截），重开要先有境外出口并经两步批准：[执行计划](docs/design/2026-10-04-jev-decide-integration.md) |
+| 客户端视觉 | HMI：[验证发布](docs/design/2026-10-09-hmi-visual-v2-validation-release.md)、[真实地图接入](docs/design/2026-10-10-hmi-map-sdk.md)；可观测台：[实施计划](docs/design/2026-10-09-dashboard-visual-v2-implementation-plan.md)；Android：[v3 执行记录](docs/design/2026-10-03-android-visual-v3-execution.md) |
 | 手册召回、条件与复合问句 | [2026-09-26 设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §8；挂确认已有 CA2-04 闭环，已登记胎压条件见 [来源护栏](docs/design/2026-09-28-manual-source-evidence-guard.md)；规划/回忆残余继续重证，Jev 不能代修 |
 | 对话评审四轮 | [逐条重证与分批落地](docs/design/2026-09-24-conversation-review-round4-remediation.md) §7；已修项不重新立项，未触发项保持条件 |
 | 对话评审三轮 | [修复记录](docs/design/2026-09-23-conversation-review-round3-remediation.md)；历史批次与待裁决项按原表追溯 |
