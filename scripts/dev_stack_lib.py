@@ -385,6 +385,8 @@ def frontend_environment(
             "VITE_EDGE_GATEWAY_URL": endpoints.edge_http,
             "VITE_AUDIO_API_URL": endpoints.audio,
             "VITE_WS_TOKEN": selected_env.get("VITE_WS_TOKEN", ""),
+            "AMAP_JS_KEY": selected_env.get("AMAP_JS_KEY", ""),
+            "AMAP_JS_SECURITY_CODE": selected_env.get("AMAP_JS_SECURITY_CODE", ""),
         }
     if app == "dashboard":
         return {

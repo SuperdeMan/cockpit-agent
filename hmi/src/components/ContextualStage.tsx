@@ -9,6 +9,7 @@ import { present, cardTitle } from '../cardPresentation.mjs'
 import { CardRenderer, ProvBadge } from './Cards'
 import { Icon } from './Icon'
 import { AQISection } from './aurora'
+import { MapStage } from './MapStage'
 import type { Msg, UiCard, WeatherCard, ForecastCard, ReminderItem, Provenance } from '../types'
 
 export function ContextualStage({messages,vehicle={},vehicleLabel,onAction}: {
@@ -68,51 +69,6 @@ function WeatherStage({card}:{card:WeatherCard|ForecastCard}) {
   </section>
 }
 
-type Node = {name:string;detail?:string;x:number;y:number}
-function mapNodes(card:UiCard):Node[] {
-  const c=card as any
-  let values:Array<{name:string;detail?:string}>=[]
-  if(c.type==='poi_list'||c.type==='place_list') values=(c.items||[]).slice(0,6).map((p:any)=>({name:p.name,detail:present(p.distance_km)?p.distance_km+' km':''}))
-  else if(c.type==='poi_detail'||c.type==='place_detail') values=[{name:c.name,detail:c.address}]
-  else if(c.type==='trip_itinerary') values=(c.itinerary||[]).flatMap((day:any)=>(day.stops||[]).map((s:any)=>({name:s.name,detail:'第 '+day.day_index+' 天'}))).slice(0,8)
-  else values=[{name:c.origin || '出发地'},...(c.waypoints||c.stops||[]).map((s:any)=>({name:s.name,detail:present(s.at_km)?'约 '+s.at_km+' km 处补电':s.address})),{name:c.destination}].filter(x=>x.name)
-  return values.map((item,index)=>({...item,x:120+(values.length>1?index/(values.length-1):.5)*680,y:values.length>1?450-index/(values.length-1)*260+(index%2?24:0):300}))
-}
-function MapStage({card}:{card:UiCard}) {
-  const c=card as any
-  const nodes=mapNodes(card)
-  const path:Array<[number,number]>=Array.isArray(c.path)?c.path.filter((p:any)=>Array.isArray(p)&&p.length===2&&p.every((n:any)=>typeof n==='number'&&Number.isFinite(n))):[]
-  let line=nodes.map(p=>p.x+','+p.y).join(' ')
-  if(path.length>1) {
-    const lats=path.map(p=>p[0]), lngs=path.map(p=>p[1])
-    const loLat=Math.min(...lats),hiLat=Math.max(...lats),loLng=Math.min(...lngs),hiLng=Math.max(...lngs)
-    const projected=path.map(p=>({x:100+(p[1]-loLng)/Math.max(.00001,hiLng-loLng)*700,y:490-(p[0]-loLat)/Math.max(.00001,hiLat-loLat)*330}))
-    line=projected.map(p=>p.x+','+p.y).join(' ')
-    nodes.forEach((node,index)=>Object.assign(node,projected[Math.round(index/Math.max(1,nodes.length-1)*(projected.length-1))]))
-  }
-  return <section className="au-map-stage">
-    <header><span className="au-stage-map-notice"><Icon name="warning" size={24} color="var(--au-warn)" />示意 · 地图底图暂不可用</span>
-      <h2>{c.cancelled?'导航已取消':c.title || c.destination || c.name || cardTitle(card)}</h2>
-      <div className="au-stage-map-meta">{c.estimate&&<span>估算 · </span>}{present(c.distance_km)&&<span>{c.distance_km} km </span>}{present(c.duration_min)&&<span> · {c.duration_min} 分钟</span>}<Source card={card} /></div>
-    </header>
-    {!c.cancelled && <svg className="au-stage-map-svg" viewBox="0 0 920 600" role="img" aria-label="结果位置与路线示意">
-      <defs><pattern id="stage-grid" width="80" height="80" patternUnits="userSpaceOnUse"><path d="M80 0H0V80" fill="none" stroke="var(--au-map-road-minor)" strokeWidth="1" /></pattern></defs>
-      <rect width="920" height="600" fill="url(#stage-grid)" />
-      {nodes.length>1&&<polyline points={line} fill="none" stroke="var(--au-map-route)" strokeWidth="4" strokeDasharray={path.length>1?undefined:'12 10'} strokeLinecap="round" strokeLinejoin="round" />}
-      {nodes.map((p,i)=><g key={i}>
-        <circle cx={p.x} cy={p.y} r={22} fill="var(--au-primary)" />
-        <text x={p.x} y={p.y+8} textAnchor="middle" fill="var(--au-primary-ink)" fontSize="24" fontFamily="var(--au-font-mono)">{i+1}</text>
-        <text x={p.x} y={p.y-36} textAnchor="middle" fill="var(--au-text)" fontSize="24"><title>{p.name}</title>{p.name.length>11?p.name.slice(0,10)+'…':p.name}</text>
-      </g>)}
-    </svg>}
-    <div className="au-map-details">
-      {c.cancelled?<p>这条导航已结束。</p>:nodes.map((p,i)=><div key={i}><b className="au-num">{i+1}</b><span>{p.name}</span>{p.detail&&<small>{p.detail}</small>}</div>)}
-      {c.type==='charging_route'&&c.stops?.length===0&&<p>全程无需补电</p>}
-      {c.soc_note&&<p>{c.soc_note}</p>}
-    </div>
-    <div className="au-stage-caption">{path.length>1?'路线形状来自返回的路径点；标注仅作示意。':'按结果顺序示意，不代表实际地理位置。'}路况以导航播报为准。</div>
-  </section>
-}
 function AgendaStage({card}:{card:UiCard}) {
   const c=card as any
   const [now,setNow]=useState(Date.now)

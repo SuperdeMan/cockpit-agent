@@ -13,9 +13,9 @@ import { AuroraPreview } from './components/aurora/AuroraPreview'
 import { IconGallery } from './components/aurora/IconGallery'
 import { VisualTokensPreview } from './components/aurora/VisualTokensPreview'
 import { CardGallery } from './components/CardGallery'
-import { DEMO_WEATHER, DEMO_MAP, DEMO_CARDS, DEMO_STATES, DEMO_INFO, DEMO_CHARGE, DEMO_TRIP, DEMO_ROUTE, DEMO_RESULTS } from './demo'
+import { DEMO_WEATHER, DEMO_MAP, DEMO_MAP_SDK, DEMO_CARDS, DEMO_STATES, DEMO_INFO, DEMO_CHARGE, DEMO_TRIP, DEMO_ROUTE, DEMO_RESULTS } from './demo'
 
-const DEMO_MAPS: Record<string, typeof DEMO_WEATHER> = { charge: DEMO_CHARGE, trip: DEMO_TRIP, route: DEMO_ROUTE, results: DEMO_RESULTS }
+const DEMO_MAPS: Record<string, typeof DEMO_WEATHER> = { charge: DEMO_CHARGE, trip: DEMO_TRIP, route: DEMO_ROUTE, results: DEMO_RESULTS, 'map-sdk': DEMO_MAP_SDK }
 
 // ?aurora 进入 P0 设计系统预览；?demo / ?demo=map / =cards / =states 用 mock 对话验证；否则正式应用。
 const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')

@@ -2,7 +2,7 @@
 
 智能座舱演示前端，横屏 1920×1080：全幅情境舞台叠加单一对话面板。通过 WebSocket 连 Edge Gateway 收发指令（文字或语音），展示完整回答、结果证据与多轮确认；通过 HTTP 代理（llm-gateway:50059）做 ASR/TTS 与记忆读取。
 
-> HMI Visual v2（2026-10-09）I1–I6 已实现并经授权上线：深浅与四档字阶、只读行车投影、固定确认条、34 类业务卡片、情境舞台、12 节设置及开发者区。设计依据与逐批证据见 [实施记录](../docs/design/2026-10-08-hmi-visual-v2-implementation-plan.md)，当前发布与独立验收见 [QA 交接 §2](../docs/reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。地图当前为明确标注的底图不可用示意，车型轮廓为占位；车机硬件验收仍单列，Dashboard 不在本轮范围。
+> HMI Visual v2（2026-10-09）I1–I6 已实现并经授权上线：深浅与四档字阶、只读行车投影、固定确认条、34 类业务卡片、情境舞台、12 节设置及开发者区。设计依据与逐批证据见 [实施记录](../docs/design/2026-10-08-hmi-visual-v2-implementation-plan.md)，当前发布与独立验收见 [QA 交接 §2](../docs/reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。真实地图接入与配置状态另见 [地图 SDK 接入](../docs/design/2026-10-10-hmi-map-sdk.md)；缺凭据、坐标或底图加载失败时显示明确的示意回退。车型轮廓仍为占位，车机硬件验收单列。
 
 预览：`?tokens` 字阶、`?icons` 图标、`?demo[=map|cards|info|states|charge|trip|route|results]`、`?card-gallery=N`（44 份样本）、`?settings[=tts|asr|wake|pipeline|occupants|vision|display|location|assistant|agents|memory|developer]`。加 `&theme=light` 切浅色；大字/大触控/手动行车在「显示」中切换。诊断默认隐藏，`?dev` 或「开发者模式」开启。
 
@@ -23,6 +23,9 @@ npm run dev      # http://localhost:5173
 环境变量（`.env` 或构建时注入）：
 - `VITE_EDGE_GATEWAY_URL` — Edge Gateway 地址（默认 `http://localhost:8090`），WS 走 `/ws`。
 - `VITE_AUDIO_API_URL` — 音频/记忆 HTTP 代理（默认 `http://localhost:50059`），用于 `/api/asr`(批处理)、`/api/asr/stream`(WS 流式识别上屏)、`/api/tts`(批处理)、`/api/tts/stream`(WS 服务端流式 TTS)、`/api/tts/stream/info`(引擎+音色探测)、`/api/voices`、`/api/memory/*`。
+- `AMAP_JS_KEY` / `AMAP_JS_SECURITY_CODE` — 高德 Web端（JS API）Key 与配套安全密钥；仅注入 HMI 服务进程，不能加 `VITE_` 前缀。根目录 `python scripts/dev_stack.py hmi` 会读取根 `.env` 并脱敏输出；发布时由 Compose 从云端受控运行配置注入。保留后端原 `AMAP_KEY`。
+
+地图使用现有 Vite 服务中的 `/api/maps/config` 和 `/_AMapService/`，不能只把 `dist/` 放到无代理的静态服务器。JS Key 通过运行时接口提供给浏览器，`jscode` 仅在服务端转发时附加；代理只接受地图初始化和样式的固定路径，不代理 POI 搜索或路线规划。真实底图视觉样例：`?demo=map-sdk`（明确标注示例数据，路线不是实际规划结果）。
 
 > 麦克风需安全上下文：经 `localhost` 或 HTTPS 访问才可录音（浏览器限制）。
 

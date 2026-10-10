@@ -1,5 +1,5 @@
 // 仅用于本地视觉验证（main.tsx 经 ?demo / ?demo=map 注入）——不进入正式应用主链。
-import type { Msg, WeatherCard, PoiListCard } from './types'
+import type { Msg, WeatherCard, PoiListCard, UiCard } from './types'
 
 const weatherCard: WeatherCard = {
   type: 'weather',
@@ -261,4 +261,15 @@ export const DEMO_TRIP: Msg[] = [
 export const DEMO_ROUTE: Msg[] = [
   { id: 'r0', role: 'user', text: '导航去首都机场，顺路吃个饭' },
   { id: 'r1', role: 'assistant', text: '已为你规划经望京小腰前往首都机场 T3 的路线。', uiCard: routeCard },
+]
+
+// Georeferenced visual fixture only. This is not a provider-planned or active navigation route.
+export const DEMO_MAP_SDK: Msg[] = [
+  {id:'map-sdk-user',role:'user',text:'查看地图示例'},
+  {id:'map-sdk-answer',role:'assistant',text:'这是地图视觉样例，地点和路线仅用于验证显示。',uiCard:{
+    type:'route_plan',estimate:true,origin:'西湖文化广场',destination:'杭州东站',
+    origin_loc:{lat:30.279,lng:120.164},destination_loc:{lat:30.290,lng:120.212},waypoints:[],
+    path:[[30.279,120.164],[30.276,120.164],[30.276,120.176],[30.279,120.176],[30.279,120.196],[30.290,120.196],[30.290,120.212]],
+    _prov:{mode:'mock',vendor:'地图视觉夹具'},
+  } as UiCard},
 ]

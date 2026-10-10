@@ -955,6 +955,9 @@ services:
       VITE_AUDIO_API_URL: http://localhost:50059
       # R3.1 会话鉴权：带 token 连接 WS（默认空=不带 token，保持现状）。
       VITE_WS_TOKEN: ${VITE_WS_TOKEN:-}
+      # JS API key is served at runtime; its paired security code stays in the HMI server.
+      AMAP_JS_KEY: ${AMAP_JS_KEY:-}
+      AMAP_JS_SECURITY_CODE: ${AMAP_JS_SECURITY_CODE:-}
     ports: ["5173:5173"]
     depends_on: [edge-gateway]
 

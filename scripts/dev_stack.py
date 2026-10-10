@@ -622,6 +622,8 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             endpoints = cloud_endpoints(selected_env.get("TAILNET_FQDN", ""))
         if args.command == "dashboard":
             selected_env["VITE_COLLECTOR_TOKEN"] = operator_token(root=repo)
+        if args.command == "hmi":
+            selected_env.update(read_root_env(repo, {"AMAP_JS_KEY", "AMAP_JS_SECURITY_CODE"}))
         command = frontend_command(
             repo=repo,
             app=args.command,
@@ -630,7 +632,7 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             selected_env=selected_env,
         )
         redacted_environment = {
-            key: "[REDACTED]" if key in {"VITE_WS_TOKEN", "VITE_COLLECTOR_TOKEN"} and value else value
+            key: "[REDACTED]" if key in {"VITE_WS_TOKEN", "VITE_COLLECTOR_TOKEN", "AMAP_JS_KEY", "AMAP_JS_SECURITY_CODE"} and value else value
             for key, value in command.env.items()
         }
         # The dev server holds the console until the operator stops it, so the

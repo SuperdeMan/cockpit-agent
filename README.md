@@ -384,7 +384,7 @@ docs/             架构（真相源）、设计记录、评审交接、指南�
 - **Android**：前台交互 PoC，不做后台保活与厂商推送，主动消息只在 App 前台送达；debug 签名；正式鉴权、推送、签名与 OTA、崩溃监控、商店合规都未启动。设备与真人验收看[剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)。
 - **声学与真人验收**：真麦命中率、误唤醒率等属于人工验收范畴，尚未签收。
 - **v2 未完成项**：核心旅程冻结（200 × 5）仍在建；Jev 判别层、端侧有界规划（T1e）、车端日志的后台同步与补偿都未实现。
-- **QA 仍非全绿**：当前 release、测试读数与剩余活项以 [QA 交接](docs/reviews/2026-08-30-qa-closeout-handoff.md)为准，README 不维护易腐的数字。
+- **QA 仍非全绿**：当前 release、QA 证据与活项以 [QA 交接](docs/reviews/2026-08-30-qa-closeout-handoff.md)为准，README 不维护易腐的数字。
 
 ## English summary
 

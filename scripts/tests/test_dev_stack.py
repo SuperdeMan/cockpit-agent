@@ -1846,6 +1846,8 @@ def test_cli_hmi_runs_only_vite_and_redacts_token(
         lambda *_args: {
             "TAILNET_FQDN": "demo.ts.net",
             "VITE_WS_TOKEN": "top-secret-token",
+            "AMAP_JS_KEY": "fixture-map-public-key",
+            "AMAP_JS_SECURITY_CODE": "fixture-map-private-code",
         },
     )
 
@@ -1855,6 +1857,10 @@ def test_cli_hmi_runs_only_vite_and_redacts_token(
     assert runner.calls[0][1:] == ("run", "dev", "--", "--host", "127.0.0.1")
     assert "docker" not in " ".join(runner.calls[0])
     assert "top-secret-token" not in json.dumps(events)
+    assert "fixture-map-public-key" not in json.dumps(events)
+    assert "fixture-map-private-code" not in json.dumps(events)
+    assert events[-1]["environment"]["AMAP_JS_KEY"] == "[REDACTED]"
+    assert events[-1]["environment"]["AMAP_JS_SECURITY_CODE"] == "[REDACTED]"
     assert events[-1]["environment"]["VITE_WS_TOKEN"] == "[REDACTED]"
 
 

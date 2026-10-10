@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { amapPlugin } from './server/amap.mjs'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), amapPlugin()],
   server: {
     host: true,
     port: 5173,
