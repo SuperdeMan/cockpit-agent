@@ -13,6 +13,7 @@
 车况键、Kind 与聚合显示只在 `components/vehicle-config.ts`。
 `tokens.css` 是运行时视觉声明，冻结的 Figma 对账快照在 `design/visual-v2.tokens.json`。
 字体与许可证自托管；图标只读复用 HMI/mobile 数据，观测台专用图标保留 Figma 原节点来源。
+浏览器页签与顶栏共用 `public/brand.svg`，保持 Visual v2 品牌标识一致。
 
 ## 运行
 
