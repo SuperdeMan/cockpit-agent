@@ -5,70 +5,71 @@ note: >-
   F07 找站与续航提醒、F09 周边搜索 / 详情 / 停车；全程零动作，都依赖高德（providers: AMAP_KEY，额度不够时 --skip-providers 记未测）。
   NV01–NV21 是本地目的地探针（scripts/probe_local_destinations.py）的案例表原样搬来：话术里该有的名字之一、不该再出现的附属地点、
   全程公里数上下限、「鼓浪屿」候选第一项是厦门——探针改读这里，案例只留一份；来历见本地目的地排序设计 §3–§13。
-  NV23–NV26 门牌与起点取自同一设计 §15 / §16 的真栈记录。会话位置用运行器缺省（深圳南山，与原探针同一点）。
+  NV23–NV26 门牌与起点取自同一设计 §15 / §16 的真栈记录。估算类都要求话术报出全程距离（route_km_min），没算路程的答复
+  （首跑里闲聊把「去口腔医院要开多久」答成看牙要花多久）不算对。会话位置用运行器缺省（深圳南山，与原探针同一点）。
 cases:
   # ── F06 估算：具名地点不落到借了名字的附属点（§3）──────────────────────
   - id: NV01
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去大梅沙要开多久", expect: {speech_any: ["大梅沙海滨"], speech_not: ["推拿"]}}
+      - {say: "去大梅沙要开多久", expect: {route_km_min: 0.1, speech_any: ["大梅沙海滨"], speech_not: ["推拿"]}}
   - id: NV02
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去蛇口港要开多久", expect: {speech_any: ["蛇口港"], speech_not: ["公安局"]}}
+      - {say: "去蛇口港要开多久", expect: {route_km_min: 0.1, speech_any: ["蛇口港"], speech_not: ["公安局"]}}
   - id: NV03
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去东门要开多久", expect: {speech_any: ["东门商业步行街", "东门步行街", "东门(地名"], speech_not: ["食堂"]}}
+      - {say: "去东门要开多久", expect: {route_km_min: 0.1, speech_any: ["东门商业步行街", "东门步行街", "东门(地名"], speech_not: ["食堂"]}}
   - id: NV04
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去海岸城要开多久", expect: {speech_any: ["海岸城购物中心"], speech_not: ["停车场"]}}
+      - {say: "去海岸城要开多久", expect: {route_km_min: 0.1, speech_any: ["海岸城购物中心"], speech_not: ["停车场"]}}
   - id: NV05
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去会展中心要开多久", expect: {speech_any: ["深圳会展中心"], speech_not: ["国家会议中心"]}}
+      - {say: "去会展中心要开多久", expect: {route_km_min: 0.1, speech_any: ["深圳会展中心"], speech_not: ["国家会议中心"]}}
   - id: NV06
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去山姆会员店要开多久", expect: {speech_any: ["山姆会员商店"], speech_not: ["北京"]}}
+      - {say: "去山姆会员店要开多久", expect: {route_km_min: 0.1, speech_any: ["山姆会员商店"], speech_not: ["北京"]}}
   - id: NV07
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去厦门火车站要开多久", expect: {speech_any: ["厦门站", "厦门火车站"]}}
+      - {say: "去厦门火车站要开多久", expect: {route_km_min: 0.1, speech_any: ["厦门站", "厦门火车站"]}}
   # ── F06 估算：带类目词的通称在本城，连锁店是近处那家（§7）────────────────
   - id: NV08
     family: estimate_category
     providers: [AMAP_KEY]
     turns:
-      - {say: "去儿童医院要开多久", expect: {speech_any: ["儿童医院"], speech_not: ["北京", "首都医科大学"], route_km_max: 60}}
+      - {say: "去儿童医院要开多久", expect: {route_km_min: 0.1, speech_any: ["儿童医院"], speech_not: ["北京", "首都医科大学"], route_km_max: 60}}
   - id: NV09
     family: estimate_category
     providers: [AMAP_KEY]
     turns:
-      - {say: "去口腔医院要开多久", expect: {speech_any: ["口腔"], speech_not: ["北京"], route_km_max: 15}}
+      - {say: "去口腔医院要开多久", expect: {route_km_min: 0.1, speech_any: ["口腔"], speech_not: ["北京"], route_km_max: 15}}
   - id: NV10
     family: estimate_category
     providers: [AMAP_KEY]
     turns:
-      - {say: "去7-11便利店要开多久", expect: {speech_any: ["7-ELEVEn", "7-Eleven", "7-11"], speech_not: ["北京"], route_km_max: 15}}
+      - {say: "去7-11便利店要开多久", expect: {route_km_min: 0.1, speech_any: ["7-ELEVEn", "7-Eleven", "7-11"], speech_not: ["北京"], route_km_max: 15}}
   - id: NV11
     family: estimate_category
     providers: [AMAP_KEY]
     turns:
-      - {say: "去华润万家超市要开多久", expect: {speech_any: ["华润万家"], route_km_max: 6}}
+      - {say: "去华润万家超市要开多久", expect: {route_km_min: 0.1, speech_any: ["华润万家"], route_km_max: 6}}
   - id: NV12
     family: estimate_category
     providers: [AMAP_KEY]
     turns:
-      - {say: "去医院要开多久", expect: {speech_not: ["北京"], route_km_max: 15}}
+      - {say: "去医院要开多久", expect: {route_km_min: 0.1, speech_not: ["北京"], route_km_max: 15}}
   # ── F06 估算：城市限定的外地名不落到本地同名点（§8）、锚词与海滩（§9 / §10）──────
   - id: NV13
     family: estimate_city_qualified
@@ -89,23 +90,23 @@ cases:
     family: estimate_anchor
     providers: [AMAP_KEY]
     turns:
-      - {say: "去小梅沙海滩要开多久", expect: {speech_any: ["沙滩"], speech_not: ["海洋世界"]}}
+      - {say: "去小梅沙海滩要开多久", expect: {route_km_min: 0.1, speech_any: ["沙滩"], speech_not: ["海洋世界"]}}
   # ── F06 估算：口头叫法落到本地门店，名字毫不相干的近处结果不当目的地（§13）──────
   - id: NV17
     family: estimate_spoken_alias
     providers: [AMAP_KEY]
     turns:
-      - {say: "去7-11要开多久", expect: {speech_any: ["7-ELEVEn", "7-Eleven", "7-11"], speech_not: ["北京"], route_km_max: 15}}
+      - {say: "去7-11要开多久", expect: {route_km_min: 0.1, speech_any: ["7-ELEVEn", "7-Eleven", "7-11"], speech_not: ["北京"], route_km_max: 15}}
   - id: NV18
     family: estimate_spoken_alias
     providers: [AMAP_KEY]
     turns:
-      - {say: "去KFC要开多久", expect: {speech_any: ["肯德基", "KFC"], speech_not: ["北京"], route_km_max: 15}}
+      - {say: "去KFC要开多久", expect: {route_km_min: 0.1, speech_any: ["肯德基", "KFC"], speech_not: ["北京"], route_km_max: 15}}
   - id: NV19
     family: estimate_spoken_alias
     providers: [AMAP_KEY]
     turns:
-      - {say: "去北大医院要开多久", expect: {speech_any: ["北京大学深圳医院"], speech_not: ["眼科", "角膜", "北京大学第一医院"], route_km_max: 60}}
+      - {say: "去北大医院要开多久", expect: {route_km_min: 0.1, speech_any: ["北京大学深圳医院"], speech_not: ["眼科", "角膜", "北京大学第一医院"], route_km_max: 60}}
   - id: NV20
     family: estimate_unrelated_fallback
     providers: [AMAP_KEY]
@@ -122,23 +123,23 @@ cases:
     family: estimate_unrelated_fallback
     providers: [AMAP_KEY]
     turns:
-      - {say: "去人民广场要开多久", expect: {speech_not: ["人民医院", "检察院", "法院"]}}
+      - {say: "去人民广场要开多久", expect: {route_km_min: 0.1, speech_not: ["人民医院", "检察院", "法院"]}}
   # ── F06 估算：门牌地址按当前城市地理编码（§15），起点只认说过的（§16）──────────
   - id: NV23
     family: estimate_house_number
     providers: [AMAP_KEY]
     turns:
-      - {say: "去南海大道1088号要开多久", expect: {speech_not: ["海口", "北京"], route_km_max: 30}}
+      - {say: "去南海大道1088号要开多久", expect: {route_km_min: 0.1, speech_not: ["海口", "北京"], route_km_max: 30}}
   - id: NV24
     family: estimate_house_number
     providers: [AMAP_KEY]
     turns:
-      - {say: "去深南大道9028号要开多久", expect: {speech_not: ["深圳湾体育中心", "北京"], route_km_max: 30}}
+      - {say: "去深南大道9028号要开多久", expect: {route_km_min: 0.1, speech_not: ["深圳湾体育中心", "北京"], route_km_max: 30}}
   - id: NV25
     family: estimate_house_number
     providers: [AMAP_KEY]
     turns:
-      - {say: "去南山区科苑路15号要开多久", expect: {speech_not: ["北京"], route_km_max: 20}}
+      - {say: "去南山区科苑路15号要开多久", expect: {route_km_min: 0.1, speech_not: ["北京"], route_km_max: 20}}
   - id: NV26
     family: estimate_spoken_origin
     providers: [AMAP_KEY]
@@ -146,6 +147,13 @@ cases:
       # 只说了起点：追问到哪；续接按说过的起点算——从当前位置算科苑路15号不到 2 公里，从深南大道9028号约 6 公里
       - {say: "从深南大道9028号出发要开多久", expect: {speech_any: ["到哪"]}}
       - {say: "南山区科苑路15号", expect: {speech_not: ["北京"], route_km_min: 3, route_km_max: 20}}
+  # 同一个「人民广场」走地点搜索：Flash A/B 里规划成 search_poi → navigate_to，搜索不核对名字就报「找到 4 个人民广场」，
+  # 列的是宝安人民医院、南山区人民检察院停车场……（本地目的地排序 §17）
+  - id: NV27
+    family: search_unrelated_fallback
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "人民广场在哪", expect: {speech_not: ["人民医院", "检察院", "法院"]}}
   # ── F07 能源（只读）──────────────────────────────────────────────
   - id: EN01
     family: charger_swap_unrouted

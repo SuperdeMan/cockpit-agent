@@ -66,6 +66,9 @@ _JOURNEY_TURN_KEYS = {"say", "expect"}
 #: 位置走 7 月旅程的 `setup.location`；别的键一律拒绝——meta 是下发给编排的，不许语料随手塞别的东西。
 _CASE_META_KEYS = {"input_source"}
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
+#: 清单条目可以按旅程补的权限（冻结 P2，2026-10-10）：周边 / 停车 Agent 按整个 Agent 要求 `payment.invoke`（只为预留的下单桩），
+#: 不给就连只读的搜索都被拒。只收这一项、只给只读车道——只读车道从不确认（`validate_case` 钉着），支付一步都执行不了；商户写永远不给。
+SCOPE_EXTRAS = ("payment.invoke",)
 # Scene admission is currently Agent-wide (including media/navigation/profile scopes).
 # Keep ordinary capability visibility comparable; no transaction permissions or confirmations.
 ASSET_GROUPS = {
@@ -148,6 +151,12 @@ def validate_case(case: dict) -> None:
             raise ValueError("synthetic_writes journeys declare data_cleanup from memory / scene / reminder")
     elif case.get("data_cleanup"):
         raise ValueError("only synthetic_writes journeys take data_cleanup")
+    extras = case.get("scopes_extra") or []
+    if extras:
+        if not isinstance(extras, list) or set(extras) - set(SCOPE_EXTRAS):
+            raise ValueError("scopes_extra only takes " + ", ".join(SCOPE_EXTRAS))
+        if lane != "read_only":
+            raise ValueError("scopes_extra is only for read_only journeys (they never confirm)")
 
 
 def _adapt_journey(journey: dict) -> dict:
@@ -206,6 +215,8 @@ def load_manifest(path: Path = MANIFEST) -> list[dict]:
             raise ValueError("journey id not found exactly once in its source")
         case.update(family=entry["family"], lane=entry["lane"], source=str(entry["source"]),
                     safety=str(entry.get("safety") or ""), known_red=str(entry.get("known_red") or ""))
+        if entry.get("scopes_extra"):
+            case["scopes_extra"] = list(entry["scopes_extra"])
         validate_case(case)
         cases.append(case)
     return cases
@@ -507,8 +518,9 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
     write = lane in WRITE_LANES
     allowed_keys = set(case.get("vehicle_keys") or []) if lane == "simulated_vehicle" else set()
     case_failures: list[str] = []
+    scopes = list(SCOPES) + [x for x in case.get("scopes_extra") or [] if x in SCOPE_EXTRAS]
     token = sign_identity(secret, run_id=run_id, user_id=user, vehicle_id="v1",
-                          scopes=list(SCOPES), timeout_s=1800)
+                          scopes=scopes, timeout_s=1800)
     pending = ""
     rows = []
     baseline = await audit._settled_vehicle_state(collector, include_unmanaged=True)
@@ -601,7 +613,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
     stop = bool(pending) or (write and (bool(case_failures) or any(r.get("evidence_errors") for r in rows)))
     return {"id": case["id"], "family": case["family"], "repeat": repeat, "lane": lane,
             "session": session, "rows": rows, "open_operation": bool(pending), "stop": stop,
-            "case_failures": case_failures}
+            "case_failures": case_failures, "scopes_extra": scopes[len(SCOPES):]}
 
 
 async def _write_lane_cleanup(ws, session, case, lane, pending, manifest, rows) -> str:

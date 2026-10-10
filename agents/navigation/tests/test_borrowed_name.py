@@ -201,3 +201,25 @@ def test_amap_poi_carries_the_city():
     poi = AmapPOIProvider.__new__(AmapPOIProvider)._poi_from(
         {"id": "B1", "name": "黄鹤楼", "location": "114.302,30.545", "cityname": "武汉市", "type": "风景名胜"})
     assert poi.city == "武汉市"
+
+
+def test_a_chain_brand_said_by_its_spoken_name_is_the_nearby_store_not_a_far_namesake():
+    """2026-10-10 冻结 P2（新高德 key）：「KFC」对上近处「肯德基(科苑店)」走的是口头叫法表，字面不相等，于是去全国找同名，
+    接到北京一个就叫「KFC」的点，反问「北京还是附近」——连锁门店没有外地本体，近处那家就是。"""
+    local = POI(id="k1", name="肯德基(科苑店)", category="餐饮服务;快餐厅;肯德基", lat=22.5425, lng=113.9420, city="深圳市")
+    far = POI(id="k2", name="KFC", category="餐饮服务;快餐厅;肯德基", lat=39.9080, lng=116.3975, city="北京市")
+    agent, kv = _agent([local], [far]), _KV()
+    res = asyncio.run(run_handle(agent, "navigation.navigate_to", slots={"destination": "KFC"},
+                                 raw_text="导航去KFC", ctx=_ctx(kv), meta=dict(SZ)))
+    assert (res.ui_card or {}).get("purpose") != "dest_choice", res.speech
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert "肯德基" in nav["payload"]["destination"]
+    assert ("KFC", False) not in agent.poi.calls          # 不再去全国找同名
+
+
+def test_a_borrowed_name_without_an_alias_still_asks_for_the_far_landmark():
+    """对照：不在口头叫法表里的借名照旧发问（鼓浪屿 / 黄鹤楼这一类）。"""
+    agent, kv = _agent([_LOCAL], [_FAR]), _KV()
+    res = asyncio.run(run_handle(agent, "navigation.navigate_to", slots={"destination": "黄鹤楼"},
+                                 raw_text="导航去黄鹤楼", ctx=_ctx(kv), meta=dict(SZ)))
+    assert res.ui_card["purpose"] == "dest_choice"

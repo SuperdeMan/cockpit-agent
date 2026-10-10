@@ -2562,7 +2562,8 @@ class NavigationAgent(BaseAgent):
                 or self._is_category_search(description)
                 or self._beyond_local_radius(top, near) is not None
                 or (q in (self._place_key(top.name), self._bare_name(top))
-                    and self._rough_km(near.lat, near.lng, top.lat, top.lng) * 1000 <= _CITY_RADIUS_M)):
+                    and self._rough_km(near.lat, near.lng, top.lat, top.lng) * 1000 <= _CITY_RADIUS_M)
+                or self._alias_names_top(q, top)):
             return None
         try:
             wide = await self.poi.search(description, near=None, limit=5, meta=meta)
@@ -2577,6 +2578,16 @@ class NavigationAgent(BaseAgent):
                      if (self._place_key(r.name).startswith(q) or self._bare_name(r).startswith(q))
                      and self._beyond_local_radius(r, near) is not None
                      and (not anchor or self._category_ok(r, anchor[1]))), None)
+
+    @classmethod
+    def _alias_names_top(cls, q: str, top) -> bool:
+        """原话是口头叫法表里的品牌说法、近处结果也经这张表对上（「KFC」之于「肯德基(科苑店)」）：近处那家就是用户要的，
+        连锁门店没有外地本体，不去全国找同名（2026-10-10 冻结 P2：新 key 下全国重搜接到北京一个就叫「KFC」的点，反问北京还是附近）。"""
+        aliased = cls._aliased(q.casefold())
+        if not aliased:
+            return False
+        return cls._names_match(aliased, cls._place_key(top.name).casefold(),
+                                cls._place_key(getattr(top, "city", "") or ""))
 
     async def _ask_namesake(self, ctx, description: str, local, far, near, *,
                             estimate: bool = False) -> AgentResult:

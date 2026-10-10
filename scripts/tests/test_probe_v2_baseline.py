@@ -461,3 +461,21 @@ def test_a_write_lane_run_with_a_cleanup_failure_does_not_pass():
     summary = probe.journey_summary(runs, 2)
     assert summary["journeys"]["W1"] == {"family": "F05", "runs": 2, "passes": 1}
     assert summary["journeys_all_pass"] == 0
+
+
+def test_scopes_extra_is_only_payment_invoke_and_only_on_the_read_only_lane():
+    """冻结 P2（2026-10-10）：周边 / 停车 Agent 按整个 Agent 要求 payment.invoke，不给就连只读搜索都被拒。条目可补这一项，
+    只给只读车道（从不确认，支付一步都执行不了）；商户写、写车道一律拒。"""
+    base = {"family": "F09", "turns": [{"say": "附近有咖啡店吗", "expect": {}}]}
+    probe.validate_case({**base, "lane": "read_only", "scopes_extra": ["payment.invoke"]})
+    with pytest.raises(ValueError):
+        probe.validate_case({**base, "lane": "read_only", "scopes_extra": ["merchant.write"]})
+    with pytest.raises(ValueError):
+        probe.validate_case({**base, "lane": "simulated_vehicle", "vehicle_keys": ["trunk"], "cleanup": [],
+                             "scopes_extra": ["payment.invoke"]})
+
+
+def test_the_manifest_carries_scopes_extra_into_the_case():
+    cases = {c["id"]: c for c in probe.load_manifest(probe.MANIFEST)}
+    assert cases["NB01"]["scopes_extra"] == ["payment.invoke"]
+    assert "scopes_extra" not in cases["NV01"]
