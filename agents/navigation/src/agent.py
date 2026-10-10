@@ -866,6 +866,17 @@ class NavigationAgent(BaseAgent):
         card = attach({"type": "poi_list", "keyword": resolved_keyword, "items": items},
                       self.poi)
 
+        # 原话以地点类型词结尾、搜到的名字里都没有它 ⇒ 搜到的是别的种类的地方，不是用户说的那个（本地目的地排序 §17：深圳搜
+        # 「人民广场」回的是宝安人民医院、南山区人民检察院停车场……修前照样说「为您找到 4 个人民广场」，下游导航接过第一项就去了医院）。
+        # 如实说没找到、列出名字相近的；结果不进 `data.items`，下游按槽位引用取不到它，导航会追问去哪。
+        kind = next((w for w in self._PLACE_TYPE_SUFFIXES
+                     if resolved_keyword == keyword and not is_category and not is_visual_landmark
+                     and keyword.endswith(w) and len(keyword) > len(w)), "")
+        if kind and not any(kind in r.name for r in results[:5]):
+            similar = "、".join(r.name for r in results[:3])
+            return AgentResult(speech=f"附近没找到「{keyword}」，名字相近的有：{similar}。",
+                               ui_card=card, data={"similar": items}, follow_up=_NOT_FOUND_FOLLOW_UP)
+
         if results and not is_category and self._is_navigation_phrase(raw_text):
             first = results[0]
             # 与 `_find_destination` 兜底同一道闸：名字对不上（地标候选只有宽松匹配的也算对不上）、又在本地半径之外的第一个结果
@@ -935,6 +946,10 @@ class NavigationAgent(BaseAgent):
     @staticmethod
     def _is_navigation_phrase(text: str) -> bool:
         return (text or "").strip().startswith(("导航", "去", "到", "带我去"))
+
+    #: 地点类型词：原话以它结尾、而搜到的名字里都没有它 ⇒ 搜到的是别的种类的地方（`_search_poi`）。
+    #: 每加一项要有真栈红例：「广场」——深圳搜「人民广场」回的是人民医院 / 检察院（本地目的地排序 §17，2026-10-10）。
+    _PLACE_TYPE_SUFFIXES = ("广场",)
 
     # 设施类目关键词：这类搜索按本步关键词如实搜附近，不走整句地标解析、不自动导航
     _CATEGORY_MARKERS = (
