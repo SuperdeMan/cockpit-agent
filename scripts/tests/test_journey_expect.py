@@ -64,3 +64,32 @@ def test_card_types_include_nested_groups():
     assert card_types({"type": "card_group", "items": [{"type": "weather"}, {"type": "manual"}]}) == [
         "card_group", "weather", "manual"]
     assert {"any_of", "vehicle", "action"} <= EXPECT_KEYS
+
+
+# ── 冻结 P2 地图家族（2026-10-10）：本地目的地探针的判据搬进共用判定 ───────────────────────────────
+
+def test_route_km_bounds_read_the_spoken_distance():
+    """上限：话术没报距离不判（原探针口径）；下限：必须报了且够远——城市限定的外地名不该落在本城。"""
+    near = _turn("去儿童医院全程约12.5公里，预计25分钟。")
+    far = _turn("去上海外滩全程约1480公里，预计17小时。")
+    silent = _turn("儿童医院在福田区益田路。")
+    assert check_expect({"route_km_max": 60}, near, True, ()) == []
+    assert check_expect({"route_km_max": 60}, silent, True, ()) == []
+    assert check_expect({"route_km_max": 60}, far, True, ())
+    assert check_expect({"route_km_min": 1000}, far, True, ()) == []
+    assert check_expect({"route_km_min": 1000}, near, True, ())
+    assert check_expect({"route_km_min": 1000}, silent, True, ())
+
+
+def test_first_item_any_looks_only_at_the_first_candidate():
+    """「鼓浪屿」要给出两处、厦门在前：只看候选卡第一项，排第二不算。"""
+    card = {"type": "poi_list", "purpose": "dest_choice",
+            "items": [{"name": "鼓浪屿(厦门思明区)"}, {"name": "鼓浪屿(深圳小区)"}]}
+    swapped = dict(card, items=list(reversed(card["items"])))
+    assert check_expect({"first_item_any": ["厦门"]}, _turn(card=card), True, ()) == []
+    assert check_expect({"first_item_any": ["厦门"]}, _turn(card=swapped), True, ())
+    assert check_expect({"first_item_any": ["厦门"]}, _turn(card={}), True, ())
+
+
+def test_the_new_keys_are_declared():
+    assert {"route_km_max", "route_km_min", "first_item_any"} <= EXPECT_KEYS

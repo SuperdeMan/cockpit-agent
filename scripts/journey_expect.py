@@ -7,13 +7,19 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable, Iterable
 
 #: 一轮 `expect` 认的键；`any_of` 是析取（任一分支全过即过），分支里的键同样受它约束。
 EXPECT_KEYS = {"speech_any", "speech_all", "speech_not", "cards_any",
                "card_contains", "need_confirm", "follow_up_any", "action",
                "action_absent", "no_duplicate_action", "process_min",
-               "latency_s", "vehicle", "any_of"}
+               "latency_s", "vehicle", "any_of",
+               # 冻结 P2 地图家族（2026-10-10）：话术报的全程公里数上下限、候选卡第一项（本地目的地探针的判据搬进来，案例只留一份）
+               "route_km_max", "route_km_min", "first_item_any"}
+
+#: 话术里报的全程距离（「全程约 12.5 公里」）。上限：话术不报距离时不判；下限：必须报了且不小于它。
+_ROUTE_KM_RE = re.compile(r"全程约\s*([\d.]+)\s*公里")
 
 
 def card_types(card: dict | None) -> list[str]:
@@ -63,6 +69,19 @@ def check_expect(expect: dict, out, enforce_latency: bool, default_not: Iterable
             miss = [k for k in exp["card_contains"] if str(k) not in card_json]
             if miss:
                 f.append(f"card_contains 缺 {miss}")
+        if "first_item_any" in exp:
+            card = final.get("ui_card") or {}
+            items = [i for i in (card.get("items") or []) if isinstance(i, dict)] if isinstance(card, dict) else []
+            first = str(items[0].get("name") or "") if items else ""
+            if not any(str(k) in first for k in exp["first_item_any"]):
+                f.append(f"first_item_any 未命中 {exp['first_item_any']} | 第一项={first[:40]}")
+        if "route_km_max" in exp or "route_km_min" in exp:
+            km_hit = _ROUTE_KM_RE.search(speech)
+            km = float(km_hit.group(1)) if km_hit else None
+            if "route_km_max" in exp and km is not None and km > float(exp["route_km_max"]):
+                f.append(f"全程 {km} 公里超上限 {exp['route_km_max']} | speech={speech[:60]}")
+            if "route_km_min" in exp and (km is None or km < float(exp["route_km_min"])):
+                f.append(f"全程 {km} 公里不到下限 {exp['route_km_min']} | speech={speech[:60]}")
         if "need_confirm" in exp and bool(final.get("need_confirm")) != bool(exp["need_confirm"]):
             f.append(f"need_confirm={final.get('need_confirm')} 期望 {exp['need_confirm']}")
         if "follow_up_any" in exp:

@@ -46,6 +46,43 @@ journeys:
   - {id: A3-3, source: journeys/target_a.yaml, family: F08, lane: read_only}
   # ── F09 周边 ────────────────────────────────────────────────────
   - {id: B5-2, source: journeys/target_b.yaml, family: F09, lane: read_only}
+  - {id: NB01, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB02, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB03, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB04, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB05, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  # ── F06 导航：估算只读（冻结 P2，2026-10-10；本地目的地探针的案例表搬进语料）─────────
+  - {id: NV01, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV02, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV03, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV04, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV05, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV06, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV07, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV08, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV09, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV10, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV11, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV12, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV13, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV14, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV15, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV16, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV17, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV18, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV19, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV20, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV21, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV22, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only,
+     known_red: "「沾边」判据认原话前两个字，深圳没有人民广场时落到宝安人民医院（本地目的地排序 §17），登记待修"}
+  - {id: NV23, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV24, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV25, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  - {id: NV26, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
+  # ── F07 能源：找站、无路线换站、续航提醒（只读）──────────────────────
+  - {id: EN01, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F07, lane: read_only}
+  - {id: EN02, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F07, lane: read_only}
+  - {id: EN03, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F07, lane: read_only}
   # ── P1（2026-10-09）：只读、不依赖地图的家族补齐 ─────────────────────
   # F01 手册问答
   - {id: M01, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F01, lane: read_only}
