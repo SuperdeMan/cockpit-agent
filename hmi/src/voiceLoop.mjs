@@ -8,8 +8,12 @@
 //   SPEAKING ─ttsEnd→ FOLLOWUP ─VAD speech→ LISTENING（免唤醒追问） / ─8s 超时→ ARMED
 //   SPEAKING ─barge-in（VAD≥300ms 过护栏）→ stopTTS + LISTENING
 //   LISTENING ─唤醒后 5s 无 speech→ ARMED（误唤醒静默回收，不发请求）
+//   THINKING/SPEAKING/FOLLOWUP ─turnRejected（云端判非受话）→ ARMED（结束这次连续对话，不再开续问窗）
 //   任意态 ─handsFreeOff→ IDLE（拆机）
 //   非 IDLE ─systemInterrupt（来电 / 闹钟 / 抢焦点）→ ARMED（停播、放弃收音与续问窗，不发）
+//
+// 续问窗的截止时刻从助手答完那一刻起算：窗里收进来又被本地丢掉的一句（语气词 / 空定稿 / 回声 / 短噪声）
+// 只回到窗的剩余时间，不续窗（嘈杂车厢里窗口曾经可以一直不关；设计 2026-10-10-handsfree-followup-rejection §4.2）。
 //
 // push-to-talk 与文本输入不进本 FSM（原路径原样保留）；hands-free 关闭即整个 FSM 挂空。
 
@@ -54,6 +58,15 @@ export function isTtsEcho(text, reference) {
   if (!tts || !heard) return false
   if (tts.includes(heard) || heard.includes(tts)) return true
   return longestCommonRun(heard, tts) / heard.length >= ECHO_OVERLAP_RATIO
+}
+
+/** 没喊唤醒词就收进来的聆听来源（续问窗 / 播报中插话）。上云时带 `voice_` 前缀成 `meta.input_source`；
+ *  云端同一组来源走续问窗自己的受话判定（`orchestrator/cloud/admission.py::CONTINUATION_SOURCES`，两边由测试对账）。 */
+export const CONTINUATION_SOURCES = Object.freeze(['followup', 'bargein'])
+
+/** 这一轮的 `meta.input_source` 是不是续问窗来的（客户端据此把那句先显示成待定，等云端判定）。 */
+export function isContinuationInput(inputSource) {
+  return CONTINUATION_SOURCES.some((source) => inputSource === 'voice_' + source)
 }
 
 export const VoiceState = {
@@ -144,6 +157,7 @@ export class VoiceLoop {
     this._utteranceMs = 0     // 本轮已结束 speech 段的累计时长
     this._speechStartAt = 0   // 当前 speech 段起点（now()）；0=当前无进行中 speech
     this._listenSource = ''   // R4.4：本轮聆听进入来源（wake|followup|bargein）→ 定稿 onSend 带给云端拒识判定
+    this._followupDeadline = null // 当前续问窗的截止时刻（now() 口径）；null=没有在跑的续问窗
   }
 
   // ─── 定时器封装（全部走注入，node 测试用 fake clock）───
@@ -188,6 +202,7 @@ export class VoiceLoop {
     this._selfTriggerCount = 0
     this._bargeInDisabled = false
     this._cameFromBargeIn = false
+    this._followupDeadline = null
     this._enter(VoiceState.IDLE)
   }
   _gotoArmed() {
@@ -195,6 +210,7 @@ export class VoiceLoop {
     this._clearPending()
     this._closeAsr()
     this._speechActive = false
+    this._followupDeadline = null
     this._enter(VoiceState.ARMED)
   }
   _gotoThinking() {
@@ -221,8 +237,28 @@ export class VoiceLoop {
     this._clearAllTimers()
     this._closeAsr() // 从 LISTENING 进入（filler/没说清继续聆听）时 ASR 仍开着；正常 SPEAKING→FOLLOWUP 已关，幂等
     this._speechActive = false
+    this._followupDeadline = this.now() + this.cfg.followupWindowMs
     this._enter(VoiceState.FOLLOWUP)
     this._setTimer('followup', this.cfg.followupWindowMs, () => this._gotoArmed())
+  }
+  // 续问窗里收进来、又被本地丢掉的一句：回到窗的**剩余**时间，到点回 ARMED——噪声不续窗。
+  // 唤醒词 / 插话进来的那一句没有在跑的续问窗，照旧开一个完整的（不因一声「嗯」把刚叫醒的用户踢走，P4 判据）。
+  _backToFollowup() {
+    if (this._listenSource !== 'followup' || this._followupDeadline === null) {
+      this._gotoFollowup()
+      return
+    }
+    const left = this._followupDeadline - this.now()
+    if (left <= 0) {
+      this.onMetric('followup_expired')
+      this._gotoArmed()
+      return
+    }
+    this._clearAllTimers()
+    this._closeAsr()
+    this._speechActive = false
+    this._enter(VoiceState.FOLLOWUP)
+    this._setTimer('followup', left, () => this._gotoArmed())
   }
   _enterListening({ speechAlreadyStarted = false, fromBargeIn = false, source = '' } = {}) {
     this._clearAllTimers()
@@ -385,15 +421,16 @@ export class VoiceLoop {
       //  · **不计 `_countSelfTrigger`**——那个计数是给「要不要关掉 barge-in」用的，
       //    而这里根本没有打断任何东西；混进去会让 barge-in 被无关的回声关掉。
       //  · **不回 ARMED 而是回 FOLLOWUP**——没有 AEC 时几乎每轮都会命中，回 ARMED
-      //    等于把「答完 8 秒内接着说」在 Android 上整个废掉。丢掉这一句、把窗留着才对。
+      //    等于把「答完 8 秒内接着说」在 Android 上整个废掉。丢掉这一句、把窗留着才对
+      //    （留的是窗的剩余时间，回声不续窗）。
       this.onMetric('echo_dismissed')
-      this._gotoFollowup()
+      this._backToFollowup()
       return
     }
 
     if (!t) {
-      // 什么都没说清（ASR 空定稿）→ 不上云，但**继续聆听**（进续问窗），不踢回待机
-      this._gotoFollowup()
+      // 什么都没说清（ASR 空定稿）→ 不上云，但**继续聆听**（回续问窗），不踢回待机
+      this._backToFollowup()
       return
     }
 
@@ -409,12 +446,12 @@ export class VoiceLoop {
         this._gotoArmed()
         return
       }
-      // U5a 语气词：纯口头噪声（嗯嗯/哈哈/唔）不上云，但**继续聆听**（进续问窗，不踢回待机）
-      if (isFiller(t)) { this.onMetric('filler_dismissed'); this._gotoFollowup(); return }
+      // U5a 语气词：纯口头噪声（嗯嗯/哈哈/唔）不上云，但**继续聆听**（回续问窗，不踢回待机）
+      if (isFiller(t)) { this.onMetric('filler_dismissed'); this._backToFollowup(); return }
       // U5a 短语音噪声：说话过短 + 字数极少（误触/杂音）→ 继续聆听
-      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this.onMetric('filler_dismissed'); this._gotoFollowup(); return }
+      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this.onMetric('filler_dismissed'); this._backToFollowup(); return }
       // 旧 D5-2 dismissMinChars 短句兜底 → 继续聆听
-      if (graphemeLen(t) < this.cfg.dismissMinChars) { this._gotoFollowup(); return }
+      if (graphemeLen(t) < this.cfg.dismissMinChars) { this._backToFollowup(); return }
     }
 
     this._selfTriggerCount = 0
@@ -475,6 +512,16 @@ export class VoiceLoop {
   ttsEnd() {
     if (this.state === VoiceState.SPEAKING || this.state === VoiceState.THINKING) {
       this._gotoFollowup()
+    }
+  }
+  // 云端判这一句「不是对助手说的」（静默拒识，2026-10-10）：结束这次连续对话，回 ARMED（只听唤醒词），不开续问窗。
+  // 拒识轮没有播报，App 照旧会补一次 turnEnded/ttsEnd——在它之前调本入口，之后那一下在 ARMED 里是空操作。
+  // 此前拒识轮按「无声终态」收尾 ⇒ THINKING → FOLLOWUP 重新计 8 秒：乘客在聊天时一句接一句被收进来、上云、再开窗。
+  // LISTENING 里不动：那是用户已经又开口了（唤醒词抢进来的新一轮），旧轮的拒识不能把它收掉。
+  turnRejected() {
+    if (this.state === VoiceState.THINKING || this.state === VoiceState.SPEAKING || this.state === VoiceState.FOLLOWUP) {
+      this.onMetric('rejected_session_end')
+      this._gotoArmed()
     }
   }
   // 用户主动停播（AR03 / 评审 R06）：SPEAKING/THINKING → **ARMED**，与 ttsEnd 的唯一差别是不开续问窗。

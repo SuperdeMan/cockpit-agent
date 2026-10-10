@@ -880,3 +880,135 @@ test('G-07 systemInterrupt：不复位会话级插话护栏（与 stopSpeaking �
   assert.equal(h.vl.state, VoiceState.ARMED)
   assert.equal(h.vl.bargeInDisabled, true)
 })
+
+// ─── 唤醒后连续对话的拒识（2026-10-10，设计 docs/design/2026-10-10-handsfree-followup-rejection.md §4.2）───
+// 两个「收录」机制：① 云端拒掉的那一轮按无声终态收尾 ⇒ THINKING → FOLLOWUP 重新计 8 秒，乘客聊天一句接一句被收进来；
+// ② 续问窗里被本地丢掉的噪声（语气词 / 空定稿 / 回声）也重开 8 秒，嘈杂车厢里窗口可以一直不关。
+
+/** 推到续问窗里第二句的 THINKING（第一句是唤醒后正常问答） */
+function driveToFollowupThinking(h, said = '你吃饭了没有') {
+  driveToSpeaking(h)
+  h.vl.ttsEnd()          // → FOLLOWUP
+  h.vl.vadSpeechStart()  // → LISTENING(followup)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal(said)    // → send + THINKING
+}
+
+test('拒识结束这次连续对话：THINKING → ARMED，App 随后补的 ttsEnd 是空操作、不再开续问窗', () => {
+  const h = makeHarness()
+  driveToFollowupThinking(h)
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  assert.equal(h.last('send')[2].source, 'followup')
+  h.vl.turnRejected()
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  assert.equal(h.last('metric')[1], 'rejected_session_end')
+  h.vl.ttsEnd()          // App 拒识分支照旧补的 turnEnded
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  h.vl.vadSpeechStart()  // 乘客接着聊：ARMED 里 VAD 不触发任何动作
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  h.advance(60000)
+  assert.equal(h.count('send'), 2, '第一句正常问答 + 被拒的那一句，再无上行')
+})
+
+test('拒识先于 turnEnded 之后到达（FOLLOWUP 里）同样收掉续问窗', () => {
+  const h = makeHarness()
+  driveToFollowupThinking(h)
+  h.vl.ttsEnd()
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  h.vl.turnRejected()
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  h.advance(10000)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('拒识不打断已经开始的新一轮聆听、也不在待机 / 拆机态做任何事', () => {
+  const h = makeHarness()
+  driveToFollowupThinking(h)
+  h.vl.wake()            // THINKING 里喊唤醒词抢进来的新一轮
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  h.vl.turnRejected()    // 旧轮的拒识晚到
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  const idle = makeHarness()
+  idle.vl.turnRejected()
+  assert.equal(idle.vl.state, VoiceState.IDLE)
+  idle.vl.handsFreeOn()
+  idle.vl.turnRejected()
+  assert.equal(idle.vl.state, VoiceState.ARMED)
+  assert.equal(idle.count('metric'), 0)
+})
+
+test('续问窗里的噪声只回到窗的剩余时间：从答完起算 8 秒到点回 ARMED，不续窗', () => {
+  const h = makeHarness()
+  driveToSpeaking(h)
+  h.vl.ttsEnd()          // t=0 开窗，截止 8000
+  h.advance(3000)
+  h.vl.vadSpeechStart()  // t=3000 → LISTENING(followup)
+  h.advance(1000)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('嗯')    // t=4000 语气词：丢掉，回窗
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  h.advance(3999)
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  h.advance(1)           // t=8000：原截止时刻，不是 4000+8000
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('噪声把窗用完：定稿到达时已过截止时刻 ⇒ 直接回 ARMED（可观测）', () => {
+  const h = makeHarness()
+  driveToSpeaking(h)
+  h.vl.ttsEnd()
+  h.advance(1000)
+  h.vl.vadSpeechStart()
+  h.advance(8000)        // 一段 8 秒的嘈杂人声
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('')      // 空定稿
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  assert.equal(h.last('metric')[1], 'followup_expired')
+})
+
+test('续问窗里一连串回声 / 空定稿都不续窗', () => {
+  const h = makeHarness()
+  driveToSpeaking(h, { final: '今天深圳天气怎么样', tts: ECHO_TTS })
+  h.vl.ttsEnd()
+  for (const said of ['深圳市。', '', '嗯嗯', '深圳市的。']) {
+    h.advance(1500)
+    h.vl.vadSpeechStart()
+    h.vl.vadSpeechEnd()
+    h.vl.asrFinal(said)
+  }
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)   // t=6000
+  h.advance(2000)
+  assert.equal(h.vl.state, VoiceState.ARMED)      // t=8000
+})
+
+test('唤醒进来的那一句被本地丢掉仍开一个完整的窗（不因一声「嗯」把刚叫醒的用户踢走）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(500)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('嗯')
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  h.advance(7999)
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  h.advance(1)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('窗里真正说出口的一句照常上云；答完重新起算一个完整的窗', () => {
+  const h = makeHarness()
+  driveToSpeaking(h)
+  h.vl.ttsEnd()
+  h.advance(6000)
+  h.vl.vadSpeechStart()
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('那后天呢')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.ttsStart()
+  h.vl.ttsEnd()          // t=6000 答完：新窗截止 14000
+  h.advance(7999)
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  h.advance(1)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})

@@ -33,6 +33,8 @@ import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './ty
 import { poiSelectionIndex, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
+import { isContinuationInput } from './voiceLoop.mjs'
+import { dropRejectedTurn, rejectedNotice } from './rejectedTurn.mjs'
 import { needsFrame, captureFrame } from './visionFrame.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 import { RequestRegistry } from './requestRouting.mjs'
@@ -152,6 +154,14 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const sendRef = useRef<(text: string, metaExtra?: Record<string, string>) => void>(() => {})
   const [handsFreeOrb, setHandsFreeOrb] = useState<string | null>(null)
   const [handsFreeNotice, setHandsFreeNotice] = useState<string>('')
+  // 会自己消失的提示（拒识等）：到点还是这一句才清，期间换成别的提示不受影响
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flashHandsFreeNotice = useCallback((text: string, ms = 4000) => {
+    setHandsFreeNotice(text)
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+    noticeTimerRef.current = setTimeout(() => setHandsFreeNotice((current) => (current === text ? '' : current)), ms)
+  }, [])
+  useEffect(() => () => { if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current) }, [])
   // hands-free 聆听中的实时识别文字（issue②）：上屏成「用户正在说」ghost 气泡；离开聆听即清空
   const [handsFreePartial, setHandsFreePartial] = useState('')
 
@@ -452,16 +462,18 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     if (data.type === 'final') {
       // M2 P2：本轮情绪只能影响**下一轮**语气——本轮 TTS 在 final 之前就已流式开播了。
       if (typeof data.emotion === 'string') lastEmotionRef.current = data.emotion
-      // R4.4：云端拒识（疑似环境人声）→ 不渲染回复、不 TTS，把本轮 pending 气泡标灰留痕供纠错。
+      // R4.4：云端拒识（疑似环境人声）→ 不渲染回复、不 TTS。2026-10-10：拒掉的那句**不进对话记录**——用户那条气泡
+      // （往往是乘客说的原话）连同本轮占位一起删掉，只给一条会自己消失的提示；FSM 结束这次连续对话（回 ARMED）。
       // 必须自己放 FSM 出 THINKING（本分支早 return，跳过下方 turnEnded 路径 → 否则死锁，§0-6）。
       const rc: any = data.ui_card
       if (rc?.type === 'rejected') {
         const rid = reg.settle(data)
         if (rid === null && data.request_id) return   // Q3：孤儿帧丢弃
         clearWatchdog(rid)
-        setMessages((m) => m.map((msg) => (msg.id === rid
-          ? { ...msg, pending: false, streaming: false, text: '', rejected: true } : msg)))
+        setMessages((m) => dropRejectedTurn(m, rid))
         bumpVoiceMetric('cloud_rejected')
+        // 提示先出：连续拒识收紧（notifyRejected 里的 RejectPolicy）要换成它自己的提示时，以它为准
+        flashHandsFreeNotice(rejectedNotice(handsFreeRef.current?.wakeWordDisplay || ''))
         handsFreeRef.current?.notifyRejected?.()
         handsFreeRef.current?.turnEnded()
         return
@@ -772,7 +784,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       })
       return
     }
-    if (!metaExtra?.__bubbled) setMessages((m) => [...m, { id: uid(), role: 'user', text }])
+    // 续问窗来的那句先显示成待定（云端判定之前），判受话转正、判非受话连同占位删掉（2026-10-10）
+    if (!metaExtra?.__bubbled) setMessages((m) => [...m, {
+      id: uid(), role: 'user', text, ...(isContinuationInput(metaExtra?.input_source) ? { provisional: true } : {}) }])
     // Q1-C：发新消息**不再撤掉待确认条**。挂起在服务端活得好好的（R2 插话不清挂起），
     // 前端却把条子藏了——后端为此加了一句「对了，X 还在等你确认」的软提醒来补偿。
     // 台账化之后条子自己留着，那句补偿话术不再是唯一的告知通道。

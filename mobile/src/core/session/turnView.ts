@@ -48,3 +48,20 @@ export function currentTurn(messages: readonly Msg[]): TurnView {
   }
   return { user: messages[ui], assistant }
 }
+
+/** 云端判定之前该显示成「待定」的用户气泡（2026-10-10 §4.3）：续问窗来的那句（`provisional`），且它那一轮的助手占位还在 pending。
+ *  第一帧（增量 / 过程 / 动作 / 终态）到达占位就不再 pending ⇒ 自动转正；被拒的整轮已从记录里删掉。
+ *  轮与用户气泡的对应取 `turnMeta[助手气泡].userBubbleId`（草稿转正的气泡未必紧挨着占位）。 */
+export function awaitingVerdictIds(
+  messages: readonly Msg[],
+  turnMeta: Readonly<Record<string, { userBubbleId?: string }>>,
+): Set<string> {
+  const provisional = new Set(messages.filter((m) => m.role === 'user' && m.provisional).map((m) => m.id))
+  const out = new Set<string>()
+  if (!provisional.size) return out
+  for (const m of messages) {
+    const userId = m.pending ? turnMeta[m.id]?.userBubbleId : undefined
+    if (userId && provisional.has(userId)) out.add(userId)
+  }
+  return out
+}

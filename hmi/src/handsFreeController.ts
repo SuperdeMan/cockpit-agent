@@ -310,7 +310,9 @@ export class HandsFreeController {
 
   // R4.4 P2：连续云端拒识自适应收紧（≥2 减半续问窗 → ≥3 仅唤醒词），一次成功交互即复位。
   // 直改 vl.cfg（不走 setFollowupWindow，避免污染策略基准）；仅唤醒词模式额外关 VAD barge-in。
+  // 2026-10-10：先结束这次连续对话（FSM turnRejected → ARMED，不再开续问窗）；App 随后补的 turnEnded 在 ARMED 里是空操作。
   notifyRejected(): void {
+    if (this.on) this.vl.turnRejected()
     const a = this.rejectPolicy.onRejected()
     if (!a) return
     if (a.type === 'tighten') {
@@ -331,6 +333,12 @@ export class HandsFreeController {
     this.vl.cfg.followupWindowMs = a.followupMs
     this.vl.setVadBargeInDisabled(false)
     bumpVoiceMetric('reject_recovered')
+  }
+
+  /** 当前唤醒词的显示文字（拒识提示里告诉用户怎么再叫它）；唤醒词关着时为空串。 */
+  get wakeWordDisplay(): string {
+    if (!this.deps.wakeWord?.()) return ''
+    return (this.deps.getWakeKeywords?.() ?? DEFAULT_KEYWORDS).split('@')[1] || ''
   }
 
   // 剥离前滚缓冲带入的唤醒词残留（「小舟小舟…」）——只用完整唤醒词 + 助手名，不用单字（避免「小明」被剥成「明」）。

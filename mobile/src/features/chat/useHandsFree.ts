@@ -14,8 +14,10 @@ import {
 } from '@/core/obs/turnTimeline'
 import { noteListeningEntered } from '@/core/voice/kwsExperiment'
 import { presenceTrail } from '@/core/presence/presenceTrail'
+import { rejectedNotice } from '@shared/rejectedTurn.mjs'
 import {
   HandsFreeController,
+  WAKE_WORD_DISPLAY,
   handsFreeAvailability,
   type HandsFreeDeps,
 } from '@/core/voice/handsFree'
@@ -80,6 +82,10 @@ export interface HandsFreeUi {
   pause(): void
   /** 上一次回声被丢弃的时刻；0=没有 */
   echoAt: number
+  /** 云端拒掉免唤醒那一句：结束这次连续对话（FSM 回 ARMED），记下提示供在场层短显（2026-10-10） */
+  turnRejected(): void
+  /** 上一次免唤醒那一句被云端拒掉：提示文字（两端同一句）与时刻；null=没有 */
+  rejected: { text: string; at: number } | null
 }
 
 export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
@@ -92,6 +98,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const [bargeInDisabled, setBargeInDisabled] = useState('')
   const [pipelineDegraded, setPipelineDegraded] = useState('')
   const [echoAt, setEchoAt] = useState(0)
+  const [rejected, setRejected] = useState<HandsFreeUi['rejected']>(null)
   /** 免唤醒这一轮的时间线 id 与上一次 FSM 态（AR08）。
    *  用 ref 不用 state：`onOrbState` 是原生回调，读 state 会读到上一次渲染的那份。 */
   const hfTimelineRef = useRef<string | null>(null)
@@ -318,6 +325,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       setBargeInDisabled('')
       setPipelineDegraded('')
       setEchoAt(0)
+      setRejected(null)
       // 上一条启动失败的话不能留给下一个控制器：清理与其它五个状态同一处（放这里而不是
       // 新 effect 体里同步 setState —— 那是 react-hooks/set-state-in-effect 的级联渲染）
       setError('')
@@ -356,6 +364,13 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   }, [])
   const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
   const recycle = useCallback(() => ctlRef.current?.recycle(), [])
+  const turnRejected = useCallback(() => {
+    const ctl = ctlRef.current
+    if (!ctl?.enabled) return
+    ctl.turnRejected()
+    const wakeWordOn = settingsStore.getState().settings.wakeWord
+    setRejected({ text: rejectedNotice(wakeWordOn ? WAKE_WORD_DISPLAY : ''), at: Date.now() })
+  }, [])
   const stopSpeaking = useCallback(() => ctlRef.current?.stopSpeaking(), [])
   /** 系统抢占出口（G-07）：停播 + 放弃收音 / 续问窗；Provider 把它装进 bindSystemStop */
   const systemInterrupt = useCallback(() => ctlRef.current?.systemInterrupt(), [])
@@ -363,5 +378,5 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     pausedRef.current = true
     void ctlRef.current?.disable().catch(() => {})
   }, [])
-  return { fsm, orb, partial, availability, error, errorKind, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, systemInterrupt, pause, echoAt }
+  return { fsm, orb, partial, availability, error, errorKind, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, systemInterrupt, pause, echoAt, turnRejected, rejected }
 }

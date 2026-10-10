@@ -16,8 +16,9 @@
 //     连开关都不渲染（坑账 §9.27——原生缺席时崩的是原生线程，ErrorBoundary 兜不住）。
 //
 // 本批**刻意不做**的（写清楚免得被读成遗漏）：声纹识别（红线：声纹不作鉴权因子，
-// 且 §2.3 信道约束下 App 不做注册入口）、RejectPolicy 拒识收紧（云端拒识信号 App 侧
-// 尚未接出来）、唤醒提示音（要 mp3 解码，而 M2 关掉了 FFmpeg——见 app.config.ts）。
+// 且 §2.3 信道约束下 App 不做注册入口）、唤醒提示音（要 mp3 解码，而 M2 关掉了 FFmpeg——见 app.config.ts）。
+// 云端拒识信号 2026-10-10 接出来了：拒掉的那一轮 `turnRejected()` 结束这次连续对话（FSM 回 ARMED）。
+// HMI 另有跨会话的连续拒识收紧（rejectPolicy.mjs）——拒识即结束会话之后它很少再触发，App 侧不搬。
 import { PcmRing } from '@shared/pcmRing.mjs'
 import { S2SClient, s2sUrl } from '@shared/s2sClient.mjs'
 import { VoiceLoop } from '@shared/voiceLoop.mjs'
@@ -45,6 +46,8 @@ const RESUME_PRE_ROLL_MS = 200
 const MAX_PRE_ROLL_MS = 1200
 /** 唤醒词也会被 ASR 听见 → 定稿前剥掉（同 HMI；词表与 KWS 预设同源） */
 const WAKE_WORDS = ['小舟小舟', '小舟']
+/** 唤醒词的显示文字（KWS 预设 `拼音 @显示`）：拒识提示里告诉用户怎么再叫它 */
+export const WAKE_WORD_DISPLAY = DEFAULT_KEYWORDS.split('@')[1] || ''
 /** FSM 判为「本地消化、不上云」的语义事件——S2S 下必须额外取消 provider 在飞的生成
  *  （它不知道我们把这句判成了噪声/退出）。名字与 voiceLoop.onMetric 的事件名一一对应。 */
 const S2S_LOCAL_HANDLED = new Set(['exit_word', 'filler_dismissed', 'false_wake_dismissed', 'echo_dismissed'])
@@ -367,6 +370,13 @@ export class HandsFreeController {
     } finally {
       this.userStopping = false
     }
+  }
+
+  /** 云端判这一轮「不是对助手说的」（静默拒识）：结束这次连续对话（FSM 回 ARMED，不再开续问窗）。
+   *  要在拒识轮的无声收尾（turnEnded）之前调：之后那一下在 ARMED 里是空操作（2026-10-10）。 */
+  turnRejected(): void {
+    if (!this.on) return
+    this.vl.turnRejected()
   }
 
   /** 本轮云端处理终结但没有播报（TTS 关 / 纯卡片 / 出错）——必须补调，

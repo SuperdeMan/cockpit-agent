@@ -7,6 +7,8 @@ export type VoiceLoopConfig = {
   exitWords: string[]; endpointGraceMs: number
 }
 export const DEFAULTS: VoiceLoopConfig
+export const CONTINUATION_SOURCES: readonly string[]
+export function isContinuationInput(inputSource: string | undefined): boolean
 export function isTtsEcho(text: string, reference: string): boolean
 export class VoiceLoop<Handle = ReturnType<typeof setTimeout>> {
   constructor(options?: {
@@ -35,6 +37,7 @@ export class VoiceLoop<Handle = ReturnType<typeof setTimeout>> {
   asrFinal(text: string): void
   ttsStart(): void
   ttsEnd(): void
+  turnRejected(): void
   stopSpeaking(): void
   systemInterrupt(): void
 }

@@ -13,13 +13,12 @@
   background: var(--au-primary-soft); font-size: var(--au-type-body-size); line-height: var(--au-type-body-line);
   color: var(--au-text); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.au-user-bubble.partial { border: 2px dashed var(--au-primary-line); background: transparent; color: var(--au-text-2); }
+.au-user-bubble.partial,
+.au-user-bubble.awaiting { border: 2px dashed var(--au-primary-line); background: transparent; color: var(--au-text-2); }
 .au-message { display: flex; flex-direction: column; gap: var(--au-space-16); min-width: 0; }
 .au-answer { font-size: var(--au-type-answer-size); line-height: var(--au-type-answer-line); color: var(--au-text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .au-follow-up, .au-thinking { font-size: var(--au-type-body-size); line-height: var(--au-type-body-line); color: var(--au-text-2); }
 .au-thinking { display: flex; gap: var(--au-space-16); align-items: center; }
-.au-rejected { display: flex; align-items: flex-start; gap: var(--au-space-12); border: 1px dashed var(--au-line);
-  border-radius: var(--au-r-full); padding: 12px 16px; font-size: var(--au-type-caption-size); line-height: var(--au-type-caption-line); color: var(--au-text-2); }
 .au-error, .au-proactive { border-left: 3px solid var(--au-danger); padding-left: var(--au-space-24); }
 .au-message-label { display: flex; align-items: center; gap: var(--au-space-12); color: var(--au-danger); font-size: var(--au-type-label-size); line-height: var(--au-type-label-line); }
 .au-proactive { border-color: var(--au-primary); }

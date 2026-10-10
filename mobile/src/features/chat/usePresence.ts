@@ -154,7 +154,9 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
   // 2s 提示：取消（§5.1.1 的隐私文案——「不会发给」而不是「未上传」）与回声（§5.2 规则 5）——取更晚的那个
   const cancelNotice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
   const echoNotice = hf.echoAt ? { text: '像是我自己的声音，没算数', at: hf.echoAt } : null
-  const notice = !cancelNotice ? echoNotice : !echoNotice ? cancelNotice : echoNotice.at > cancelNotice.at ? echoNotice : cancelNotice
+  // 云端拒掉免唤醒那一句（2026-10-10）：提示文字由免唤醒回路给（两端同一句），这里只取最近的一条
+  const notice = [cancelNotice, echoNotice, hf.rejected]
+    .reduce<{ text: string; at: number } | null>((latest, n) => (n && (!latest || n.at > latest.at) ? n : latest), null)
   // 上面那段就是这条偏离的论证：这一层是时钟驱动的状态机，`now` 必须是**这一帧**的墙钟。
   // 存进 state 会在停表期留下陈旧读数，重新起表那一帧的倒计时就是错的；useMemo 也不行
   // （依赖不变就冻住）。AR09 复核在场层负载时连同 useChangedAt 一起测。

@@ -1,0 +1,128 @@
+# 续问窗（唤醒后连续对话）受话判定评测语料 · 开发集（2026-10-10，设计 docs/design/2026-10-10-handsfree-followup-rejection.md §2.3）。
+#
+# 评的是 `orchestrator/cloud/admission.py` 的续问窗判定（`judge_continuation`）与现有轻量判定在同一批句子上的对照，
+# 运行器 `test/eval_followup_admission.py`（离线只做尺子自检；`--live` 直连同款快档模型）。
+# 每条：ctx = 助手上一句（contexts 里的键），text = 续问窗里收到的这句。
+#   expect: accept = 对助手说的（误拒即回归）/ reject = 不是对助手说的 / either = 两可，不计分只看分布
+# ⚠ 开发集的句子允许出现在提示词示例里（调提示词时看的就是它）；泛化只看留出集 followup_admission_heldout.yaml。
+contexts:
+  weather: "深圳明天多云，21到29度，北风1到3级。"
+  nav: "已为您规划到深圳世界之窗的路线，全程18公里，预计35分钟。"
+  music: "为您播放周杰伦的《晴天》。"
+  poi: "附近找到三家川菜馆：蜀香园、川味坊、巴蜀人家，第一家评分最高。"
+  know: "固态电池就是把液态电解液换成固态电解质，能量密度更高，也更安全。"
+  ask_time: "好的，要设几点的提醒？"
+  ask_dest: "您要去宝安机场还是深圳北站？"
+  confirm: "确认要打开后备箱吗？"
+  hvac: "空调已打开，温度24度。"
+  chat: "听起来今天有点累，要不要我放点轻松的音乐？"
+  news: "今天的要闻：国内油价下周可能上调，多地迎来降温。"
+  joke: "有一只企鹅走进了冰淇淋店，店员问它要什么口味，它说：随便，反正我都冻习惯了。"
+cases:
+  # ── 正例：接着助手的话追问 / 回答助手的提问 / 新的请求 ──
+  - {ctx: weather, text: "那后天呢", expect: accept, tag: continue}
+  - {ctx: weather, text: "上海呢", expect: accept, tag: continue}
+  - {ctx: weather, text: "明天会下雨吗", expect: accept, tag: continue}
+  - {ctx: weather, text: "那要带伞吗", expect: accept, tag: continue}
+  - {ctx: weather, text: "周末天气怎么样", expect: accept, tag: continue}
+  - {ctx: nav, text: "走高速吧", expect: accept, tag: continue}
+  - {ctx: nav, text: "还要多久能到", expect: accept, tag: continue}
+  - {ctx: nav, text: "换一条不堵的路", expect: accept, tag: continue}
+  - {ctx: nav, text: "路上帮我找个加油站", expect: accept, tag: continue}
+  - {ctx: nav, text: "算了不去了，回家", expect: accept, tag: continue}
+  - {ctx: nav, text: "前面堵不堵", expect: accept, tag: continue}
+  - {ctx: music, text: "换一首", expect: accept, tag: continue}
+  - {ctx: music, text: "声音大一点", expect: accept, tag: continue}
+  - {ctx: music, text: "这首歌叫什么名字", expect: accept, tag: continue}
+  - {ctx: music, text: "下一首", expect: accept, tag: continue}
+  - {ctx: music, text: "不想听这个了，来点轻音乐", expect: accept, tag: continue}
+  - {ctx: poi, text: "去第一家", expect: accept, tag: continue}
+  - {ctx: poi, text: "第二家人均多少", expect: accept, tag: continue}
+  - {ctx: poi, text: "有没有近一点的", expect: accept, tag: continue}
+  - {ctx: poi, text: "评分最高的那家营业到几点", expect: accept, tag: continue}
+  - {ctx: know, text: "那它有什么缺点", expect: accept, tag: continue}
+  - {ctx: know, text: "详细说说", expect: accept, tag: continue}
+  - {ctx: know, text: "现在哪些车用上了", expect: accept, tag: continue}
+  - {ctx: know, text: "为什么更安全", expect: accept, tag: continue}
+  - {ctx: know, text: "还有呢", expect: accept, tag: continue}
+  - {ctx: ask_time, text: "早上八点", expect: accept, tag: answer}
+  - {ctx: ask_time, text: "明天下午三点", expect: accept, tag: answer}
+  - {ctx: ask_time, text: "半小时以后", expect: accept, tag: answer}
+  - {ctx: ask_dest, text: "宝安机场", expect: accept, tag: answer}
+  - {ctx: ask_dest, text: "北站", expect: accept, tag: answer}
+  - {ctx: ask_dest, text: "第一个", expect: accept, tag: answer}
+  - {ctx: confirm, text: "确认", expect: accept, tag: answer}
+  - {ctx: confirm, text: "好的打开吧", expect: accept, tag: answer}
+  - {ctx: confirm, text: "先不要", expect: accept, tag: answer}
+  - {ctx: hvac, text: "再低一点", expect: accept, tag: continue}
+  - {ctx: hvac, text: "风小一点", expect: accept, tag: continue}
+  - {ctx: hvac, text: "把座椅加热也打开", expect: accept, tag: continue}
+  - {ctx: chat, text: "好啊", expect: accept, tag: answer}
+  - {ctx: chat, text: "放首周杰伦的吧", expect: accept, tag: answer}
+  - {ctx: chat, text: "我就是昨晚没睡好", expect: accept, tag: answer}
+  - {ctx: news, text: "油价涨多少", expect: accept, tag: continue}
+  - {ctx: news, text: "还有别的新闻吗", expect: accept, tag: continue}
+  - {ctx: joke, text: "再讲一个", expect: accept, tag: continue}
+  - {ctx: joke, text: "没听懂", expect: accept, tag: continue}
+  - {ctx: weather, text: "打开车窗", expect: accept, tag: new_request}
+  - {ctx: music, text: "现在几点了", expect: accept, tag: new_request}
+  - {ctx: nav, text: "帮我把空调打开", expect: accept, tag: new_request}
+  - {ctx: know, text: "给我讲个笑话", expect: accept, tag: new_request}
+  - {ctx: hvac, text: "提醒我下午五点开会", expect: accept, tag: new_request}
+  - {ctx: news, text: "我有点冷", expect: accept, tag: new_request}
+  - {ctx: poi, text: "附近有充电桩吗", expect: accept, tag: new_request}
+  - {ctx: weather, text: "明天杭州天气怎么样", expect: accept, tag: new_request}
+  - {ctx: joke, text: "导航去最近的星巴克", expect: accept, tag: new_request}
+  - {ctx: music, text: "停", expect: accept, tag: assistant_control}
+  - {ctx: know, text: "好了可以了", expect: accept, tag: assistant_control}
+  - {ctx: nav, text: "小舟你听错了，我说的是世界之窗北门", expect: accept, tag: correction}
+  - {ctx: ask_dest, text: "不对，我要去深圳站", expect: accept, tag: correction}
+  # ── 负例：车里人之间的对话 / 打电话 / 孩子 / 广播电台 / 自言自语 / 残句 ──
+  - {ctx: weather, text: "你吃饭了没有", expect: reject, tag: passenger}
+  - {ctx: nav, text: "等会儿我们先去接孩子", expect: reject, tag: passenger}
+  - {ctx: music, text: "你看那个车好漂亮", expect: reject, tag: passenger}
+  - {ctx: joke, text: "哈哈哈哈对对对", expect: reject, tag: passenger}
+  - {ctx: know, text: "我跟你说，今天老板又发火了", expect: reject, tag: passenger}
+  - {ctx: hvac, text: "你妈刚才给我打电话了", expect: reject, tag: passenger}
+  - {ctx: weather, text: "这个周末你有空吗", expect: reject, tag: passenger}
+  - {ctx: nav, text: "开慢点，前面有摄像头", expect: reject, tag: passenger}
+  - {ctx: news, text: "我觉得还是早点出发比较好", expect: reject, tag: passenger}
+  - {ctx: music, text: "你昨天几点睡的", expect: reject, tag: passenger}
+  - {ctx: know, text: "他们公司好像要裁员了", expect: reject, tag: passenger}
+  - {ctx: hvac, text: "你冷不冷", expect: reject, tag: passenger}
+  - {ctx: nav, text: "宝贝你坐好，把安全带系上", expect: reject, tag: passenger_name}
+  - {ctx: nav, text: "老公你看导航是不是走错了", expect: reject, tag: passenger_name}
+  - {ctx: weather, text: "小王你把那个文件发我一下", expect: reject, tag: passenger_name}
+  - {ctx: poi, text: "妈你到哪了，我们在停车场等你", expect: reject, tag: passenger_name}
+  - {ctx: news, text: "他昨天跟我说那个项目黄了", expect: reject, tag: passenger}
+  - {ctx: poi, text: "你想吃辣的还是不辣的", expect: reject, tag: passenger}
+  - {ctx: weather, text: "喂，你好，哪位", expect: reject, tag: phone}
+  - {ctx: music, text: "喂，听得到吗，我在开车呢", expect: reject, tag: phone}
+  - {ctx: nav, text: "对，我大概二十分钟到", expect: reject, tag: phone}
+  - {ctx: hvac, text: "行行行，你先忙，回头再说", expect: reject, tag: phone}
+  - {ctx: know, text: "王总您好，资料我晚点发您", expect: reject, tag: phone}
+  - {ctx: weather, text: "妈妈我要上厕所", expect: reject, tag: kid}
+  - {ctx: nav, text: "爸爸还要多久才到啊", expect: reject, tag: kid}
+  - {ctx: music, text: "我要吃冰淇淋", expect: either, tag: kid}
+  - {ctx: weather, text: "接下来为您播放一首经典老歌", expect: reject, tag: broadcast}
+  - {ctx: nav, text: "下一站人民广场，请从后门下车", expect: reject, tag: broadcast}
+  - {ctx: music, text: "各位听众朋友大家好，欢迎收听交通广播", expect: reject, tag: broadcast}
+  - {ctx: hvac, text: "据央视新闻报道，今日多地迎来强降雨天气", expect: reject, tag: broadcast}
+  - {ctx: know, text: "本节目由某某品牌独家赞助播出", expect: reject, tag: broadcast}
+  - {ctx: news, text: "今天我们来聊一聊人工智能的发展", expect: reject, tag: broadcast}
+  - {ctx: joke, text: "我们一起学猫叫，一起喵喵喵喵喵", expect: reject, tag: media}
+  - {ctx: weather, text: "前方两百米请靠右行驶", expect: reject, tag: media}
+  - {ctx: hvac, text: "哎呀我钥匙放哪了", expect: reject, tag: self_talk}
+  - {ctx: poi, text: "等一下，我想想", expect: either, tag: self_talk}
+  - {ctx: nav, text: "这个红绿灯怎么这么长", expect: reject, tag: self_talk}
+  - {ctx: know, text: "然后他就", expect: reject, tag: fragment}
+  - {ctx: music, text: "那个就是说", expect: reject, tag: fragment}
+  - {ctx: news, text: "嗯这样啊", expect: reject, tag: fragment}
+  - {ctx: joke, text: "不是，你听我说完", expect: either, tag: passenger}
+  - {ctx: weather, text: "你帮我拿一下那瓶水", expect: reject, tag: passenger}
+  # ── 两可：不计分，只看分布 ──
+  - {ctx: joke, text: "好的谢谢", expect: either, tag: ack}
+  - {ctx: weather, text: "知道了", expect: either, tag: ack}
+  - {ctx: nav, text: "唉又堵车了真烦人", expect: either, tag: emotion}
+  - {ctx: music, text: "好无聊啊", expect: either, tag: emotion}
+  - {ctx: poi, text: "那家店上次去过，不太好吃", expect: either, tag: comment}

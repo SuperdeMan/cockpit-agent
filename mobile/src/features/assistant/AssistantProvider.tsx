@@ -182,6 +182,9 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     // PTT 的草稿不能被空闲 HF 的 effect 擦掉。
     if (hf.fsm !== 'LISTENING' && ptt.state === 'idle') core.discardDraftUser()
   }, [hf.fsm, ptt.state, core])
+  // 云端拒掉免唤醒那一句 ⇒ 结束这次连续对话（会话层先删记录、再报这一下，然后才是无声收尾；2026-10-10）
+  const hfTurnRejected = hf.turnRejected
+  useEffect(() => core.onVoiceRejected(hfTurnRejected), [core, hfTurnRejected])
   const win = useWindowDimensions()
   // 隐私栏的「当前：xx」取**服务端身份**（AR05 R14）。取不到才回落 token 尾 4 位——
   // 那从来不是用户是谁，只是一段凭证的尾巴。配置一变先清空：旧账号的摘要绝不能

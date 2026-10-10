@@ -9,6 +9,7 @@ import {
   type SpeechSink,
 } from '@/core/session/store'
 import type { Msg } from '@shared/types.ts'
+import { awaitingVerdictIds } from '@/core/session/turnView'
 import type { SendHooks } from '@/core/api/gateway'
 
 class FakeTransport {
@@ -1047,6 +1048,82 @@ describe('B4-2 行车档事实登记（Edge process 帧的 driving 标）', () =
     const rid = transport.lastUserFrame().request_id
     core.handleFrame({ type: 'process', request_id: rid, phase: 'plan', label: '规划', status: 'running', driving: false })
     expect(core.store.getState().drivingEdge).toEqual({ trueAt: 0, falseAt: 0 })
+    core.dispose()
+  })
+})
+
+// ── 唤醒后连续对话的拒识（2026-10-10，设计 docs/design/2026-10-10-handsfree-followup-rejection.md §4.3）──
+// 拒掉的那句往往是乘客说的：免唤醒那一轮整轮从记录里删掉（用户话 + 占位），并让免唤醒回路结束这次连续对话；
+// 按住说话那一轮仍标灰留痕。续问窗来的那句在云端判定之前是待定样式。
+describe('免唤醒那一轮被云端拒掉', () => {
+  class OrderedSpeech extends FakeSpeech {
+    endSilentTurn(): void {
+      this.calls.push('endSilent')
+    }
+  }
+
+  test('整轮删掉：用户话与占位都不留；先结束连续对话、再无声收尾', () => {
+    const speech = new OrderedSpeech()
+    const { core, transport } = newCore({ speech })
+    core.send('深圳明天天气怎么样', { input_source: 'voice_wake' }, { source: 'handsfree' })
+    core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id, speech: '深圳明天多云。' })
+    core.onVoiceRejected(() => speech.calls.push('rejected'))
+    core.send('你吃饭了没有', { input_source: 'voice_followup' }, { source: 'handsfree' })
+    core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id, ui_card: { type: 'rejected', reason: 'not_addressed' } })
+    expect(msgs(core).map((m) => m.text)).toEqual(['深圳明天天气怎么样', '深圳明天多云。'])
+    expect(speech.calls.slice(-2)).toEqual(['rejected', 'endSilent'])
+    expect(Object.values(core.store.getState().turnMeta).some((t) => t.userBubbleId && !msgs(core).some((m) => m.id === t.userBubbleId))).toBe(false)
+    core.dispose()
+  })
+
+  test('草稿转正的那条用户气泡按 id 删：中间夹着的主动播报不受影响', () => {
+    const { core, transport } = newCore()
+    core.draftUser('你吃')
+    core.handleFrame({ type: 'proactive', speech: '前方拥堵', advisory: 'traffic', delivery_ids: ['d-jam'] })
+    core.send('你吃饭了没有', { input_source: 'voice_followup' }, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined })
+    const before = msgs(core).filter((m) => m.role === 'assistant' && !m.pending).length
+    core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id, ui_card: { type: 'rejected' } })
+    expect(msgs(core).some((m) => m.role === 'user')).toBe(false)
+    expect(msgs(core).filter((m) => m.role === 'assistant')).toHaveLength(before)
+    core.dispose()
+  })
+
+  test('按住说话那一轮仍标灰留痕，也不通知免唤醒回路', () => {
+    const { core, transport } = newCore()
+    const seen: string[] = []
+    core.onVoiceRejected(() => seen.push('rejected'))
+    core.send('帮我查一下明天北京到上海的高铁', { input_source: 'ptt' }, { source: 'ptt' })
+    core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id, ui_card: { type: 'rejected' } })
+    expect(msgs(core)[0]).toMatchObject({ role: 'user', text: '帮我查一下明天北京到上海的高铁' })
+    expect(assistants(core)[0]).toMatchObject({ rejected: true, pending: false })
+    expect(seen).toEqual([])
+    core.dispose()
+  })
+
+  test('迟到的旧轮拒识只删自己，不结束正在进行的新一轮', () => {
+    const { core, transport } = newCore()
+    const seen: string[] = []
+    core.onVoiceRejected(() => seen.push('rejected'))
+    core.send('你吃饭了没有', { input_source: 'voice_followup' }, { source: 'handsfree' })
+    const old = transport.lastUserFrame().request_id
+    core.send('讲个笑话', { input_source: 'voice_wake' }, { source: 'handsfree' })
+    core.handleFrame({ type: 'final', request_id: old, ui_card: { type: 'rejected' } })
+    expect(msgs(core).map((m) => m.text)).toEqual(['讲个笑话', ''])
+    expect(seen).toEqual([])
+    core.dispose()
+  })
+
+  test('续问窗来的那句标成待定，第一帧到达即转正；唤醒词那一轮与文字不标', () => {
+    const { core, transport } = newCore()
+    core.send('那后天呢', { input_source: 'voice_followup' }, { source: 'handsfree' })
+    const user = msgs(core).find((m) => m.role === 'user')!
+    expect(user.provisional).toBe(true)
+    expect(awaitingVerdictIds(msgs(core), core.store.getState().turnMeta)).toEqual(new Set([user.id]))
+    core.handleFrame({ type: 'speech_delta', request_id: transport.lastUserFrame().request_id, delta: '深圳后天' })
+    expect(awaitingVerdictIds(msgs(core), core.store.getState().turnMeta).size).toBe(0)
+    core.send('打开空调', { input_source: 'voice_wake' }, { source: 'handsfree' })
+    core.send('讲个笑话')
+    expect(msgs(core).filter((m) => m.role === 'user' && m.provisional).map((m) => m.text)).toEqual(['那后天呢'])
     core.dispose()
   })
 })

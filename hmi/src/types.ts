@@ -20,7 +20,10 @@ export type Msg = {
   pending?: boolean // 助手"思考中"占位（开放域慢响应时立刻给反馈）
   streaming?: boolean // 正在流式接收 speech_delta
   error?: boolean
-  rejected?: boolean // R4.4：云端判非受话（疑似环境人声）→ 静默忽略，气泡标灰留痕供纠错
+  rejected?: boolean // R4.4：云端判非受话 → 静默忽略、标灰留痕（Android 按住说话那一轮用；免唤醒那一轮 2026-10-10 起直接删掉）
+  // 2026-10-10：续问窗里没喊唤醒词就收进来的那句用户话——云端判定之前显示成待定（紧随其后的助手占位还在 pending 时），
+  // 判受话即转正、判非受话连同占位从记录里删掉（设计 2026-10-10-handsfree-followup-rejection §4.3）
+  provisional?: boolean
   uiCard?: UiCard
   resultBundles?: ResultBundle[] // immutable server snapshots; never an execution channel
   // 复杂任务过程区（脱敏「步骤+思考摘要」）：进行中默认简短摘要，完成后默认折叠可展开。

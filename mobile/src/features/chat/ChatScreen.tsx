@@ -19,6 +19,7 @@ import { emptyCandidates } from '../../core/session/candidates'
 import { followUpChips, MAX_CHIPS } from '../../core/session/followUps'
 import { followOnContentChange, lastUserMessageId, showJumpToLatest, STICK_TO_BOTTOM_THRESHOLD, timeDividers, welcomeShown } from '../../core/session/history'
 import { buildReceipt } from '../../core/session/receipt'
+import { awaitingVerdictIds } from '../../core/session/turnView'
 import { settingsStore, type FontScalePref } from '../../core/settings/store'
 import { composerOrbAnimated, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
 import { composerInputMode } from '../../core/presence/drivingMode'
@@ -217,6 +218,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // 打磨批 F（评审 P13）：时间分隔（判据 history.ts::timeDividers，5 分钟）与「回到最新」（history.ts::showJumpToLatest）。
   // now 取 snapshot.now：分隔标签只在跨天时变化，不需要自己的秒表
   const dividers = useMemo(() => timeDividers(messages, messageAt, snapshot.now), [messages, messageAt, snapshot.now])
+  // 续问窗来的那句在云端判定之前画成待定（虚线，同转写草稿），判受话即转正（2026-10-10）
+  const awaitingIds = useMemo(() => awaitingVerdictIds(messages, turnMeta), [messages, turnMeta])
   const listRef = useRef<FlashListRef<Msg>>(null)
   const [offsetFromBottom, setOffsetFromBottom] = useState(0)
   // 同一个离底读数的即时副本：onContentSizeChange 在同一帧里要用「增高之前」的离底距离判贴底，不能等 state
@@ -456,7 +459,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             }
           }}
           scrollEventThrottle={100}
-          extraData={[core.candidates, turn.assistant?.id, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds, layout.mode]}
+          extraData={[core.candidates, turn.assistant?.id, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds, layout.mode, awaitingIds]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             // 单栏版式下内容列最宽 560 居中（Figma L-1 手机横屏）；竖屏手机窄于它，原样满宽
@@ -480,6 +483,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                 chips={chipsOf(item)}
                 uncertain={uncertainIds.includes(item.id)}
                 draft={item.id === draftUserId}
+                awaiting={awaitingIds.has(item.id)}
                 interrupted={interruptedIds.includes(item.id)}
                 vision={visionIds.includes(item.id)}
                 s2s={s2sIds.includes(item.id)}

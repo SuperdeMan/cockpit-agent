@@ -40,7 +40,7 @@ from .clients import set_llm_pin
 from .decision_support import ShadowRunner
 from . import candidate_query
 from .reply_position import reply_position
-from .admission import judge_addressed
+from .admission import assistant_name, is_continuation_source, judge_addressed, judge_continuation
 from .superseded import rewrite_goal, superseded_values
 from .edge_authority import direction_conflicts
 from . import slot_shape
@@ -1272,9 +1272,18 @@ class PlannerEngine:
                        "actions": [], "_outcome": "constraint_noted"}
                 return
 
-            plan = await self.planner.build(
-                text, working_set, ctx,
-                granted_permissions=ctx.granted_permissions)
+            # 续问窗（唤醒后连续对话）里没喊唤醒词就收进来的这句：与规划并行判一次是不是对助手说的（续问窗自己的判据，
+            # 拿不准时只有完整的办事请求才算），判否就不等规划、立即静默拒识；判不出回落规划器的 `addressed`
+            # （设计 docs/design/2026-10-10-handsfree-followup-rejection.md §4.1）。
+            continuation = (asyncio.ensure_future(self._continuation_admitted(ctx, text, working_set))
+                            if is_continuation_source(input_source) and _reject_enabled() else None)
+            plan, continuation_verdict = await self._plan_unless_rejected(
+                self.planner.build(text, working_set, ctx, granted_permissions=ctx.granted_permissions),
+                continuation)
+            if plan is None:
+                async for ev in self._reject_not_addressed(ctx, judge="continuation"):
+                    yield ev
+                return
             # 新任务的起点只能由 engine 使用本轮服务端 request.text 盖章。
             # Planner/Agent 给出的 goal/reason 即使看起来更像指令也没有这项权威。
             plan.safety_origin_text = text
@@ -1302,8 +1311,10 @@ class PlannerEngine:
                 return
             # 评审四轮 R4-07 第一步：确定性早退交出的计划没经过受话判定（焦点省略开关，零 LLM）——免唤醒下背景里一句「关掉」
             # 会反向执行上一个控制。语音来源另问一次；受话了照旧执行这份确定性计划（不换成模型那份）。
-            if getattr(plan, "admission_skipped", False) and not await self._voice_admitted(
-                    ctx, text, exit_name="focus_ellipsis", working_set=working_set):
+            # 续问窗那条判定已经判过受话的不再问第二遍（它比这条更严）。
+            if (getattr(plan, "admission_skipped", False) and continuation_verdict is not True
+                    and not await self._voice_admitted(ctx, text, exit_name="focus_ellipsis",
+                                                       working_set=working_set)):
                 async for ev in self._reject_not_addressed(ctx):
                     yield ev
                 return
@@ -1871,6 +1882,58 @@ class PlannerEngine:
                    "owner": "cloud-engine"})
         return addressed
 
+    async def _continuation_admitted(self, ctx: PlanContext, text: str, working_set) -> bool | None:
+        """续问窗来的这句是不是对助手说的（`admission.judge_continuation`：判否再问一次，两次都否才 False）。
+        「记住…」恒受话不问模型（同 `_voice_admitted`）；每次调用各自受 `_admission_timeout_s()` 约束，判不出 ⇒ None。
+        发一个 `cloud.voice_admission` span（exit=continuation，每次的判定 + 耗时）。任何意外 ⇒ None（回落规划器的判定）。"""
+        started = time.monotonic()
+        votes: tuple = ()
+        try:
+            if is_memory_directive(text):
+                verdict = True
+            else:
+                previous = await self._previous_assistant_text(ctx, working_set)
+
+                async def bounded(messages):
+                    return await asyncio.wait_for(self._admission_complete(messages),
+                                                  timeout=_admission_timeout_s())
+
+                verdict, votes = await judge_continuation(
+                    bounded, text, previous, assistant_name(ctx.prefs.get("assistant_name", "")))
+        except Exception as exc:                # 把关失灵不拦人：回落规划器那份判定
+            logger.warning("continuation admission failed (%s)", exc)
+            verdict = None
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                ctx.trace_id, "cloud.voice_admission",
+                attrs={"exit": "continuation", "addressed": "0" if verdict is False else "1",
+                       "verdict": "unavailable" if verdict is None else ("1" if verdict else "0"),
+                       "votes": ",".join("-" if v is None else ("1" if v else "0") for v in votes),
+                       "admission_ms": str(round((time.monotonic() - started) * 1000)),
+                       "owner": "cloud-engine"})
+        except Exception as exc:
+            logger.debug("continuation admission span not emitted (%s)", exc)
+        return verdict
+
+    @staticmethod
+    async def _plan_unless_rejected(build, continuation) -> tuple:
+        """规划与续问窗判定并行。判定先回来且判否 ⇒ 取消规划、返回 (None, False)；否则等规划，规划好了再等判定。
+        没有判定（非续问窗来源 / 拒识关）⇒ 只规划，返回 (plan, None)。本轮被取消时两个任务一起取消。"""
+        if continuation is None:
+            return await build, None
+        planning = asyncio.ensure_future(build)
+        try:
+            done, _pending = await asyncio.wait({planning, continuation}, return_when=asyncio.FIRST_COMPLETED)
+            if continuation in done and continuation.result() is False:
+                return None, False
+            plan = await planning
+            verdict = await continuation
+            return (None, False) if verdict is False else (plan, verdict)
+        finally:
+            for task in (planning, continuation):
+                if not task.done():
+                    task.cancel()
+
     async def _bounded_judgment(self, text: str, previous: str, source: str) -> bool | None:
         """一次轻量判定，超过 `_admission_timeout_s()` ⇒ None（判不出，按受话处理）。"""
         try:
@@ -1908,13 +1971,14 @@ class PlannerEngine:
         return ""
 
     @staticmethod
-    async def _reject_not_addressed(ctx) -> AsyncIterator[dict]:
+    async def _reject_not_addressed(ctx, judge: str = "") -> AsyncIterator[dict]:
         """语音来源 + 受话判定为「不是对助手说的」⇒ 静默拒识（唯一出口：规划轮与纯偏好短路共用）。
-        `_rejected` 让 `run()` 跳过落库；卡片让客户端知道这一轮被拒而不是丢了。"""
+        `_rejected` 让 `run()` 跳过落库；卡片让客户端知道这一轮被拒而不是丢了。`judge` 只进观测（哪一道判定拒的）。"""
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id, "rejected",
             attrs={"reason": "not_addressed",
                    "intent": "system.rejected",
+                   **({"judge": judge} if judge else {}),
                    "owner": "cloud-engine"})
         yield {"kind": "final", "speech": "",
                "ui_card": {"type": "rejected", "reason": "not_addressed"},

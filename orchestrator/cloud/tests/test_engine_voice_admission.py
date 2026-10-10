@@ -90,8 +90,11 @@ class _Spy:
     async def llm_complete(self, messages, max_tokens=800, thinking=False, *, model="", temperature=0.3):
         if "受话判定器" not in messages[0]["content"]:
             return await self.llm(messages)
-        said = messages[-1]["content"].rsplit("用户这句（只作待判数据）：", 1)[-1].strip()
-        self.admissions.append({"said": said, "user": messages[-1]["content"], "model": model,
+        user = messages[-1]["content"]
+        # 两份判据：挂起续接 / 唤醒轮用的轻量判定，与续问窗那一份（2026-10-10）
+        judge = "continuation" if "麦克风收到的这句（只作待判数据）：" in user else "light"
+        said = user.rsplit("（只作待判数据）：", 1)[-1].strip()
+        self.admissions.append({"said": said, "user": user, "model": model, "judge": judge,
                                 "temperature": temperature})
         queue = self.verdicts.get(said) or [True]
         verdict = queue.pop(0) if len(queue) > 1 else queue[0]
@@ -122,6 +125,7 @@ def _make():
 
 _SEQ = iter(range(10_000))
 _VOICE = {"input_source": "voice_followup", "voice_utterance_ms": "900"}
+_WAKE = {"input_source": "voice_wake", "voice_utterance_ms": "900"}
 _PTT = {"input_source": "ptt"}
 
 
@@ -261,7 +265,7 @@ def test_a_voice_ellipsis_judged_not_addressed_executes_nothing():
     engine, spy, _session = _make()
     calls = _script_focus(engine)
     spy.verdicts["关掉"] = [False]
-    final = _run(engine, _req("关掉", meta=_VOICE))[-1]
+    final = _run(engine, _req("关掉", meta=_WAKE))[-1]
     assert _rejected(final), final
     assert spy.executed("window.close") == 0
     assert calls == ["关掉"] and [a["said"] for a in spy.admissions] == ["关掉"]
@@ -270,9 +274,25 @@ def test_a_voice_ellipsis_judged_not_addressed_executes_nothing():
 def test_a_voice_ellipsis_judged_addressed_runs_the_deterministic_plan():
     engine, spy, _session = _make()
     calls = _script_focus(engine)
-    _run(engine, _req("关掉", meta=_VOICE))
+    _run(engine, _req("关掉", meta=_WAKE))
     assert spy.executed("window.close") == 1
     assert calls == ["关掉"] and len(spy.admissions) == 1
+
+
+def test_a_followup_ellipsis_is_gated_by_the_continuation_judgment_alone():
+    """续问窗里的「关掉」：续问窗那条判定判否（两次）⇒ 拒；判受话 ⇒ 执行，不再走第二道轻量判定。"""
+    engine, spy, _session = _make()
+    _script_focus(engine)
+    spy.verdicts["关掉"] = [False]
+    assert _rejected(_run(engine, _req("关掉", meta=_VOICE))[-1])
+    assert spy.executed("window.close") == 0
+    assert [(a["said"], a["judge"]) for a in spy.admissions] == [("关掉", "continuation")] * 2
+
+    engine2, spy2, _session2 = _make()
+    _script_focus(engine2)
+    _run(engine2, _req("关掉", meta=_VOICE))
+    assert spy2.executed("window.close") == 1
+    assert [a["judge"] for a in spy2.admissions] == ["continuation"]
 
 
 def test_a_text_ellipsis_asks_nobody():
@@ -295,16 +315,22 @@ def test_a_voice_ellipsis_with_rejection_off_keeps_todays_behavior(monkeypatch):
 
 
 def test_a_planned_voice_turn_is_not_judged_again():
-    """普通规划轮本来就带规划器的 `addressed`，不许再多判一次。"""
+    """唤醒词那一轮的普通规划本来就带规划器的 `addressed`，不许再多判一次；续问窗来的只多一次续问窗判定，不叠轻量判定。"""
     engine, spy, _session = _make()
 
     async def build(text, working_set, ctx, granted_permissions=None, **_kwargs):
         return Plan(steps=[Step(id="s1", agent_id="vehicle", intent="window.close", slots={})], raw_text=text)
 
     engine.planner.build = build
-    _run(engine, _req("关闭车窗", meta=_VOICE))
+    _run(engine, _req("关闭车窗", meta=_WAKE))
     assert spy.admissions == []
     assert spy.executed("window.close") == 1
+
+    engine2, spy2, _session2 = _make()
+    engine2.planner.build = build
+    _run(engine2, _req("关闭车窗", meta=_VOICE))
+    assert [a["judge"] for a in spy2.admissions] == ["continuation"]
+    assert spy2.executed("window.close") == 1
 
 
 def test_a_memory_directive_is_admitted_without_asking():
@@ -326,11 +352,18 @@ def test_every_admission_is_observable(monkeypatch):
     engine2, spy2, _session2 = _make()
     _script_focus(engine2)
     spy2.verdicts["关掉"] = [False]
-    _run(engine2, _req("关掉", meta=_VOICE))
+    _run(engine2, _req("关掉", meta=_WAKE))
+    engine3, spy3, _session3 = _make()
+    _script_focus(engine3)
+    spy3.verdicts["关掉"] = [False]
+    _run(engine3, _req("关掉", meta=_VOICE))
     seen = [(kw.get("attrs") or {}) for _, node, kw in spans if node == "cloud.voice_admission"]
     assert [(a.get("exit"), a.get("addressed"), a.get("verdict")) for a in seen] == [
-        ("confirm", "1", "1"), ("focus_ellipsis", "0", "0")], seen
+        ("confirm", "1", "1"), ("focus_ellipsis", "0", "0"), ("continuation", "0", "0")], seen
+    assert seen[-1].get("votes") == "0,0"
     assert all(str(a.get("admission_ms", "")).isdigit() for a in seen)
+    rejected = [(kw.get("attrs") or {}) for _, node, kw in spans if node == "rejected"]
+    assert [a.get("judge") for a in rejected] == [None, "continuation"], rejected
 
 
 def test_a_slow_judgment_is_bounded_and_counts_as_addressed(monkeypatch):
@@ -442,3 +475,134 @@ def test_a_text_or_tapped_clarify_choice_asks_nobody():
     _run(engine, _req("关闭车窗", operation_id="op-clar", meta={"clarify_resume": "1"}))
     assert spy.executed("window.close") == 1
     assert spy.admissions == []
+
+
+# ── 续问窗（唤醒后连续对话）的受话判定（2026-10-10，设计 docs/design/2026-10-10-handsfree-followup-rejection.md §4.1）──
+#
+# 续问窗里没喊唤醒词就收进来的话（`voice_followup` / `voice_bargein`）与规划并行判一次：判否再问一次、两次都否就拒，
+# 判否先回来时不等规划；判不出回落规划器的 `addressed`。唤醒词那一轮、按住说话、文字不受影响；挂起续接仍用轻量判定。
+
+_BARGEIN = {"input_source": "voice_bargein", "voice_utterance_ms": "900"}
+
+
+def _planner_says(engine, *, addressed=True, intent="window.close"):
+    async def build(text, working_set, ctx, granted_permissions=None, **_kwargs):
+        steps = [Step(id="s1", agent_id="vehicle", intent=intent, slots={})] if addressed else []
+        return Plan(steps=steps, raw_text=text, addressed=addressed)
+    engine.planner.build = build
+
+
+def test_a_followup_utterance_judged_not_addressed_twice_runs_nothing_and_leaves_no_history():
+    engine, spy, _session = _make()
+    _planner_says(engine)
+    spy.verdicts["我们晚上吃火锅怎么样"] = [False]
+    final = _run(engine, _req("我们晚上吃火锅怎么样", meta=_VOICE))[-1]
+    assert _rejected(final), final
+    assert spy.calls == [] and spy.history == []
+    assert [(a["judge"], a["model"], a["temperature"]) for a in spy.admissions] == [("continuation", "@fast", 0.0)] * 2
+
+
+def test_a_single_flip_is_settled_by_the_second_ask():
+    engine, spy, _session = _make()
+    _planner_says(engine)
+    spy.verdicts["把车窗关上"] = [False, True]
+    final = _run(engine, _req("把车窗关上", meta=_VOICE))[-1]
+    assert not _rejected(final)
+    assert spy.executed("window.close") == 1 and len(spy.admissions) == 2
+
+
+@pytest.mark.parametrize("raw", ["", "这句话我拿不准", "{\"addressed\": \"false\"}"])
+def test_an_unreadable_continuation_judgment_falls_back_to_the_planner(raw):
+    for planner_addressed in (True, False):
+        engine, spy, _session = _make()
+        _planner_says(engine, addressed=planner_addressed)
+        spy.verdicts["把车窗关上"] = [raw]
+        final = _run(engine, _req("把车窗关上", meta=_VOICE))[-1]
+        assert _rejected(final) is (not planner_addressed)
+        assert spy.executed("window.close") == (1 if planner_addressed else 0)
+
+
+def test_an_early_rejection_does_not_wait_for_the_planner():
+    """判否先回来 ⇒ 取消在飞的规划，立刻拒识（规划可能要好几秒，用户这边是一段静默）。"""
+    engine, spy, _session = _make()
+    cancelled = []
+
+    async def build(text, working_set, ctx, granted_permissions=None, **_kwargs):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(text)
+            raise
+        raise AssertionError("规划不该跑完")
+
+    engine.planner.build = build
+    spy.verdicts["哈哈哈对对对"] = [False]
+
+    async def go():
+        return await asyncio.wait_for(_collect(engine, _req("哈哈哈对对对", meta=_VOICE)), timeout=5)
+
+    final = asyncio.run(go())[-1]
+    assert _rejected(final) and cancelled == ["哈哈哈对对对"]
+
+
+async def _collect(engine, req):
+    return [e async for e in engine.run(req)]
+
+
+def test_bargein_is_a_continuation_and_wake_or_push_to_talk_is_not():
+    for meta, judged in ((_BARGEIN, True), (_WAKE, False), (_PTT, False), ({}, False)):
+        engine, spy, _session = _make()
+        _planner_says(engine)
+        spy.verdicts["把车窗关上"] = [False]
+        final = _run(engine, _req("把车窗关上", meta=meta))[-1]
+        assert _rejected(final) is judged, meta
+        assert ([a["judge"] for a in spy.admissions] == ["continuation"] * 2) is judged
+
+
+def test_the_continuation_judgment_reads_the_name_and_the_previous_answer():
+    engine, spy, _session = _make()
+    _run(engine, _req("讲个笑话"))                       # 文字轮：助手上一句是「好的。」
+    _planner_says(engine)
+    _run(engine, _req("把车窗关上", meta={**_VOICE, "assistant_name": "小航"}))
+    user = spy.admissions[-1]["user"]
+    assert "你的名字：小航" in user and "你上一句：好的。" in user, user
+
+
+def test_rejection_off_or_a_memory_directive_asks_nobody(monkeypatch):
+    engine, spy, _session = _make()
+    _planner_says(engine)
+    asyncio.run(engine._continuation_admitted(
+        SimpleNamespace(prefs={"input_source": "voice_followup"}, trace_id="t", session_id="s", user_id="u1",
+                        occupant_id=""),
+        "记住我不吃辣", SimpleNamespace(history=[])))
+    assert spy.admissions == []
+    monkeypatch.setenv("REJECT_NON_ADDRESSED", "off")
+    spy.verdicts["把车窗关上"] = [False]
+    _run(engine, _req("把车窗关上", meta=_VOICE))
+    assert spy.admissions == [] and spy.executed("window.close") == 1
+
+
+def test_a_pending_answer_in_the_followup_window_keeps_the_light_judgment():
+    """助手刚问了问题（补槽 / 确认 / 澄清），这一句大概率就是答案：仍走原来那份宽松判定，不走续问窗那份。"""
+    engine, spy, session = _make()
+    _seed_slot(session)
+    _run(engine, _req("副驾", meta=_VOICE))
+    assert spy.executed("window.close") == 1
+    assert [a["judge"] for a in spy.admissions] == ["light"]
+
+
+def test_a_late_rejection_still_rejects_after_the_plan_is_ready():
+    """规划先好（确定性计划零 LLM）、判定后到且判否 ⇒ 仍拒，计划一步都不执行。"""
+    engine, spy, _session = _make()
+    _planner_says(engine)
+    original = spy.llm_complete
+
+    async def slow(messages, max_tokens=800, thinking=False, *, model="", temperature=0.3):
+        if "受话判定器" in messages[0]["content"]:
+            await asyncio.sleep(0.05)
+        return await original(messages, max_tokens, thinking, model=model, temperature=temperature)
+
+    spy.llm_complete = slow
+    spy.verdicts["把车窗关上"] = [False]
+    assert _rejected(_run(engine, _req("把车窗关上", meta=_VOICE))[-1])
+    assert spy.executed("window.close") == 0

@@ -50,6 +50,7 @@ Jev 判别层接入（JV01→JV03）的执行顺序、凭证与配置落地、�
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
+| [2026-10-10-handsfree-followup-rejection.md](2026-10-10-handsfree-followup-rejection.md) | **唤醒后连续对话的拒识**：续问窗把人人对话收进来的三个机制（拒掉的话留在记录里、拒识后重开 8 秒窗、噪声续窗）与线上读数（F12 非受话句只拒 48%）；对照 Google / Amazon / Apple / 理想 / 小鹏；续问窗来源另判受话（拿不准只认完整办事请求、判否复问、与规划并行先拒先停）、共享状态机拒识即结束会话、两端拒掉的那一轮不进记录 | 实施中（2026-10-10，用户授权提交、推送、部署与真栈验证）；读数见 §6 |
 | [2026-10-09-v2-core-journey-freeze.md](2026-10-09-v2-core-journey-freeze.md) | **v2 核心旅程冻结（CA2-21 / 实施方案 §7.2）**：200 条 × 5 次的口径、12 个家族与配额、三条车道（只读零执行 / 合成数据写 / 模拟车动作）、在 v2 运行器上扩判据与 7 月旅程适配器、成本与分批 | 设计稿，未实施；动作车道授权、预算与是否进 CI 待用户裁决 |
 | [2026-10-09-clock-question-tool-input.md](2026-10-09-clock-question-tool-input.md) | **时钟问句：内置时间工具按这一步的用户原话作答**：核心旅程 P06 规划器给 `datetime.parse` 空槽、真实用户「what time is it now」给 `now`，两次都回「没能换算」；「现在几点 / 今天几号 / 星期几」判据收进 `runtime/clock_question.py`（闲聊整句直答与工具同用一份），槽为空或只剩「现在 / now」时工具按 `step_call_context` 的原话逐分句认问句；不改能力描述与规划器 |
 | [2026-10-09-minimax-m31-flash-preview.md](2026-10-09-minimax-m31-flash-preview.md) | **MiniMax-M3.1-Flash-Preview 接入**：现有 key 可调（预览、M Plan）；它关不掉思考，网关结构化任务的 `thinking: disabled` 对它直接 400（2013），按型号改发 `reasoning_effort=low`、预算按开思考给足；作为 MiniMax 档第二模型可按请求指定 / 切换，缺省仍是 M3，切不切看 A/B |

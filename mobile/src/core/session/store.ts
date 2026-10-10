@@ -11,6 +11,8 @@ import { emptyVehicleProjection, bindVehicleIdentity, projectVehicleFrame } from
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import { RequestRegistry } from '@shared/requestRouting.mjs'
+import { dropRejectedTurn } from '@shared/rejectedTurn.mjs'
+import { isContinuationInput } from '@shared/voiceLoop.mjs'
 import { projectResultFinal, mergeResultMessage } from '@shared/resultBundle.mjs'
 import { PENDING_CAPACITY, PENDING_TTL_MS, closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
 
@@ -69,6 +71,8 @@ export interface TurnMeta {
   operationId?: string
   /** 发出时带了坐标（回执「定位 当前位置」） */
   withLocation?: boolean
+  /** 这一轮的用户气泡（send 发起的轮才有）。免唤醒那一轮被云端拒掉时按它把用户话一起删掉（2026-10-10） */
+  userBubbleId?: string
 }
 
 /** 本端台账里的一次确认 / 取消（回执「你在手机端点了「确认」 00:41」） */
@@ -279,6 +283,8 @@ export class SessionCore {
   private s2sAssistantId: string | null = null
 
   private readonly speech: SpeechSink
+  /** 免唤醒那一轮被云端拒掉（最新轮）时的回调：免唤醒回路据此结束这次连续对话（AssistantProvider 接到 useHandsFree.turnRejected） */
+  private voiceRejected: (() => void) | null = null
 
   constructor(deps: SessionDeps) {
     this.deps = deps
@@ -449,13 +455,25 @@ export class SessionCore {
     } catch { /* 同步传输失败也不丢回执 */ }
   }
 
+  /** 订阅「免唤醒那一轮被云端拒掉」（只报最新轮；同一时刻只有一个订阅者）。返回撤销函数 */
+  onVoiceRejected(fn: () => void): () => void {
+    this.voiceRejected = fn
+    return () => {
+      if (this.voiceRejected === fn) this.voiceRejected = null
+    }
+  }
+
   /** 用户消息入口（Composer/卡片按钮 send_text 共用）：加用户气泡 → 前置路由 → 派发 */
   send(text: string, metaExtra?: Record<string, string>, opts: SendOpts = {}): void {
     if (this.disposed) return
     const reuse = opts.bubbleId && this.store.getState().messages.some((m) => m.id === opts.bubbleId) ? opts.bubbleId : null
     const userBubbleId = reuse || uid()
-    if (reuse) this.setText(reuse, text)
-    else this.appendMessage({ id: userBubbleId, role: 'user', text })
+    // 续问窗里没喊唤醒词就收进来的那句：云端判定之前显示成待定，判受话转正、判非受话连同占位删掉（2026-10-10 §4.3）
+    const provisional = isContinuationInput(metaExtra?.input_source)
+    if (reuse) {
+      this.store.setState((s) => ({ messages: s.messages.map((m) => (m.id === reuse
+        ? { ...m, text, ...(provisional ? { provisional: true } : {}) } : m)) }))
+    } else this.appendMessage({ id: userBubbleId, role: 'user', text, ...(provisional ? { provisional: true } : {}) })
     const decision = routeSend(
       text,
       { candidates: this.candidates, locationEnabled: this.deps.location.isEnabled() },
@@ -495,7 +513,11 @@ export class SessionCore {
       : undefined
     // 候选/翻页会改写 text 并附加路由字段，但不得丢掉本轮的语音来源等请求上下文。
     const requestMeta = metaExtra || decision.metaExtra ? { ...metaExtra, ...decision.metaExtra } : undefined
-    this.dispatch(decision.text, false, undefined, requestMeta, decision.operationId, opts.source ?? 'text', preparation)
+    const pendingId = this.dispatch(decision.text, false, undefined, requestMeta, decision.operationId, opts.source ?? 'text', preparation)
+    if (pendingId) {
+      this.store.setState((s) => (s.turnMeta[pendingId]
+        ? { turnMeta: { ...s.turnMeta, [pendingId]: { ...s.turnMeta[pendingId], userBubbleId } } } : {}))
+    }
   }
 
   /** 确认条按钮（App.tsx:850-876 对照）：哪一条由 operationId 决定 */
@@ -749,8 +771,8 @@ export class SessionCore {
     source: TurnSource = 'text',
     preparation?: Preparation,
     operation?: PendingOp,
-  ): void {
-    if (this.disposed) return
+  ): string | undefined {
+    if (this.disposed) return undefined
     const frame = buildUserFrame(text, this.deps.sessionId, {
       isConfirmation,
       ...(operationId ? { operationId } : {}),
@@ -798,11 +820,12 @@ export class SessionCore {
       }
       signal.addEventListener('abort', revoke, { once: true })
       request.unsubscribePreparation = () => signal.removeEventListener('abort', revoke)
-      if (signal.aborted) { revoke(); return }
+      if (signal.aborted) { revoke(); return pendingId }
     }
     // 普通文本保持同步发送；异步准备也先登记身份和占位，停止按钮才能撤回它。
     if (preparation) void this.prepareRequest(request, preparation, locationMeta, metaExtra)
     else this.transmitRequest(request, locationMeta, metaExtra)
+    return pendingId
   }
 
   private requestLive(request: OutboundRequest): boolean {
@@ -1046,23 +1069,35 @@ export class SessionCore {
       }
       // 本轮情绪只影响**下一轮**语气（M2 P2）——先记再走归属
       if (typeof data.emotion === 'string') this.store.setState({ lastEmotion: data.emotion })
-      // R4.4 云端拒识：不渲染回复，把本轮气泡标灰留痕
+      // R4.4 云端拒识：不渲染回复。按住说话那一轮（用户按了键）把本轮气泡标灰留痕；
+      // 免唤醒那一轮（2026-10-10）**不进对话记录**——用户话（往往是乘客说的）连同占位一起删掉，
+      // 并告诉免唤醒回路结束这次连续对话（FSM 回 ARMED，不再开续问窗）。
       const rc: any = data.ui_card
       if (rc?.type === 'rejected') {
         const isLatest = this.registry.isLatest(this.registry.bubbleFor(data))
         const rid = this.registry.settle(data)
         if (rid === null && data.request_id) return // Q3：孤儿帧丢弃
         this.clearWatchdog(rid)
-        this.store.setState((s) => ({
-          messages: s.messages.map((msg) =>
-            msg.id === rid
-              ? { ...msg, pending: false, streaming: false, processActive: false, text: '', rejected: true }
-              : msg,
-          ),
-        }))
+        const meta = rid ? this.store.getState().turnMeta[rid] : undefined
+        const handsFree = meta?.source === 'handsfree' || meta?.source === 's2s'
+        if (rid && handsFree) {
+          this.store.setState((s) => {
+            const { [rid]: _dropped, ...turnMeta } = s.turnMeta
+            return { messages: dropRejectedTurn(s.messages, rid, meta?.userBubbleId ?? ''), turnMeta }
+          })
+        } else {
+          this.store.setState((s) => ({
+            messages: s.messages.map((msg) =>
+              msg.id === rid
+                ? { ...msg, pending: false, streaming: false, processActive: false, text: '', rejected: true }
+                : msg,
+            ),
+          }))
+        }
         // begin 已开播报会话；拒识也是终态，必须释放等待并让免唤醒离开 THINKING。
-        // 迟到旧轮只更新自己的气泡，不能打断正在处理的新轮。
+        // 迟到旧轮只更新自己的气泡，不能打断正在处理的新轮。结束连续对话要在收尾之前：之后那一下在 ARMED 里是空操作。
         if (isLatest) {
+          if (handsFree) this.voiceRejected?.()
           if (this.speech.endSilentTurn) this.speech.endSilentTurn()
           else this.speech.stop()
         }

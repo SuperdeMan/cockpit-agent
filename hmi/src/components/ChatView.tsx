@@ -69,6 +69,8 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
     const next = rows[(rows.indexOf(pinned) + 1) % rows.length]
     setSelected(next.operationId || next.id)
   }
+  // 续问窗来的那句在云端判定之前显示成待定（同聆听中的虚线样式）：紧随其后的本轮占位还在 pending 就是还没判完（2026-10-10）
+  const awaitingVerdict = (index: number) => !!messages[index].provisional && !!messages[index + 1]?.pending
   const retryText = (index: number) => {
     for (let i = index - 1; i >= 0; i--) if (messages[i].role === 'user') return messages[i].text
     return undefined
@@ -83,7 +85,7 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
           <div className="au-welcome-sub">说出需求，或选择下方指令</div>
         </div>}
         {!driving && messages.map((message, index) => <Message key={message.id} msg={{ ...message, driving }}
-          retryText={retryText(index)} onAction={onQuick} />)}
+          retryText={retryText(index)} onAction={onQuick} awaiting={awaitingVerdict(index)} />)}
         {!driving && partialUser && <div className="au-user-row"><div className="au-user-bubble partial">
           {partialUser}<span className="au-cursor" />
         </div></div>}
@@ -98,11 +100,10 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
   </div>
 }
 
-function Message({ msg, onAction, retryText }: { msg: Msg; onAction: (text: string) => void; retryText?: string }) {
+function Message({ msg, onAction, retryText, awaiting }: { msg: Msg; onAction: (text: string) => void; retryText?: string; awaiting?: boolean }) {
   const { developerMode, developerOptions } = useSettings()
-  if (msg.role === 'user') return <div className="au-user-row"><div className="au-user-bubble">{msg.text}</div></div>
-  if (msg.rejected) return <div className="au-rejected"><Icon name="info" size={24} />
-    已忽略（疑似环境人声）· 如果是对我说的，请再说一遍</div>
+  if (msg.role === 'user') return <div className="au-user-row">
+    <div className={'au-user-bubble' + (awaiting ? ' awaiting' : '')} data-awaiting={awaiting ? 'true' : undefined}>{msg.text}</div></div>
   const proactive = msg.text.trim().startsWith('💡')
   const text = proactive ? msg.text.replace(/^💡\s*/, '') : messageTextForView(msg, developerMode && developerOptions.rawErrors)
   const kind = msg.proactiveKind || ''

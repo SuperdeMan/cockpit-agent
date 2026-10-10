@@ -41,7 +41,7 @@ Android 的工程主干（M0～M4、UX v2 B1–B5、AR01～AR09 工程批、打�
 | E-03 | AR09 P1 长内容（500 条本地消息）缺离线灌数 harness | [余项收口 §7 E-05](2026-09-10-ar-residuals-closeout.md) | 做法已定（仿 `card-gallery` 加只读调试路由，用真的 chat 列表渲 N 条合成消息）。价值有限：持久化上限 50 条把「长记录」按住了，只有单会话内长聊才会超；与 E-01 一起做才划算 | `src/app/`（dev 取证屏族） |
 | E-04 | catalog 预筛 `PLANNER_CATALOG_TOP_K` 20→8 / 前缀缓存（prompt 10.5k token 里 13.6k 字符每轮相同、`cache_hit` 0） | 性能评审 §3.3 / §6-9 | 云端；要过落域门禁（`eval_intent_adversarial --suite gate`）与 M1a 顺序契约的重新 A/B。规划 LLM p50 2.29s 是现在整条链路最大的单段 | `orchestrator/cloud/context.py`、`planning.py`（catalog 渲染） |
 | E-05 | manifest 加「必填槽」声明 → 「只在必填槽缺失时才重试」 | 性能评审 §9.2 | 离线 A/B：14 轮强制重试里 8 轮纯代价、3 轮有益，但 `slots: [query, limit]` 只是名字列表，表达不出更细的规则。新字段要走 SDK loader → Registry round-trip → Step 装配 → pending serialize 整条链（CLAUDE.md §3） | `agents/_sdk/manifest.py`、`registry/`、`orchestrator/cloud/retry_policy.py` |
-| E-06 | 语音采纳实施记录 §3 保留的边界：端侧直接命中 / 挂起续接不经拒识、外部播报参照、`RejectPolicy` 自适应收紧 | [语音采纳实施 §3](2026-09-11-android-voice-input-acceptance.md) | 本日 #4 把「端侧直接命中」里播报语域这一族堵上了；其余仍是设计边界，不是缺陷。`RejectPolicy` 自适应要先有真实拒识分布（H6）再定参 | `mobile/src/core/voice/handsFree.ts`、`orchestrator/cloud/engine.py` |
+| E-06 | 语音采纳实施记录 §3 保留的边界：端侧直接命中 / 挂起续接不经拒识、外部播报参照、`RejectPolicy` 自适应收紧 | [语音采纳实施 §3](2026-09-11-android-voice-input-acceptance.md) | 本日 #4 把「端侧直接命中」里播报语域这一族堵上了；其余仍是设计边界，不是缺陷。`RejectPolicy` 自适应要先有真实拒识分布（H6）再定参。2026-10-10：云端拒识信号已接进 App 免唤醒回路——拒识即结束这次连续对话、拒掉的那一轮不进记录、续问窗来源云端另判受话（[设计](2026-10-10-handsfree-followup-rejection.md)）；`RejectPolicy` 跨会话收紧仍只在 HMI，设备包未重打 | `mobile/src/core/voice/handsFree.ts`、`orchestrator/cloud/engine.py` |
 
 ### 2.2 D｜只缺真机时间
 

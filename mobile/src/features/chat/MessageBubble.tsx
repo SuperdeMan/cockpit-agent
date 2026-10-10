@@ -107,6 +107,8 @@ export interface BubbleProps {
   uncertain?: boolean
   /** 转写草稿（方案 §5.2.1）：虚线边 + 光标，定稿后由同一条气泡接管（HMI PartialUserBubble 同款形态） */
   draft?: boolean
+  /** 续问窗来的那句、云端还没判是不是对助手说的（2026-10-10）：同草稿的虚线边、不带光标，判受话即转正 */
+  awaiting?: boolean
   /** 被打断（方案 §5.2 规则 4）：文字定格 + 灰字「已打断」，不是错误样式 */
   interrupted?: boolean
   /** 端到端自答轮：角标「端到端」，长按看「转写由语音模型生成」（方案 §5.2.2，Q7） */
@@ -131,7 +133,7 @@ export interface BubbleProps {
   resent?: boolean
 }
 
-export function MessageBubble({ p, msg, uncertain, draft, interrupted, s2s, vision, receipt, chips, loops, driving, fontScale = 'normal', onSend, onResend, resent }: BubbleProps) {
+export function MessageBubble({ p, msg, uncertain, draft, awaiting, interrupted, s2s, vision, receipt, chips, loops, driving, fontScale = 'normal', onSend, onResend, resent }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
   // 回答文字匀速上屏（2026-09-18）：记录里的 msg.text 逐片即时累积，**只有显示**按节拍追（判据 streamReveal.ts）；
@@ -162,9 +164,9 @@ export function MessageBubble({ p, msg, uncertain, draft, interrupted, s2s, visi
           accessibilityHint="长按复制这句话"
           style={{
             backgroundColor: p.accentSoft,
-            borderWidth: draft ? 1.5 : 0,
+            borderWidth: draft || awaiting ? 1.5 : 0,
             borderStyle: 'dashed',
-            borderColor: draft ? p.lineStrong : 'transparent',
+            borderColor: draft || awaiting ? p.lineStrong : 'transparent',
             borderRadius: 20,
             borderBottomRightRadius: 6,
             paddingHorizontal: 16,

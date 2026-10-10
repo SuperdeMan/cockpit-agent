@@ -17,6 +17,8 @@ const METRIC_OF = {
   cloud_rejected: 'voice_cloud_rejected',            // R4.4 P0：云端语义拒识计数
   reject_downgrade: 'voice_reject_downgrade',        // R4.4 P2：连续拒识降级仅唤醒词
   reject_recovered: 'voice_reject_recovered',        // R4.4 P2：一次成功交互复位
+  rejected_session_end: 'voice_rejected_session_end', // 2026-10-10：云端拒识结束这次连续对话（回 ARMED）
+  followup_expired: 'voice_followup_expired',        // 2026-10-10：续问窗里的噪声把窗用完，回 ARMED
 }
 
 /** 累计一个语音事件。sink 默认 localStorage（浏览器）；node 测注入内存 storage。 */
