@@ -4,6 +4,7 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 `app.config.ts` + config plugins 是原生配置唯一真相源）。与座舱 HMI **共存**的第二个
 用户端、同一个后端大脑：同 user_id 共享记忆/画像，各自独立会话，经同一 WS/HTTP 契约接入。
 
+- **当前视觉：Visual v3**（2026-10-03/04 落地）：一屏一颗光球、回答不套气泡、卡片与追问 chip 跟在答案末尾、每种卡型有行车摘要、折叠屏展开为左对话右舞台。设计依据见 [Brief](../docs/design/2026-10-02-android-visual-redesign-brief.md)（Figma `1jdZ6Cwp8pEtQJJUwg6NHS`）与 [实施计划](../docs/design/2026-10-03-android-visual-v3-implementation-plan.md)，逐批实现与真机轮次见 [执行记录](../docs/design/2026-10-03-android-visual-v3-execution.md)；真机截图见仓库根 [README](../README.md#android-陪伴端小舟随行-visual-v3)。
 - 需求/选型/架构判断：[`docs/design/2026-08-23-hmi-android-app-plan.md`](../docs/design/2026-08-23-hmi-android-app-plan.md)
 - **逐任务执行真相源**（协议契约指认 + 坑账）：[`docs/design/2026-08-24-mobile-app-implementation-plan.md`](../docs/design/2026-08-24-mobile-app-implementation-plan.md)
 - **剩余待办总表（2026-09-14 起的唯一入口）**：[2026-09-14-android-remaining-todos.md](../docs/design/2026-09-14-android-remaining-todos.md)——按「工程可独立 / 只缺真机 / 缺真人、外部条件或授权 / 已裁决不改」四栏列全部尾巴；接手先看它，不从各批实施记录里重新找「下一步」。

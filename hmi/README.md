@@ -28,7 +28,7 @@ npm run dev      # http://localhost:5173
 
 ## 功能
 - **对话**：文字输入 / **按住下方小舟光球说话**（ASR）；语音支持**流式实时上屏**——边说边在输入框逐字显示、松手定稿自动发送（任一环失败无感回退批处理识别）；助手回复**流式逐字**渲染 + “思考中”即时反馈；危险动作多轮确认（确认/取消按钮）。
-- **信息类 UI 卡片**：天气/股票/搜索/新闻/深度调研/POI/路线/充电/行程/赛事等结构化卡片（Aurora Glass 液态玻璃风格，按 Figma 设计稿逐张重建），从 Agent 返回的 `ui_card` 经 Gateway→Cloud→Edge 全链路透传到 HMI 渲染。
+- **信息类 UI 卡片**：天气/股票/搜索/新闻/深度调研/POI/路线/充电/行程/赛事等结构化卡片（Visual v2 卡片族：深浅主题与四档字阶，每张标注数据来源，行车档只给摘要），从 Agent 返回的 `ui_card` 经 Gateway→Cloud→Edge 全链路透传到 HMI 渲染。
 - **语音播报（TTS）**：回复可自动朗读，**服务端流式合成**（文本增量进、PCM 分片无缝拼播、首音 <1s，`pcmPlayer.mjs` 调度）；音色**两级选择**——先选引擎（CosyVoice 流式 / Qwen 流式方言 / MiMo 流式 / MiniMax 流式）再选该引擎音色，逐个可试听；无凭据/失败无感回退句级批处理。
 - **免唤醒连续对话 / 唤醒词**（R4.3，opt-in 默认关）：本地 KWS 唤醒（sherpa-onnx WASM）+ silero VAD 端点 + 续问窗免唤醒接话 + 播报中打断（barge-in）+ 「退下吧」本地退场不上云。状态机在 `voiceLoop.mjs`（六态，纯逻辑全注入），外设接线在 `handsFreeController.ts`。
 - **端到端语音直连（S2S，M4，可选挡位，默认关）**：闲聊与常识由语音大模型直接听直接答（首音频 ~609ms、多轮更连贯）；**需要执行或查实时信息的请求由模型自动交回确定性主链**——车控不绕权限校验与二次确认。断线自动重连并重注入上下文，连不上整条回落三段式。**voiceLoop 状态机零改动**，S2S 只是换了一组效果回调（详见 `docs/design/2026-07-25-m4-s2s-fullduplex-rfc.md`）。⚠️ 开启后唤醒窗内的**原始语音**会上云（三段式只上传识别后的文字），故须用户显式开启。
@@ -64,7 +64,7 @@ src/
   utteranceHeuristics.mjs  退出词/语气词/完整度判据（去尾语气词后精确匹配，防吞「退出导航」）
   voiceMetrics.mjs   语音语义事件计数(localStorage，供真麦验收)
   types.ts           共享类型 + 能力目录 + 默认值（数据契约，重构不改字段）
-  aurora.css         Aurora Glass 设计系统 token 层（--au-*，深空/玻璃/极光/语义色/keyframes）
+  aurora.css         Visual v2 token 声明源（--au-*；data-theme / data-drive / data-font 切换深浅、行车与字号；Figma 导出见 design/visual-v2.tokens.json）
   shell.css          全幅舞台与单一面板、状态栏、输入区与行车回答条
   conversation.css   回答/过程/固定确认条与历史滚动
   stage.css          待机、地图示意、天气、车况、日程、阅读/付款、媒体
@@ -79,7 +79,7 @@ src/
 ```
 
 当前设计见 [Visual v2 brief](../docs/design/2026-10-08-hmi-visual-redesign-brief.md) 与 [落地规则](../docs/guides/figma-design-system-rules.md)。旧 Make 稿与 2026-06-29 计划只作历史证据。
-本地预览参数：`?aurora`（设计系统沙盒）、`?demo` / `?demo=map` / `?demo=cards`（场景与卡片夹具）。
+本地预览参数见文首；`?aurora` 是旧设计系统沙盒，只作历史参考。
 
 ## 自检
 

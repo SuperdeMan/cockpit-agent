@@ -14,7 +14,7 @@
 | 层 | 主要技术 |
 |---|---|
 | Gateway | Go，grpc-go，WebSocket |
-| Orchestrator / Agent / AI 服务 | Python 3.12，grpcio，FastAPI |
+| Orchestrator / Agent / AI 服务 | Python 3.11（镜像与 CI 基线；CI 另测 3.12），grpcio，FastAPI |
 | HMI | React + TypeScript + Vite |
 | Mobile | React Native + Expo + TypeScript |
 | 服务通信 | gRPC；`proto/` 是唯一契约源 |
