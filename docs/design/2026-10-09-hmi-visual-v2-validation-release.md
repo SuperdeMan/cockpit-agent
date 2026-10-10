@@ -54,3 +54,11 @@ python scripts/dev_stack.py deploy --sha 6280cdb0ddd8291440e83a90aab693dfc9bcd52
 - 随后独立 status / verify 均通过，并在 verify 完成后再次核对运行版本及告警。统一验证绑定本次 release，实际 Provider/模型为 `minimax / MiniMax-M3`；没有执行真实车控、下单或付款探针。
 - 线上 HMI 5 项只读资源核对通过；两份字体逐字节哈希对账候选 Git 内容，资源检查前后 release 一致。仅证明已部署的前端资源与受控候选相符，硬件验收边界保留。
 - 本地留证目录 `.artifacts/hmi-visual-v2/release-prep/`：`apply-attempt-1.result.json` / `apply-attempt-1.json`、`apply-attempt-2.result.json` / `apply-attempt-2.json`、`post-deploy-status.json`、`verify.result.json` / `verify.stdout`、`final-status.json`、`live-assets.json`。统一 verify 的权威 artifact 在 QA 交接 §2。
+
+## T5 浏览器页签图标与授权发布（2026-10-10）
+
+- 代码提交 `b0268d435b812182aa973a501bc94f70a7fb7e38`：保留已有紫色玻璃球配色，在固定 64px 画布中仅将球体与内部效果放大 20%，16px 页签下球体由 11px 增至 13.2px；外层光晕不放大。HTML 主题色对齐 v2，图标引用增加 `sizes=any` 与 `?v=20261010`。
+- 本地 HMI Vite build、SVG 解析、构建产物复制与 HTTP 资源检查通过；16/24/32/48px 在深浅背景上对照复核。未新增依赖、未改 `types.ts` / `handleEvent` 或交互语义，未为这次静态资产调整新增单测或重跑旧批全量。
+- 用户明确要求「推送部署」后，只推本笔精确 SHA。首份 dry-run 之后另一发布将生产从 `7bb9df32` 切到 `6318d66b`，因此保留原预检产物，改用新的干净隔离树重新绑定实际基线；等待事务锁释放后 apply，26 个镜像构建与发布事务成功。新基线的范围为 HMI 两文件、Dashboard 图标引用及一行说明。
+- 独立 status / verify 与线上 HMI、Dashboard 图标检查均通过，资源检查前后运行版本固定；SVG 规范换行后与候选 Git blob 相同。当前 release、Provider / 模型及统一验收 artifact 只维护在 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)，不以健康检查或本次图标发布关闭原有 QA 活项。
+- 本地证据 `.artifacts/hmi-favicon-audit-20261010/`：`checks.json`、`comparison.png`、`dry-run-final.stdout.log`、`apply-result.json` / `apply.stdout.log`、`verification-result.json`、`status-final.json`。旧基线预检保留为 `dry-run.stdout.log`，未用于最终 apply。
