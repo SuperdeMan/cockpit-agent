@@ -20,9 +20,20 @@ _SWAP_RE = re.compile(
 CHARGER_NAME_WORDS = ("充电", "快充", "超充", "闪充", "换电")
 
 
+#: 「再加一个充电站」：要的是**另一个**站（2026-10-10 真栈 swap2）。动词必须有，「再换一个充电站」是换站、不在这里
+_ANOTHER_RE = re.compile(
+    rf"(?:再|还|另外?|多)(?:加|找|来|要|添|安排|搜)(?:{_WHICH}){{0,2}}{_STATION}"
+    rf"|(?:加|找|来|要|添)(?:另一个|另一家|另外一个|另外一家|别的|其他的?){_STATION}")
+
+
 def asks_to_swap_charger(text: str) -> bool:
     """原话是不是在要「换一个充电站」。"""
     return bool(_SWAP_RE.search(text or ""))
+
+
+def asks_for_another_charger(text: str) -> bool:
+    """原话是不是在要「再加一个充电站」——路线上已有的站不算数。"""
+    return bool(_ANOTHER_RE.search(text or ""))
 
 
 def is_charger_name(name: str) -> bool:

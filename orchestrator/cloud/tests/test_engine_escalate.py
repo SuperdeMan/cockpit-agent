@@ -502,3 +502,37 @@ def test_escalated_step_receives_the_focus_facts_of_this_turn():
     assert json.loads(spy.calls[-1][3]["focus_active_route"])["destination"] == "深圳北站"
     assert "focus_active_route" not in spy.calls[0][3]      # 没声明 location 的闲聊照旧收不到
     assert events[-1]["speech"] == "已把途经点换成另一个充电站。"
+
+
+def test_a_resumed_step_receives_the_focus_facts_at_resume_time():
+    """2026-10-10 真栈 swap2：「换一个充电站」改派导航改路线、路线上两个充电站 ⇒ 反问换哪一个、挂起；「换第二个」续接时
+    step.meta 不持久化，恢复出的那一步收不到活动路线，导航答「当前没有正在进行的导航」。续接轮按这一刻的焦点重新下发。"""
+    route = {"destination": "深圳北站", "lat": 22.609, "lng": 114.029,
+             "waypoints": [{"name": "路特斯充电站", "lat": 22.61, "lng": 114.03},
+                           {"name": "特来电充电站", "lat": 22.615, "lng": 114.03}],
+             "strategy": "", "ts": int(time.time())}
+    ask = _Resp(status=2, speech="路线上有2个充电站：路特斯充电站、特来电充电站。您要换哪一个？")
+    ask.missing_slots = ["remove_waypoint"]
+    spy = _EscSpy(
+        script=[("final", _Resp(speech="", data={"_escalate": {
+            "intent": "navigation.reroute", "slots": {}, "reason": "swap_route_charger"}}))],
+        unary_seq=[ask, _Resp(speech="已把途经点特来电充电站换成星星充电。")])
+    engine, session = _make_engine(spy)
+    nav_plan = Plan(steps=[Step(id="s1", agent_id="navigation", intent="navigation.navigate_to")])
+    seeded = StepResult(step_id="s1", status=StepStatus.OK, source_intent="navigation.navigate_to",
+                        data={"destination": "深圳北站", "_route_session": route})
+    asyncio.run(engine.context.update_focus("sess-esc", nav_plan, [seeded], user_id="u1"))
+
+    first = _run(engine, _req("换一个充电站"))[-1]
+    state = asyncio.run(session.load("sess-esc", owner_user_id="u1"))
+    assert state is not None and state.phase == "wait_slot" and state.pending_step_id == "esc1", first
+
+    second = _run(engine, SimpleNamespace(
+        text="换第二个", session_id="sess-esc", request_id="r2", is_confirmation=False,
+        context=SimpleNamespace(user_id="u1", vehicle_id="v1")))[-1]
+
+    assert [c[1] for c in spy.calls] == ["chitchat.talk", "navigation.reroute", "navigation.reroute"]
+    resumed_meta = spy.calls[-1][3]
+    assert json.loads(resumed_meta["focus_active_route"])["destination"] == "深圳北站"
+    assert len(json.loads(resumed_meta["focus_active_route"])["waypoints"]) == 2
+    assert second["speech"] == "已把途经点特来电充电站换成星星充电。"

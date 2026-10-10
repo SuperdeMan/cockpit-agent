@@ -560,3 +560,43 @@ def test_swap_does_not_remove_or_re_add_the_new_station():
     assert [w["name"] for w in nav["payload"]["waypoints"]] == [_CHARGER_B["name"]]
     assert len(calls["search"]) == 1
 
+
+
+# ─── 2026-10-10 真栈 swap2：加途经点不重复加路线上已有的点 ───
+
+def _add(waypoints, results, slots=None, raw_text="途经再加一个充电站"):
+    agent, calls = _agent(search_results=results)
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots=slots or {}, raw_text=raw_text,
+        ctx=make_context(), meta=_session_meta(waypoints=waypoints, destination="深圳北站",
+                                               lat=22.609, lng=114.029)))
+    nav = next((a for a in res.actions if a["type"] == "navigate"), None)
+    return res, calls, [w["name"] for w in (nav or {}).get("payload", {}).get("waypoints", [])]
+
+
+def test_adding_a_stop_already_on_the_route_names_it_instead_of_adding_it_again():
+    """充电步推荐的正是路线上那个站，模型把它的名字接成 add_waypoint：修前按名字搜到它又加了一遍。点名的就是路线上那个 ⇒ 如实说、不搜。"""
+    res, calls, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1")], slots={"add_waypoint": _CHARGER_A["name"]})
+    assert f"{_CHARGER_A['name']}已经在路线上了" in res.speech
+    assert names.count(_CHARGER_A["name"]) <= 1 and not calls["search"]
+
+
+def test_adding_a_category_skips_the_stops_already_on_the_route():
+    """类目词（「充电站」）：搜到的第一个就是路线上那个 ⇒ 跳过它，加下一个。"""
+    res, _, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2")],
+                         slots={"add_waypoint": "充电站"})
+    assert names == [_CHARGER_A["name"], _CHARGER_B["name"]]
+    assert f"已顺路加上{_CHARGER_B['name']}" in res.speech
+
+
+def test_adding_a_category_when_everything_nearby_is_already_on_the_route_says_so():
+    res, _, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1")], slots={"add_waypoint": "充电站"})
+    assert "都已经在路线上了" in res.speech and names == [_CHARGER_A["name"]]
+
+
+def test_a_named_place_found_by_search_is_added_as_before():
+    """点名一个路线上没有的地方：照旧加它（不因为多取了几个结果就换成别处）。"""
+    station = POI(id="gas-1", name="中石化加油站", lat=22.55, lng=113.92)
+    other = POI(id="gas-2", name="中石油加油站", lat=22.56, lng=113.93)
+    res, _, names = _add([_KFC], [other, station], slots={"add_waypoint": "中石化加油站"}, raw_text="顺路加个中石化加油站")
+    assert names == [_KFC["name"], "中石化加油站"] and "已顺路加上中石化加油站" in res.speech

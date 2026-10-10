@@ -680,6 +680,7 @@ class PlannerEngine:
         seed_results: list[StepResult] = []
         agents = []
         working_set = None  # 新规划轮由 ContextManager 装配；确认/补槽续接保持 None
+        resume_focus = None  # 续接轮单独读的会话焦点（新规划轮的在 working_set 里）
         # 补槽答案替换掉的旧槽值 `{旧: 新}`（判据在 `superseded`）：续接进 T2 循环时不许再追旧值
         superseded: dict[str, str] = {}
 
@@ -1109,6 +1110,13 @@ class PlannerEngine:
                     yield {"kind": "final", "speech": speech,
                            "_outcome": "safety_origin_blocked"}
                     return
+            # 续接轮不装配工作集，焦点单独读一次：step.meta 不持久化，恢复出的步要的活动路线 / 候选集 / 告警
+            # 按这一刻的焦点重新下发（判据与新规划轮同一份 `_downlink_focus_meta`；同轮改派步同样拿它）
+            if mem_on and getattr(self.context, "session", None):
+                resume_focus = await self.context._load_focus(
+                    ctx.session_id, ctx.user_id,
+                    occupant_id=getattr(ctx, "occupant_id", ""))
+                self._downlink_focus_meta(plan, resume_focus)
         if plan is None:
             # ws8 P1: 注入检测——疑似 prompt injection 时拦截，不进 Planner
             from security.injection import detect_injection
@@ -1610,7 +1618,8 @@ class PlannerEngine:
                 if esc is not None:
                     sink: dict = {}
                     async for ev in self._run_escalated(
-                            esc, ctx, agents, sink, focus=getattr(working_set, "focus", None)):
+                            esc, ctx, agents, sink,
+                            focus=getattr(working_set, "focus", None) or resume_focus):
                         yield ev
                     if sink.get("suspended"):
                         return
@@ -1740,7 +1749,7 @@ class PlannerEngine:
             sink: dict = {}
             async for ev in self._run_escalated(esc, ctx, agents, sink,
                                                 prior=results[len(seed_results):],
-                                                focus=getattr(working_set, "focus", None)):
+                                                focus=getattr(working_set, "focus", None) or resume_focus):
                 yield ev
             if sink.get("suspended"):
                 return
@@ -3538,6 +3547,19 @@ class PlannerEngine:
                     slots["name"] = str(focus.last_poi)
                     step.slots = slots
 
+        PlannerEngine._downlink_focus_meta(plan, focus)
+
+    @staticmethod
+    def _downlink_focus_meta(plan: Plan, focus) -> None:
+        """焦点事实的 meta 下发：活动路线、候选集、会话约束、安全告警、目的地坐标。
+
+        新规划轮在 `_apply_focus_meta` 补完槽之后调它；续接轮（确认 / 补槽恢复出的计划）只调这一半——槽在规划那轮
+        已经补过，而 step.meta 不持久化，恢复出的步此前一份焦点事实都收不到（2026-10-10 真栈 swap2：「换一个充电站」
+        反问换哪一个 →「换第二个」续接，导航答「当前没有正在进行的导航」）。下发的是续接这一刻的焦点：挂起之后
+        插话轮改过的路线、新出的告警，以这一刻为准。
+        """
+        if not focus:
+            return
         # G8 路线会话下发：与 focus_destination_* 同一门控通道（只注给声明 location
         # context_scope 的步；LLM 与客户端都写不到 step.meta），navigation.reroute
         # 在 Agent 侧从这份 JSON 确定性读活动路线——坐标不经 prompt。

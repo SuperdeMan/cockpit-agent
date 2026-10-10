@@ -276,3 +276,28 @@ def test_a_waypoint_without_a_new_route_does_not_invent_one():
     focus = extract_focus(Plan(steps=[Step(id="s2", agent_id="charging-planner", intent="charging.find")]),
                           [_charging_result()])
     assert focus is None or not focus.active_route
+
+
+_CHARGER_ON_ROUTE = {"name": "路特斯汽车充电站(北站闪充站)", "lat": 22.6100, "lng": 114.0300}
+
+
+def test_the_same_stop_declared_by_two_steps_is_one_waypoint_in_route_order():
+    """2026-10-10 真栈 swap2：充电步推荐一个站、改路线那一步把它加进路线，两步都声明了它 ⇒ 修前下发的导航和活动路线上
+    同一个站出现两三次。同一处只留一个：留在后出现（改路线那一步给出整条路线的顺序）的位置、字段合并。"""
+    from orchestrator.cloud.aggregator import Aggregator
+    added = {"name": "特来电充电站(北站东广场)", "lat": 22.6150, "lng": 114.0300}
+    charging = StepResult(step_id="s1", status=StepStatus.OK, source_intent="charging.find",
+                          data={"waypoint": {**added, "address": "东广场"}, "items": [{"name": added["name"]}]})
+    reroute = _route_result(step_id="s2", waypoints=[_CHARGER_ON_ROUTE, added])
+    reroute.data["waypoints"] = [_CHARGER_ON_ROUTE, added]          # 改路线那一步声明整条路线
+    reroute.actions = [{"type": "navigate", "payload": {"destination": "万象天地", "lat": 22.53, "lng": 113.95}}]
+    plan = Plan(steps=[Step(id="s1", agent_id="charging-planner", intent="charging.find"),
+                       Step(id="s2", agent_id="navigation", intent="navigation.reroute")])
+
+    sent = Aggregator.compose_actions([charging, reroute])[0]["payload"]["waypoints"]
+    focus = extract_focus(plan, [charging, reroute])
+
+    assert [w["name"] for w in sent] == [_CHARGER_ON_ROUTE["name"], added["name"]]
+    assert sent[1]["address"] == "东广场"
+    assert [w["name"] for w in focus.active_route["waypoints"]] == [w["name"] for w in sent]
+

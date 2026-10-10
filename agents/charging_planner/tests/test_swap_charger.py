@@ -174,3 +174,37 @@ def test_the_swap_hint_replaces_a_talk_only_plan():
 def _step_from(raw):
     from orchestrator.cloud.models import Step
     return Step(id=raw["id"], agent_id=raw["agent_id"], intent=raw["intent"], slots=dict(raw["slots"]))
+
+
+def _route_agent():
+    """路线上已有「国网充电站」；搜出来的第一个就是它，第二个是另一家。"""
+    agent = ChargingPlannerAgent()
+
+    async def nearby(point, charger_type="", meta=None):
+        return [ChargingStation(id="s1", name=_STATION["name"], distance_km=0.1,
+                                lat=_STATION["lat"], lng=_STATION["lng"]),
+                ChargingStation(id="s2", name="特来电充电站", distance_km=0.6, lat=22.615, lng=114.035)]
+
+    agent.charging.find_nearby = nearby
+    return agent
+
+
+def test_another_charger_on_an_active_route_skips_the_stations_already_on_it():
+    """2026-10-10 真栈 swap2：「途经再加一个充电站」推荐的正是路线上那个站，又被加了一遍。说了「再 / 另 / 多」的，路线上已有的不算数。"""
+    agent = _route_agent()
+    res = _find(agent, "途经再加一个充电站", {**LOC, "focus_active_route": _route([_STATION])})
+    assert res.data["waypoint"]["name"] == "特来电充电站", res.data
+    assert [item["name"] for item in res.data["items"]] == ["特来电充电站"]
+
+
+def test_a_repeated_plain_request_still_picks_the_nearest_station():
+    """重新说一遍「导航去X，在附近找个充电桩」是新路线：最近的那个照样该选，不因为旧路线上有它就跳过。"""
+    agent = _route_agent()
+    res = _find(agent, "导航去深圳北站，在附近找个充电桩", {**LOC, "focus_active_route": _route([_STATION])})
+    assert res.data["waypoint"]["name"] == _STATION["name"], res.data
+
+
+def test_another_charger_says_so_when_every_station_is_already_on_the_route():
+    agent, _ = _agent()
+    res = _find(agent, "再加一个充电站", {**LOC, "focus_active_route": _route([_STATION])})
+    assert "都已经在路线上了" in res.speech and "waypoint" not in (res.data or {})

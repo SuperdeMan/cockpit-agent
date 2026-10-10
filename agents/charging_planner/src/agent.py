@@ -20,7 +20,8 @@ from agents._sdk.dest_choice import resolve_ordinal, save_choices
 from runtime.proactive import publish_proactive
 from runtime import vehicle_reading
 from runtime.vehicle_reading import Reading
-from runtime.charger_swap import asks_to_swap_charger
+from runtime.charger_swap import asks_for_another_charger, asks_to_swap_charger
+from runtime.route_stops import on_route
 from .low_battery import LowBatteryWatcher
 from .providers import build_charging_provider
 from .providers.base import GeoPoint
@@ -111,13 +112,19 @@ class ChargingPlannerAgent(BaseAgent):
         return AgentResult(status=FAILED, speech="充能助手暂不支持该请求。")
 
     @staticmethod
-    def _route_has_stops(meta) -> bool:
-        """活动路线（编排按 location 范围下发的服务端事实）上有没有途经点。"""
+    def _route_stops(meta) -> list[dict]:
+        """活动路线（编排按 location 范围下发的服务端事实）上的途经点；没有路线 / 读不懂就是空。"""
         try:
             route = json.loads((meta or {}).get("focus_active_route") or "")
         except (TypeError, ValueError):
-            return False
-        return isinstance(route, dict) and bool(route.get("waypoints"))
+            return []
+        stops = route.get("waypoints") if isinstance(route, dict) else None
+        return [w for w in stops if isinstance(w, dict)] if isinstance(stops, list) else []
+
+    @classmethod
+    def _route_has_stops(cls, meta) -> bool:
+        """活动路线上有没有途经点。"""
+        return bool(cls._route_stops(meta))
 
     async def _resolve_soc(self, ctx, meta) -> Reading:
         """当前电量连同时效与来源（CA2-19 S1）：只认编排下发、验签且未过期的车况读数。
@@ -148,6 +155,9 @@ class ChargingPlannerAgent(BaseAgent):
                 "intent": "navigation.reroute", "slots": {}, "reason": "swap_route_charger"}})
         # 没有活动路线的「换一个充电站」：排除这一会话里推荐过的站（此前照常找站，又推荐同一个——CA2-19 §9.1）
         seen = await self._recommended(ctx) if swap else []
+        # 「再加一个充电站」：路线上已有的站不再推荐（2026-10-10 真栈 swap2：推荐的正是路线上那个，又被加了一遍）。
+        # 只认说了「再 / 另 / 多」的：重新说一遍「导航去X，在附近找个充电桩」是新路线，最近的那个照样该选
+        en_route = self._route_stops(meta) if asks_for_another_charger(intent.raw_text or "") else []
         # 读电量（真实车辆电量优先，回退 memory）
         soc = await self._resolve_soc(ctx, meta)
 
@@ -162,7 +172,8 @@ class ChargingPlannerAgent(BaseAgent):
             clarify = await self._clarify_vague_destination(destination, meta, ctx=ctx)
             if clarify:
                 return clarify
-            return await self._find_near_destination(destination, charger_type, soc, meta, ctx=ctx, seen=seen)
+            return await self._find_near_destination(destination, charger_type, soc, meta, ctx=ctx, seen=seen,
+                                                     en_route=en_route)
 
         # 获取位置
         current = current_location_from_meta(meta)
@@ -194,6 +205,10 @@ class ChargingPlannerAgent(BaseAgent):
             stations = [s for s in stations if not self._was_recommended(s, seen)]
             if not stations:
                 return AgentResult(speech="附近能找到的充电站刚才都推荐过了。要换个地方找，可以说「到XX附近找充电站」。")
+        if en_route:
+            stations = [s for s in stations if not on_route(s, en_route)]
+            if not stations:
+                return AgentResult(speech="附近能找到的充电站都已经在路线上了。")
 
         # 组织回复：实时空闲已知（mock）才报"X/Y空闲"，高德基础 POI 未知时报距离/评分，不编造
         top3 = stations[:3]
@@ -223,7 +238,7 @@ class ChargingPlannerAgent(BaseAgent):
         )
 
     async def _find_near_destination(self, destination: str, charger_type: str,
-                                     soc: Reading, meta, *, ctx=None, seen=()) -> AgentResult:
+                                     soc: Reading, meta, *, ctx=None, seen=(), en_route=()) -> AgentResult:
         """按目的地搜充电站，把最优站作为导航途经点（出 charging_route 卡 + data.waypoint）。
 
         聚合器据 data.waypoint 把该站并入导航步的 navigate 动作（payload.waypoints），
@@ -265,6 +280,10 @@ class ChargingPlannerAgent(BaseAgent):
             if not stations:
                 return AgentResult(
                     speech=f"{destination}附近能找到的充电站刚才都推荐过了，到达后我再帮您找。")
+        if en_route:
+            stations = [s for s in stations if not on_route(s, en_route)]
+            if not stations:
+                return AgentResult(speech=f"{destination}附近能找到的充电站都已经在路线上了。")
         top = stations[0]
         await self._remember_recommended(ctx, [top], seen)
         # CA2-19 S3：选站理由可追溯；高德基础 POI 没有实时空闲，按距离选、如实标「空闲状态未知」

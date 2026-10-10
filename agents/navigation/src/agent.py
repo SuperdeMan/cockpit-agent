@@ -20,6 +20,7 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
 from runtime.charger_swap import asks_to_swap_charger, is_charger_name
+from runtime.route_stops import on_route, plain_name, same_stop
 from runtime.slots import STEP_ORIGIN_META, is_place_placeholder
 from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
 from agents._sdk.dest_choice import ordinal_in, resolve_choice, save_choices
@@ -2106,16 +2107,11 @@ class NavigationAgent(BaseAgent):
             logger.warning("swap charger search failed: %s", e)
             return "充电站信息暂时拿不到，路线保持不变。", "", False
 
-        def same(p, w) -> bool:
-            """搜索结果就是路线上这个点：同名，或坐标相距不到 50 米。"""
-            return p.name == str(w.get("name") or "") or (
-                p.lat is not None and p.lng is not None
-                and self._rough_km(p.lat, p.lng, w["lat"], w["lng"]) < 0.05)
-
-        if verify and not any(same(p, old) for p in found):
+        # 搜索结果是不是路线上的某个点：判据 `runtime.route_stops`（编排合并途经点、充电排除路线上的站同一份）
+        if verify and not any(same_stop(p, old) for p in found):
             return "当前路线上没有途经的充电站，要加一个可以说「顺路加个充电站」。", "", False
         pick = next((p for p in found if p.lat is not None and p.lng is not None
-                     and not any(same(p, w) for w in waypoints)), None)
+                     and not on_route(p, waypoints)), None)
         if pick is None:
             return f"{old_name}附近暂时没找到别的充电站，路线保持不变。", "", False
         waypoints[i] = {"name": pick.name, "lat": pick.lat, "lng": pick.lng}
@@ -2290,19 +2286,33 @@ class NavigationAgent(BaseAgent):
             current = origin_pair[1] if origin_pair else current_location_from_meta(meta)
             near = (GeoPoint(lat=current.lat, lng=current.lng) if current
                     else GeoPoint(lat=dest_lat, lng=dest_lng))
-            try:
-                found = await self.poi.search(keyword, near=near, limit=1, meta=meta)
-            except ProviderError as e:
-                logger.warning("reroute add-waypoint search failed: %s", e)
-                found = []
-            if found:
-                wp = {"name": found[0].name, "lat": found[0].lat, "lng": found[0].lng}
+            # 点名的就是路线上已有的那一个（充电步推荐的站被模型接成 add_waypoint）⇒ 如实说，不搜、不换成别处
+            want = plain_name(add_word)
+            already = next((w for w in waypoints if plain_name(w.get("name")) == want), None)
+            found = []
+            if already is None:
+                try:
+                    # 多取几个：类目词（「充电站」）跳过路线上已有的点（2026-10-10 真栈 swap2：同一个充电站被加了两遍）
+                    found = await self.poi.search(keyword, near=near, limit=self._SWAP_SCAN, meta=meta)
+                except ProviderError as e:
+                    logger.warning("reroute add-waypoint search failed: %s", e)
+            exact = next((p for p in found if plain_name(p.name) == want), None)
+            if exact is not None and on_route(exact, waypoints):
+                already = next(w for w in waypoints if same_stop(exact, w))
+            pick = None if already is not None else (
+                exact or next((p for p in found if not on_route(p, waypoints)), None))
+            if pick is not None:
+                wp = {"name": pick.name, "lat": pick.lat, "lng": pick.lng}
                 if prepend:
                     waypoints.insert(0, wp)
                 else:
                     waypoints.append(wp)
-                notes.append(f"已顺路加上{found[0].name}")
+                notes.append(f"已顺路加上{pick.name}")
                 changed = True
+            elif already is not None:
+                notes.append(f"{already.get('name')}已经在路线上了")
+            elif found:
+                notes.append(f"附近的{add_word}都已经在路线上了")
             else:
                 notes.append(f"附近暂时没找到{add_word}")
 
