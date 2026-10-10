@@ -203,3 +203,12 @@
   - A. 给云端的 Jev 外呼一个境外出口（境外中转或 HTTPS 代理）。代码侧只需让提供方接受一个代理地址；地址进云端 `.env`。
   - B. 先停 shadow 外呼（`DECISION_ENABLED=false`），等有出口再开。
   - 维持现状：每个 shadow 轮白打一次约 1.7 s 的后台请求、只记 `http_451`，不影响主链结果。
+
+## 15. 用户选 B：停 shadow 外呼（2026-10-10）
+
+- 用户 10-10：「jev的按你建议选B」。云端共享 `.env`（`/opt/car-agent/shared/.env`）的 `DECISION_ENABLED` 由 `true` 改为 `false`，
+  经 SSH stdin 在主机上原子改写，只动这一行，属主与权限保持 root:root、600。凭证与其余 `DECISION_*` 键原样保留，有境外出口后改回这一键即可重开。
+  本机根 `.env` 本来就没有 `DECISION_*` 键，不涉及。
+- 生效：网关只在容器创建时读这组键，随下一次部署重建生效。之后每个 shadow 轮在网关内直接返回 `DISABLED / global_off`，不再外呼；
+  编排侧照旧发起 Decide 调用并记 `decision.shadow`，主链结果不受影响。
+- 重开的前提：先为云端外呼准备境外出口（方案 A），再把 `DECISION_ENABLED` 改回 `true`，两步都要用户批准。
