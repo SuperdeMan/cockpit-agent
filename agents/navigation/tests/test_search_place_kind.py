@@ -48,3 +48,22 @@ def test_a_result_that_is_that_kind_of_place_is_listed_as_before():
 def test_keywords_that_are_not_a_place_kind_are_untouched():
     res = _search("人民公园", [_poi("h1", "人民医院")])   # 「公园」不在类型词里（没有真栈红例），照旧
     assert "为您找到" in res.speech
+
+
+def test_a_trip_estimate_question_is_handed_to_the_estimate_not_to_navigation():
+    """2026-10-10 冻结 P2：「去KFC要开多久」被规划成地点搜索，按导航词改派「导航去目的地」，问句闸拦下、闲聊答了一句空话。
+    问路程 / 时间的交估算（只读），要动身的照旧交导航。"""
+    ask = _search("KFC", [_poi("k1", "肯德基(科苑店)")], raw_text="去KFC要开多久")
+    assert ask.data["_escalate"]["intent"] == "navigation.estimate"
+    assert ask.data["_escalate"]["slots"] == {"destination": "KFC"}
+    go = _search("KFC", [_poi("k1", "肯德基(科苑店)")], raw_text="导航去KFC")
+    assert go.data["_escalate"]["intent"] == "navigation.navigate_to"
+
+
+def test_a_not_found_estimate_question_is_handed_to_the_estimate_too():
+    """「没找到」那条改派与交接同一个方向（带导航词的原话才改派：视觉地标描述搜不到时走这里）。"""
+    ask = NavigationAgent._search_not_found("云岚国际中心", "去云岚国际中心要多久")
+    assert "没找到" in ask.speech and ask.data["_escalate"]["intent"] == "navigation.estimate"
+    go = NavigationAgent._search_not_found("云岚国际中心", "导航去云岚国际中心")
+    assert go.data["_escalate"]["intent"] == "navigation.navigate_to"
+    assert not NavigationAgent._search_not_found("云岚国际中心", "云岚国际中心在哪").data

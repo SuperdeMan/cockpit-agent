@@ -154,7 +154,8 @@ cases:
     family: search_unrelated_fallback
     providers: [AMAP_KEY]
     turns:
-      - {say: "人民广场在哪", expect: {speech_not: ["人民医院", "检察院", "法院"]}}
+      # 修后如实说「附近没找到」并列出名字相近的（列出它们是设计）；不许再说「找到 N 个人民广场」
+      - {say: "人民广场在哪", expect: {speech_any: ["没找到"], speech_not: ["个人民广场"]}}
   # ── F07 能源（只读）──────────────────────────────────────────────
   - id: EN01
     family: charger_swap_unrouted
@@ -197,6 +198,8 @@ cases:
   - id: NB04
     family: nearby_focus_from_estimate
     providers: [AMAP_KEY]
+    # 当前在福田、万象天地在南山（同 B1-3）：缺省位置也在南山时「南山」判不出焦点迁没迁
+    location: {lat: "22.5410", lng: "114.0579"}
     turns:
       # 估算轮确立的目的地，下一句「那附近」按它找（B1-3 的只读版：那条先导航）
       - {say: "去万象天地要开多久", expect: {speech_any: ["万象天地"]}}

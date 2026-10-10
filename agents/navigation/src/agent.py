@@ -813,7 +813,7 @@ class NavigationAgent(BaseAgent):
         # 视觉地标描述（「像贝壳那样的地方」）仍走下面按原话找候选的那一路：规划器可能把描述误抽成别的关键词。
         if (self._is_navigation_phrase(raw_text) and not is_category
                 and not self._is_visual_landmark_description(raw_text)):
-            return self._named_destination_handoff(keyword)
+            return self._named_destination_handoff(keyword, raw_text)
 
         # 按引用取车辆当前位置（隐私最小化：只取需要的 scope）
         near = await self._current_position(ctx, meta)
@@ -911,16 +911,26 @@ class NavigationAgent(BaseAgent):
             follow_up="可以说『导航去第一个』",
         )
 
-    @staticmethod
-    def _named_destination_handoff(keyword: str) -> AgentResult:
-        """「导航去 + 具名地点」落成 search_poi ⇒ 改派 `navigation.navigate_to`（目的地 = 关键词）。
+    #: 原话问的是路程 / 时间（「去KFC要开多久」「到深圳北站多远」）：要的是估算，不是动身（`_handoff_intent`）。
+    #: 2026-10-10 冻结 P2：「去7-11要开多久」被规划成地点搜索，按导航词改派导航到目的地，问句闸拦下改派、闲聊答了一句空话。
+    _ESTIMATE_ASK_RE = re.compile(r"多久|多远|多长时间|几点(?:能)?到|多少(?:公里|分钟|小时)")
 
-        与 `_search_not_found` 同一个改派方向：挂起（同名两处的反问、找不到时追问城市）落在导航到目的地身上，
+    @classmethod
+    def _handoff_intent(cls, raw_text: str) -> str:
+        """带导航词的原话交给谁：问路程 / 时间的交估算（只读），其余交导航到目的地。"""
+        return "navigation.estimate" if cls._ESTIMATE_ASK_RE.search(raw_text or "") else "navigation.navigate_to"
+
+    @classmethod
+    def _named_destination_handoff(cls, keyword: str, raw_text: str = "") -> AgentResult:
+        """「导航去 + 具名地点」落成 search_poi ⇒ 改派 `navigation.navigate_to`（目的地 = 关键词）；
+        「去 X 要开多久」问的是估算 ⇒ 改派 `navigation.estimate`（`_handoff_intent`）。
+
+        与 `_search_not_found` 同一个改派方向：挂起（同名两处的反问、找不到时追问城市）落在承接方身上，
         下一句「第一个」「上海的」续接的也是它。D0 与多步执行都会消费改派、这句话术被替换；T2 循环不消费，
         那条路上用户至少知道怎么说。"""
         return AgentResult(
             speech=f"要去「{keyword}」的话，说「导航去{keyword}」我来确认目的地。",
-            data={"_escalate": {"intent": "navigation.navigate_to",
+            data={"_escalate": {"intent": cls._handoff_intent(raw_text),
                                "slots": {"destination": keyword},
                                "reason": "search_named_destination"}})
 
@@ -939,7 +949,7 @@ class NavigationAgent(BaseAgent):
                   else f"没找到「{keyword}」。")
         result = AgentResult(speech=speech, follow_up=_NOT_FOUND_FOLLOW_UP)
         if cls._is_navigation_phrase(raw_text):
-            result.data = {"_escalate": {"intent": "navigation.navigate_to",
+            result.data = {"_escalate": {"intent": cls._handoff_intent(raw_text),
                                          "slots": {"destination": keyword},
                                          "reason": "search_not_found"}}
         return result

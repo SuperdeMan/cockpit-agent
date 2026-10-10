@@ -75,8 +75,7 @@ journeys:
   - {id: NV20, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV21, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV22, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
-  - {id: NV27, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only, scopes_extra: [payment.invoke],
-     known_red: "地点搜索不核对名字就报「找到 N 个人民广场」，列的是人民医院 / 检察院（本地目的地排序 §17），登记待修"}
+  - {id: NV27, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only, scopes_extra: [payment.invoke]}
   - {id: NV23, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV24, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV25, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}

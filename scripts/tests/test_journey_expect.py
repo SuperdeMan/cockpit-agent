@@ -93,3 +93,11 @@ def test_first_item_any_looks_only_at_the_first_candidate():
 
 def test_the_new_keys_are_declared():
     assert {"route_km_max", "route_km_min", "first_item_any"} <= EXPECT_KEYS
+
+
+def test_route_km_falls_back_to_the_first_spoken_distance():
+    """聚合改写成「开车大概8分钟、1.3公里」也算报了路程；有「全程约」时以它为准，续航提醒里的公里数不抢。"""
+    rewritten = _turn("附近找到几家华润万家，最近的是科兴科学园店，开车大概8分钟、1.3公里。")
+    advisory = _turn("全程约584.6公里，开车约7小时。提醒一下：估算续航约360公里，建议途中补能。")
+    assert check_expect({"route_km_min": 0.1, "route_km_max": 6}, rewritten, True, ()) == []
+    assert check_expect({"route_km_min": 300}, advisory, True, ()) == []

@@ -20,6 +20,9 @@ EXPECT_KEYS = {"speech_any", "speech_all", "speech_not", "cards_any",
 
 #: 话术里报的全程距离（「全程约 12.5 公里」）。上限：话术不报距离时不判；下限：必须报了且不小于它。
 _ROUTE_KM_RE = re.compile(r"全程约\s*([\d.]+)\s*公里")
+#: 没有「全程约」时取第一个「X公里」：聚合模型会把估算改写成「开车大概8分钟、1.3公里」（2026-10-10 冻结 P2 NV11）。
+#: 续航提醒里的「续航约360公里」都排在「全程约」之后，有「全程约」时轮不到它。
+_ANY_KM_RE = re.compile(r"([\d.]+)\s*公里")
 
 
 def card_types(card: dict | None) -> list[str]:
@@ -76,7 +79,7 @@ def check_expect(expect: dict, out, enforce_latency: bool, default_not: Iterable
             if not any(str(k) in first for k in exp["first_item_any"]):
                 f.append(f"first_item_any 未命中 {exp['first_item_any']} | 第一项={first[:40]}")
         if "route_km_max" in exp or "route_km_min" in exp:
-            km_hit = _ROUTE_KM_RE.search(speech)
+            km_hit = _ROUTE_KM_RE.search(speech) or _ANY_KM_RE.search(speech)
             km = float(km_hit.group(1)) if km_hit else None
             if "route_km_max" in exp and km is not None and km > float(exp["route_km_max"]):
                 f.append(f"全程 {km} 公里超上限 {exp['route_km_max']} | speech={speech[:60]}")
