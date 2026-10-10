@@ -125,6 +125,8 @@ RECALL_SPEECH_VERBS = ("说", "讲", "提到", "提过")
 HOW_TO_ACTIONS = (
     "打开", "开启", "关闭", "关掉", "使用", "操作", "进入", "连接", "设置",
     "更换", "启动", "停用", "换", "开", "关",
+    # 2026-10-10 核心旅程 P3 K02：「锁车」不带任何操作线索，第二轮被催出来的 `door_lock.close` 被当成编造作废、落到闲聊
+    "解锁", "上锁", "锁上", "锁",
 )
 _HOW_TO_ACTION_ALT = "|".join(sorted(map(re.escape, HOW_TO_ACTIONS), key=len,
                                       reverse=True))

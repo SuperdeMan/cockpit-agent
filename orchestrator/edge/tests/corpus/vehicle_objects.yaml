@@ -17,6 +17,10 @@ intent_recognition:
   - {text: 播放音乐, object: [media, music]}
   - {text: 把音量调大, object: volume}
   - {text: 打开后备箱, object: trunk}
+  # 2026-10-10（核心旅程 P3 K02）：「锁车」族整句短指令；「关闭锁车鸣笛」这类功能设置不在这里认
+  - {text: 锁车, object: door_lock}
+  - {text: 帮我锁车, object: door_lock}
+  - {text: 把车锁上, object: door_lock}
   - {text: 打开雨刮, object: wiper}
   - {text: 打开大灯, object: headlight}
   # 2026-08-19（QA 卡 Q8）新增三族。⚠ 本组语料 2026-08-19 起**同时断言 VAL 收下这条命令**

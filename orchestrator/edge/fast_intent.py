@@ -639,7 +639,7 @@ def _classify_structured(text: str) -> dict | None:
         return _s("setting", "control", "open", "trunk", conf=0.9)
 
     # ── 车门锁 ────────────────────────────────────────────
-    if "车门" in t or "门锁" in t or "解锁" in t or "上锁" in t:
+    if "车门" in t or "门锁" in t or "解锁" in t or "上锁" in t or _LOCK_CAR_RE.match(t):
         pos = _extract_position(t)
         if "锁" in t and "解" not in t:
             return _s("setting", "control", "close", "door_lock",
@@ -1500,6 +1500,14 @@ def _s(domain: str, intent: str, operate: str, obj: str, **kwargs) -> dict:
     data = {"operate": operate, "object": obj}
     data.update(kwargs)
     return {"domain": domain, "intent": intent, "data": data, "confidence": kwargs.pop("conf", 0.9)}
+
+
+#: 「锁车 / 锁门 / 帮我锁车 / 把车锁上」这类整句就是锁车的短指令（2026-10-10 核心旅程 P3 K02：「锁车」端侧认不出、上云后
+#: 落到闲聊，闲聊回「已上锁」，车门其实开着）。只认整句：「关闭锁车鸣笛」「锁车后自动升窗」是在说功能设置，不是锁车。
+_LOCK_CAR_RE = re.compile(
+    r"^(?:请|帮我|麻烦|给我|替我)?(?:把|将)?"
+    r"(?:(?:车门|车|门)(?:给)?锁(?:上|好|起来)?|锁(?:一下|上|好)?(?:车门|车|门))"
+    r"(?:吧|了|啊|呀|一下)?[。！!]?$")
 
 
 def _extract_position(t: str) -> list[str] | None:

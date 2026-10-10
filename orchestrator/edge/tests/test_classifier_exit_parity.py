@@ -70,6 +70,9 @@ _GOLDEN = [
     ("停止充电", None, False),
     ("关闭定位", None, False),
     ("关闭儿童锁", None, False),
+    # 「锁车」族只认整句短指令：说的是锁车相关的功能设置时不当锁车（2026-10-10）
+    ("关闭锁车鸣笛", None, False),
+    ("锁车后自动升窗", None, False),
     ("停止播放", "media.stop", True),
     ("关闭电台", "media.stop", True),
     ("停止", "media.stop", True),
@@ -98,6 +101,11 @@ _GOLDEN = [
     ("打开后备箱", "trunk.open", True),
     ("锁车门", "door_lock.close", True),
     ("解锁车门", "door_lock.open", True),
+    # 2026-10-10 核心旅程 P3 K02：最常说的「锁车」修前端侧认不出、上云后落到闲聊答「已上锁」
+    ("锁车", "door_lock.close", True),
+    ("帮我锁车", "door_lock.close", True),
+    ("把车锁上", "door_lock.close", True),
+    ("锁门", "door_lock.close", True),
     ("打开充电口", "charging_port.open", True),
     ("打开方向盘加热", "steering_wheel.heating.open", True),
     ("音量大一点", "volume.inc", True),

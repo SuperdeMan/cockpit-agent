@@ -504,6 +504,9 @@ def test_operation_characters_inside_the_asked_noun_phrase_do_not_make_a_directi
     "麻烦关一下天窗",
     "帮我把座椅加热打开",
     "换一首歌",             # 只有操作动作词（`HOW_TO_ACTIONS`）
+    "锁车",                 # 2026-10-10 P3 K02：修前没有任何操作线索，被催出来的锁车作废、落到闲聊答「已上锁」
+    "帮我锁车",
+    "解锁",
 ])
 def test_operation_cue_is_carried_by_the_utterance(text):
     from runtime.question_shape import carries_operation_cue
@@ -686,3 +689,10 @@ def test_a_recall_opener_is_stripped_down_to_the_question(text, content):
 def test_text_without_a_recall_opener_is_left_alone(text):
     from runtime.question_shape import strip_recall_opener
     assert strip_recall_opener(text) == text
+
+
+@pytest.mark.parametrize("text", ["车门怎么锁", "怎么锁车", "怎么解锁车门", "儿童锁是什么", "车门锁了吗", "为什么锁不上"])
+def test_lock_questions_stay_questions(text):
+    """「锁」进操作动作词表之后，问怎么锁 / 锁没锁 / 锁不上照旧是问句（2026-10-10）。"""
+    from runtime.question_shape import is_non_directive_question
+    assert is_non_directive_question(text) is True, text

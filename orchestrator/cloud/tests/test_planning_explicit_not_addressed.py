@@ -38,8 +38,8 @@ def _offline_retrieval(monkeypatch):
 def _agents():
     return [
         MockAgent("chitchat", ["chitchat.talk"], response_only=("chitchat.talk",)),
-        MockAgent("edge-vehicle", ["warning_light.close", "trunk.open", "hvac.inc"],
-                  kind="edge_fast", deployment="edge", require_confirm=("trunk.open",)),
+        MockAgent("edge-vehicle", ["warning_light.close", "trunk.open", "hvac.inc", "door_lock.close"],
+                  kind="edge_fast", deployment="edge", require_confirm=("trunk.open", "door_lock.close")),
         MockAgent("nearby", ["nearby.search"]),
     ]
 
@@ -159,6 +159,15 @@ def test_a_nudged_write_with_an_operation_cue_is_kept():
     """历史救回的真请求：「把后备箱打开」第一轮被判不受话，第二轮规划出开后备箱，照常走到确认。"""
     plan, _ = _build([NOT_ADDRESSED, _wire(("edge-vehicle", "trunk.open"))], "把后备箱打开")
     assert [s.intent for s in plan.steps] == ["trunk.open"], plan.steps
+    assert plan.steps[0].require_confirm is True
+    assert "_nudged_write_blocked" not in plan.plan_mode
+
+
+def test_a_nudged_lock_from_a_bare_lock_command_is_kept():
+    """核心旅程 P3 K02（2026-10-10）：「锁车」第一轮被判不受话，第二轮规划出锁车——修前「锁」不算操作线索，整份作废落到闲聊，
+    闲聊回「已上锁」，车门其实开着。照常走到确认。"""
+    plan, _ = _build([NOT_ADDRESSED, _wire(("edge-vehicle", "door_lock.close"))], "锁车")
+    assert [s.intent for s in plan.steps] == ["door_lock.close"], plan.steps
     assert plan.steps[0].require_confirm is True
     assert "_nudged_write_blocked" not in plan.plan_mode
 

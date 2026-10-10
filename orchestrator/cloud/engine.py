@@ -605,8 +605,9 @@ class PlannerEngine:
         剥空了换成固定的诚实话术；其余形态（信息类能力的「已为您规划 3 天行程」是真的）照旧只观测。
         剥掉的是**模型编的执行事实**，不是润色——把假话删掉与把失败改写成成功方向相反。
 
-        无主完成句（`bare`，2026-10-08）只观测、不剥：闲聊零动作编的「已在路线中添加途经点。」两族都不收，
-        它与「已经十点了」这类客观陈述同形，先量分布（判据见 `runtime.execution_claim.bare_execution_claim`）。
+        无主完成句（`bare`，2026-10-08 起只观测）：闲聊零动作编的「已在路线中添加途经点。」两族都不收。2026-10-10 第 3 条真阳性
+        是车况上的假话（P3 K02：「锁车」落到闲聊，闲聊回「已上锁」，车门其实开着），升为同样剥；「已经十点了」这类客观陈述
+        由判据按形态排除（`runtime.execution_claim.bare_execution_claim`）。
         """
         if actions:
             return
@@ -615,7 +616,7 @@ class PlannerEngine:
         if not family:
             return
         intercepted = False
-        if family != "bare" and getattr(ctx, "answer_only", False):
+        if getattr(ctx, "answer_only", False):
             cleaned, removed = strip_execution_claims(speech)
             if removed:
                 intercepted = True

@@ -75,9 +75,13 @@ def execution_claim(text: str | None) -> str:
 #:   「已找到 5 个地点」，回放里零动作命中的 16 条误报都是这两类）；
 #: - 问句不算（「已经到了吗？」）。
 #: 回放口径下零动作命中 2 条，都是真阳性（上面那句；8 月一条零动作的「已为前往…的路线加入途经充电站」）。
+#: 2026-10-10 第 3 条真阳性，而且是车况上的假话：核心旅程 P3 K02 收尾「锁车」落到闲聊，闲聊回「已上锁」，车门其实开着。
+#: 由此从只观测升为与两族同样剥（谈话步 + 零动作）。客观陈述那一侧按形态排除：「已经」后面接数目 / 时刻（「已经十点了」）、
+#: 系词与程度 / 有无 / 否定（「已经是周五了」「已经很晚了」「已经有三个提醒」「已经不早了」）——说的是状态，不是动了手。
 _LEAD_CLAUSE_MAX = 4
 _BARE_DONE_RE = re.compile(
-    rf"^已(?!经?\s*{_FOR_YOU})(?!经?\s*(?:找到|查到|搜到|收到|综合|汇总|检索|获取))\S")
+    rf"^已(?!经?\s*{_FOR_YOU})(?!经?\s*(?:找到|查到|搜到|收到|综合|汇总|检索|获取))"
+    r"(?!经?\s*(?:是|快|很|太|有|没|不|[0-9０-９一二三四五六七八九十两几半]))\S")
 _LEAD_CLAUSE_RE = re.compile(rf"^[^，,：:]{{1,{_LEAD_CLAUSE_MAX}}}[，,：:]\s*")
 _QUESTION_END_RE = re.compile(r"(?:[吗呢么]\s*[？?]?|[？?])\s*$")
 _SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;\n]?")
@@ -204,7 +208,8 @@ class ExecutionClaimGate:
             self._long = False
             self._dropping = False
             return released
-        if is_execution_claim_sentence(part):
+        if is_execution_claim_sentence(part) or bare_execution_claim(part):
+            # 无主完成句只在整句判（≤ 160 字）这一支收：它锚在句首，分段模式的保留区推导只按三条正则（`CLAIM_SPAN_MAX`）
             self.removed += 1
             return ""
         return part

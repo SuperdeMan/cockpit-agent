@@ -163,9 +163,9 @@ def test_strip_keeps_line_structure_of_the_rest():
     assert cleaned == "第一行建议。\n第三行建议。"
 
 
-# ── 6. 无主完成句（观测专用，2026-10-08）──────────────────────────────────
+# ── 6. 无主完成句（2026-10-08 观测；2026-10-10 起谈话步零动作同样剥）──────────────
 
-from runtime.execution_claim import bare_execution_claim, is_execution_claim_sentence  # noqa: E402
+from runtime.execution_claim import ExecutionClaimGate, bare_execution_claim, is_execution_claim_sentence  # noqa: E402
 
 
 @pytest.mark.parametrize("text", [
@@ -176,12 +176,22 @@ from runtime.execution_claim import bare_execution_claim, is_execution_claim_sen
     "好的，已添加。",                        # 前面一个应答短句
     "已经关掉了。",
 ])
-def test_subjectless_completion_sentences_are_observed(text):
+def test_subjectless_completion_sentences_are_stripped_from_talk(text):
     assert bare_execution_claim(text)
-    # 只出观测：两族都不认它，流式闸与按句剥也不碰（拦不拦等分布出来再说）
+    # 两族仍不认它（族名与观测列不变，肯定句判据 `affirmation` 消费的 `is_execution_claim_sentence` 也不变）
     assert execution_claim(text) == ""
     assert not any(is_execution_claim_sentence(s) for s in re.split(r"(?<=[。！？])", text))
-    assert strip_execution_claims(text) == (text, 0)
+    # 2026-10-10 起按句剥收它：回放零动作命中的 2 条与 P3 K02 的「已上锁」全是真阳性
+    cleaned, removed = strip_execution_claims(text)
+    assert removed >= 1 and not bare_execution_claim(cleaned), cleaned
+
+
+def test_a_false_lock_claim_never_leaves_a_talk_step():
+    """P3 K02（2026-10-10）：「锁车」落到闲聊，闲聊回「已上锁」，车门其实开着。一次喂入与逐字流式都剥掉。"""
+    assert strip_execution_claims("好的，已上锁。") == ("", 1)
+    gate = ExecutionClaimGate()
+    streamed = "".join(gate.feed(ch) for ch in "已上锁。车门锁好了记得拔钥匙。") + gate.flush()
+    assert "已上锁" not in streamed and gate.removed == 1
 
 
 @pytest.mark.parametrize("text", [
@@ -194,7 +204,15 @@ def test_subjectless_completion_sentences_are_observed(text):
     "已经到了吗？",                           # 问句
     "路线已经算好了。",                       # 有主语
     "已为您导航到深圳北站。",                 # 「为您」归 done 一族
+    # 2026-10-10 升为剥之前按形态排除的客观陈述：数目 / 时刻、系词、程度、有无、否定
+    "已经十点了，早点休息。",
+    "已经是周五了。",
+    "已经很晚了。",
+    "已经有三个提醒了。",
+    "已经不早了。",
     "",
 ])
 def test_statements_shaped_like_it_are_not(text):
     assert not bare_execution_claim(text)
+    if text and not execution_claim(text):
+        assert strip_execution_claims(text) == (text.strip(), 0)
