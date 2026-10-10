@@ -866,13 +866,14 @@ class NavigationAgent(BaseAgent):
         card = attach({"type": "poi_list", "keyword": resolved_keyword, "items": items},
                       self.poi)
 
-        # 原话以地点类型词结尾、搜到的名字里都没有它 ⇒ 搜到的是别的种类的地方，不是用户说的那个（本地目的地排序 §17：深圳搜
-        # 「人民广场」回的是宝安人民医院、南山区人民检察院停车场……修前照样说「为您找到 4 个人民广场」，下游导航接过第一项就去了医院）。
-        # 如实说没找到、列出名字相近的；结果不进 `data.items`，下游按槽位引用取不到它，导航会追问去哪。
+        # 原话以地点类型词结尾（「人民广场」）、前五个结果的名字都对不上原话 ⇒ 附近没有用户说的那个地方（本地目的地排序 §17：深圳搜
+        # 「人民广场」回的是宝安人民医院、南山区人民检察院停车场、关口村人民医院住宅楼、常兴时代广场……修前照样说「为您找到 4 个人民广场」，
+        # 下游导航接过第一项就去了医院）。名字对不对得上用导航的同一份严格判据 `_dest_matches`——只看类型词在不在不够：「常兴时代广场」
+        # 也是广场，但不是人民广场。如实说没找到、列出名字相近的；结果不进 `data.items`，下游按槽位引用取不到它，导航会追问去哪。
         kind = next((w for w in self._PLACE_TYPE_SUFFIXES
                      if resolved_keyword == keyword and not is_category and not is_visual_landmark
                      and keyword.endswith(w) and len(keyword) > len(w)), "")
-        if kind and not any(kind in r.name for r in results[:5]):
+        if kind and not any(self._dest_matches(keyword, r.name, getattr(r, "city", "") or "") for r in results[:5]):
             similar = "、".join(r.name for r in results[:3])
             return AgentResult(speech=f"附近没找到「{keyword}」，名字相近的有：{similar}。",
                                ui_card=card, data={"similar": items}, follow_up=_NOT_FOUND_FOLLOW_UP)

@@ -23,7 +23,8 @@ cases:
     family: estimate_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "去东门要开多久", expect: {route_km_min: 0.1, speech_any: ["东门商业步行街", "东门步行街", "东门(地名"], speech_not: ["食堂"]}}
+      # 罗湖东门离南山约 25 公里：高德有时直接叫「东门」（2026-10-10 一跑 24.7 km 东门商业步行街、一跑 25.5 km 东门），距离区间判落点
+      - {say: "去东门要开多久", expect: {route_km_min: 15, route_km_max: 40, speech_not: ["食堂"]}}
   - id: NV04
     family: estimate_named
     providers: [AMAP_KEY]
@@ -186,12 +187,13 @@ cases:
     providers: [AMAP_KEY]
     turns:
       - {say: "附近有什么好吃的火锅店", expect: {cards_any: [place_list]}}
-      - {say: "第一家几点关门", expect: {cards_any: [place_detail], speech_not: ["请先查询", "没听清"]}}
+      # 候选集问答可以直接答营业时间、不出详情卡（2026-10-10 读数：「营业到 22:00」）
+      - {say: "第一家几点关门", expect: {speech_any: ["营业", "关门", "打烊"], speech_not: ["请先查询", "没听清", "没有可以引用的列表"]}}
   - id: NB03
     family: nearby_parking_named
     providers: [AMAP_KEY]
     turns:
-      - {say: "海岸城附近有停车场吗", expect: {cards_any: [place_list], card_contains: ["南山"]}}
+      - {say: "海岸城附近有停车场吗", expect: {cards_any: [place_list], card_contains: ["海岸城"]}}
   - id: NB04
     family: nearby_focus_from_estimate
     providers: [AMAP_KEY]

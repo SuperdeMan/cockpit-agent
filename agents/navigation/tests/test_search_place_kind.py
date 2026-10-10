@@ -32,7 +32,9 @@ def _poi(pid, name):
 
 
 def test_a_place_kind_no_result_has_is_reported_as_not_found():
-    res = _search("人民广场", [_poi("h1", "深圳市宝安人民医院"), _poi("p1", "南山区人民检察院停车场")])
+    # 第四个是别的广场（2026-10-10 真栈原样）：只看「广场」在不在会放过它，要名字对得上原话
+    res = _search("人民广场", [_poi("h1", "深圳市宝安人民医院"), _poi("p1", "南山区人民检察院停车场"),
+                             _poi("h2", "关口村人民医院住宅楼"), _poi("g1", "常兴时代广场")])
     assert "没找到「人民广场」" in res.speech and "宝安人民医院" in res.speech
     assert "items" not in (res.data or {})            # 下游按槽位引用取不到它
     assert not res.actions
