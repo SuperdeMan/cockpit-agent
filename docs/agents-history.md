@@ -10961,3 +10961,15 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   按设计，「记住…」两轮空手照报失败，以防把「记住明天八点提醒我」敷衍成「记住了」。90 天真实流量里「记住…」只有 5 句，登记不改。
 - **Jev 停外呼（用户选 B）**：云端共享 `.env` 的 `DECISION_ENABLED` 由 true 改为 false，只动这一行、保持 root:root 600，凭证保留；
   随下一次部署重建网关生效（[Jev §15](design/2026-10-04-jev-decide-integration.md)）。
+
+## 2026-10-10：Dashboard 浏览器页签图标同步并发布
+
+- `7bb9df32` 将页签从旧 favicon 改为与顶栏共用 Visual v2 `brand.svg`；16/20/32/64px 深浅预览与候选构建通过。
+- 用户明确授权后推送、隔离工作树发布；独立 verify 和线上图标资源检查通过，前后运行 SHA 固定。发布版本与验收记录统一见 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)，实现见 [Dashboard §9.7](design/2026-10-09-dashboard-visual-v2-implementation-plan.md#97-2026-10-10-浏览器页签图标同步)。
+- 首版被另一条较旧的 `6318d66b` 发布覆盖后，等待已含本次提交的后继 `b0268d43`（HMI 图标更新）上线，再按最终运行 SHA 复验 Dashboard 图标；最终证据位于 `.artifacts/favicon-review/final-b0268d43/`。
+
+## 2026-10-10：HMI 页签图标可读性调整并发布
+
+- `b0268d43` 保留紫色玻璃球设计，将 16px 页签中的球体放大 20%，主题色对齐 v2，并给 favicon URL 加版本号；构建、SVG / HTTP 检查与多尺寸深浅预览通过。
+- 用户明确要求推送部署后，按精确 SHA 发布；并发发布改变基线时重新 dry-run、等待云端锁释放，随后独立 verify 及 HMI / Dashboard 线上图标内容检查通过。
+- 实施与留证见 [HMI 验证记录 T5](design/2026-10-09-hmi-visual-v2-validation-release.md#t5-浏览器页签图标与授权发布2026-10-10)；当前 release、Provider / 模型、统一验收 artifact 与容量只维护 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。

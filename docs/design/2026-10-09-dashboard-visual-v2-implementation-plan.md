@@ -275,3 +275,11 @@ node dashboard/visual-qa.mjs --interactions components components:1920:presentat
 - 该提交的 dashboard **18 文件 / 156 tests** 与 TypeScript/Vite build 通过；浏览器 **18 个组合 / 108 次布局检查**通过，覆盖 1024/1280/1440/1679/1680/1920/2560、深浅主题、工作台/演示尺寸、长文本与 JSON 全文、跨断点缩放，以及暂停/恢复。允许长内容引入竖向滚动条，但不允许多出空列或正文横向溢出。
 - 本地证据：`.artifacts/dashboard-log-expand/release-{tests,build,browser}.log` 和 `release-b2222c63/browser/evidence.json`；后者绑定精确代码提交及源码摘要。沿用本轮“提交推送并部署”授权，发布与线上验收结果登记在 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 - dry-run 无阻断，独立 status / verify 通过；从线上服务加载离线日志夹具，1440/1679/1680/1920 深浅 **8 个组合 / 48 次布局检查**通过，前后运行版本固定为该提交，空列宽度为 0。证据：`.artifacts/dashboard-log-expand/online-checks.json` 与 `online-b2222c63/browser/`；不读取真实日志正文或执行真实业务写入。
+
+### 9.7 2026-10-10 浏览器页签图标同步
+
+- 线上 Dashboard 的页签仍引用旧 `favicon.svg`，其配色和尾点与 Visual v2 顶栏标识不同。`7bb9df328cf3a086bf7ad141d7e3a66a3b30681c` 将页签改为直接引用顶栏同一份 `brand.svg`，并声明 SVG 可缩放尺寸；不另做一份品牌图形。
+- 16/20/32/64px、深浅背景的浏览器预览已核对；候选提交的 TypeScript/Vite build 通过，构建产物包含同一份品牌 SVG。证据：`.artifacts/favicon-review/preview.png`、`checks.json`、`release-build.log`。
+- 用户明确授权推送部署，采用干净隔离工作树，dry-run 无阻断；运行版本及上线后独立验证统一登记在 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
+- 独立发布验证通过；线上 HTML 图标引用、SVG 响应类型、与 Git 资源的文本一致性和顶栏同源均已核对，检查前后运行 SHA 固定。证据：`.artifacts/favicon-review/online-checks.json`、`status-before-icon.json`、`status-after-icon.json`。首趟图标检查遇到本次 verify 的正常事务锁占用，待 verify 完成后串行复查通过。
+- 首版验收后，另一条发布于 2026-10-10 03:38:29 UTC 激活较早的 `6318d66b`，覆盖了图标更新；随后 HMI 图标发布 `b0268d435b812182aa973a501bc94f70a7fb7e38` 重新包含本次提交。按最终版本独立复核 Dashboard 图标通过，前后 release 固定，证据为 `.artifacts/favicon-review/final-b0268d43/online-checks.json`；两次验收不混用，当前发布记录见 QA 交接 §2。
