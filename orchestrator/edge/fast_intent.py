@@ -1665,7 +1665,49 @@ def _resplit_on_he(part: str) -> list[str]:
         name = _to_legacy_name(r)
         if name is None or not is_local(name):
             return [part]
-    return subs
+    return _inherit_direction(subs)
+
+
+#: 方向字：一段话里有它们之一，才算自己说了开 / 关的方向（只用于「和」并列里补方向，不是动作词表）。
+_DIRECTION_MARKS = ("开", "关", "启", "闭")
+_DIRECTION_VERB = {"open": "打开", "close": "关闭"}
+
+
+def _direction_of(result: dict | None) -> str:
+    """结构化意图的开关方向：open / close；调温、调量这类没有方向的返回空串。"""
+    data = (result or {}).get("data") or {}
+    op = data.get("operate")
+    if op in ("open", "on") or (op == "set" and data.get("enabled") is True):
+        return "open"
+    if op in ("close", "off") or (op == "set" and data.get("enabled") is False):
+        return "close"
+    return ""
+
+
+def _inherit_direction(subs: list[str]) -> list[str]:
+    """「和」并列里的方向继承（2026-10-10 核心旅程 P3 C17）。
+
+    「关闭座椅加热和方向盘加热」「关闭车窗和天窗」「座椅加热和方向盘加热都关掉」——动词只说了一次，拆开后没带方向的
+    那一段被分类器按裸对象默认成「开」：用户要关两样，另一样被打开（真栈收尾实测执行了 `steering_wheel.heating.open`，
+    车态复位核对抓到）。组里自己带方向字的那几段方向一致时，把方向补给没带方向的段，补完对象不变、方向对上才采用；
+    方向不一致（「打开空调和关闭车窗」）或没有一段带方向（「空调和氛围灯」），一律照旧。
+    """
+    explicit = {_direction_of(classify_structured(s)) for s in subs if any(m in s for m in _DIRECTION_MARKS)}
+    explicit.discard("")
+    if len(explicit) != 1:
+        return subs
+    direction = explicit.pop()
+    out = []
+    for s in subs:
+        own = classify_structured(s)
+        if any(m in s for m in _DIRECTION_MARKS) or own is None or _direction_of(own) in ("", direction):
+            out.append(s)
+            continue
+        rewritten = _DIRECTION_VERB[direction] + s
+        r = classify_structured(rewritten)
+        same_object = bool(r) and (r.get("data") or {}).get("object") == (own.get("data") or {}).get("object")
+        out.append(rewritten if same_object and _direction_of(r) == direction else s)
+    return out
 
 
 def _split_parts(text: str) -> list[str]:
