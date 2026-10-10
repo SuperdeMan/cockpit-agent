@@ -1,6 +1,6 @@
 # HMI 真实地图接入（2026-10-10）
 
-状态：代码与本地真实地图验证完成，生产环境变量导入、Compose 批准与发布待确认。用户提供了 Web端 JS API Key 和配套安全密钥用于本批开发；本地验证只把文件内容读进专用 Vite 进程，未修改根 `.env` 或云端配置。
+状态：2026-10-10 经用户批准完成凭据导入、Compose 批准、精确 SHA 推送与生产发布，独立 verify 和线上真实地图专项通过。当前 release 与统一证据见 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。开发阶段仅进程注入凭据，授权后才写入根 `.env` 与云端受控配置。
 
 ## 范围与设计依据
 
@@ -24,7 +24,15 @@
 - 真实 SDK 初始化、瓦片、样式及图标请求成功；浏览器中 `window._AMapSecurityConfig` 只有 `serviceHost`，网络与 CDP 检查没有安全密钥原值，业务出帧为 0。
 - 浏览器覆盖 9 组：深浅路线、浅色大字 1920×720、地点列表、充电、行程、缺轨迹路线、行车大字及失败重试；另验缺坐标零 SDK 请求、取消销毁、编号保序、点选与换主题后的选中状态。标记须在视口内且避开会话 / 标题 / 摘要。大字行车首次读出终点裁切 1px，增加取景边距后同断言通过，未放宽断言。
 - 纯函数测试覆盖坐标 / 轨迹 / 取消 / grounded 与取景；代理测试覆盖路径与 Key 绑定、方法 / 跨站 / 缺配置拒绝、超限响应与错误不泄密。启动器测试覆盖凭据脱敏。
-- 复现：凭据只注入 Vite 服务进程后启动本机 Vite；`HMI_MAP_URL` 指向该 Vite，运行 `node test/hmi_cdp/map_stage.mjs`。测试进程可通过 `AMAP_JS_SECURITY_CODE` 做不泄露断言，该值不输出；`secretChecked=false` 时不得宣称完成实际密钥检查。
+- 复现：凭据只注入 Vite 服务进程后启动本机 Vite；`HMI_MAP_URL` 指向该 Vite，运行 `node test/hmi_cdp/map_stage.mjs`。测试进程可通过 `AMAP_JS_SECURITY_CODE` 做不泄露断言，该值不输出，启动浏览器子进程时剔除两项凭据环境变量；`secretChecked=false` 时不得宣称完成实际密钥检查。
 - 本地验证：HMI **401 passed**，严格类型检查与 Vite build 通过（已有 >500 kB bundle 提示保留）。启动器 / Compose / 发布资产检查首次 **389 passed / 4 skipped / 1 failed**；唯一失败来自并发合入 README 后权威入口语句不再匹配既有守卫，按相同含义恢复原表述后该项专项 **1 passed**，没有放宽断言或跳过测试。
 - 本地证据目录 `.artifacts/hmi-map-20261010/`：`hmi-tests.log`、`typecheck.log`、`build.log`、`python-tests.log` / `docs-recheck.log`、`browser-checks.json`、各场景截图与 `geometry-*.json`、`confidentiality.json`。源码 / 构建 / 文本证据未检出凭据原值，扫描器以仅在内存中插入的凭据及 UTF-16 编码做反向验证；`types.ts` / `App.tsx` 整文件无改动。不转借旧版本后端全量、生产 verify 或车机硬件验收。
-- 这是真实地图展示接入，不新增定位采集、逐向导航、实时车位、路线重算或服务端执行语义。设备 GPU/触控、生产域名白名单与云端最终瓦片加载需在正式发布时独立验证。
+- 这是真实地图展示接入，不新增定位采集、逐向导航、实时车位、路线重算或服务端执行语义。本次生产域名与云端瓦片加载已独立验证；设备 GPU/触控仍需设备验收。
+
+## 授权发布（2026-10-10）
+
+- 用户明确批准两项运行时凭据、Compose 透传、推送与部署。只写 `AMAP_JS_KEY` / `AMAP_JS_SECURITY_CODE`，保留其他字段、原 `AMAP_KEY` 与文件权限，回读与授权输入一致；凭据经进程内读取和 SSH stdin 传递，不进命令参数或日志。云端事务锁占用时未改配置，等待释放后完成写入。
+- 前置导航提交由其任务同步并发布后，本批以实际基线重新 dry-run。Compose 一次性批准摘要 `1472e6a003ebfbc31ef77aa20957cb527ef9e8bc008a83137a98f636633ebe39`，零阻断；干净隔离工作树未复制 `.env`。26 个镜像与发布事务完成，随后独立 status / verify 通过。
+- 线上运行时接口只返回应用 Key，可用状态 / 输入匹配 / `no-store` 均已检查；安全密钥未下发。实际页面资源加载高德 SDK 与瓦片，9 组地图浏览器断言通过，业务出帧 0、页面异常 0；浏览器启动器隔离凭据环境变量后再次通过，前后运行版本相同。
+- 线上测试使用合成地图卡和隔离 WebSocket，不生成真实导航、车控、下单或付款。浏览器驱动的路径 / 端口 / WebSocket 目标按线上地址适配，断言不放宽；测试驱动与文档后续提交不是生产代码 SHA。
+- 证据：`.artifacts/hmi-map-20261010/credential-configuration.json`、`approved-dry-run.stdout.log`、`apply-result.json`、`live-verification.json`、`status-final.json`、`online/`、`browser-environment-recheck.json`。精确 release、Provider / 模型、统一 verify artifact 与容量仅维护在 QA 交接 §2。

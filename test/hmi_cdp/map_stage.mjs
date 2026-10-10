@@ -10,8 +10,11 @@ mkdirSync(out,{recursive:true})
 const base=process.env.HMI_MAP_URL||'http://127.0.0.1:5197'
 // Optional in ordinary fixture runs; required for a credential non-disclosure claim.
 const secret=process.env.AMAP_JS_SECURITY_CODE||''
+const browserEnv={...process.env}
+delete browserEnv.AMAP_JS_KEY
+delete browserEnv.AMAP_JS_SECURITY_CODE
 const exe=['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(existsSync)
-const browser=spawn(exe,['--headless=new','--guest','--no-first-run','--disable-extensions','--remote-debugging-port=9371',`--user-data-dir=${join(out,'browser-profile')}`,'about:blank'],{windowsHide:true,stdio:'ignore'})
+const browser=spawn(exe,['--headless=new','--guest','--no-first-run','--disable-extensions','--remote-debugging-port=9371',`--user-data-dir=${join(out,'browser-profile')}`,'about:blank'],{windowsHide:true,stdio:'ignore',env:browserEnv})
 const cdp=new Cdp(),network=[],errors=[]
 let secretInBrowser=false
 try {
