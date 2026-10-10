@@ -585,7 +585,7 @@ def test_adding_a_category_skips_the_stops_already_on_the_route():
     """类目词（「充电站」）：搜到的第一个就是路线上那个 ⇒ 跳过它，加下一个。"""
     res, _, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2")],
                          slots={"add_waypoint": "充电站"})
-    assert names == [_CHARGER_A["name"], _CHARGER_B["name"]]
+    assert sorted(names) == sorted([_CHARGER_A["name"], _CHARGER_B["name"]])     # 先后按多绕最少（另有用例）
     assert f"已顺路加上{_CHARGER_B['name']}" in res.speech
 
 
@@ -599,4 +599,23 @@ def test_a_named_place_found_by_search_is_added_as_before():
     station = POI(id="gas-1", name="中石化加油站", lat=22.55, lng=113.92)
     other = POI(id="gas-2", name="中石油加油站", lat=22.56, lng=113.93)
     res, _, names = _add([_KFC], [other, station], slots={"add_waypoint": "中石化加油站"}, raw_text="顺路加个中石化加油站")
-    assert names == [_KFC["name"], "中石化加油站"] and "已顺路加上中石化加油站" in res.speech
+    assert sorted(names) == sorted([_KFC["name"], "中石化加油站"]) and "已顺路加上中石化加油站" in res.speech
+
+
+def test_a_new_stop_goes_where_it_adds_the_least_detour():
+    """2026-10-10 真栈 swap2（M3）：路线上已有北站旁的充电站，再加一个起点旁的站，修前排到最后——先去北站、绕回南山、再去北站，
+    全程 21.6 公里绕成 52.5 公里。没说先后时插在多绕最少的位置：起点旁的站排在前面。"""
+    near_start = POI(id="h1", name="海王银河科技大厦电动汽车充电站", lat=22.5415, lng=113.9415)
+    agent, _ = _agent(search_results=[near_start])
+    meta = _session_meta(waypoints=[_CHARGER_A], destination="深圳北站", lat=22.609, lng=114.029,
+                         current_lat="22.541", current_lng="113.9412")
+    res = asyncio.run(run_handle(agent, "navigation.reroute", slots={"add_waypoint": "充电站"},
+                                 raw_text="途经再加一个充电站", ctx=make_context(), meta=meta))
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == [near_start.name, _CHARGER_A["name"]]
+
+
+def test_a_stop_near_the_destination_still_goes_last():
+    near_dest = POI(id="d1", name="特来电充电站(北站东广场)", lat=22.6150, lng=114.0300)
+    res, _, names = _add([_KFC], [near_dest], slots={"add_waypoint": "充电站"})
+    assert names == [_KFC["name"], near_dest.name]

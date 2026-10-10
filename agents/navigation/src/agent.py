@@ -2306,7 +2306,7 @@ class NavigationAgent(BaseAgent):
                 if prepend:
                     waypoints.insert(0, wp)
                 else:
-                    waypoints.append(wp)
+                    waypoints.insert(self._cheapest_slot(waypoints, wp, current, (dest_lat, dest_lng)), wp)
                 notes.append(f"已顺路加上{pick.name}")
                 changed = True
             elif already is not None:
@@ -2381,6 +2381,32 @@ class NavigationAgent(BaseAgent):
         return self._stamp_route_session(
             result, dest_name, dest_lat, dest_lng, waypoints=waypoints,
             strategy=strategy, arrive_by_ts=arrive_by_ts)
+
+    @classmethod
+    def _cheapest_slot(cls, waypoints: list, wp: dict, start, dest) -> int:
+        """没说先后的新途经点插在哪：全程（直线近似）多绕得最少的位置（2026-10-10 真栈 swap2）。
+
+        修前一律排到最后：路线上已有目的地旁的充电站，再加一个起点旁的站，就成了「先去目的地旁、绕回起点、再去目的地」，
+        全程 21.6 公里绕成 52.5 公里。起点或坐标缺失 ⇒ 照旧排到最后。同样多绕时取靠后的位置（与修前一致）。
+        """
+        try:
+            here = (float(start.lat), float(start.lng)) if start else None
+            stops = [(float(w["lat"]), float(w["lng"])) for w in waypoints]
+            new = (float(wp["lat"]), float(wp["lng"]))
+            end = (float(dest[0]), float(dest[1]))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return len(waypoints)
+        if here is None:
+            return len(waypoints)
+        points = [here, *stops, end]
+
+        def km(a, b):
+            return cls._rough_km(a[0], a[1], b[0], b[1])
+
+        costs = [km(points[i], new) + km(new, points[i + 1]) - km(points[i], points[i + 1])
+                 for i in range(len(points) - 1)]
+        best = min(costs)
+        return max(i for i, cost in enumerate(costs) if cost <= best + 1e-9)
 
     async def _remember_visited(self, ctx, name, lat, lng) -> None:
         """导航成功落一条轻量情景轨迹（G6「上次去的那个地方」数据源）。best-effort。
