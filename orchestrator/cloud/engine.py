@@ -262,6 +262,17 @@ def _admission_timeout_s() -> float:
     return value if value > 0 else 3.0
 
 
+def _continuation_timeout_s() -> float:
+    """续问窗受话判定每一问的上限（秒）。它与规划并行，受话轮不增加可感时延，所以比挂起续接那道（`_admission_timeout_s`）宽：
+    2026-10-11 真栈探针里 3 s 上限下两句判定在规划同时进行时超时、回落规划器的宽松判定，乘客的话被放行。
+    代码缺省 5.0，不进 `.env.example`（部署闸按路径硬阻断）；非法值回落缺省。"""
+    try:
+        value = float(os.getenv("CONTINUATION_ADMISSION_TIMEOUT_S", "") or 5.0)
+    except ValueError:
+        return 5.0
+    return value if value > 0 else 5.0
+
+
 def _clarify_enabled() -> bool:
     # 兜底缺省与部署缺省对齐（`.env.example` / compose 都是 on）——两处不一致时，
     # 不经 compose 起的进程会静默测到另一套装配。见 planning.py 同名开关的注释。
@@ -1884,7 +1895,7 @@ class PlannerEngine:
 
     async def _continuation_admitted(self, ctx: PlanContext, text: str, working_set) -> bool | None:
         """续问窗来的这句是不是对助手说的（`admission.judge_continuation`：判否再问一次，两次都否才 False）。
-        「记住…」恒受话不问模型（同 `_voice_admitted`）；每次调用各自受 `_admission_timeout_s()` 约束，判不出 ⇒ None。
+        「记住…」恒受话不问模型（同 `_voice_admitted`）；每一问各自受 `_continuation_timeout_s()` 约束，判不出 ⇒ None。
         发一个 `cloud.voice_admission` span（exit=continuation，每次的判定 + 耗时）。任何意外 ⇒ None（回落规划器的判定）。"""
         started = time.monotonic()
         votes: tuple = ()
@@ -1896,7 +1907,7 @@ class PlannerEngine:
 
                 async def bounded(messages):
                     return await asyncio.wait_for(self._admission_complete(messages),
-                                                  timeout=_admission_timeout_s())
+                                                  timeout=_continuation_timeout_s())
 
                 verdict, votes = await judge_continuation(
                     bounded, text, previous, assistant_name(ctx.prefs.get("assistant_name", "")))

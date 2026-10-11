@@ -138,7 +138,24 @@ def test_a_rejection_needs_two_consecutive_noes(answers, verdict, votes):
         return "" if answer is None else json.dumps({"addressed": answer})
 
     assert asyncio.run(judge_continuation(llm, "你冷不冷", "空调已打开。")) == (verdict, votes)
-    assert len(seen) == len(answers) and all(m == seen[0] for m in seen)
+    assert len(seen) == len(answers)
+
+
+def test_the_recheck_is_not_a_byte_identical_request():
+    """复核那一问与第一问只差结尾一个换行：网关按「消息 + 模型 + 温度」缓存 300 s，一字不差的第二问会直接拿回第一问的答案
+    （2026-10-11 真栈探针实测两问合计不到 1 s、恒为「否、否」）。判据（system）与待判数据一字不变。"""
+    seen = []
+
+    async def llm(messages):
+        seen.append(messages)
+        return json.dumps({"addressed": False})
+
+    asyncio.run(judge_continuation(llm, "你冷不冷", "空调已打开。", "小舟"))
+    first, second = seen
+    assert first != second
+    assert first[0] == second[0]
+    assert second[1]["content"] == first[1]["content"] + "\n"
+    assert continuation_messages("你冷不冷", "空调已打开。", "小舟") == first
 
 
 def test_the_client_listen_sources_match_the_cloud_continuation_sources():

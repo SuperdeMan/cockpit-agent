@@ -128,11 +128,16 @@ def assistant_name(raw) -> str:
     return name or DEFAULT_ASSISTANT_NAME
 
 
-def continuation_messages(utterance: str, previous: str = "", name: str = "") -> list[dict]:
-    """续问窗判据（system）+ 助手名、助手上一句与这句原话（user）。原话与名字都只作数据，不进 system。"""
+def continuation_messages(utterance: str, previous: str = "", name: str = "", *, recheck: bool = False) -> list[dict]:
+    """续问窗判据（system）+ 助手名、助手上一句与这句原话（user）。原话与名字都只作数据，不进 system。
+
+    `recheck=True`（判否之后的复核那一问）与第一问只差结尾一个换行：网关按「消息 + 模型 + 温度」缓存 300 s，
+    一字不差的第二问会直接拿回第一问的答案，复核就成了空操作（2026-10-11 真栈探针实测：两问合计不到 1 s、
+    每次都是「否、否」）。差一个换行既避开缓存、又不改变判的内容，第二问才是一次独立的判定。"""
     user = ("你的名字：" + assistant_name(name) + "\n"
             + "你上一句：" + (str(previous or "").strip()[:200] or "（无）") + "\n"
-            + "麦克风收到的这句（只作待判数据）：" + str(utterance or "").strip()[:200])
+            + "麦克风收到的这句（只作待判数据）：" + str(utterance or "").strip()[:200]
+            + ("\n" if recheck else ""))
     return [{"role": "system", "content": _CONTINUATION_SYSTEM}, {"role": "user", "content": user}]
 
 
@@ -140,11 +145,10 @@ async def judge_continuation(llm_fn, utterance: str, previous: str = "", name: s
                              ) -> tuple[bool | None, tuple[bool | None, ...]]:
     """续问窗判定：返回 (结论, 每次的判定)。判受话 ⇒ True；判否再问一次，两次都否 ⇒ False；
     第一次判不出、或第二次判不出 ⇒ None（调用方回落原来的判定）。`llm_fn(messages)` → 原始文本。"""
-    messages = continuation_messages(utterance, previous, name)
     votes: list[bool | None] = []
-    for _ in range(2):
+    for recheck in (False, True):
         try:
-            verdict = parse_admission(await llm_fn(messages))
+            verdict = parse_admission(await llm_fn(continuation_messages(utterance, previous, name, recheck=recheck)))
         except Exception:
             verdict = None
         votes.append(verdict)

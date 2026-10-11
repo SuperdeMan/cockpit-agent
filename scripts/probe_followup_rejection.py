@@ -82,18 +82,25 @@ async def probe(expected_sha: str, repeat: int) -> dict:
             user = f"{run_id}-r{rep}-s{index}"
             token = sign_identity(secret, run_id=run_id, user_id=user, vehicle_id="v1", scopes=list(SCOPES),
                                   timeout_s=900)
-            session = f"{user}-session"
+            session = f"{user}-session-1"     # 签名车道只认「<用户>-session-<正整数>」（gateway/edge/e2e_identity.go）
             trace = uuid.uuid4().hex
-            async with websockets.connect(identity._ws_url_with(ws_url, token), max_size=8 * 1024 * 1024) as ws:
-                try:
-                    await asyncio.wait_for(ws.recv(), timeout=wire._HELLO_WAIT_S)
-                except asyncio.TimeoutError:
-                    pass
-                opening = await wire._one_turn(ws, session, OPENING, meta_overrides={"input_source": "voice_wake"})
-                started = time.monotonic()
-                obs = await wire._one_turn(ws, session, text, trace_id=trace,
-                                           meta_overrides={"input_source": "voice_followup"})
-                turn_s = round(time.monotonic() - started, 2)
+            try:
+                async with websockets.connect(identity._ws_url_with(ws_url, token), max_size=8 * 1024 * 1024) as ws:
+                    try:
+                        await asyncio.wait_for(ws.recv(), timeout=wire._HELLO_WAIT_S)
+                    except asyncio.TimeoutError:
+                        pass
+                    opening = await wire._one_turn(ws, session, OPENING, meta_overrides={"input_source": "voice_wake"})
+                    started = time.monotonic()
+                    obs = await wire._one_turn(ws, session, text, trace_id=trace,
+                                               meta_overrides={"input_source": "voice_followup"})
+                    turn_s = round(time.monotonic() - started, 2)
+            except (asyncio.TimeoutError, TimeoutError, OSError, websockets.ConnectionClosed) as exc:
+                # 单例链路失败（云端偶发慢、断连）如实记一行、继续下一例；不算判定对错
+                result["rows"].append({"rep": rep, "text": text, "gold_addressed": addressed, "trace_id": trace,
+                                       "error": type(exc).__name__, "actions": []})
+                print(f"r{rep} ERR {type(exc).__name__}  {text}")
+                continue
             admission, rejected_span, detail = await _admission(collector, trace)
             attrs = (admission or {}).get("attrs") or {}
             rejected = obs.get("card_type") == "rejected"
@@ -121,14 +128,17 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=3)
     args = parser.parse_args()
     result = asyncio.run(probe(args.expected_sha, args.repeat))
-    rows = result.get("rows", [])
+    errors = [r for r in result.get("rows", []) if r.get("error")]
+    rows = [r for r in result.get("rows", []) if not r.get("error")]
     negatives = [r for r in rows if not r["gold_addressed"]]
     positives = [r for r in rows if r["gold_addressed"]]
     summary = {
         "turns": len(rows),
+        "link_errors": len(errors),
         "negatives_rejected": f"{sum(r['rejected'] for r in negatives)}/{len(negatives)}",
         "positives_rejected": f"{sum(r['rejected'] for r in positives)}/{len(positives)}",
         "continuation_judged": sum(r["votes"] is not None for r in rows),
+        "judge_unavailable": sum(r.get("verdict") == "unavailable" for r in rows),
         "opening_answered": sum(r["opening_ok"] for r in rows),
         "actions": sum(len(r["actions"]) for r in rows),
     }

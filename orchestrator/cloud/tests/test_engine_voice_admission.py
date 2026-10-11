@@ -606,3 +606,27 @@ def test_a_late_rejection_still_rejects_after_the_plan_is_ready():
     spy.verdicts["把车窗关上"] = [False]
     assert _rejected(_run(engine, _req("把车窗关上", meta=_VOICE))[-1])
     assert spy.executed("window.close") == 0
+
+
+def test_a_slow_continuation_judgment_is_bounded_and_falls_back_to_the_planner(monkeypatch):
+    """续问窗判定每一问有自己的上限（`CONTINUATION_ADMISSION_TIMEOUT_S`，缺省 5 s，比挂起续接那道 3 s 宽：它与规划并行）；
+    超时 ⇒ 判不出，回落规划器的 `addressed`，span 记 unavailable。"""
+    from .test_obs_spans import _capture_spans
+    spans = _capture_spans(monkeypatch)
+    monkeypatch.setenv("CONTINUATION_ADMISSION_TIMEOUT_S", "0.05")
+    monkeypatch.setenv("ADMISSION_TIMEOUT_S", "30")          # 两个上限各管各的：放宽挂起那道不影响这一道
+    engine, spy, _session = _make()
+    _planner_says(engine)
+    original = spy.llm_complete
+
+    async def slow(messages, max_tokens=800, thinking=False, *, model="", temperature=0.3):
+        if "受话判定器" in messages[0]["content"]:
+            await asyncio.sleep(1.0)
+        return await original(messages, max_tokens, thinking, model=model, temperature=temperature)
+
+    spy.llm_complete = slow
+    spy.verdicts["把车窗关上"] = [False]
+    final = _run(engine, _req("把车窗关上", meta=_VOICE))[-1]
+    assert not _rejected(final) and spy.executed("window.close") == 1
+    seen = [(kw.get("attrs") or {}) for _, node, kw in spans if node == "cloud.voice_admission"]
+    assert [(a.get("exit"), a.get("verdict"), a.get("votes")) for a in seen] == [("continuation", "unavailable", "-")]
