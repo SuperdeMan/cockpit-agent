@@ -37,6 +37,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Release -Vari
 
 缓存只能减少重做，不能保证每次“增量秒级”。CNG prebuild 可能重新生成 `android/`；CMake 参数变化也会改变配置哈希。尤其调整 `-CompileJobs N` 会切换 `.cxx/<hash>`，所以同一验收候选应尽量固定参数。不要把 `-Clean` 或删除缓存当作内存不足、长时间无日志的默认处理。
 
+`onnxruntime-react-native` 自己按 `latest.integration` 取 ORT 原生库，版本由 [gradle_rn_compat.init.gradle](../../scripts/gradle_rn_compat.init.gradle) 钉住（2026-10-11 起 1.30.0）。没钉之前，上游一发新版，release 增量构建就报 `ninja: error: '.../onnxruntime-android-<旧版本>.aar/jni/...' missing`：镜像每次重新解压 AAR，而保留在镜像外的 CMake 配置是配置时 GLOB 出来的旧路径。有意升级这个版本时同样如此——改版本后要让该模块重新配置，再真机验 VAD。
+
 ## 3. 低内存构建：并发与 JVM 分开处理
 
 先看可用物理内存与 commit 余量；Windows 的 JVM 启动错误 1455 不能仅用“物理内存还有几 GB”排除。

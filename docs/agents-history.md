@@ -11039,3 +11039,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 用户明确要求“推送部署验证”，精确推送并部署 `64be4936cd6898a44660f768d6233d7ef8ed0aa4`，基线 `0c07bc33`。干净隔离工作树仅复制 target 文件；dry-run 无阻塞，沿用既有基础设施批准，不改环境/密钥/数据库/CI/CD。
 - CI 8 项成功，apply 完成后独立 status/verify 通过。线上真实对话的三轮底部跟随、主动历史、中断恢复与深浅地图交叉流程通过，业务隔离的线上地图矩阵 8 组通过；发布权威字段见 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 - 额外记录 B04：两次新浏览器首屏加载 127.1 / 107.5 s，后续导航 2.7–38.2 s。初次等待超时未计通过；等待资源正常渲染后完成三项交互验收。性能原因尚未分解、未修，不宣称完整 QA 全绿。证据与复现见 [浏览器验收](reviews/2026-10-11-hmi-visual-v2-browser-audit.md)。
+
+## 2026-10-11：续问窗拒识的 Android 设备包 + ORT 钉版本
+
+- 用户确认线上全局生效模型 Flash 是自己切的、用于测试（[Flash 接入 §7](design/2026-10-09-minimax-m31-flash-preview.md)）：之后的验收只如实记录生效模型，不当异常、不替用户切回。
+- 手机接入后打常驻包。主工作树里有别的会话未提交的 `hmi/src` 文件（直接构建会标 `-dirty`），改在干净隔离工作树构建。首趟 ORT 原生步失败：`onnxruntime-react-native` 按 `latest.integration` 取 ORT，今天解析到 1.31.0，镜像外保留的 CMake 配置仍指向 1.30.0 的解压路径。
+  `b79daa46` 在 `scripts/gradle_rn_compat.init.gradle` 钉 1.30.0（此前设备包都是这个版本，本地与 CI APK 工作流共用），构建指南 §2 补了这条失败签名。
+- 常驻包 `b79daa46b` 装 Xiaomi（compare；上一包 `7d6141afe`）：安装回读、设备与本地 SHA-256 一致、启动与 KWS 正常、设置页底部同 SHA；包内拒识提示与新指标名都在（旧包为 0）。读数见 [续问窗拒识 §6.4](design/2026-10-10-handsfree-followup-rejection.md)。真车声学由用户验。

@@ -1,6 +1,6 @@
 # 唤醒后连续对话的拒识：续问窗收进人人对话
 
-- 状态：云端与 HMI 已部署 `0c07bc33`（2026-10-11，用户授权提交、推送、部署与真栈验证）；Android 代码已入库、设备包未重打（手机未连接）
+- 状态：云端与 HMI 已部署 `0c07bc33`（2026-10-11，用户授权提交、推送、部署与真栈验证）；Android 常驻包 `b79daa46b` 已装 Xiaomi（2026-10-11，§6.4）；真车声学验收由用户进行
 - 交付对象：云端编排（`orchestrator/cloud`）、共享语音状态机（`hmi/src/voiceLoop.mjs`）、HMI、Android
 - 关联：`orchestrator/cloud/admission.py`、`orchestrator/cloud/engine.py`、`hmi/src/voiceLoop.mjs`、
   `hmi/src/handsFreeController.ts`、`hmi/src/App.tsx`、`mobile/src/core/voice/handsFree.ts`、
@@ -159,5 +159,21 @@
     第 2 轮「现在几点了」第一问判否、复核判受话 ⇒ 放行：复核在线上生效了。
   - 时延：拒识轮判定 1.3–3.2 s（两问）、整轮 2.3–4.0 s 落地；受话轮判定 0.6–1.7 s，与规划并行，整轮 2.5–5.6 s 由规划决定。
   - 证据：`.artifacts/followup-rejection/probe-0c07bc33-r3.json`。对照：发布前生产（`47a71942`）同来源 F12 六句 7 趟只拒 20/42。
-- 尚未覆盖：真麦克风、真车厢噪声与多人同时说话（文本层以外的问题）；Android 设备包未重打。
+- 尚未覆盖：真麦克风、真车厢噪声与多人同时说话（文本层以外的问题），由用户真车验收。
+
+### 6.4 Android 设备包（`b79daa46b`，2026-10-11）
+
+- 构建：干净隔离工作树 `b79daa46`（移动端代码与 `0c07bc33` 相同，之上只有 HMI 视图提交和下面这条构建修复），
+  `build_mobile.ps1 -Release -Variant prod -CompileJobs 3`，堆 128m / 2048m，9 分 4 秒。
+  落点 `D:\Android\builds\apk\xiaozhou-companion-prod-release-b79daa46b-20261011-1453.apk`，SHA-256 `6f615baa…27e5`，
+  签名 SHA-1 与 `mobile/README.md` 登记值一致，ORT 1.30.0，arm64-v8a / armeabi-v7a。
+- 首次构建失败：`onnxruntime-react-native` 按 `latest.integration` 取 ORT，今天解析到 1.31.0，镜像外保留的 CMake 配置
+  仍指向 1.30.0 的解压路径，ninja 找不到文件。`b79daa46` 在 `scripts/gradle_rn_compat.init.gradle` 把 ORT 钉为 1.30.0
+  （此前所有设备包都是这个版本），本地构建与 CI APK 工作流共用这一份。
+- 包内核对：内嵌 bundle 含「不像是对我说的」提示和 `rejected_session_end` / `followup_expired` 指标名，
+  旧包 `6bd6ed9a8` 三项都是 0（反向对照）。
+- 装机：Xiaomi MIX Fold 4（compare，Android 16），上一包 `7d6141afe`（10-03 构建）。`mobile_device.ps1 -Install` 回读
+  `lastUpdateTime 2026-10-11 14:54:11`、非 DEBUGGABLE；设备安装文件 SHA-256 与本地一致；启动 `Running "main"`、
+  `KWS loaded … @小舟小舟`、无崩溃；设置页底部 `v0.1.0 · prod · b79daa46b · 2026-10-11 14:43`。
+- 未在设备上做声学取证（需要真人说话），由用户真车验收。
 
