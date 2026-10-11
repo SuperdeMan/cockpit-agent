@@ -41,7 +41,7 @@ Android 的工程主干（M0～M4、UX v2 B1–B5、AR01～AR09 工程批、打�
 | E-03 | AR09 P1 长内容（500 条本地消息）缺离线灌数 harness | [余项收口 §7 E-05](2026-09-10-ar-residuals-closeout.md) | 做法已定（仿 `card-gallery` 加只读调试路由，用真的 chat 列表渲 N 条合成消息）。价值有限：持久化上限 50 条把「长记录」按住了，只有单会话内长聊才会超；与 E-01 一起做才划算 | `src/app/`（dev 取证屏族） |
 | E-04 | catalog 预筛 `PLANNER_CATALOG_TOP_K` 20→8 / 前缀缓存（prompt 10.5k token 里 13.6k 字符每轮相同、`cache_hit` 0） | 性能评审 §3.3 / §6-9 | 云端；要过落域门禁（`eval_intent_adversarial --suite gate`）与 M1a 顺序契约的重新 A/B。规划 LLM p50 2.29s 是现在整条链路最大的单段 | `orchestrator/cloud/context.py`、`planning.py`（catalog 渲染） |
 | E-05 | manifest 加「必填槽」声明 → 「只在必填槽缺失时才重试」 | 性能评审 §9.2 | 离线 A/B：14 轮强制重试里 8 轮纯代价、3 轮有益，但 `slots: [query, limit]` 只是名字列表，表达不出更细的规则。新字段要走 SDK loader → Registry round-trip → Step 装配 → pending serialize 整条链（CLAUDE.md §3） | `agents/_sdk/manifest.py`、`registry/`、`orchestrator/cloud/retry_policy.py` |
-| E-06 | 语音采纳实施记录 §3 保留的边界：端侧直接命中 / 挂起续接不经拒识、外部播报参照、`RejectPolicy` 自适应收紧 | [语音采纳实施 §3](2026-09-11-android-voice-input-acceptance.md) | 本日 #4 把「端侧直接命中」里播报语域这一族堵上了；其余仍是设计边界，不是缺陷。`RejectPolicy` 自适应要先有真实拒识分布（H6）再定参。2026-10-10：云端拒识信号已接进 App 免唤醒回路——拒识即结束这次连续对话、拒掉的那一轮不进记录、续问窗来源云端另判受话（[设计](2026-10-10-handsfree-followup-rejection.md)）；`RejectPolicy` 跨会话收紧仍只在 HMI。2026-10-11：常驻包 `b79daa46b` 已装 Xiaomi（设备与本地 SHA-256 一致、设置页底部同 SHA），真车声学由用户验。同日语义打断（[设计](2026-10-11-semantic-barge-in.md)）：播报中插话先压低、判受话才停；拒识提示改 4 s；常驻包 `eb098eddc` 已装 OPPO（test，设备与本地 SHA-256 一致、设置页同 SHA），Xiaomi 仍是 `b79daa46b`；同日 OPPO 换装深链闪退修复包 `1778e22eb`（文末 E-27） | `mobile/src/core/voice/handsFree.ts`、`orchestrator/cloud/engine.py` |
+| E-06 | 语音采纳实施记录 §3 保留的边界：端侧直接命中 / 挂起续接不经拒识、外部播报参照、`RejectPolicy` 自适应收紧 | [语音采纳实施 §3](2026-09-11-android-voice-input-acceptance.md) | 本日 #4 把「端侧直接命中」里播报语域这一族堵上了；其余仍是设计边界，不是缺陷。`RejectPolicy` 自适应要先有真实拒识分布（H6）再定参。2026-10-10：云端拒识信号已接进 App 免唤醒回路——拒识即结束这次连续对话、拒掉的那一轮不进记录、续问窗来源云端另判受话（[设计](2026-10-10-handsfree-followup-rejection.md)）；`RejectPolicy` 跨会话收紧仍只在 HMI。2026-10-11：常驻包 `b79daa46b` 已装 Xiaomi（设备与本地 SHA-256 一致、设置页底部同 SHA），真车声学由用户验。同日语义打断（[设计](2026-10-11-semantic-barge-in.md)）：播报中插话先压低、判受话才停；拒识提示改 4 s；常驻包 `eb098eddc` 已装 OPPO（test，设备与本地 SHA-256 一致、设置页同 SHA），Xiaomi 仍是 `b79daa46b`；同日 OPPO 换装深链闪退修复包 `1778e22eb`（文末 E-27），再换装唤醒应答包 `521270e0b`（文末 E-28） | `mobile/src/core/voice/handsFree.ts`、`orchestrator/cloud/engine.py` |
 
 ### 2.2 D｜只缺真机时间
 
@@ -290,3 +290,9 @@ CA2-04 已实现完整正文/结果引用、共享 revision 选择器与原生�
 | ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
 |---|---|---|---|---|
 | E-27 | E | App 在锁屏 / 被系统弹窗挡着时拉起（JS 已跑、窗口从未布局 ⇒ 根导航器不就绪），这时送来的运行期深链让 expo-router 在它自己的 effect 里抛「Attempted to navigate before mounting the Root Layout component」，release 包闪退；旧包 `eb098eddc` 锁屏复现 2 / 2 | **已修** `1778e22e`：`+native-intent` 只在根导航器就绪后发命令式导航，没就绪先等（最多 10 s），等不到把 URL 交回 router。OPPO（test）装 `1778e22eb`（SHA-256 `4978ca0a…ae74c`，设备与本地一致、非 DEBUGGABLE）：同一路径 3 / 3 不崩、解锁后落设置页，运行中与冷启动深链回归通过；Xiaomi 仍是 `b79daa46b`。[设计 §8.2](2026-10-11-semantic-barge-in.md) | `mobile/src/core/nav/navReady.ts`、`mobile/src/app/+native-intent.tsx`；`nativeIntentReady.test` |
+
+## 2026-10-11 追加：唤醒应答语（用户「每次唤醒后没有应答语，主流语音助手都有」）
+
+| ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
+|---|---|---|---|---|
+| E-28 | E | 喊唤醒词后只有两音提示、没有人声应答（HMI 有）；当初以「要 mp3 解码」为由不做，实际流式 TTS 回 PCM | **已实现** `521270e0`：共享状态机唤醒后 240 ms 看逐窗语音概率——停下来等 ⇒ 播「我在 / 在呢…」（与正文同音色预合成），播完才开 ASR（端上没有回声消除）；一口气接着说 ⇒ 不回应答、唤醒之后那段作精确前滚；轻点光球照旧。退出词补上「好的」。OPPO（test）装 `521270e0b`（SHA-256 `b9e11b88…044d`），启动后应答片段 5 + 3 句合成就绪、无崩溃；**听感待用户验**；Xiaomi 仍 `b79daa46b`。[设计](2026-10-11-wake-acknowledgement.md) | `hmi/src/voiceLoop.mjs`（`_beginWake` / `_decideWake`）、`mobile/src/core/voice/voiceCue.ts`、`handsFree.ts`；`voiceLoop.test` / `voiceCue.test` / `ttsCollect.test` / `handsFree.test` |
