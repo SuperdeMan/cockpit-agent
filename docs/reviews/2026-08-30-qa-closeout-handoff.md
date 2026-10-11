@@ -29,8 +29,10 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
-| 当前生产 release | `65ddeb85b2b3a9c68676ee8238ceee3e5c035aa2`，2026-10-11 授权上线：llm-gateway 按「有没有传」取温度（`e5d581f9`，proto `CompleteRequest.temperature` 改 `optional`、线路兼容）与 Android 深链就绪（`1778e22e`，客户端代码、随 APK 生效），合入当时 main 的 `65ddeb85` 只多了已发布的交接文档。前版 `bb7d76b0b11ae866fbf7cded6bd42e5b3a0a4e20`（HMI 分辨率适配）。本批无配置、凭据、依赖或 schema 变更 |
-| 当前 status / verify | release = running = `65ddeb85b2b3a9c68676ee8238ceee3e5c035aa2`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T103538Z-65ddeb8.json`，`minimax:MiniMax-M3.1-Flash-Preview`（沿用用户设置），`e2e_remote_safe` 通过（切换后约 1 分钟的首次 verify 失败、工件未记原因，单跑发布核对通过后重跑通过）；该 SHA 的 [CI 8 项成功](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38131941601)。前版 `bb7d76b0` 的 status / verify 为 `20261011T093126Z-bb7d76b.json` |
+| 当前生产 release | `374ed444c6d41b20d58618e126ce211a7a5803c2`，2026-10-12 授权上线（同一授权下当晚三次发布）：唤醒应答（`521270e0`，客户端，随 APK 生效）、香氛状态问答与挂起中的执行审计（`370d5eab` / `d1fc804e`）、P06 时钟范例（`2085fc7a`）、条件指令 D04 闸门（`565824bd`）。中间版 `2085fc7a` 在 T2 放行条件指令后件，上线即测出条件为假也执行（D02 0/3），由 `08a62bf5` 回退。前版 `65ddeb85b2b3a9c68676ee8238ceee3e5c035aa2`。本批无配置、凭据、依赖或 schema 变更 |
+| 当前 status / verify | release = running = `374ed444c6d41b20d58618e126ce211a7a5803c2`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T172703Z-374ed44.json`，`minimax:MiniMax-M3.1-Flash-Preview`（沿用用户设置），`e2e_remote_safe` 通过；该 SHA 的 [CI 8 项成功](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38158903264)。apply 两次被主机 sshd 节流拦下（`ssh: Connection closed … port 22`，主机无残留），隔几分钟重试即过。中间版 verify：`2085fc7a` `20261011T163009Z-2085fc7.json`、`08a62bf5` `20261011T165148Z-08a62bf.json` |
+| 条件指令与时钟范例（2085fc7a → 374ed444） | 模拟车车道 ×3：D02「如果深圳今天下雪，就把空调打开」修前 3/3、T2 放行版 **0/3**（三次开了空调）、回退 3/3；D04（同句带「帮我」）回退版 **1/3**（两次开了空调，既有缺口）、修复版 3/3；D01（条件为真应开）0/3、D03（将来条件）known_red。只读：P06 9/10 → 10/10，P01 / P02 / R07 9/9 不变，F08 12/13 不变（同一条 A1-5），P10 / P13 3/3，C02 香氛第二问 7/7 零动作。证据 `.artifacts/v2-runtime/after-{2085fc7a,08a62bf5,374ed444}-*.json`，基线 `*-baseline-65ddeb85-*.json`；设计 [条件指令与时钟问句](../design/2026-10-12-conditional-consequent-and-clock-clause.md) |
+| 唤醒应答（521270e0b） | OPPO（test）装 `xiaozhou-companion-prod-release-521270e0b-20261011-2332.apk`（SHA-256 `b9e11b88…044d`，设备与本地一致）：免唤醒待命、约 7 s 合成好 5 + 3 句应答，无崩溃。听感（停下来等才回「我在」、一口气说完不回、应答不被当成用户的话）待用户真机验收；Xiaomi（compare）仍是 `b79daa46b`。CI mobile 严格 tsc 在 `2085fc7a` 上红（测试假件隐式 any），`67615246` 修 |
 | 温度 0 真栈（65ddeb85） | 插话判定接口 ×2（相隔 10 分钟以上、零缓存命中）96 次：负例 59 / 60 判非受话（「你今天几点下班」一次第一问否、复核是）、正例 36 / 36、判不出 0（0.7 时 3 / 96 超时）；签名车道已判过的插话只有 `bargein_preadmitted`、不带身份 401、零动作。续问窗 ×3：48 轮负例 30 / 30 拒、正例误拒 0 / 18、判定 48 / 48、零动作，与 0.7 同数。核心旅程受影响家族各 1 遍（钉 M3）：只读 71 条 70 过（F01 29 / 30，唯一红 M09 为已知规划方差；F06 27 / 27、F09 6 / 6、F12 8 / 8），F10 提醒 2 / 2、收尾清理核对通过；证据错误 / 残留挂起 / 连续性错误 0。证据 `.artifacts/semantic-bargein/probe-65ddeb85-t0-run{1,2}.json`、`.artifacts/followup-rejection/probe-65ddeb85-t0-r3.json`、`.artifacts/v2-runtime/temp0-65ddeb85-{readonly,f10}-r1.json`；本地全量 11594 passed / 37 skipped 属 `1778e22e` |
 | Android 深链就绪（1778e22eb） | OPPO（test）装 `xiaozhou-companion-prod-release-1778e22eb-20261011-1819.apk`（SHA-256 `4978ca0a…ae74c`，设备与本地一致、非 DEBUGGABLE）：锁屏下拉起、10 s 后锁屏中送深链——旧包 `eb098eddc` 2 / 2 闪退，新包 3 / 3 不崩、解锁后落设置页；运行中与冷启动深链回归通过。jest 新增 7 条（去掉就绪判断 4 条变红）、tsc / eslint。Xiaomi（compare）仍是 `b79daa46b`；证据在本机仓库外（界面导出含天气卡街道地址） |
 | HMI 分辨率线上复验（bb7d76b0） | 9 视口 × 两主题 × 两字号 × 5 场景 **180/180**，负向注入有效；5 次动态改窗、2 次字号、7 次鼠标地图点选，SDK 9 场景/失败重试，滚动 8 场景 + 3 次改窗 + 独立 padding 均通过。三个独立冷启动 1.059 / 1.046 / 1.030 s，均 6 请求、gzip、零源码/HMR 请求。真实线上资源/地图 SDK，业务 WS 隔离、零业务帧；前后 release 固定。本地 HMI 445、typecheck/build，已按源码 blob 与发布对账；未重做密钥内容扫描或硬件验收。证据 `.artifacts/hmi-resolution-release-20261011/online-summary.json` |
@@ -273,11 +275,11 @@ Provider 529 后的受话误判，以及露营模式解释覆盖不足；自动�
 CA2-07 另登记：V210 r1 手册未派发，V207 r3 场景列表未回答模式含义，V214 r3 生成层混淆前/后备箱；
 权限专项的正向回忆也有一轮声称无记录，但数据存在，Agent 具体输入缺乏完整证据，根因待裁定。
 这些都没有随权限机制签收而关闭，见 [CA2-07 §5](../design/2026-09-28-v2-permissioned-context-view.md#5-发布与证据2026-09-28)。
-2026-10-02 CA2-10 真栈车控探针（两次授权）新增三项：① 车端把「如果深圳今天不下雪，就把空调打开」拆开，后件当场执行、空调被无条件打开（「温度低于20度时打开空调」也会被当成设 20 度）——**已修**，`9d6b0509` 整句上云，判据与规划器共用；② 修后云端 T2 查完条件不派后件（goal「条件式指示不产生本轮动作步」，trace `ac80349a236c4747b074dc1cd8c8b162`），未修，改规划知识需 A/B；③ 规划为空步时谈话步说「好，关空调这步执行完了」（trace `70b966cf482846969e001e1b320d93d2`），执行声明闸刻意只认「为您」类标记，放宽前要先拿历史谈话量误伤，未修。另有「下雨的话…」「等到了公司再…」两种延后形态端云两侧都不认，未修。见 [CA2-10 §5](../design/2026-10-02-v2-effect-evidence.md#5-实现与证据2026-10-02)。
+2026-10-02 CA2-10 真栈车控探针（两次授权）新增三项：① 车端把「如果深圳今天不下雪，就把空调打开」拆开，后件当场执行、空调被无条件打开（「温度低于20度时打开空调」也会被当成设 20 度）——**已修**，`9d6b0509` 整句上云，判据与规划器共用；② 修后云端 T2 查完条件不派后件（goal「条件式指示不产生本轮动作步」，trace `ac80349a236c4747b074dc1cd8c8b162`）——2026-10-12 重证：后件其实由再规划正确派出、被问句闸拦下；在 T2 放行（`2085fc7a`）后再规划在前件为假时照样开空调（D02 0/3），已撤回，D01 标 known_red，再放行要先有可证伪的条件判定（[设计 §1.4](../design/2026-10-12-conditional-consequent-and-clock-clause.md)）；同批修掉既有缺口 D04「如果…就帮我…」首轮不拦（`565824bd`，3/3）；③ 规划为空步时谈话步说「好，关空调这步执行完了」（trace `70b966cf482846969e001e1b320d93d2`），执行声明闸刻意只认「为您」类标记，放宽前要先拿历史谈话量误伤，未修。另有「下雨的话…」「等到了公司再…」两种延后形态端云两侧都不认，未修。见 [CA2-10 §5](../design/2026-10-02-v2-effect-evidence.md#5-实现与证据2026-10-02)。
 2026-10-09 核心旅程冻结（CA2-21）首批真栈读数新增，见 [冻结设计 §11](../design/2026-10-09-v2-core-journey-freeze.md#11-落地记录)：
 ① 语音来源「据央视新闻报道…」端侧本地放了媒体，已修（`6733f0ae`），复测转绿；
-② 「打开充电口，顺便告诉我今天几号」以及真实用户「what time is it now」听到「没能换算」，工具一侧已修（`7035ef68`），仍有规划器把问日期误派天气（P06 2/5，`known_red`）；
-③ 挂起中问「我刚才让你做了什么」，审计不提在等确认的操作（P10，产品缺口）；
+② 「打开充电口，顺便告诉我今天几号」以及真实用户「what time is it now」听到「没能换算」，工具一侧已修（`7035ef68`），仍有规划器把问日期误派天气（P06 2/5，`known_red`）——2026-10-12 加三条 datetime 范例后 10/10（前 9/10）、回归不变，已摘 known_red；
+③ 挂起中问「我刚才让你做了什么」，审计不提在等确认的操作（P10，产品缺口）——`d1fc804e` 已修，P13 3/3、已摘 known_red；
 ④ 公交报站与回声风格句没被拒识（R05 / R06），按拒识设计「负例只入基线」登记 `known_red`。
 另：Jev 自 10-09 起全部请求 HTTP 451，用户 10-10 选停外呼，云端 `DECISION_ENABLED=false`（[Jev §15](../design/2026-10-04-jev-decide-integration.md)）；main 的 CI 已由 `8a1acc76` 修绿。
 2026-10-09 / 10 夜间新增（[history](../agents-history.md) 同日条目）：
@@ -285,7 +287,7 @@ CA2-07 另登记：V210 r1 手册未派发，V207 r3 场景列表未回答模式
 ② 预报天数「后天」让信息 Agent 报内部错误，`6aa9b88d` 已修并部署。
 ③ **部署被主机 SSH 节流挡住**：公网扫描器占满 sshd 的 `MaxStartups`，待用户定 sshd / 安全组处置。
 ④ Jev 按出口国家拦截，用户选停外呼（方案 B），已处置。
-⑤ 香氛状态问答答不出（车态有键，答句没读）。
+⑤ 香氛状态问答答不出（车态有键，答句没读）——`370d5eab` 已修，C02 第二问「香氛开着」零动作，已钉进旅程。
 会话四轮未关项按 [原待办](../design/2026-09-24-conversation-review-round4-remediation.md) §7 重证；
 Android 按 [总表](../design/2026-09-14-android-remaining-todos.md)。统一优先级见 [路线图](../roadmap.md)，
 下面保留历史 QA 五项的逐条处置，不代表全部仍待修。
