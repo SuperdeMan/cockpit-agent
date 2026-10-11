@@ -1,7 +1,7 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-10-11（HMI 分辨率适配已授权发布并完成线上复验；历史测试保留原 SHA，其余 QA 活项不因此关闭）
+> 更新时间：2026-10-11（网关温度 0 与 Android 深链闪退修复已发布 `65ddeb85` 并完成真栈复测；此前 HMI 分辨率适配已授权发布并完成线上复验；历史测试保留原 SHA，其余 QA 活项不因此关闭）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
@@ -65,7 +65,7 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 | 历史手册专项（本轮未重跑全量） | `5a2f4c9d`：章节 187/187、视觉 35/35、胎压复合句 16/20（有手册步 16/16）、词法自信三句 8/9、调节类 6/6、口语语料 39/43 与 38/43（失败在规划层）、指代 8/9、空调模式 3/3、多步按话术 3/3、原 36 题可发送子集 31/31，车态零差异；[二批记录](../design/2026-09-26-manual-rag-colloquial-recall.md) §8 |
 | 手册证据限制 | `.artifacts/manual-rag-colloquial/live-*-5a2f4c9d*.json` 属旧 release；5 条旧表述被预检拦下，不能报当前 36/36；当时挂确认无手册卡，后续 CA2-04 的 9 个样本闭环不改写旧结论 |
 | 历史 QA 证据 | §3–4、T24/T47 等分别绑定自己的 release/provider，不转借当前 release；旧入口发布行见 [快照](../history/2026-09-26-entry-status-snapshot.md) |
-| Android 包与验收 | [剩余待办总表](../design/2026-09-14-android-remaining-todos.md)记录设备与包身份；服务端 SHA、APK SHA、设备安装状态分列，本次 OPPO 装 `1778e22eb`（总表 E-23），Xiaomi 未动 |
+| Android 包与验收 | [剩余待办总表](../design/2026-09-14-android-remaining-todos.md)记录设备与包身份；服务端 SHA、APK SHA、设备安装状态分列，本次 OPPO 装 `1778e22eb`（总表 E-27），Xiaomi 未动 |
 | v2 小基线 | 前测 `d9970d9a` / runner `9aa5216b`，20×3 / 100 轮，raw 11 个红轮（9 个丢卡、1 个规划失败、1 个关键词误报）；后测同语料见下行，不混合分母 |
 | v2 后测 | `02363932` / runner `845e240e`，60/60 case run、99 测量轮；raw 2 红，逐条复核为 1 个规划失败 + 1 个关键词误报；零动作/车态变化/证据失败/残留挂起，27 键；原丢卡样本 9/9、15 次关闭身份保持、9 份完成引用保留；[首批执行 §5](../design/2026-09-26-v2-runtime-r0-r1-execution.md#5-发布后固定语料复验2026-09-27) |
 | 首批客户端与门禁（历史） | 客户端/Go/门禁实际测试 SHA 为 `f4d3b8d7`；HMI 350、Android 112 suites / 1157 tests + typecheck/lint、Go 四包、四门禁/edge smoke 均过；与 release 相同的客户端 tree OID 见 [首批执行 §4](../design/2026-09-26-v2-runtime-r0-r1-execution.md#4-首批合入与部署阻断2026-09-27) |
