@@ -172,3 +172,6 @@ journeys:
   - {id: K02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F05, lane: simulated_vehicle}
   - {id: N02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
   - {id: E02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}
+  - {id: D01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
+  - {id: D02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}

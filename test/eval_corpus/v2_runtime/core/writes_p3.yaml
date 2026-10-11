@@ -187,3 +187,26 @@ cases:
     turns:
       - {say: "记住我老婆的生日是五月二十号", expect: {speech_not: ["没听清"]}}
       - {say: "我老婆生日是哪天", expect: {speech_any: ["五月二十", "5月20"]}}
+  # ── 第三批（2026-10-11）：条件句车控（CA2-10 ②「T2 查完条件不派后件」重证；前件取深圳十月「不下雪」这个恒真事实）──
+  - id: D01
+    family: conditional_control_now
+    vehicle_keys: [hvac_on]
+    turns:
+      - {say: "如果深圳今天不下雪，就把空调打开", expect: {actions_required: ["hvac.on"], actions_allowed: ["hvac.on"],
+                                                  vehicle_values: {hvac_on: true}}}
+    cleanup:
+      - {say: "关闭空调"}
+  - id: D02
+    family: conditional_control_false
+    vehicle_keys: [hvac_on]
+    turns:
+      - {say: "如果深圳今天下雪，就把空调打开", expect: {actions_allowed: []}}
+    cleanup:
+      - {say: "关闭空调"}
+  - id: D03
+    family: deferred_condition_not_now
+    vehicle_keys: [hvac_on]
+    turns:
+      - {say: "车里温度低于20度的时候打开空调", expect: {actions_allowed: []}}
+    cleanup:
+      - {say: "关闭空调"}
