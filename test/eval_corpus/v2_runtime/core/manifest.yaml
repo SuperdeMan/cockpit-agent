@@ -172,7 +172,9 @@ journeys:
   - {id: K02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F05, lane: simulated_vehicle}
   - {id: N02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
   - {id: E02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}
-  - {id: D01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
+  - {id: D01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
+     known_red: "2026-10-12 标定 0/3：T2 再规划派出的后件 hvac.on 被问句闸按「假设框架 = 提问」拦下。试过 T2 放行（2085fc7a）：再规划在前件为假时照样派后件（D02 3/3 开了空调），当天撤回；要先有可靠的条件判定再放行"}
   - {id: D02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
      known_red: "2026-10-12 标定 0/3：等将来的条件（温度低于20度时）被落成 scene.create「温度低开空调」，条件丢了、要确认保存；不动车（无动作），该怎么答（说做不到 / 建条件提醒）待产品裁决"}
+  - {id: D04, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}

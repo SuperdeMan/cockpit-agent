@@ -924,38 +924,6 @@ def test_unknown_legacy_pending_confirmed_side_effect_fails_closed_before_dispat
     )) is None
 
 
-@pytest.mark.parametrize("origin, dispatched", [
-    ("如果附近有川菜馆，就订一桌", 1),          # 条件指令（不带「帮我」——带了就不算提问、闸门本来不拦）：确认后执行
-    ("如果订川菜馆的话会不会要排队", 0),       # 后件是提问：照旧按问句拦
-])
-def test_restored_conditional_directive_consequent_runs_after_confirm(origin, dispatched):
-    """CA2-10 ②（2026-10-12）：条件指令的后件要确认时会挂起；确认之后恢复计划，不能再按「问句」把它删一次。"""
-    from orchestrator.cloud.models import SessionState
-
-    engine, spy, session = _make_engine()
-    asyncio.run(session.save("sess-cond", SessionState(
-        phase="wait_confirm",
-        owner_user_id="u1",
-        operation_id="op-cond",
-        pending_step_id="s1",
-        pending_plan={
-            "steps": [{
-                "id": "s1", "agent_id": "nearby", "endpoint": "stub:50063",
-                "intent": "nearby.order", "require_confirm": True,
-            }],
-            "raw_text": origin,
-            "safety_origin_text": origin,
-            "goal": "订餐厅",
-        },
-    )))
-
-    _run(engine, _req(
-        "确认", session_id="sess-cond", is_confirmation=True, operation_id="op-cond",
-    ))
-
-    assert spy.count("nearby.order") == dispatched
-
-
 def test_unknown_legacy_pending_read_still_dispatches_with_current_slot_answer():
     """unknown origin 只挡声明式副作用；恢复后的只读补槽仍使用当前回答。"""
     from orchestrator.cloud.models import SessionState

@@ -279,9 +279,8 @@ class LoopController:
                             pass
                     if not fresh_steps:
                         break
-                # 再规划拿到了首轮的观察：条件指令的后件此时才可以执行（判据与理由见被调函数的 after_observation）
                 kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
-                    fresh_steps, safety_origin_text, after_observation=True,
+                    fresh_steps, safety_origin_text,
                 )
                 if blocked:
                     logger.warning(

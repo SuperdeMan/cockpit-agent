@@ -219,19 +219,21 @@ def test_question_replan_confirmed_cloud_step_never_dispatches():
     assert events[-1]["speech"] == "best effort"
 
 
-def test_conditional_directive_consequent_dispatches_after_the_condition_was_observed():
-    """CA2-10 ② / 核心旅程 D01（2026-10-12）：首轮查了天气，再规划派出的后件 `hvac.on` 要真的派发——
-    修前被「问句」闸在这里再拦一次，条件指令整句作废。"""
+def test_conditional_instruction_consequent_is_still_blocked_after_replan():
+    """条件判定可靠之前，T2 再规划派出的后件写步照样按问句拦（2026-10-12）。
+
+    当天试过在这里对条件指令放行（`2085fc7a`）：再规划看到「深圳今天不会下雪」仍派出 `hvac.on`——核心旅程 D02
+    「如果深圳今天下雪，就把空调打开」3/3 开了空调。「不执行」可以接受，「条件为假却执行」不行，已撤回。"""
     step = Step(
         id="r1", agent_id="edge-vehicle", intent="hvac.on",
         deployment="edge", kind="edge_fast", capability_description="打开空调",
     )
 
     _, executor, events = _replan_case(
-        [step], user_text="如果深圳今天不下雪，就把空调打开",
+        [step], user_text="如果深圳今天下雪，就把空调打开",
     )
 
-    assert executor.runs == [["s1"], ["r1"]]
+    assert executor.runs == [["s1"]]
     assert events[-1]["kind"] == "final"
 
 

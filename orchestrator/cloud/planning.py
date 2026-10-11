@@ -49,7 +49,6 @@ from runtime.polarity import is_negated_directive
 from runtime.question_shape import (
     HYPOTHETICAL_FRAMES, carries_operation_cue, is_information_request, is_non_directive_question,
     is_reference_question, is_definition_only_question, is_complete_information_question,
-    is_conditional_directive,
 )
 from .step_grounding import opens_as_instruction, step_naming_score
 from .reply_position import reply_position
@@ -3461,24 +3460,15 @@ class PlanBuilder:
 
     @staticmethod
     def _filter_safety_origin_side_effect_steps(
-            steps: list, safety_origin_text: str, *,
-            after_observation: bool = False) -> tuple[list, list]:
+            steps: list, safety_origin_text: str) -> tuple[list, list]:
         """Apply the question guard with a fail-closed branch for unknown origins.
 
         A restored legacy plan may predate ``safety_origin_text``.  Its persisted
         ``raw_text`` is the only permitted compatibility source; if that is empty as
         well, current slot answers and LLM goal/reason are not authorization.  In
         that case declaration-backed side effects are blocked while reads remain.
-
-        after_observation：调用方已经拿到条件前件的观察（T2 再规划；或恢复一份挂起计划——条件指令的后件写步首轮一律
-        被拦、进不了挂起，挂起里的只可能出自再规划）。原话是条件指令（「如果深圳今天不下雪，就把空调打开」，
-        `question_shape.is_conditional_directive`）时这一步不再按「问句」拦：首轮按提问拦是对的（条件还没查），
-        观察在手之后再拦，就是把条件指令整句废掉（CA2-10 ②，核心旅程 D01 修前 0/3）。需确认的照旧走确认、
-        端侧写照旧过 VAL；后件是提问的（「如果开空调的话会不会更费电」）不是条件指令，照旧拦。
         """
         origin = str(safety_origin_text or "").strip()
-        if after_observation and origin and is_conditional_directive(origin):
-            return list(steps), []
         blocked = (
             PlanBuilder._question_side_effect_steps(steps, origin)
             if origin else PlanBuilder._side_effect_steps(steps)
