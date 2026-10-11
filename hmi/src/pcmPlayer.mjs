@@ -13,9 +13,12 @@ export class PcmPlayer {
    *  @param {number} [o.jitterMs=200]  首片抖动缓冲
    *  @param {()=>void} [o.onFirstAudio]  首片真正排定起播（驱动 hands-free SPEAKING）
    *  @param {()=>void} [o.onUnderrun]  发生 underrun（供观测/调参）
+   *  @param {AudioNode} [o.destination]  输出节点；缺省 ctx.destination。主链播报接「播报总线」GainNode，
+   *    语义打断压低 / 恢复只调总线增益（2026-10-11，设计 2026-10-11-semantic-barge-in §4.4）
    */
-  constructor({ ctx, sampleRate, jitterMs = 200, onFirstAudio, onUnderrun }) {
+  constructor({ ctx, sampleRate, jitterMs = 200, onFirstAudio, onUnderrun, destination }) {
     this.ctx = ctx
+    this.destination = destination || ctx.destination
     this.sampleRate = sampleRate
     this.jitter = jitterMs / 1000
     this.onFirstAudio = onFirstAudio
@@ -34,7 +37,7 @@ export class PcmPlayer {
     buf.getChannelData(0).set(f32)
     const src = this.ctx.createBufferSource()
     src.buffer = buf
-    src.connect(this.ctx.destination)
+    src.connect(this.destination)
     const now = this.ctx.currentTime
     let when
     if (!this.started) {

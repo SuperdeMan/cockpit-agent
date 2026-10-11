@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { VoiceLoop, VoiceState } from './voiceLoop.mjs'
 
 // ─── fake clock + 事件记录：把时间源/定时器/效果全部注入，回路纯逻辑可完全离线断言 ───
-function makeHarness(config = {}) {
+function makeHarness(config = {}, extra = () => ({})) {
   const events = []
   const rec = (name) => (...args) => events.push([name, ...args])
 
@@ -51,6 +51,7 @@ function makeHarness(config = {}) {
     onCancelTurn: rec('cancelTurn'),
     onMetric: rec('metric'),
     config,
+    ...extra(rec),
   })
 
   const count = (name) => events.filter((e) => e[0] === name).length
@@ -1011,4 +1012,275 @@ test('窗里真正说出口的一句照常上云；答完重新起算一个完�
   assert.equal(h.vl.state, VoiceState.FOLLOWUP)
   h.advance(1)
   assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+// ─── 语义打断（2026-10-11，设计 docs/design/2026-10-11-semantic-barge-in.md）───
+// 注入插话判定后：播报中有人说话先压低、不停播；定稿后 THINKING 等判定；判受话才停旧回答、发出这一句。
+
+function makeHoldHarness({ hold = true, config = {}, onStopTts } = {}) {
+  const judges = []
+  let vlRef = null
+  const h = makeHarness(config, (rec) => ({
+    onJudgeBargeIn: (text, previous, done) => judges.push({ text, previous, done }),
+    onDuckTts: rec('duck'),
+    holdBargeIn: () => hold,
+    ...(onStopTts ? { onStopTts: (...args) => { rec('stopTts')(...args); onStopTts(vlRef) } } : {}),
+  }))
+  vlRef = h.vl
+  return { ...h, judges }
+}
+
+// 播报中有人持续开口 ≥300ms 且不像回声 → 打断确认
+function bargeIn(h) {
+  h.vl.vadSpeechStart()
+  h.advance(300)
+}
+
+// 插话那句说完、定稿 → 进判定
+function sayDuringAnswer(h, text) {
+  bargeIn(h)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal(text)
+}
+
+const ducks = (h) => h.events.filter((e) => e[0] === 'duck').map((e) => e[1])
+const metric = (h, name) => h.events.some((e) => e[0] === 'metric' && e[1] === name)
+
+test('语义打断：插话先压低不停播，定稿后进判定，判据拿到这句与正在播的那段', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  bargeIn(h)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  assert.deepEqual(ducks(h), [true])
+  assert.equal(h.count('stopTts'), 0, '压低不是停播')
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('妈你到哪了')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  assert.equal(h.judges.length, 1)
+  assert.deepEqual([h.judges[0].text, h.judges[0].previous], ['妈你到哪了', '好的，正在为您播放音乐'])
+  assert.equal(h.count('send'), 1, '只有唤醒那一轮发过')
+})
+
+test('语义打断：判非受话 ⇒ 恢复音量回 SPEAKING、不发、对话不结束（旧回答播完照常进续问窗）', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '妈你到哪了')
+  h.judges[0].done(false)
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+  assert.deepEqual(ducks(h), [true, false])
+  assert.equal(h.count('stopTts'), 0)
+  assert.equal(h.count('send'), 1)
+  assert.ok(metric(h, 'barge_in_rejected'))
+  h.vl.ttsEnd()
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+})
+
+test('语义打断：判受话 ⇒ 先停旧回答、恢复音量，再按「已判过」发出这一句；新回答照常起播', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '换一首周杰伦的歌')
+  h.judges[0].done(true)
+  const stopAt = h.events.findIndex((e) => e[0] === 'stopTts')
+  const unduckAt = h.events.findIndex((e) => e[0] === 'duck' && e[1] === false)
+  const sendAt = h.events.findLastIndex((e) => e[0] === 'send')
+  assert.ok(stopAt >= 0 && stopAt < unduckAt && unduckAt < sendAt, '先停、再恢复音量、再发')
+  assert.equal(h.last('send')[1], '换一首周杰伦的歌')
+  assert.equal(h.last('send')[2].source, 'bargein')
+  assert.equal(h.last('send')[2].admitted, true)
+  assert.ok(metric(h, 'barge_in_admitted'))
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.ttsStart()
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+})
+
+test('语义打断：判不出 / 判定超时 ⇒ 停旧回答、按今天的路径发出（不带已判过，云端照旧判）', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '那后天呢')
+  h.judges[0].done(null)
+  assert.equal(h.count('stopTts'), 1)
+  assert.equal(h.last('send')[2].admitted, undefined)
+  assert.ok(metric(h, 'barge_in_unjudged'))
+
+  const t = makeHoldHarness()
+  driveToSpeaking(t)
+  sayDuringAnswer(t, '那后天呢')
+  t.advance(5999)
+  assert.equal(t.count('send'), 1, '上限之内一直等')
+  t.advance(1)
+  assert.equal(t.count('send'), 2)
+  assert.equal(t.last('send')[2].admitted, undefined)
+  t.judges[0].done(false) // 迟到的判定：已作废，不再动任何东西
+  assert.equal(t.vl.state, VoiceState.THINKING)
+  assert.equal(t.count('stopTts'), 1)
+})
+
+test('语义打断：判定期间旧回答播完——判非受话同续问窗拒识（结束这次对话），判受话照发', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '你今天几点下班')
+  h.vl.ttsEnd()
+  assert.equal(h.vl.state, VoiceState.THINKING, '旧回答播完只记一笔，不迁移')
+  h.judges[0].done(false)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  assert.ok(metric(h, 'rejected_session_end'))
+
+  const a = makeHoldHarness()
+  driveToSpeaking(a)
+  sayDuringAnswer(a, '帮我把空调调到24度')
+  a.vl.ttsEnd()
+  a.judges[0].done(true)
+  assert.equal(a.vl.state, VoiceState.THINKING)
+  assert.equal(a.last('send')[1], '帮我把空调调到24度')
+})
+
+test('语义打断：收音期间旧回答播完、这句被本地丢掉（语气词）⇒ 照常进续问窗', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  bargeIn(h)
+  h.vl.ttsEnd()
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('嗯嗯')
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  assert.equal(h.judges.length, 0)
+})
+
+test('语义打断：「停 / 别说了 / 够了」整句 ⇒ 本地立刻停、回待机，不判、不发、不回应答', () => {
+  for (const word of ['停', '别说了', '够了', '好了好了', '停一下吧', '知道了']) {
+    const h = makeHoldHarness()
+    driveToSpeaking(h)
+    sayDuringAnswer(h, word)
+    assert.equal(h.vl.state, VoiceState.ARMED, word)
+    assert.equal(h.count('stopTts'), 1, word)
+    assert.equal(h.count('exitAck'), 0, word)
+    assert.equal(h.judges.length, 0, word)
+    assert.equal(h.count('send'), 1, word)
+    assert.ok(metric(h, 'barge_in_stop'), word)
+  }
+})
+
+test('语义打断：「暂停」不是本地停词，交给判定（可能是「把音乐暂停」）', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '暂停')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  assert.equal(h.judges.length, 1)
+  assert.equal(h.count('stopTts'), 0)
+})
+
+test('语义打断：退出词 ⇒ 先停旧回答，再播退场应答回待机（同既有）', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '再见')
+  const stopAt = h.events.findIndex((e) => e[0] === 'stopTts')
+  const ackAt = h.events.findIndex((e) => e[0] === 'exitAck')
+  assert.ok(stopAt >= 0 && stopAt < ackAt)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('语义打断：回声 / 空定稿 ⇒ 恢复音量接着播（不再把回答掐掉），自触发照旧计数', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '')
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+  assert.equal(h.count('stopTts'), 0)
+  assert.deepEqual(ducks(h), [true, false])
+  sayDuringAnswer(h, '正在为您播放音乐')
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+  assert.equal(h.count('disableBargeIn'), 1, '连续两次自触发 → 本会话关打断')
+})
+
+test('语义打断：确认条可见时不判（D5-2 红线），停旧回答直接上云', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  h.vl.setNeedConfirm(true)
+  sayDuringAnswer(h, '确认')
+  assert.equal(h.judges.length, 0)
+  assert.equal(h.count('stopTts'), 1)
+  assert.equal(h.last('send')[1], '确认')
+  assert.equal(h.last('send')[2].admitted, undefined)
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('语义打断：判定期间喊唤醒词 ⇒ 作废判定、停旧回答、重新聆听，不取消任何云端轮', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '妈你到哪了')
+  h.vl.wake()
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  assert.equal(h.count('stopTts'), 1)
+  assert.equal(h.count('cancelTurn'), 0)
+  assert.equal(h.count('chime'), 2)
+  h.judges[0].done(true) // 迟到的判定作废
+  assert.equal(h.count('send'), 1)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+})
+
+test('语义打断：收音或判定期间按停播键 ⇒ 停旧回答回待机；迟到的判定作废', () => {
+  for (const atJudging of [false, true]) {
+    const h = makeHoldHarness()
+    driveToSpeaking(h)
+    if (atJudging) sayDuringAnswer(h, '妈你到哪了')
+    else bargeIn(h)
+    h.vl.stopSpeaking()
+    assert.equal(h.vl.state, VoiceState.ARMED)
+    assert.equal(h.count('stopTts'), 1)
+    assert.equal(ducks(h).at(-1), false)
+    if (atJudging) h.judges[0].done(true)
+    assert.equal(h.count('send'), 1)
+  }
+})
+
+test('语义打断：拆机 / 系统抢占 ⇒ 音量一定恢复、判定作废', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '妈你到哪了')
+  h.vl.handsFreeOff()
+  assert.equal(h.vl.state, VoiceState.IDLE)
+  assert.equal(ducks(h).at(-1), false)
+  h.judges[0].done(true)
+  assert.equal(h.count('send'), 1)
+
+  const s = makeHoldHarness()
+  driveToSpeaking(s)
+  bargeIn(s)
+  s.vl.systemInterrupt()
+  assert.equal(s.vl.state, VoiceState.ARMED)
+  assert.equal(ducks(s).at(-1), false)
+})
+
+test('语义打断：判定期间的拒识帧不是这句的（它没发出去），不动状态', () => {
+  const h = makeHoldHarness()
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '妈你到哪了')
+  h.vl.turnRejected()
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.judges[0].done(false)
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+})
+
+test('语义打断：停播同步回调 ttsEnd（Android 形态）也不会把状态机推进续问窗', () => {
+  // Android 的 SpeechController.stop() 会同步走 onSpeechEnded → ttsEnd：先停、后放手，那一下归旧回答
+  const h = makeHoldHarness({ onStopTts: (vl) => vl.ttsEnd() })
+  driveToSpeaking(h)
+  sayDuringAnswer(h, '换一首')
+  h.judges[0].done(true)
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  assert.equal(h.last('send')[2].admitted, true)
+  h.vl.ttsStart()
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+})
+
+test('语义打断：此刻不能压低（S2S 挡位）⇒ 逐字是旧行为：立即停播、照旧发出', () => {
+  const h = makeHoldHarness({ hold: false })
+  driveToSpeaking(h)
+  bargeIn(h)
+  assert.equal(h.count('stopTts'), 1)
+  assert.equal(h.count('duck'), 0)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('妈你到哪了')
+  assert.equal(h.judges.length, 0)
+  assert.equal(h.last('send')[2].source, 'bargein')
+  assert.equal(h.vl.state, VoiceState.THINKING)
 })

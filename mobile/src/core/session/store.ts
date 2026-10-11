@@ -469,7 +469,8 @@ export class SessionCore {
     const reuse = opts.bubbleId && this.store.getState().messages.some((m) => m.id === opts.bubbleId) ? opts.bubbleId : null
     const userBubbleId = reuse || uid()
     // 续问窗里没喊唤醒词就收进来的那句：云端判定之前显示成待定，判受话转正、判非受话连同占位删掉（2026-10-10 §4.3）
-    const provisional = isContinuationInput(metaExtra?.input_source)
+    // 续问窗 / 插话来的那句云端判定前先显示成待定；插话已在 llm-gateway 判过受话的（voice_admitted=1）不再待定（2026-10-11）
+    const provisional = isContinuationInput(metaExtra?.input_source) && metaExtra?.voice_admitted !== '1'
     if (reuse) {
       this.store.setState((s) => ({ messages: s.messages.map((m) => (m.id === reuse
         ? { ...m, text, ...(provisional ? { provisional: true } : {}) } : m)) }))

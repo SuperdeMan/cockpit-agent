@@ -7,6 +7,8 @@
 //   IDLE ─handsFreeOn→ ARMED ─wake→ LISTENING ─(VAD end + 定稿)→ THINKING ─ttsStart→ SPEAKING
 //   SPEAKING ─ttsEnd→ FOLLOWUP ─VAD speech→ LISTENING（免唤醒追问） / ─8s 超时→ ARMED
 //   SPEAKING ─barge-in（VAD≥300ms 过护栏）→ stopTTS + LISTENING
+//            （语义打断，2026-10-11：注入了插话判定时改为压低旧回答 + LISTENING，定稿后 THINKING 等判定——
+//             判受话才停旧回答、发出这一句；判非受话恢复音量回 SPEAKING。设计 2026-10-11-semantic-barge-in.md）
 //   LISTENING ─唤醒后 5s 无 speech→ ARMED（误唤醒静默回收，不发请求）
 //   THINKING/SPEAKING/FOLLOWUP ─turnRejected（云端判非受话）→ ARMED（结束这次连续对话，不再开续问窗）
 //   任意态 ─handsFreeOff→ IDLE（拆机）
@@ -101,6 +103,12 @@ export const DEFAULTS = {
   // R4.3b P1（U3 退出）：退下类指令本地消化（短应答 + 回待机），不上云。needConfirm 时照发走 F1（红线）。
   exitWords: ['退下', '退下吧', '下去吧', '退出聆听', '再见', '拜拜', '闭嘴', '别说了', '先这样', '没事了', '不用了', '结束对话'],
   endpointGraceMs: 700,   // R4.3b P1（U5b）：端点宽限合并窗——定稿疑似没说完时等续说的时长；0 即关
+  // 语义打断（2026-10-11）：插话那句整句就是让助手住嘴——本地立刻停、不上云、不回应答（退出词那张表另有「好的」应答）。
+  // 播报中的「好了 / 知道了」几乎都是在叫停；就算是乘客对别人说的，代价也只是停了播报——与今天「谁出声都停」相比只少不多。
+  // 「暂停」刻意不在表里：它也可能是「把音乐暂停」，交给判定 + 云端（判受话照样先停旧回答）。
+  bargeInStopWords: ['停', '停下', '停一下', '停停', '别说了', '别念了', '别讲了', '不用说了', '不用念了',
+    '闭嘴', '安静', '够了', '好了', '可以了', '行了', '知道了'],
+  bargeInJudgeMs: 6000,   // 插话判定的等待上限；到点按「判不出」处理（停旧回答、照今天的路径发出）
 }
 
 export class VoiceLoop {
@@ -121,6 +129,11 @@ export class VoiceLoop {
       onExitAck = () => {},        // U3：命中退出/dismiss 词 → 播退场应答（外设播「好的」短语音）
       onCancelTurn = () => {},     // U2/P2：THINKING 期唤醒词打断 → 请求取消在飞的云端处理
       onMetric = () => {},         // P3 obs：语义事件名（wake/filler_dismissed/endpoint_merge/…）→ 外设累计
+      // 语义打断（2026-10-11）：(text, previous, done) 插话那句问一次是不是对助手说的，done(true|false|null)。
+      // 不传 = 旧行为（一打断就停播）；previous 是正在播的那段（回声参照文本）。
+      onJudgeBargeIn = null,
+      onDuckTts = () => {},        // (on) 播报压低 / 恢复（只调音量，不停播）
+      holdBargeIn = () => true,    // 此刻能不能「先压低、后判定」（S2S 挡位等不能时走旧行为）
       config = {},
     } = opts
 
@@ -138,6 +151,9 @@ export class VoiceLoop {
     this.onExitAck = onExitAck
     this.onCancelTurn = onCancelTurn
     this.onMetric = onMetric
+    this.onJudgeBargeIn = onJudgeBargeIn
+    this.onDuckTts = onDuckTts
+    this.holdBargeIn = holdBargeIn
     this.cfg = { ...DEFAULTS, ...config }
 
     this.state = VoiceState.IDLE
@@ -155,9 +171,14 @@ export class VoiceLoop {
     this._pendingText = ''    // 疑似没说完、正在宽限等续说的定稿文本
     this._pendingPrefix = ''  // 续说重开 ASR 前的已定稿前缀（下次定稿拼在其后）
     this._utteranceMs = 0     // 本轮已结束 speech 段的累计时长
-    this._speechStartAt = 0   // 当前 speech 段起点（now()）；0=当前无进行中 speech
+    this._speechStartAt = null // 当前 speech 段起点（now()）；null=当前无进行中 speech（不用 0：假时钟与时间原点下 0 是合法时刻）
     this._listenSource = ''   // R4.4：本轮聆听进入来源（wake|followup|bargein）→ 定稿 onSend 带给云端拒识判定
     this._followupDeadline = null // 当前续问窗的截止时刻（now() 口径）；null=没有在跑的续问窗
+    // 语义打断：旧回答被压低、等插话那句的判定（LISTENING 收音 → THINKING 判定）。期间 ttsEnd 只记「旧回答播完了」、不迁移。
+    this._held = false
+    this._heldEnded = false
+    this._judge = null        // { token, text, voice } 在等判定的那句；null = 没有
+    this._judgeSeq = 0
   }
 
   // ─── 定时器封装（全部走注入，node 测试用 fake clock）───
@@ -197,6 +218,7 @@ export class VoiceLoop {
     this._clearAllTimers()
     this._clearPending()
     this._closeAsr()
+    this._dropHold()
     this._speechActive = false
     // 会话级护栏在拆机时复位：重新开 hands-free 视为新会话
     this._selfTriggerCount = 0
@@ -209,6 +231,7 @@ export class VoiceLoop {
     this._clearAllTimers()
     this._clearPending()
     this._closeAsr()
+    this._dropHold()
     this._speechActive = false
     this._followupDeadline = null
     this._enter(VoiceState.ARMED)
@@ -273,10 +296,12 @@ export class VoiceLoop {
     // 控制器，pre-roll 按它动态回取（仅 barge-in 进入；续说/追问起点即此刻，传 0 维持原短 pre-roll）。
     // 判据用 speechAlreadyStarted 而非时间戳真值——now() 可为 0（同 _currentUtteranceMs 的处理）。
     const sinceSpeechStartMs = (fromBargeIn && speechAlreadyStarted)
-      ? Math.max(0, this.now() - this._speechStartAt) : 0
-    // 新一段聆听重置本轮 speech 计时；续说/打断进入时 speech 已在进行，起点即此刻。
+      ? Math.max(0, this.now() - (this._speechStartAt ?? this.now())) : 0
+    // 新一段聆听重置本轮 speech 计时；续说进入时 speech 已在进行，起点即此刻。
+    // 打断进入从 VAD 判到开口那一刻算起（含 300ms 确认窗）：否则「暂停」「换台」这类两字指令只剩确认之后那一截，
+    // 会被短语音规则当噪声丢掉（2026-10-11 语义打断补）。
     this._utteranceMs = 0
-    this._speechStartAt = speechAlreadyStarted ? this.now() : 0
+    this._speechStartAt = speechAlreadyStarted ? this.now() - sinceSpeechStartMs : null
     if (!this._asrOpen) {
       this._asrOpen = true
       // resume=true（续问/打断/宽限续说）→ 控制器可注入短 pre-roll 补 VAD 判定延迟首字；
@@ -327,8 +352,14 @@ export class VoiceLoop {
       // U2 真打断（P2）：处理中喊唤醒词 → 取消在飞的云端处理 + 提示音 + 重新聆听。
       // 仅 KWS 唤醒词可打断 THINKING（显式意图）；VAD speech 不行（THINKING 期环境音太易误触）。
       this._clearPending()
-      this.onMetric('turn_cancelled')
-      this.onCancelTurn()
+      if (this._judge) {
+        // 插话还在判定：没有在飞的云端轮可取消——作废这次判定、停掉压着的旧回答，按唤醒重新聆听
+        this._judge = null
+        this._stopHeld()
+      } else {
+        this.onMetric('turn_cancelled')
+        this.onCancelTurn()
+      }
       this.onWakeChime()
       this._enterListening({ source: 'wake' })
     }
@@ -371,13 +402,13 @@ export class VoiceLoop {
     if (this.state === VoiceState.LISTENING) {
       if (this._speechActive) {
         this._speechActive = false
-        if (this._speechStartAt) { this._utteranceMs += this.now() - this._speechStartAt; this._speechStartAt = 0 }
+        if (this._speechStartAt !== null) { this._utteranceMs += this.now() - this._speechStartAt; this._speechStartAt = null }
         this.onEndpoint() // 端点到达 → 请引擎定稿
       }
     } else if (this.state === VoiceState.SPEAKING) {
       // 开口不足 bargeInMinMs 即结束 → _bargeInFire 时会看到 !speechActive 从而不打断
       this._speechActive = false
-      this._speechStartAt = 0 // 未成打断的短 speech：清起点，防陈旧值污染下次 pre-roll 回取
+      this._speechStartAt = null // 未成打断的短 speech：清起点，防陈旧值污染下次 pre-roll 回取
     }
   }
 
@@ -405,6 +436,8 @@ export class VoiceLoop {
       this._cameFromBargeIn = false
       if (!t || this._overlapsTts(t)) {
         this._countSelfTrigger()
+        // 语义打断：旧回答只是压低了——恢复音量接着播（播完了就照常进续问窗），不因一次回声把整段回答掐掉
+        if (this._held) { this._releaseHeld('followup'); return }
         this._gotoArmed()
         return
       }
@@ -430,7 +463,7 @@ export class VoiceLoop {
 
     if (!t) {
       // 什么都没说清（ASR 空定稿）→ 不上云，但**继续聆听**（回续问窗），不踢回待机
-      this._backToFollowup()
+      this._dismiss()
       return
     }
 
@@ -438,20 +471,28 @@ export class VoiceLoop {
     // P4 真麦修复：区分「退出意图」与「没说清」——退出词回待机（ARMED），filler/短语音/没说清进续问窗
     // （FOLLOWUP，orb 仍聆听态、可直接接着说、8s 无接话才回待机），不因一句语气词就把用户踢出聆听。
     if (!this._needConfirm) {
+      // 语义打断：插话那句整句就是「停 / 别说了 / 够了」——本地立刻停旧回答、回待机，不上云、不回应答
+      if (this._held && matchExitWord(t, this.cfg.bargeInStopWords)) {
+        this.onMetric('barge_in_stop')
+        this._stopHeld()
+        this._gotoArmed()
+        return
+      }
       // U3 退出/dismiss 词**优先**（明确退出意图，去尾语气词后占据整句匹配）→ 短应答后回待机，不上云。
       // 优先于下面的 filler/短语音——否则「退下」这类退出词会因短而被当「继续聆听」，与用户意图相反。
       if (matchExitWord(t, this._exitDismissWords())) {
         this.onMetric('exit_word')
+        this._stopHeld() // 语义打断里旧回答还压着：先停，再播退场应答
         this.onExitAck()
         this._gotoArmed()
         return
       }
       // U5a 语气词：纯口头噪声（嗯嗯/哈哈/唔）不上云，但**继续聆听**（回续问窗，不踢回待机）
-      if (isFiller(t)) { this.onMetric('filler_dismissed'); this._backToFollowup(); return }
+      if (isFiller(t)) { this.onMetric('filler_dismissed'); this._dismiss(); return }
       // U5a 短语音噪声：说话过短 + 字数极少（误触/杂音）→ 继续聆听
-      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this.onMetric('filler_dismissed'); this._backToFollowup(); return }
+      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this.onMetric('filler_dismissed'); this._dismiss(); return }
       // 旧 D5-2 dismissMinChars 短句兜底 → 继续聆听
-      if (graphemeLen(t) < this.cfg.dismissMinChars) { this._backToFollowup(); return }
+      if (graphemeLen(t) < this.cfg.dismissMinChars) { this._dismiss(); return }
     }
 
     this._selfTriggerCount = 0
@@ -474,8 +515,88 @@ export class VoiceLoop {
   _finalizeSend(text) {
     // R4.4：第二参带 hands-free 来源 + 本轮 speech 时长 → App 拼成 meta.input_source 上云做拒识判定。
     // 旧调用方（不读第二参）兼容。默认 'followup'（最保守：续问窗是最大垃圾入口）。
-    this.onSend(text, { source: this._listenSource || 'followup', utteranceMs: Math.round(this._currentUtteranceMs()) })
+    const voice = { source: this._listenSource || 'followup', utteranceMs: Math.round(this._currentUtteranceMs()) }
+    if (this._held) {
+      // 语义打断：旧回答还压着——先问这句是不是对助手说的，答案回来再决定停不停。
+      // 确认条可见时不判（D5-2 红线：一切定稿照发上云），照旧停旧回答直接发。
+      if (!this._needConfirm) { this._startJudge(text, voice); return }
+      this._stopHeld()
+    }
+    this.onSend(text, voice)
     this._gotoThinking()
+  }
+
+  // ─── 语义打断（2026-10-11，设计 docs/design/2026-10-11-semantic-barge-in.md）───
+  // 判定期间状态机在 THINKING（ASR 已关、旧回答压低在播）；ttsStart 不迁移、ttsEnd 只记「旧回答播完了」。
+  _startJudge(text, voice) {
+    const token = ++this._judgeSeq
+    this._judge = { token, text, voice }
+    this._gotoThinking()
+    this._setTimer('judge', this.cfg.bargeInJudgeMs, () => this._judged(token, null))
+    try {
+      this.onJudgeBargeIn(text, this._ttsText, (verdict) => this._judged(token, verdict))
+    } catch {
+      this._judged(token, null)
+    }
+  }
+
+  _judged(token, verdict) {
+    const judge = this._judge
+    if (!judge || judge.token !== token) return // 过期：期间被唤醒词 / 停播 / 拆机作废了
+    this._judge = null
+    this._clearTimer('judge')
+    if (this.state !== VoiceState.THINKING || !this._held) return
+    if (verdict === false) {
+      // 不是对助手说的：恢复音量接着播，这次对话不结束；判定期间旧回答已经播完 → 同续问窗拒识，结束这次对话
+      this.onMetric('barge_in_rejected')
+      this._releaseHeld('armed')
+      return
+    }
+    // 受话 ⇒ 停旧回答、发出这一句（带「已判过」，云端不再判第二遍）；判不出 ⇒ 照今天的路径发出，云端照旧判——失灵不拦人
+    this.onMetric(verdict === true ? 'barge_in_admitted' : 'barge_in_unjudged')
+    this._stopHeld()
+    this.onSend(judge.text, verdict === true ? { ...judge.voice, admitted: true } : judge.voice)
+    this._setTimer('thinking', this.cfg.thinkingMaxMs, () => {
+      if (this.state === VoiceState.THINKING) this._gotoFollowup()
+    })
+  }
+
+  // 放回旧回答：恢复音量；还在播 → 回 SPEAKING（播完照常进续问窗）；压着期间已播完 → endedTo（'followup' / 'armed'）
+  _releaseHeld(endedTo) {
+    const ended = this._heldEnded
+    this._held = false
+    this._heldEnded = false
+    this.onDuckTts(false)
+    this._clearPending()
+    this._closeAsr()
+    if (!ended) { this._gotoSpeaking(); return }
+    if (endedTo === 'armed') { this.onMetric('rejected_session_end'); this._gotoArmed(); return }
+    this._gotoFollowup()
+  }
+
+  // 停掉压着的旧回答：先停、后放手——Android 的停播会同步回调 ttsEnd，放手前到达的那一下归旧回答，
+  // 不会把状态机推进续问窗。恢复音量放在最后：下一段播报（新一轮的回答）按原音量出声。
+  _stopHeld() {
+    if (!this._held) return
+    this.onStopTts()
+    this._held = false
+    this._heldEnded = false
+    this.onDuckTts(false)
+  }
+
+  // 离开整个打断判定（回待机 / 拆机）：作废在等的判定；旧回答若还压着，恢复音量（停不停由调用方负责）
+  _dropHold() {
+    this._judge = null
+    if (!this._held) return
+    this._held = false
+    this._heldEnded = false
+    this.onDuckTts(false)
+  }
+
+  // 本地丢掉这一句（空 / 语气词 / 短噪声）：语义打断里旧回答还压着 → 放回原音量接着播；否则回续问窗的剩余时间
+  _dismiss() {
+    if (this._held) this._releaseHeld('followup')
+    else this._backToFollowup()
   }
 
   // 退出/dismiss 合并词表（去尾语气词后精确匹配，见 utteranceHeuristics.matchExitWord）
@@ -485,7 +606,7 @@ export class VoiceLoop {
 
   // 本轮已结束 speech 段累计 + 进行中段（用 _speechActive 作是否在段内的权威判据，避免 now()=0 歧义）
   _currentUtteranceMs() {
-    return this._utteranceMs + (this._speechActive ? this.now() - this._speechStartAt : 0)
+    return this._utteranceMs + (this._speechActive && this._speechStartAt !== null ? this.now() - this._speechStartAt : 0)
   }
 
   // 进宽限微态（仍是 LISTENING，orb 不变）：关掉刚定稿的会话，挂宽限定时器等续说
@@ -506,10 +627,12 @@ export class VoiceLoop {
 
   // 助手回复开始播报（TTS 首帧/首句起播）：THINKING → SPEAKING。
   ttsStart() {
+    if (this._held) return // 压着的是旧回答：它的分段起播不代表新一轮开始说话
     if (this.state === VoiceState.THINKING) this._gotoSpeaking()
   }
   // 助手回复播完，或无音频时（TTS 关/纯文本）由 App 在 final 到达时调用 → 收窗进 FOLLOWUP。
   ttsEnd() {
+    if (this._held) { this._heldEnded = true; return } // 语义打断期间旧回答播完：记一笔，等判定决定去向
     if (this.state === VoiceState.SPEAKING || this.state === VoiceState.THINKING) {
       this._gotoFollowup()
     }
@@ -519,6 +642,7 @@ export class VoiceLoop {
   // 此前拒识轮按「无声终态」收尾 ⇒ THINKING → FOLLOWUP 重新计 8 秒：乘客在聊天时一句接一句被收进来、上云、再开窗。
   // LISTENING 里不动：那是用户已经又开口了（唤醒词抢进来的新一轮），旧轮的拒识不能把它收掉。
   turnRejected() {
+    if (this._judge) return // 插话还在判定：那句没发出去，这个拒识不是它的
     if (this.state === VoiceState.THINKING || this.state === VoiceState.SPEAKING || this.state === VoiceState.FOLLOWUP) {
       this.onMetric('rejected_session_end')
       this._gotoArmed()
@@ -529,6 +653,13 @@ export class VoiceLoop {
   // 把它当成停播的副产品就是隐式开采集。刻意不复用 handsFreeOff→On（recycle 那条路会顺带复位
   // 会话级 _bargeInDisabled 与自触发计数，那是「重新开启插话」的语义，不该被一次停播做掉）。
   stopSpeaking() {
+    if (this._held) {
+      // 语义打断期间（收音中 / 判定中）按停：作废判定、停掉压着的旧回答
+      this._judge = null
+      this._stopHeld()
+      this._gotoArmed()
+      return
+    }
     if (this.state === VoiceState.SPEAKING || this.state === VoiceState.THINKING) {
       this._gotoArmed()
     }
@@ -552,7 +683,14 @@ export class VoiceLoop {
       return
     }
     this.onMetric('barge_in')
-    this.onStopTts()
+    if (this.onJudgeBargeIn && this.holdBargeIn()) {
+      // 语义打断：先压低、不停播，听完这句、问过是不是对助手说的再决定（乘客一句话不再掐断回答）
+      this._held = true
+      this._heldEnded = false
+      this.onDuckTts(true)
+    } else {
+      this.onStopTts()
+    }
     this._enterListening({ speechAlreadyStarted: true, fromBargeIn: true, source: 'bargein' })
   }
 

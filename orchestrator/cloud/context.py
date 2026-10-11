@@ -2501,6 +2501,7 @@ def build_context(request) -> PlanContext:
               "vehicle_battery",   # 端侧真实电量，透传给 charging
               "input_source",      # 本轮来源：voice_* 免唤醒/S2S；ptt 为 Android 手动录音
               "voice_utterance_ms",  # R4.4：本轮 speech 累计时长（数字字符串）
+              "voice_admitted",    # 语义打断：插话那句客户端已在 llm-gateway 判过受话（"1"），云端不再判第二遍
               "clarify_resume",    # R4.4：澄清续接标记（"1"）——engine 据此深度=1 抑制再澄清
               "vision_frame_id",   # M4 P4：车外单帧的**引用**（图像本体只在网关内存里）。
                                    # 按 _SENSITIVE_SCOPE 最小化下发——只有声明了 vision

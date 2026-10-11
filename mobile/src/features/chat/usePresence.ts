@@ -154,9 +154,9 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
   // 2s 提示：取消（§5.1.1 的隐私文案——「不会发给」而不是「未上传」）与回声（§5.2 规则 5）——取更晚的那个
   const cancelNotice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
   const echoNotice = hf.echoAt ? { text: '像是我自己的声音，没算数', at: hf.echoAt } : null
-  // 云端拒掉免唤醒那一句（2026-10-10）：提示文字由免唤醒回路给（两端同一句），这里只取最近的一条
+  // 云端拒掉免唤醒那一句（2026-10-10）/ 插话判非受话（2026-10-11）：提示文字与显示时长由免唤醒回路给，这里只取最近的一条
   const notice = [cancelNotice, echoNotice, hf.rejected]
-    .reduce<{ text: string; at: number } | null>((latest, n) => (n && (!latest || n.at > latest.at) ? n : latest), null)
+    .reduce<{ text: string; at: number; ms?: number } | null>((latest, n) => (n && (!latest || n.at > latest.at) ? n : latest), null)
   // 上面那段就是这条偏离的论证：这一层是时钟驱动的状态机，`now` 必须是**这一帧**的墙钟。
   // 存进 state 会在停表期留下陈旧读数，重新起表那一帧的倒计时就是错的；useMemo 也不行
   // （依赖不变就冻住）。AR09 复核在场层负载时连同 useChangedAt 一起测。
@@ -174,7 +174,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
     (connStatus === 'connecting' && now - connChangedAt < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
     (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显
     (hf.fsm === 'ARMED' && now - hfFsmChangedAt < ARMED_CAPSULE_MS) || // armed 胶囊 3s 隐藏
-    (!!notice && now - notice.at < NOTICE_SHOW_MS) // 取消 / 回声提示 2s 短显
+    (!!notice && now - notice.at < (notice.ms ?? NOTICE_SHOW_MS)) // 取消 / 回声提示 2s、拒识提示 4s 短显
   useEffect(() => {
     if (!needsTick) return
     const t = setInterval(() => bumpTick((n) => n + 1), TICK_MS)

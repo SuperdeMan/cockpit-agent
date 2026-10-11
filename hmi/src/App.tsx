@@ -22,6 +22,7 @@ import { DEFER, INTERRUPT, PendingSpeech, SPEAK, decideSpeech, deliveryIdsOf } f
 import { ContextualStage } from './components/ContextualStage'
 import {
   appendTTSDelta,
+  duckTTS,
   finishTTSReply,
   queueTTS,
   startTTSReply,
@@ -34,7 +35,7 @@ import { poiSelectionIndex, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
 import { isContinuationInput } from './voiceLoop.mjs'
-import { dropRejectedTurn, rejectedNotice } from './rejectedTurn.mjs'
+import { bargeInRejectedNotice, dropRejectedTurn, rejectedNotice } from './rejectedTurn.mjs'
 import { needsFrame, captureFrame } from './visionFrame.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 import { RequestRegistry } from './requestRouting.mjs'
@@ -148,6 +149,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
   // R4.3 免唤醒回路控制器（VAD+FSM+ASR 编排）：默认关，settings.handsFree 开启才激活
   const handsFreeRef = useRef<HandsFreeController | null>(null)
+  // 最新一轮已送去播报的字（语义打断判据的「助手上一句」、回声参照；dispatch 清空）
+  const spokenRef = useRef('')
   // M4 S2S：当前自答轮的助手气泡 id（逐字累积）／待回传主链回答的逃逸轮 turn_id
   const s2sBubbleRef = useRef<string>('')
   const s2sEscalatedTurnRef = useRef<string>('')
@@ -243,9 +246,13 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         }
       },
       onSend: (t, vm) => sendRef.current(t, vm
-        ? { input_source: 'voice_' + vm.source, voice_utterance_ms: String(vm.utteranceMs || 0) }
+        ? { input_source: 'voice_' + vm.source, voice_utterance_ms: String(vm.utteranceMs || 0),
+            // 语义打断：插话那句已在 llm-gateway 判过受话，云端不再判第二遍（2026-10-11）
+            ...(vm.admitted ? { voice_admitted: '1' } : {}) }
         : undefined),
       onStopTts: () => stopTTS(),
+      onDuckTts: (on) => duckTTS(on),
+      onBargeInRejected: () => flashHandsFreeNotice(bargeInRejectedNotice()),
       // 离开 LISTENING（发送/静默回收/打断）即清 partial——真实用户气泡由 send 接管，避免重影
       onOrbState: (orb) => {
         setHandsFreeOrb(orb)
@@ -388,6 +395,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       // A2：只有最新轮的语音才喂 TTS 播放队列，旧轮 delta 不复读
       if (s.ttsEnabled && s.autoplay && delta && reg.isLatest(targetId)) {
         appendTTSDelta(delta).catch(() => {/* 播放失败静默 */})
+        // 已送去播报的字随流式变长喂给 FSM：回声参照、语义打断判定里的「助手上一句」都要「此刻正在播的那段」——
+        // 只在 final 给一次的话，final 之前插话拿到的是上一轮的话（同 Android speech.onSpeechText）
+        spokenRef.current += delta
+        handsFreeRef.current?.setTtsText(spokenRef.current)
       }
       setMessages((m) =>
         m.some((x) => x.id === targetId)
@@ -732,6 +743,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     if (s.ttsEnabled && s.autoplay)
       startTTSReply(AUDIO_API, s.voiceId, s.ttsProvider, lastEmotionRef.current)
     else stopTTS()
+    spokenRef.current = ''
     const traceId = genTraceId() // 观测贯通：本轮 trace，随 meta 上行 + 挂气泡供复制
     const requestId = uid()      // Q3：本轮归属键，网关盖在该轮每一帧上
     // 断线时入有界队列、重连后自动 flush——不再静默丢消息（旧逻辑 readyState!==OPEN 直接 return）
@@ -786,7 +798,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     }
     // 续问窗来的那句先显示成待定（云端判定之前），判受话转正、判非受话连同占位删掉（2026-10-10）
     if (!metaExtra?.__bubbled) setMessages((m) => [...m, {
-      id: uid(), role: 'user', text, ...(isContinuationInput(metaExtra?.input_source) ? { provisional: true } : {}) }])
+      id: uid(), role: 'user', text,
+      ...(isContinuationInput(metaExtra?.input_source) && metaExtra?.voice_admitted !== '1' ? { provisional: true } : {}) }])
     // Q1-C：发新消息**不再撤掉待确认条**。挂起在服务端活得好好的（R2 插话不清挂起），
     // 前端却把条子藏了——后端为此加了一句「对了，X 还在等你确认」的软提醒来补偿。
     // 台账化之后条子自己留着，那句补偿话术不再是唯一的告知通道。
@@ -963,6 +976,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const stopOutput = () => {
     handsFreeRef.current?.bargeInForProactive()
     stopTTS()
+    handsFreeRef.current?.stopSpeaking() // FSM 回 ARMED；语义打断判定期间按停 ⇒ 作废判定（2026-10-11）
   }
 
   return (

@@ -19,6 +19,11 @@ const METRIC_OF = {
   reject_recovered: 'voice_reject_recovered',        // R4.4 P2：一次成功交互复位
   rejected_session_end: 'voice_rejected_session_end', // 2026-10-10：云端拒识结束这次连续对话（回 ARMED）
   followup_expired: 'voice_followup_expired',        // 2026-10-10：续问窗里的噪声把窗用完，回 ARMED
+  // 2026-10-11 语义打断：压低后的四种去向（本地叫停 / 判受话 / 判非受话接着播 / 判不出照旧发）
+  barge_in_stop: 'voice_barge_in_stop',
+  barge_in_admitted: 'voice_barge_in_admitted',
+  barge_in_rejected: 'voice_barge_in_rejected',
+  barge_in_unjudged: 'voice_barge_in_unjudged',
 }
 
 /** 累计一个语音事件。sink 默认 localStorage（浏览器）；node 测注入内存 storage。 */

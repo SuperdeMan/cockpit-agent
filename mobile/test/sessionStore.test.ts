@@ -1126,4 +1126,13 @@ describe('免唤醒那一轮被云端拒掉', () => {
     expect(msgs(core).filter((m) => m.role === 'user' && m.provisional).map((m) => m.text)).toEqual(['那后天呢'])
     core.dispose()
   })
+
+  test('语义打断：插话那句已在 llm-gateway 判过受话（voice_admitted=1）⇒ 不标待定，标记随帧上云；没判过的插话照旧待定', () => {
+    const { core, transport } = newCore()
+    core.send('换一首周杰伦的歌', { input_source: 'voice_bargein', voice_admitted: '1' }, { source: 'handsfree' })
+    expect(transport.lastUserFrame().meta.voice_admitted).toBe('1')
+    core.send('那后天呢', { input_source: 'voice_bargein' }, { source: 'handsfree' })
+    expect(msgs(core).filter((m) => m.role === 'user' && m.provisional).map((m) => m.text)).toEqual(['那后天呢'])
+    core.dispose()
+  })
 })

@@ -14,7 +14,7 @@ import {
 } from '@/core/obs/turnTimeline'
 import { noteListeningEntered } from '@/core/voice/kwsExperiment'
 import { presenceTrail } from '@/core/presence/presenceTrail'
-import { rejectedNotice } from '@shared/rejectedTurn.mjs'
+import { bargeInRejectedNotice, rejectedNotice } from '@shared/rejectedTurn.mjs'
 import {
   HandsFreeController,
   WAKE_WORD_DISPLAY,
@@ -22,6 +22,8 @@ import {
   type HandsFreeDeps,
 } from '@/core/voice/handsFree'
 import { setFocusHold } from '@/core/voice/audioFocus'
+import { duckTts } from '@/core/voice/audioCtx'
+import { REJECT_NOTICE_SHOW_MS } from '@/core/presence/presence'
 import { nativeErrorText } from '@/core/voice/nativeErrorText'
 import { speechController } from '@/core/voice/speech'
 import { ASR_FALLBACK_MODEL, settingsStore } from '@/core/settings/store'
@@ -85,7 +87,7 @@ export interface HandsFreeUi {
   /** 云端拒掉免唤醒那一句：结束这次连续对话（FSM 回 ARMED），记下提示供在场层短显（2026-10-10） */
   turnRejected(): void
   /** 上一次免唤醒那一句被云端拒掉：提示文字（两端同一句）与时刻；null=没有 */
-  rejected: { text: string; at: number } | null
+  rejected: { text: string; at: number; ms: number } | null
 }
 
 export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
@@ -162,9 +164,14 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         cbRef.current.onSend(text, {
           input_source: 'voice_' + (voice?.source || 'followup'),
           voice_utterance_ms: String(voice?.utteranceMs || 0),
+          // 语义打断：插话那句已在 llm-gateway 判过受话，云端不再判第二遍（2026-10-11）
+          ...(voice?.admitted ? { voice_admitted: '1' } : {}),
         })
       },
       onStopTts: () => speechController().stop(),
+      onDuckTts: (on) => duckTts(on),
+      // 插话判非受话、旧回答恢复音量接着播：与续问窗拒识同一条短显提示通道（这次对话没结束，不提唤醒词）
+      onBargeInRejected: () => { if (live) setRejected({ text: bargeInRejectedNotice(), at: Date.now(), ms: REJECT_NOTICE_SHOW_MS }) },
       onOrbState: (o, f) => {
         if (!live) return
         // 进入 LISTENING = 唤醒命中且开始收音：这一轮的计时从这里起（AR08）。
@@ -369,7 +376,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     if (!ctl?.enabled) return
     ctl.turnRejected()
     const wakeWordOn = settingsStore.getState().settings.wakeWord
-    setRejected({ text: rejectedNotice(wakeWordOn ? WAKE_WORD_DISPLAY : ''), at: Date.now() })
+    setRejected({ text: rejectedNotice(wakeWordOn ? WAKE_WORD_DISPLAY : ''), at: Date.now(), ms: REJECT_NOTICE_SHOW_MS })
   }, [])
   const stopSpeaking = useCallback(() => ctlRef.current?.stopSpeaking(), [])
   /** 系统抢占出口（G-07）：停播 + 放弃收音 / 续问窗；Provider 把它装进 bindSystemStop */

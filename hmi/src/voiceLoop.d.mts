@@ -4,7 +4,7 @@ export const VoiceState: { [K in VoiceStateName]: K }
 export type VoiceLoopConfig = {
   followupWindowMs: number; silenceTailMs: number; falseWakeMs: number; bargeInMinMs: number
   dismissMinChars: number; dismissWords: string[]; selfTriggerLimit: number; thinkingMaxMs: number
-  exitWords: string[]; endpointGraceMs: number
+  exitWords: string[]; endpointGraceMs: number; bargeInStopWords: string[]; bargeInJudgeMs: number
 }
 export const DEFAULTS: VoiceLoopConfig
 export const CONTINUATION_SOURCES: readonly string[]
@@ -17,9 +17,12 @@ export class VoiceLoop<Handle = ReturnType<typeof setTimeout>> {
     onState?: (orbState: VoiceOrbState, state: VoiceStateName) => void
     onOpenAsr?: (context: { resume: boolean; sinceSpeechStartMs: number }) => void
     onCloseAsr?: () => void; onEndpoint?: () => void
-    onSend?: (text: string, meta: { source: string; utteranceMs: number }) => void
+    onSend?: (text: string, meta: { source: string; utteranceMs: number; admitted?: boolean }) => void
     onStopTts?: () => void; onWakeChime?: () => void; onDisableBargeIn?: (reason: string) => void
     onExitAck?: () => void; onCancelTurn?: () => void; onMetric?: (event: string) => void
+    /** 语义打断：插话那句问一次是不是对助手说的；不传 = 一打断就停播（旧行为） */
+    onJudgeBargeIn?: ((text: string, previous: string, done: (addressed: boolean | null) => void) => void) | null
+    onDuckTts?: (on: boolean) => void; holdBargeIn?: () => boolean
   })
   cfg: VoiceLoopConfig
   state: VoiceStateName

@@ -40,7 +40,8 @@ from .clients import set_llm_pin
 from .decision_support import ShadowRunner
 from . import candidate_query
 from .reply_position import reply_position
-from .admission import assistant_name, is_continuation_source, judge_addressed, judge_continuation
+from .admission import (assistant_name, continuation_timeout_s, format_votes, is_continuation_source,
+                        judge_addressed, judge_continuation)
 from .superseded import rewrite_goal, superseded_values
 from .edge_authority import direction_conflicts
 from . import slot_shape
@@ -260,17 +261,6 @@ def _admission_timeout_s() -> float:
     except ValueError:
         return 3.0
     return value if value > 0 else 3.0
-
-
-def _continuation_timeout_s() -> float:
-    """续问窗受话判定每一问的上限（秒）。它与规划并行，受话轮不增加可感时延，所以比挂起续接那道（`_admission_timeout_s`）宽：
-    2026-10-11 真栈探针里 3 s 上限下两句判定在规划同时进行时超时、回落规划器的宽松判定，乘客的话被放行。
-    代码缺省 5.0，不进 `.env.example`（部署闸按路径硬阻断）；非法值回落缺省。"""
-    try:
-        value = float(os.getenv("CONTINUATION_ADMISSION_TIMEOUT_S", "") or 5.0)
-    except ValueError:
-        return 5.0
-    return value if value > 0 else 5.0
 
 
 def _clarify_enabled() -> bool:
@@ -1286,8 +1276,12 @@ class PlannerEngine:
             # 续问窗（唤醒后连续对话）里没喊唤醒词就收进来的这句：与规划并行判一次是不是对助手说的（续问窗自己的判据，
             # 拿不准时只有完整的办事请求才算），判否就不等规划、立即静默拒识；判不出回落规划器的 `addressed`
             # （设计 docs/design/2026-10-10-handsfree-followup-rejection.md §4.1）。
+            # 播报中插话、客户端已在 llm-gateway 用同一份判据问过并判受话（`voice_admitted=1`）：不再问第二遍，
+            # 按「判定为受话」往下走（焦点省略那道复问同样跳过；设计 docs/design/2026-10-11-semantic-barge-in.md §4.2）。
+            preadmitted = is_continuation_source(input_source) and ctx.prefs.get("voice_admitted") == "1"
             continuation = (asyncio.ensure_future(self._continuation_admitted(ctx, text, working_set))
-                            if is_continuation_source(input_source) and _reject_enabled() else None)
+                            if is_continuation_source(input_source) and _reject_enabled() and not preadmitted
+                            else None)
             plan, continuation_verdict = await self._plan_unless_rejected(
                 self.planner.build(text, working_set, ctx, granted_permissions=ctx.granted_permissions),
                 continuation)
@@ -1295,6 +1289,9 @@ class PlannerEngine:
                 async for ev in self._reject_not_addressed(ctx, judge="continuation"):
                     yield ev
                 return
+            if preadmitted:
+                continuation_verdict = True
+                await self._note_preadmitted(ctx)
             # 新任务的起点只能由 engine 使用本轮服务端 request.text 盖章。
             # Planner/Agent 给出的 goal/reason 即使看起来更像指令也没有这项权威。
             plan.safety_origin_text = text
@@ -1894,23 +1891,20 @@ class PlannerEngine:
         return addressed
 
     async def _continuation_admitted(self, ctx: PlanContext, text: str, working_set) -> bool | None:
-        """续问窗来的这句是不是对助手说的（`admission.judge_continuation`：判否再问一次，两次都否才 False）。
-        「记住…」恒受话不问模型（同 `_voice_admitted`）；每一问各自受 `_continuation_timeout_s()` 约束，判不出 ⇒ None。
+        """续问窗来的这句是不是对助手说的（`runtime.continuation_admission.judge_continuation`：判否再问一次，两次都否才 False；
+        「记住…」恒受话不问模型，同 `_voice_admitted`）。每一问各自受 `continuation_timeout_s()` 约束，判不出 ⇒ None。
         发一个 `cloud.voice_admission` span（exit=continuation，每次的判定 + 耗时）。任何意外 ⇒ None（回落规划器的判定）。"""
         started = time.monotonic()
         votes: tuple = ()
         try:
-            if is_memory_directive(text):
-                verdict = True
-            else:
-                previous = await self._previous_assistant_text(ctx, working_set)
+            previous = await self._previous_assistant_text(ctx, working_set)
 
-                async def bounded(messages):
-                    return await asyncio.wait_for(self._admission_complete(messages),
-                                                  timeout=_continuation_timeout_s())
+            async def bounded(messages):
+                return await asyncio.wait_for(self._admission_complete(messages),
+                                              timeout=continuation_timeout_s())
 
-                verdict, votes = await judge_continuation(
-                    bounded, text, previous, assistant_name(ctx.prefs.get("assistant_name", "")))
+            verdict, votes = await judge_continuation(
+                bounded, text, previous, assistant_name(ctx.prefs.get("assistant_name", "")))
         except Exception as exc:                # 把关失灵不拦人：回落规划器那份判定
             logger.warning("continuation admission failed (%s)", exc)
             verdict = None
@@ -1919,12 +1913,24 @@ class PlannerEngine:
                 ctx.trace_id, "cloud.voice_admission",
                 attrs={"exit": "continuation", "addressed": "0" if verdict is False else "1",
                        "verdict": "unavailable" if verdict is None else ("1" if verdict else "0"),
-                       "votes": ",".join("-" if v is None else ("1" if v else "0") for v in votes),
+                       "votes": format_votes(votes),
                        "admission_ms": str(round((time.monotonic() - started) * 1000)),
                        "owner": "cloud-engine"})
         except Exception as exc:
             logger.debug("continuation admission span not emitted (%s)", exc)
         return verdict
+
+    @staticmethod
+    async def _note_preadmitted(ctx: PlanContext) -> None:
+        """已在 llm-gateway 判过受话的插话轮：留一个 `cloud.voice_admission` span（exit=bargein_preadmitted），
+        读数时能把「客户端判过」与「云端判过」分开数。发不出不影响这一轮。"""
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                ctx.trace_id, "cloud.voice_admission",
+                attrs={"exit": "bargein_preadmitted", "addressed": "1", "verdict": "client",
+                       "owner": "cloud-engine"})
+        except Exception as exc:
+            logger.debug("preadmitted span not emitted (%s)", exc)
 
     @staticmethod
     async def _plan_unless_rejected(build, continuation) -> tuple:

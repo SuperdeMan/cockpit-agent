@@ -529,3 +529,103 @@ test('CA2-15 S2：S2S 会话的 session.start 带上这台手机配置的 token�
   expect(start.auth_token).toBe('tok-phone')
   await ctl.disable()
 })
+
+// ─── 语义打断接线（2026-10-11，设计 docs/design/2026-10-11-semantic-barge-in.md）──────────────
+// 判据（什么时候压低、判完去哪）的权威单测在 hmi/src/voiceLoop.test.mjs；这里验控制器把它接到了哪儿：
+// 压低走 deps.onDuckTts、判定请求打 llm-gateway（带 token、正在播的那段作 previous）、判受话的这句带 admitted 发出、
+// 判非受话不停播不发、提示走 deps.onBargeInRejected。
+
+const flushMicrotasks = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
+
+function admissionFetch(addressed: boolean | null) {
+  const calls: { url: string; body: any; auth?: string }[] = []
+  const impl = jest.fn(async (url: string, init: any) => {
+    calls.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization })
+    return { ok: true, json: async () => ({ ok: true, addressed }) }
+  })
+  return { impl, calls }
+}
+
+async function speakingCtl(over: Record<string, unknown>) {
+  const events: string[] = []
+  const sends: [string, any][] = []
+  const { ctl } = makeCtl({
+    onSend: (t: string, v: any) => sends.push([t, v]),
+    onStopTts: () => events.push('stop'),
+    onDuckTts: (on: boolean) => events.push('duck:' + on),
+    getAuthToken: () => 'tok-1',
+    ...over,
+  })
+  await ctl.enable()
+  kws.cb.onKeyword('小舟小舟')
+  vad.cb.onSpeechStart()
+  vad.cb.onSpeechEnd()
+  FakeAsr.last!.cb.onFinal('讲个笑话')
+  ctl.ttsStart('从前有座山，山里有座庙')
+  return { ctl, events, sends }
+}
+
+async function bargeInWith(ctl: any, text: string) {
+  jest.useFakeTimers()
+  vad.cb.onSpeechStart()
+  jest.advanceTimersByTime(300) // FSM 的打断确认窗
+  expect(ctl.state).toBe('LISTENING')
+  vad.cb.onSpeechEnd()
+  FakeAsr.last!.cb.onFinal(text)
+  expect(ctl.state).toBe('THINKING')
+  await flushMicrotasks()
+}
+
+test('语义打断：插话先压低不停播，问 llm-gateway；判受话才停播、按「已判过」发出这一句', async () => {
+  const f = admissionFetch(true)
+  const original = globalThis.fetch
+  ;(globalThis as any).fetch = f.impl
+  try {
+    const { ctl, events, sends } = await speakingCtl({})
+    await bargeInWith(ctl, '换个笑话吧')
+    expect(f.calls).toHaveLength(1)
+    expect(f.calls[0].url).toBe('https://x/api/voice/admission')
+    expect(f.calls[0].auth).toBe('Bearer tok-1')
+    expect(f.calls[0].body).toMatchObject({ utterance: '换个笑话吧', previous: '从前有座山，山里有座庙', session_id: 's1' })
+    expect(events).toEqual(['duck:true', 'stop', 'duck:false'])
+    expect(sends.at(-1)?.[0]).toBe('换个笑话吧')
+    expect(sends.at(-1)?.[1]).toMatchObject({ source: 'bargein', admitted: true })
+    expect(ctl.state).toBe('THINKING')
+  } finally {
+    ;(globalThis as any).fetch = original
+    jest.useRealTimers()
+  }
+})
+
+test('语义打断：判非受话 ⇒ 不停播、不发，恢复音量回 SPEAKING，提示走 onBargeInRejected', async () => {
+  const f = admissionFetch(false)
+  const original = globalThis.fetch
+  ;(globalThis as any).fetch = f.impl
+  const rejected = jest.fn()
+  try {
+    const { ctl, events, sends } = await speakingCtl({ onBargeInRejected: rejected })
+    await bargeInWith(ctl, '妈你到哪了')
+    expect(events).toEqual(['duck:true', 'duck:false'])
+    expect(sends).toHaveLength(1) // 只有唤醒那一轮
+    expect(ctl.state).toBe('SPEAKING')
+    expect(rejected).toHaveBeenCalledTimes(1)
+  } finally {
+    ;(globalThis as any).fetch = original
+    jest.useRealTimers()
+  }
+})
+
+test('语义打断：判定接口失败（旧网关 404 / 断网）⇒ 判不出，按今天的路径停播发出、不带已判过', async () => {
+  const original = globalThis.fetch
+  ;(globalThis as any).fetch = jest.fn(async () => ({ ok: false, json: async () => ({}) }))
+  try {
+    const { ctl, events, sends } = await speakingCtl({})
+    await bargeInWith(ctl, '那后天呢')
+    expect(events).toEqual(['duck:true', 'stop', 'duck:false'])
+    expect(sends.at(-1)?.[1]?.admitted).toBeUndefined()
+    expect(ctl.state).toBe('THINKING')
+  } finally {
+    ;(globalThis as any).fetch = original
+    jest.useRealTimers()
+  }
+})

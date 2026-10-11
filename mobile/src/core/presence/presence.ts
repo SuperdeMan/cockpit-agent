@@ -152,7 +152,8 @@ export interface PresenceInput {
   /** 建议开行车档（§6 触发③三条件由收集器算：drivingMode.ts::drivingSuggested）；**只建议不切** */
   drivingSuggest?: boolean
   /** 2s 短提示（取消 / 回声）；判据 NOTICE_SHOW_MS 在这里 */
-  notice?: { text: string; at: number } | null
+  /** ms：这条提示自己的显示时长（缺省 NOTICE_SHOW_MS）。拒识提示句子长，给 REJECT_NOTICE_SHOW_MS（同 HMI 4 s） */
+  notice?: { text: string; at: number; ms?: number } | null
   /** 此刻在支持页（设置 / 车辆 / 地图）而不是对话页。**只影响常驻**：行车档 B/C 的「语音层常驻」是对话页
    *  的形态——在支持页上它会压住用户来这一页要用的东西（打磨批 A 未达项①：设置页下 40% 被层盖住、
    *  行车档开关够不到）；支持页闲置只有浮动光球（AR04 形态修正），层只在收音 / 语音轮在飞 / 点开时升。
@@ -215,6 +216,8 @@ export const ARMED_CAPSULE_MS = 3000
 
 /** 2s 短提示（取消 / 回声）的显示时长（方案 §5.1.1 / §5.2 规则 5） */
 export const NOTICE_SHOW_MS = 2000
+/** 拒识提示（续问窗拒识 / 插话判非受话）的显示时长：句子十几到二十几个字，2 s 读不完；与 HMI 的 4 s 对齐（2026-10-11） */
+export const REJECT_NOTICE_SHOW_MS = 4000
 
 /** 行车档答完多久内容回落（§5.2 规则 3 行车条款「TTS 结束后 +3s 自动收起」）。
  *  「收起」= 内容回落到只球 + 胶囊（detent 0.4）；**层本身常驻不消失**（§5 第 15 条的合并写法）。 */
@@ -352,7 +355,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   else if (agent === 'processing') capsule = { text: `${i.turn.processLabel || '处理中'}…`, tone: 'neutral' }
   else if (agent === 'thinking') capsule = { text: '正在思考…', tone: 'neutral' }
   // 2s 短提示（取消 / 回声）：压过 followup 与 armed 这两个「常态提示」，但让位给收音 / 播报 / 思考
-  else if (!!i.notice && i.now - i.notice.at < NOTICE_SHOW_MS) capsule = { text: i.notice.text, tone: 'neutral' }
+  else if (!!i.notice && i.now - i.notice.at < (i.notice.ms ?? NOTICE_SHOW_MS)) capsule = { text: i.notice.text, tone: 'neutral' }
   else if (agent === 'followup') capsule = { text: '可以接着说', tone: 'accent', live: true }
   // error 在 armed 之前（评审 D3）：免唤醒开着时 capture 恒 armed，排后面就永远出不来
   else if (errorLive) capsule = { text: i.lastError!.text, tone: 'red' }

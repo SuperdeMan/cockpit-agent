@@ -7,7 +7,7 @@
 //     评审那个案例（待确认时断网，确认被盖掉）在这里有一条专门的断言
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
-import { MIC_LABEL, capsuleVisible, derivePresence, sheetCapsuleText, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
+import { MIC_LABEL, REJECT_NOTICE_SHOW_MS, capsuleVisible, derivePresence, sheetCapsuleText, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
 
 const NOW = 5_000_000
 
@@ -265,6 +265,12 @@ describe('capsule 文案', () => {
     expect(derivePresence(base({ notice: n, hfEnabled: true, hfUsable: true, hfFsm: 'ARMED', hfFsmChangedAt: NOW - 100 })).capsule?.text).toBe(n.text)
     expect(derivePresence(base({ notice: n, ptt: 'recording' })).capsule?.text).toBe('在听…')
     expect(derivePresence(base({ notice: n, speaking: true })).capsule?.text).toBe('播报中')
+  })
+
+  test('拒识提示带自己的显示时长（4s，同 HMI）：2s 之后仍在，到点才收', () => {
+    const n = { text: '刚才那句不像是对我说的，我接着说', at: NOW - 2_500, ms: REJECT_NOTICE_SHOW_MS }
+    expect(derivePresence(base({ notice: n })).capsule?.text).toBe(n.text)
+    expect(derivePresence(base({ notice: { ...n, at: NOW - REJECT_NOTICE_SHOW_MS } })).capsule).toBeUndefined()
   })
 })
 

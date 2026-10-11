@@ -20,3 +20,9 @@ export function dropRejectedTurn(messages, assistantId, userId = '') {
 export function rejectedNotice(wakeWord) {
   return '刚才那句不像是对我说的，已忽略' + (wakeWord ? `；需要我时先喊「${wakeWord}」` : '')
 }
+
+/** 播报中插话被判「不是对我说的」、旧回答恢复音量接着播时的提示（2026-10-11 语义打断）。
+ *  这次对话没结束，不提唤醒词；那句没发出去，也不进对话记录。 */
+export function bargeInRejectedNotice() {
+  return '刚才那句不像是对我说的，我接着说'
+}

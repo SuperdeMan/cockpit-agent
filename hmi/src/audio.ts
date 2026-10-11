@@ -208,6 +208,7 @@ async function prepareTTS(request: TtsRequest, signal: AbortSignal): Promise<Pre
 async function playPreparedTTS(item: PreparedAudio, signal: AbortSignal): Promise<void> {
   await new Promise<void>((resolve) => {
     const audio = new Audio(item.url)
+    audio.volume = ttsDucked ? DUCK_GAIN : 1 // 语义打断压低期间起播的段同样压低
     let finished = false
 
     const finish = () => {
@@ -289,6 +290,43 @@ export function makeS2sPlayer(sampleRate: number): PcmPlayer | null {
   const ctx = getAudioContext()
   if (!ctx) return null
   return new PcmPlayer({ ctx, sampleRate: sampleRate || 24000 })
+}
+
+// ─── 播报总线（2026-10-11 语义打断，设计 docs/design/2026-10-11-semantic-barge-in.md §4.4）───
+// 主链播报的 PcmPlayer 都接到同一个 GainNode；播报中有人插话、等判定期间压到 0.3（约 −10 dB），判定后恢复。
+// 批处理那条（HTMLAudioElement）改 volume。S2S 播放器与提示音不经总线：S2S 插话仍是立即停播，提示音不该被压。
+const DUCK_GAIN = 0.3
+const DUCK_RAMP_S = 0.08 // 斜坡防爆音
+let ttsBus: GainNode | null = null
+let ttsBusCtx: AudioContext | null = null
+let ttsDucked = false
+
+function ttsBusOf(ctx: AudioContext): AudioNode {
+  if (!ttsBus || ttsBusCtx !== ctx) {
+    ttsBus = ctx.createGain()
+    ttsBus.gain.value = ttsDucked ? DUCK_GAIN : 1
+    ttsBus.connect(ctx.destination)
+    ttsBusCtx = ctx
+  }
+  return ttsBus
+}
+
+/** 压低 / 恢复正在播的回答（只调音量，不停播）。之后新起的播报段沿用当前状态，直到恢复。 */
+export function duckTTS(on: boolean): void {
+  ttsDucked = on
+  const level = on ? DUCK_GAIN : 1
+  if (ttsBus && ttsBusCtx) {
+    const gain = ttsBus.gain
+    const now = ttsBusCtx.currentTime
+    try {
+      gain.cancelScheduledValues(now)
+      gain.setValueAtTime(gain.value, now)
+      gain.linearRampToValueAtTime(level, now + DUCK_RAMP_S)
+    } catch {
+      gain.value = level
+    }
+  }
+  if (ttsAudio) ttsAudio.volume = level
 }
 
 // 共享 AudioContext：懒建 + 复用（避免每轮新建撞浏览器上下文数上限）。startTTSReply 在用户手势
@@ -377,7 +415,7 @@ class StreamingTtsSession {
       const ctx = getAudioContext()
       if (!ctx) { void this.fallback(); return }
       this.player = new PcmPlayer({
-        ctx, sampleRate: m.sample_rate || 24000,
+        ctx, sampleRate: m.sample_rate || 24000, destination: ttsBusOf(ctx),
         onFirstAudio: () => { this.audioStarted = true; markTtsStart() },
       })
     } else if (m.type === 'done') {

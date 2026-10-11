@@ -23,6 +23,7 @@ import { PcmRing } from '@shared/pcmRing.mjs'
 import { S2SClient, s2sUrl } from '@shared/s2sClient.mjs'
 import { VoiceLoop } from '@shared/voiceLoop.mjs'
 import { stripLeadingWakeWord } from '@shared/utteranceHeuristics.mjs'
+import { judgeBargeIn } from '@shared/bargeInJudge.mjs'
 
 import { AsrSession, type AsrConfig } from './asr'
 import { newPcmPlayer } from './audioCtx'
@@ -89,10 +90,14 @@ export interface HandsFreeDeps {
   audioUrl: string
   getAsrConfig(): Pick<AsrConfig, 'language' | 'provider' | 'model' | 'fallbackModel'>
   getSessionId(): string
-  /** 定稿通过 FSM 本地治理 → 派发给对话链路（= SessionCore.send） */
-  onSend(text: string, voice: { source: string; utteranceMs: number }): void
+  /** 定稿通过 FSM 本地治理 → 派发给对话链路（= SessionCore.send）。admitted：语义打断里这句已在 llm-gateway 判过受话 */
+  onSend(text: string, voice: { source: string; utteranceMs: number; admitted?: boolean }): void
   /** barge-in：停播报 */
   onStopTts(): void
+  /** 语义打断（2026-10-11）：播报中有人插话先压低（true）、判定后恢复（false） */
+  onDuckTts?(on: boolean): void
+  /** 插话被判「不是对我说的」、旧回答恢复音量接着播 → UI 短显提示 */
+  onBargeInRejected?(): void
   /** (orbState, fsmState)；orbState=null 表示回 IDLE，把麦态交还给 PTT */
   onOrbState(orb: string | null, fsm: string): void
   /** 续问窗回声被 FSM 丢弃（voiceLoop echo_dismissed）→ UI 短显提示（方案 §5.2 规则 5） */
@@ -185,7 +190,7 @@ export class HandsFreeController {
         if (this.s2s) this.commitS2sAudio()
         else void this.asr?.stop()
       },
-      onSend: (text: string, voice: { source: string; utteranceMs: number }) => {
+      onSend: (text: string, voice: { source: string; utteranceMs: number; admitted?: boolean }) => {
         if (!this.on) return
         if (this.s2s) {
           // S2S 下 provider 已经在答了；这句只是「过了本地治理」，归属（自答/逃逸）
@@ -204,6 +209,14 @@ export class HandsFreeController {
         if (this.s2s) this.s2s.cancelTurn()
         this.deps.onCancelTurn?.()
       },
+      // 语义打断：插话那句先问 llm-gateway 是不是对助手说的（不占对话通道），旧回答压低接着播。
+      // S2S 挡位不压低（自答轮不经主链），逐字是旧行为：立即停播（设计 2026-10-11-semantic-barge-in §4.3）。
+      onJudgeBargeIn: (text: string, previous: string, done: (addressed: boolean | null) => void) => {
+        void judgeBargeIn(this.deps.audioUrl, { utterance: text, previous, sessionId: this.deps.getSessionId() },
+          { token: this.deps.getAuthToken?.() ?? '' }).then(done, () => done(null))
+      },
+      onDuckTts: (on: boolean) => this.deps.onDuckTts?.(on),
+      holdBargeIn: () => !this.s2s,
       onDisableBargeIn: (reason: string) => {
         this.deps.onNotice?.('已关闭本次会话的语音打断（' + reason + '）')
         this.deps.onBargeInDisabled?.(reason)
@@ -214,6 +227,7 @@ export class HandsFreeController {
         if (this.s2s && S2S_LOCAL_HANDLED.has(name)) this.s2s.cancelTurn()
         // 回声提示只有这一路信号（barge-in 那一路的 _countSelfTrigger 没有 metric——共享文件不改，记遗留）
         if (name === 'echo_dismissed') this.deps.onEchoDismissed?.()
+        if (name === 'barge_in_rejected') this.deps.onBargeInRejected?.()
       },
     })
   }

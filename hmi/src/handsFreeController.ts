@@ -11,6 +11,7 @@ import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 import { RejectPolicy } from './rejectPolicy.mjs'
 import { S2SClient, s2sUrl } from './s2sClient.mjs'
+import { judgeBargeIn } from './bargeInJudge.mjs'
 
 // R4.3b P4：续说（followup/宽限续说）开 ASR 时注入的前滚缓冲——只补 VAD speech-start 判定
 // 延迟（去抖 64ms + 几帧）的首字；刻意短，不带回声/上轮 TTS 尾。唤醒进入注入 0（不带唤醒词，见 openAsr）。
@@ -32,8 +33,12 @@ export type HandsFreeDeps = {
   audioApi: string
   getAsrConfig: () => { language: string; provider: string; model: string }
   // R4.4：第二参带 hands-free 来源 → App 拼 meta.input_source 上云做拒识判定（旧调用方可略）。
-  onSend: (text: string, voice?: { source: string; utteranceMs: number }) => void
+  // admitted：语义打断里这句已在 llm-gateway 判过受话（App 带 voice_admitted=1，云端不再判第二遍）
+  onSend: (text: string, voice?: { source: string; utteranceMs: number; admitted?: boolean }) => void
   onStopTts: () => void
+  // 语义打断（2026-10-11）：播报中有人插话先压低（true）、判定后恢复（false）；判非受话、旧回答接着播时提示一次
+  onDuckTts?: (on: boolean) => void
+  onBargeInRejected?: () => void
   onOrbState: (orb: string | null) => void // null = FSM 回 IDLE，交还 mic 态
   onPartialText?: (text: string) => void    // 聆听中的实时识别文字（issue②：hands-free 上屏）
   onCancelTurn?: () => void                  // U2/P2：THINKING 期唤醒词打断 → App 发 {type:cancel} 给网关
@@ -132,7 +137,7 @@ export class HandsFreeController {
       // 气泡插入就落到状态迁移之后，与并发的另一次 send 交错时会出现气泡与回答错位。
       // 声纹也根本不需要这个等待：识别在用户说到 1.5s 时就发出，而端点还要再等一个静音尾
       // （默认 800ms），结果早就回来了——**为一个几乎不生效的优化牺牲一条不变量是亏的**。
-      onSend: (t: string, vm?: { source: string; utteranceMs: number }) => {
+      onSend: (t: string, vm?: { source: string; utteranceMs: number; admitted?: boolean }) => {
         // D5-2 红线在 S2S 下的兑现：**确认条可见时一切定稿必须上主链**。S2S 模型没有
         // 任何机制感知主链的挂起确认——「确认/取消」留给它只会被当闲聊自答（「好的已
         // 确认」而后备箱没开；「已为您取消」而挂起还活着），是假承诺。此时取消 provider
@@ -142,6 +147,16 @@ export class HandsFreeController {
         this.deps.onSend(t, vm)
       },
       onStopTts: () => { this.s2s?.bargeIn(); this.deps.onStopTts() },
+      // 语义打断：插话那句先问 llm-gateway 是不是对助手说的（不占对话通道），旧回答压低接着播。
+      // S2S 挡位不压低（自答轮不经主链），逐字是旧行为：立即停播（设计 2026-10-11-semantic-barge-in §4.3）。
+      onJudgeBargeIn: (text: string, previous: string, done: (addressed: boolean | null) => void) => {
+        const meta = this.deps.getSessionMeta?.() || { sessionId: '' }
+        void judgeBargeIn(this.deps.audioApi, {
+          utterance: text, previous, assistantName: this.deps.getAssistantName?.() || '', sessionId: meta.sessionId,
+        }, { token: memoryAuthToken() }).then(done, () => done(null))
+      },
+      onDuckTts: (on: boolean) => this.deps.onDuckTts?.(on),
+      holdBargeIn: () => !this.useS2s(),
       onWakeChime: () => this.chime(),
       onDisableBargeIn: (r: string) => this.deps.onNotice?.('已关闭语音打断（' + r + '）'),
       onExitAck: () => this.exitAck(), // U3：退出词命中 → 播退场应答
@@ -151,6 +166,7 @@ export class HandsFreeController {
         // 生成——不然一句「嗯」会被 S2S 当一轮答出来，R4.3b 辛苦做的本地治理在 S2S 下全失效。
         // onMetric 就是 FSM 的语义事件总线（RFC §4.1「一组新效果回调注入」），voiceLoop 零改动。
         if (this.useS2s() && S2S_LOCAL_HANDLED.has(name)) this.s2s.bargeIn()
+        if (name === 'barge_in_rejected') this.deps.onBargeInRejected?.()
         bumpVoiceMetric(name)
       }, // P3 obs：语音事件计数（localStorage，供真麦验收）
     })
@@ -304,6 +320,9 @@ export class HandsFreeController {
   // R4.3b P0（U2 死锁）：本轮终结（无播报/纯卡片/error/超时）时 App 调此放 FSM 出 THINKING。
   // 命名表意（= ttsEnd 语义），App 侧读起来即「这一轮结束了」，不必知道内部靠 TTS 生命周期驱动。
   turnEnded(): void { this.ttsSpeaking = false; if (this.on) this.vl.ttsEnd() }
+  // 用户按了停播（与 Android 同语义）：FSM 回 ARMED、不开续问窗；语义打断判定期间按停 ⇒ 作废判定、停掉压着的旧回答。
+  // 停播本身由 App 的 stopTTS 完成——它不回放 onEnd，FSM 不告诉它就会停在一个没有声音的 SPEAKING 里。
+  stopSpeaking(): void { this.ttsSpeaking = false; if (this.on) this.vl.stopSpeaking() }
   setSilenceTail(ms: number): void { this.vad.setSilenceTail(ms); this.vl.cfg.silenceTailMs = ms }
   // 用户设置（App effect）改续问窗 → 同步 FSM + 收紧策略基准（restore/tighten 以最新设置为准）。
   setFollowupWindow(ms: number): void { this.vl.cfg.followupWindowMs = ms; this.rejectPolicy.setBaseFollowupMs(ms) }

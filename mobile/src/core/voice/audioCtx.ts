@@ -18,7 +18,7 @@
 // 2026-09-06「嗡嗡」定因后，正式路径改走 `queuePlayer.ts`（一个 AudioBufferQueueSourceNode 顺序吃片）；
 // 下面的逐片排定适配层保留为 A/B 对照与「库没有队列节点」时的回退（`setPcmPlayerImpl('nodes')`）。
 import { PcmPlayer } from '@shared/pcmPlayer.mjs'
-import type { AudioBuffer, AudioBufferSourceNode, AudioContext } from 'react-native-audio-api'
+import type { AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode } from 'react-native-audio-api'
 
 import { audioPlaybackLive } from './playbackFacts'
 import { QueuePcmPlayer, type PcmPlayerLike, type QueueCtxLike } from './queuePlayer'
@@ -91,7 +91,7 @@ class ShimSource {
   }
 
   connect(destination: unknown): void {
-    // pcmPlayer 传的永远是 ctx.destination（本适配原样透出的真实节点）
+    // pcmPlayer 传的是它的 destination 选项（播报总线 GainNode）或缺省的 ctx.destination——都是真实节点
     this.real.connect(destination as Parameters<AudioBufferSourceNode['connect']>[0])
   }
 
@@ -189,7 +189,51 @@ export function peekSharedAudioContext(): AudioContext | null {
 export function closeSharedAudioContext(): void {
   const ctx = shared
   shared = null
+  bus = null
+  busCtx = null
   void ctx?.close().catch(() => {})
+}
+
+// ─── 播报总线（2026-10-11 语义打断，设计 docs/design/2026-10-11-semantic-barge-in.md §4.4）───
+// 播放器都接到共享上下文上的一个 GainNode：播报中有人插话、等判定期间压到 0.3（约 −10 dB），判定后恢复。
+// 提示音（cueTone.ts）自己的 GainNode 直连 destination，不经总线。S2S 播放器也走总线，但 S2S 挡位从不压低（holdBargeIn）。
+export const DUCK_GAIN = 0.3
+const DUCK_RAMP_S = 0.08 // 斜坡防爆音
+let bus: GainNode | null = null
+let busCtx: AudioContext | null = null
+let ducked = false
+
+/** 共享上下文上的播报总线（懒建；上下文关了重建）。没有 createGain 的上下文（单测替身）直接给 destination。 */
+export function ttsBus(ctx: AudioContext): unknown {
+  if (typeof (ctx as { createGain?: unknown }).createGain !== 'function') return ctx.destination
+  if (!bus || busCtx !== ctx) {
+    bus = ctx.createGain()
+    bus.gain.value = ducked ? DUCK_GAIN : 1
+    bus.connect(ctx.destination)
+    busCtx = ctx
+  }
+  return bus
+}
+
+/** 压低 / 恢复正在播的播报（只调音量，不停播）；之后新起的播放器沿用当前状态，直到恢复。 */
+export function duckTts(on: boolean): void {
+  ducked = on
+  if (!bus || !busCtx) return
+  const level = on ? DUCK_GAIN : 1
+  const gain = bus.gain
+  const now = busCtx.currentTime
+  try {
+    gain.cancelScheduledValues(now)
+    gain.setValueAtTime(gain.value, now)
+    gain.linearRampToValueAtTime(level, now + DUCK_RAMP_S)
+  } catch {
+    gain.value = level
+  }
+}
+
+/** 此刻是不是压着（诊断 / 单测读）。 */
+export function ttsDucked(): boolean {
+  return ducked
 }
 
 /** 把 react-native-audio-api 的 AudioContext 包成 pcmPlayer 能吃的形状。
@@ -246,10 +290,10 @@ export function selectPcmPlayer(
   const queueCapable =
     typeof (ctx as unknown as { createBufferQueueSource?: unknown }).createBufferQueueSource === 'function'
   if (impl === 'queue' && queueCapable) {
-    return new QueuePcmPlayer({ ...opts, ctx: ctx as unknown as QueueCtxLike })
+    return new QueuePcmPlayer({ ...opts, ctx: ctx as unknown as QueueCtxLike, destination: ttsBus(ctx) })
   }
   // **类型断言只在这一处**——把「共享模块的 JSDoc 声明的是 DOM AudioContext」这件事收在一个函数里
-  return new PcmPlayer({ ...opts, ctx: playerCtxOf(ctx) } as never) as unknown as PcmPlayerLike
+  return new PcmPlayer({ ...opts, ctx: playerCtxOf(ctx), destination: ttsBus(ctx) } as never) as unknown as PcmPlayerLike
 }
 
 /** 建一个播放器（正式路径）。 */

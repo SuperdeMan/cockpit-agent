@@ -40,6 +40,11 @@ test('免唤醒三种来源和语音时长必须交给宿主，不能只转发�
         input_source: 'voice_' + source, voice_utterance_ms: '1234',
       })
     }
+    // 语义打断：插话那句已在 llm-gateway 判过受话 ⇒ 带 voice_admitted=1，云端不再判第二遍（2026-10-11）
+    await act(async () => { mockControllers[0].deps.onSend('换一首', { source: 'bargein', utteranceMs: 800, admitted: true }) })
+    expect(onSend).toHaveBeenLastCalledWith('换一首', {
+      input_source: 'voice_bargein', voice_utterance_ms: '800', voice_admitted: '1',
+    })
   } finally {
     await act(async () => view.unmount())
     settingsStore.setState({ settings: DEFAULT_APP_SETTINGS })

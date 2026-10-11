@@ -630,3 +630,38 @@ def test_a_slow_continuation_judgment_is_bounded_and_falls_back_to_the_planner(m
     assert not _rejected(final) and spy.executed("window.close") == 1
     seen = [(kw.get("attrs") or {}) for _, node, kw in spans if node == "cloud.voice_admission"]
     assert [(a.get("exit"), a.get("verdict"), a.get("votes")) for a in seen] == [("continuation", "unavailable", "-")]
+
+
+def test_a_preadmitted_bargein_is_not_judged_twice_and_still_answers(monkeypatch):
+    """语义打断：插话那句客户端已在 llm-gateway 用同一份判据判过受话（`voice_admitted=1`）——云端不再起续问窗判定、
+    这一轮照常执行，span 记 bargein_preadmitted；不带标记的同一句照旧判、照旧拒（设计 2026-10-11-semantic-barge-in §4.2）。"""
+    from .test_obs_spans import _capture_spans
+    cases = (({**_BARGEIN, "voice_admitted": "1"}, False), (_BARGEIN, True),
+             ({**_VOICE, "voice_admitted": "1"}, False), ({**_BARGEIN, "voice_admitted": "0"}, True))
+    for meta, judged in cases:
+        spans = _capture_spans(monkeypatch)
+        engine, spy, _session = _make()
+        _planner_says(engine)
+        spy.verdicts["把车窗关上"] = [False]
+        final = _run(engine, _req("把车窗关上", meta=meta))[-1]
+        assert _rejected(final) is judged, meta
+        assert spy.executed("window.close") == (0 if judged else 1), meta
+        assert any(a["judge"] == "continuation" for a in spy.admissions) is judged, meta
+        exits = [(kw.get("attrs") or {}).get("exit") for _, node, kw in spans if node == "cloud.voice_admission"]
+        assert exits == (["continuation"] if judged else ["bargein_preadmitted"]), (meta, exits)
+
+
+def test_a_preadmitted_followup_ellipsis_is_not_asked_again(monkeypatch):
+    """焦点省略那道复问（确定性早退的计划）同样按「判过受话」跳过：已判过的一句不因背景省略句判据再被拒。"""
+    engine, spy, _session = _make()
+
+    async def build(text, working_set, ctx, granted_permissions=None, **_kwargs):
+        plan = Plan(steps=[Step(id="s1", agent_id="vehicle", intent="window.close", slots={})],
+                    raw_text=text, addressed=True)
+        plan.admission_skipped = True
+        return plan
+    engine.planner.build = build
+    spy.verdicts["关掉"] = [False]
+    final = _run(engine, _req("关掉", meta={**_BARGEIN, "voice_admitted": "1"}))[-1]
+    assert not _rejected(final) and spy.executed("window.close") == 1
+    assert spy.admissions == []

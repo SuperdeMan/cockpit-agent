@@ -14,8 +14,8 @@ function fakeCtx() {
                getChannelData() { return this._data } }
     },
     createBufferSource() {
-      const src = { buffer: null, when: null, stopped: false, onended: null,
-                    connect() {}, start(w) { this.when = w; started.push(this) },
+      const src = { buffer: null, when: null, stopped: false, onended: null, out: null,
+                    connect(node) { this.out = node }, start(w) { this.when = w; started.push(this) },
                     stop() { this.stopped = true } }
       return src
     },
@@ -103,4 +103,13 @@ test('PcmPlayer：空片返回 null 不排定', () => {
   assert.equal(p.push(new Int16Array(0)), null)
   assert.equal(p.push(null), null)
   assert.equal(started.length, 0)
+})
+
+test('PcmPlayer：输出节点缺省是 ctx.destination；给了就接到它（播报总线，语义打断压低只调总线增益）', () => {
+  const { ctx, started } = fakeCtx()
+  new PcmPlayer({ ctx, sampleRate: 22050 }).push(chunk())
+  assert.equal(started[0].out, ctx.destination)
+  const bus = { name: 'tts-bus' }
+  new PcmPlayer({ ctx, sampleRate: 22050, destination: bus }).push(chunk())
+  assert.equal(started[1].out, bus)
 })

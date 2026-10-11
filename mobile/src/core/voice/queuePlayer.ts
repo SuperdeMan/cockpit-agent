@@ -56,6 +56,8 @@ export interface QueuePlayerOptions {
   jitterMs?: number
   onFirstAudio?(): void
   onUnderrun?(): void
+  /** 输出节点；缺省 ctx.destination。主链播报接「播报总线」GainNode（语义打断压低只调总线增益，2026-10-11） */
+  destination?: unknown
 }
 
 export class QueuePcmPlayer implements PcmPlayerLike {
@@ -70,9 +72,11 @@ export class QueuePcmPlayer implements PcmPlayerLike {
   private readonly resampler: Resampler | null
   private readonly onFirstAudio?: () => void
   private readonly onUnderrun?: () => void
+  private readonly destination: unknown
 
-  constructor({ ctx, sampleRate, jitterMs = 200, onFirstAudio, onUnderrun }: QueuePlayerOptions) {
+  constructor({ ctx, sampleRate, jitterMs = 200, onFirstAudio, onUnderrun, destination }: QueuePlayerOptions) {
     this.ctx = ctx
+    this.destination = destination ?? ctx.destination
     this.sampleRate = sampleRate
     this.jitter = jitterMs / 1000
     this.onFirstAudio = onFirstAudio
@@ -95,7 +99,7 @@ export class QueuePcmPlayer implements PcmPlayerLike {
     if (!this.started || !this.node) {
       when = now + this.jitter // 首片攒抖动缓冲：节点到 when 才开始吃队列
       const node = this.ctx.createBufferQueueSource({ pitchCorrection: false })
-      node.connect(this.ctx.destination)
+      node.connect(this.destination)
       node.enqueueBuffer(buf)
       try {
         // offset **必须显式传 0**：库的 JS 包装 `start(when = 0, offset = -1)` 用缺省 -1 过不了它自己的

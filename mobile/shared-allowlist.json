@@ -12,6 +12,7 @@
     { "file": "controlNames.mjs", "phase": "M4", "purpose": "车控对象展示名；继续由 controlNames.test 对账 commands.yaml" },
     { "file": "controlResult.mjs", "phase": "M4", "purpose": "两端共用动作与 ResultBundle 证据的只读投影" },
     { "file": "rejectedTurn.mjs", "phase": "M4", "purpose": "云端拒掉免唤醒那一句之后的记录收法（整轮删掉）与提示文字；两端只许一份判据（2026-10-10）" },
+    { "file": "bargeInJudge.mjs", "phase": "M4", "purpose": "语义打断：播报中插话那句问 llm-gateway 是不是对助手说的——请求与回包约定只许一份（2026-10-11）", "notes": "fetch 由调用方注入或取全局（RN 有全局 fetch）" },
     {
       "file": "drivingMode.mjs",
       "phase": "M4",

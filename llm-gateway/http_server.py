@@ -37,6 +37,7 @@ from providers import (
     build_tts_stream_provider, emotion_instruct, TTS_STREAM_CATALOG,
 )
 from llm_runtime import get_runtime
+from runtime.continuation_admission import format_votes
 
 logger = logging.getLogger("llm.http")
 
@@ -1053,6 +1054,35 @@ def create_http_app() -> web.Application:
             return web.json_response({"ok": False, "error": str(e)}, status=500)
         return web.json_response({"ok": resp.ok, "deleted_templates": resp.deleted_templates,
                                   "deleted_memories": resp.deleted_memories})
+
+    # ── 语义打断（2026-10-11）：播报中插进来的那句先问一次是不是对助手说的 ──────────────────
+    @routes.post("/api/voice/admission")
+    async def handle_voice_admission(request: web.Request):
+        """body: {"utterance", "previous"（正在播的那段）, "assistant_name"?, "session_id"?}。
+        回 {"ok": true, "addressed": true|false|null, "votes": "0,1", "ms": n}；null = 判不出，客户端按今天的路径处理。
+
+        判据与云端续问窗判定是同一份（`runtime/continuation_admission.py`），模型调用走本网关的 `Complete`
+        （设计 docs/design/2026-10-11-semantic-barge-in.md §4.1）。它要花模型调用，只认 Bearer token 的主体（同记忆 / 声纹接口）。
+        日志只记字数不记原话：判非受话的往往是乘客说的话，它不会成为对话的一轮。"""
+        import voice_admission
+        owner = _authenticated_owner(request)
+        if not owner:
+            return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            return web.json_response({"ok": False, "error": "bad_request"}, status=400)
+        utterance = str(body.get("utterance") or "").strip()
+        if not utterance:
+            return web.json_response({"ok": False, "error": "empty_utterance"}, status=400)
+        meta = {"caller_service": "voice-admission", "session_id": str(body.get("session_id") or "")[:128]}
+        verdict, votes, ms = await voice_admission.judge(
+            utterance, str(body.get("previous") or ""), str(body.get("assistant_name") or ""), meta=meta)
+        logger.info("voice admission: user=%s source=bargein chars=%d addressed=%s votes=%s ms=%d",
+                    owner, len(utterance), verdict, format_votes(votes), ms)
+        return web.json_response({"ok": True, "addressed": verdict, "votes": format_votes(votes), "ms": ms})
 
     # ── 视觉单帧（M4 P4）────────────────────────────────────────────────────
     # 帧只在网关内存里活 TTL 秒，不落 Redis 不落盘；对话链里流动的只有 frame_id。
