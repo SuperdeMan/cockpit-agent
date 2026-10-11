@@ -11046,3 +11046,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 手机接入后打常驻包。主工作树里有别的会话未提交的 `hmi/src` 文件（直接构建会标 `-dirty`），改在干净隔离工作树构建。首趟 ORT 原生步失败：`onnxruntime-react-native` 按 `latest.integration` 取 ORT，今天解析到 1.31.0，镜像外保留的 CMake 配置仍指向 1.30.0 的解压路径。
   `b79daa46` 在 `scripts/gradle_rn_compat.init.gradle` 钉 1.30.0（此前设备包都是这个版本，本地与 CI APK 工作流共用），构建指南 §2 补了这条失败签名。
 - 常驻包 `b79daa46b` 装 Xiaomi（compare；上一包 `7d6141afe`）：安装回读、设备与本地 SHA-256 一致、启动与 KWS 正常、设置页底部同 SHA；包内拒识提示与新指标名都在（旧包为 0）。读数见 [续问窗拒识 §6.4](design/2026-10-10-handsfree-followup-rejection.md)。真车声学由用户验。
+
+## 2026-10-11：HMI 首屏加载 B04 候选修复
+
+- 用户要求“遗留继续修复”。确认云端仍以 Vite 开发模式逐项分发源码；新增启动时 build、构建完成后开放的 Node 资源服务，gzip 与私有缓存减少传输。沿用运行时配置、高德服务端代理与 COOP/COEP，没有改 UI、`App.tsx`、`types.ts`、语音状态机或依赖。
+- HMI 420 项测试、TypeScript 与构建通过；云端部署资产测试 205 passed、1 skipped。构建入口的滚动、地图层级、对话回归通过；6 项声音资源浏览器解压后字节一致，两个 WASM 可编译，未调用麦克风。
+- 固定 262144 B/s、150 ms、禁用缓存，3 次成对测量：就绪中位数 21.356 s → 1.833 s、请求 95 → 6、传输 5,387,709 → 298,036 bytes。仅为本地受控对照，不转借为线上收益；复现入口与证据见 [B04 修复记录](design/2026-10-11-hmi-startup-performance.md)。
+- 候选涉及两处 `deploy/cloud/` 启动命令，须准备精确 SHA 的基础设施批准材料并取得本轮批准后才能更新云端锚、推送与部署。线上 B04 继续开放，当前 release 与独立验证仍以 QA 交接 §2 为准。其他任务的文档改动未纳入。

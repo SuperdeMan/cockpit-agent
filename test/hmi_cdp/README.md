@@ -111,3 +111,12 @@ node test/hmi_cdp/visual_map_layers.mjs
 两项串行运行（共享 CDP 端口 9339）。截图/几何证据在 `.artifacts/hmi-visual-v2/<batch>/`；
 真实对话另跑，不能用这些业务夹具关闭线上端到端缺陷。修前失败与修后证据见
 [2026-10-11 浏览器验收](../../docs/reviews/2026-10-11-hmi-visual-v2-browser-audit.md)。
+
+## 首屏资源回归
+
+`startup_servers.mjs` 只起测试用 Vite（5194/5195），比较开发入口与同一构建产物 HTTP handler。
+另一终端设 `HMI_VISUAL_URL=http://127.0.0.1:5194` 后运行 `startup_performance.mjs`。
+探针禁用缓存、固定带宽/延迟，3 轮对比就绪时间、请求数和字节数；构建入口不得请求源码/HMR，
+同时验证跨源隔离、单光球及零业务出帧。不能与另一项使用 CDP 9339 的用例并发。
+该测试会构建 `hmi/dist`；验证后关闭它创建的两台 Vite，不动其他进程。详细口径见
+[首屏加载修复](../../docs/design/2026-10-11-hmi-startup-performance.md)。

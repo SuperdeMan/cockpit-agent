@@ -25,7 +25,9 @@ npm run dev      # http://localhost:5173
 - `VITE_AUDIO_API_URL` — 音频/记忆 HTTP 代理（默认 `http://localhost:50059`），用于 `/api/asr`(批处理)、`/api/asr/stream`(WS 流式识别上屏)、`/api/tts`(批处理)、`/api/tts/stream`(WS 服务端流式 TTS)、`/api/tts/stream/info`(引擎+音色探测)、`/api/voices`、`/api/memory/*`。
 - `AMAP_JS_KEY` / `AMAP_JS_SECURITY_CODE` — 高德 Web端（JS API）Key 与配套安全密钥；仅注入 HMI 服务进程，不能加 `VITE_` 前缀。根目录 `python scripts/dev_stack.py hmi` 会读取根 `.env` 并脱敏输出；发布时由 Compose 从云端受控运行配置注入。保留后端原 `AMAP_KEY`。
 
-地图使用现有 Vite 服务中的 `/api/maps/config` 和 `/_AMapService/`，不能只把 `dist/` 放到无代理的静态服务器。JS Key 通过运行时接口提供给浏览器，`jscode` 仅在服务端转发时附加；代理只接受地图初始化和样式的固定路径，不代理 POI 搜索或路线规划。真实底图视觉样例：`?demo=map-sdk`（明确标注示例数据，路线不是实际规划结果）。
+地图的 `/api/maps/config` 和 `/_AMapService/` 由开发 Vite 与构建产物入口共用同一服务端中间件，不能只把 `dist/` 放到无代理的静态服务器。JS Key 通过运行时接口提供给浏览器，`jscode` 仅在服务端转发时附加；代理只接受地图初始化和样式的固定路径，不代理 POI 搜索或路线规划。真实底图视觉样例：`?demo=map-sdk`（明确标注示例数据，路线不是实际规划结果）。
+
+云端构建产物候选入口是 `npm run serve`：用容器已有运行时配置先 build，再由 Node 提供 gzip/缓存资源及高德代理；构建失败不会开放旧产物。这个云端启动方式变更尚待基础设施批准，当前发布以 QA 交接为准。开发仍用 `dev_stack.py hmi`（Vite）。根因、对照与复现见 [首屏加载修复](../docs/design/2026-10-11-hmi-startup-performance.md)。
 
 > 麦克风需安全上下文：经 `localhost` 或 HTTPS 访问才可录音（浏览器限制）。
 

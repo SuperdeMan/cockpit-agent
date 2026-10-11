@@ -1,7 +1,7 @@
 # HMI Visual v2 浏览器验收（2026-10-11）
 
 当前状态：**3 个问题已按授权部署并通过线上浏览器回归。** 当前 release/status/verify 统一见 [QA 交接 §2](2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
-下文保留 `0c07bc33` 的初验事实，发布前验证与发布后复验分别列出。另发现首屏加载慢，列为 B04，仅记录、尚未修复。
+下文保留 `0c07bc33` 的初验事实，发布前验证与发布后复验分别列出。首屏加载慢列为 B04：候选修复与本地对照已完成，云端启动配置待批准，线上仍待部署复验。
 
 ## 初验身份与边界
 
@@ -117,10 +117,12 @@ Figma 本轮只读取 `34:9` 和 `54:9` 截图，用于外壳/设置结构对照
 - 浏览器复验前后 release 固定，active 为 `minimax / MiniMax-M3.1-Flash-Preview`，未切换。没有捕获到 JS 异常、console error/warning 或非取消网络失败；首次页面等待超时另记在 B04，不能被这条“无运行时错误”覆盖。
 - 留证在 [发布目录](../../.artifacts/hmi-visual-release-20261011/)：`dry-run.stdout.log`、`apply-result.json` / `apply.stdout.log`、`verification-bound.json`、`ci.json`、`status-before.json` / `status-after.json`；浏览器 [真实复验结论](../../.artifacts/hmi-visual-release-20261011/online-result.json)、[三轮滚动](../../.artifacts/hmi-visual-release-20261011/online-tail-results.json)、[真实地图](../../.artifacts/hmi-visual-release-20261011/online-map-results.json)、[8 组层级矩阵](../../.artifacts/hmi-visual-release-20261011/map-layer-evidence.json)。
 
-### V2-B04 · P2：首屏/页面重载偏慢（仅记录，未修）
+### V2-B04 · P2：首屏/页面重载偏慢（候选已修，线上待批准与复验）
 
 - 本次 Windows Edge + 私网链路下，两次独立浏览器会话的 DOMContentLoaded 为 **127.1 s / 107.5 s**。第一次实际 UI 最终正常显示，但超过原驱动 30 s 等待；并行启动的地图矩阵也超过其 20 s 本地默认等待。两次超时均不计作通过。
 - 第一趟记录了 94 个资源；页面使用 Vite 开发模块入口（`/@vite/client`、`/src/main.tsx`），多个资源请求耗时 20–37 s。后续已加载浏览器内 8 次页面导航仍在 **2.7–38.2 s** 之间波动。
 - 仅将本次验收驱动的页面就绪等待扩至 180 s，保留全部交互和几何断言；等待正常渲染后完成上述三项修复复验。没有修改产品超时、服务器配置或部署方式。
-- 尚未区分私网传输、开发模块加载、首次编译的各自影响，不宣称由这 4 个 HMI 文件改动导致，也不据此关闭性能验收。下一批应单独测首屏资源与加载链路。
+- 初验时尚未区分私网传输、开发模块加载、首次编译的各自影响，未将其归因于该批 4 个 HMI 文件改动；后续拆分与候选修复见下方 B04 记录，线上性能验收继续保持开放。
 - 证据：[首次资源时序](../../.artifacts/hmi-visual-release-20261011/bootstrap-attempt-1.json)、[第二次冷加载](../../.artifacts/hmi-visual-release-20261011/bootstrap-attempt-2.json)、[后续导航时序](../../.artifacts/hmi-visual-release-20261011/warm-navigation-timings.json)。
+
+用户要求继续修复后，已定位云端开发模块分发的开销并实现构建产物服务；受控网络三轮中位数 21.356 s → 1.833 s、95 → 6 请求、5.39 MB → 298 KB。代码、资源/功能验证与待批准的两处云端启动配置见 [B04 修复记录](../design/2026-10-11-hmi-startup-performance.md)。这是本地候选对照，线上仍按上面的旧读数保留问题。

@@ -15,4 +15,4 @@ COPY --from=hmi_runtime_models public/kws/sherpa-onnx-wasm-kws-main.js /app/publ
 COPY --from=hmi_runtime_models public/kws/sherpa-onnx-wasm-kws-main.wasm /app/public/kws/sherpa-onnx-wasm-kws-main.wasm
 
 EXPOSE 5173
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "serve", "--", "--host", "0.0.0.0"]

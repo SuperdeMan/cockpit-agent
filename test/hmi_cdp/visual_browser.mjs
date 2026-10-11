@@ -14,8 +14,11 @@ export async function withVisualPage(batch, run) {
   assert.ok(exe, 'Edge is required')
   const port = 9339
   assert.ok((await fetch(base)).ok, 'Vite must be running before visual QA')
+  const browserEnv={...process.env}
+  delete browserEnv.AMAP_JS_KEY
+  delete browserEnv.AMAP_JS_SECURITY_CODE
   const browser = spawn(exe, ['--headless=new', '--guest', '--no-first-run', '--disable-extensions', '--disable-features=Translate,EdgeTranslate', '--force-device-scale-factor=1',
-    `--remote-debugging-port=${port}`, `--user-data-dir=${join(out, 'browser-profile')}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' })
+    `--remote-debugging-port=${port}`, `--user-data-dir=${join(out, 'browser-profile')}`, 'about:blank'], { windowsHide: true, stdio: 'ignore', env:browserEnv })
   const cdp = new Cdp()
   try {
     let pages

@@ -2243,7 +2243,7 @@ def test_cloud_frontends_use_tailnet_https_bases_and_derive_websockets_in_code()
     assert "BASE.replace(/^http/, 'ws') + '/stream'" in dashboard_api
 
 
-def test_cloud_hmi_mounts_a_vite5_compatible_tailnet_host_config():
+def test_cloud_hmi_serves_built_assets_with_the_tailnet_host_config():
     _, compose = _cloud_compose()
     hmi = compose["services"]["hmi"]
     config = _required_text(HMI_VITE_CONFIG_PATH)
@@ -2252,7 +2252,7 @@ def test_cloud_hmi_mounts_a_vite5_compatible_tailnet_host_config():
         "/opt/car-agent/shared/vite.hmi.cloud.config.mjs:/app/vite.cloud.config.mjs:ro"
     ]
     assert hmi["command"] == [
-        "npm", "run", "dev", "--", "--config", "vite.cloud.config.mjs"
+        "npm", "run", "serve", "--", "--config", "vite.cloud.config.mjs", "--host", "0.0.0.0"
     ]
     assert "./vite.config.ts" in config
     assert "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS" in config

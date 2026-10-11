@@ -168,7 +168,7 @@ services:
     image: "car-agent-release/hmi:${RELEASE_SHA:?RELEASE_SHA required}"
     pull_policy: never
     build: !reset null
-    command: ["npm", "run", "dev", "--", "--config", "vite.cloud.config.mjs"]
+    command: ["npm", "run", "serve", "--", "--config", "vite.cloud.config.mjs", "--host", "0.0.0.0"]
     ports: !override
       - "127.0.0.1:5173:5173"
     volumes:
