@@ -1,16 +1,16 @@
 # HMI Visual v2 浏览器验收（2026-10-11）
 
-当前状态：**3 个问题已完成代码修复与回归，尚未推送/部署。** 高德真实地图正常，问题不是缺 Key。
-下列“已复现问题”和原检查表保留线上 `0c07bc33` 的初验事实；修复版证据单列在文末，不转借给仍在运行的旧版。
+当前状态：**3 个问题已按授权部署并通过线上浏览器回归。** 当前 release/status/verify 统一见 [QA 交接 §2](2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
+下文保留 `0c07bc33` 的初验事实，发布前验证与发布后复验分别列出。另发现首屏加载慢，列为 B04，仅记录、尚未修复。
 
-## 验证身份与边界
+## 初验身份与边界
 
 - 线上 release：`0c07bc3341ef74d96467dbbb4e4e8163b29fca7d`。开始、结束独立 `dev_stack status` 均为同一 SHA，5/5 healthy、无告警。
 - 浏览器：Windows Edge `154.0.4258.62`，独立 guest/headless profile；1920×1080 为主，另测 1920×720、1920×1200、深浅主题、标准/大字与行车布局。通过真实浏览器输入、点击、滚动、键盘事件取证，并逐图复核关键页面。
 - 在线服务配置在真实对话前后均为 `minimax / MiniMax-M3.1-Flash-Preview`。这是当轮 active 配置读数，不转借旧 MiniMax-M3 的发布证据，也不宣称逐轮 collector 模型归属审计。
 - 真实对话使用现有签名 E2E 身份车道；适配层只替换认证 token 和该车道要求的 session ID，保留线上页面、真实 WebSocket、服务端回答和第三方数据。未向浏览器注入业务答案。只授予本轮查询所需 scope，未授予车控、商户写或支付权限。
 - 卡片全覆盖、确认/删除弹窗、付款码、自动行车投影和故障状态另用浏览器内业务夹具。它们加载线上前端资源，但**不算真实业务端到端通过**；高德 SDK/瓦片仍为真实网络请求。
-- 初验证据在 [初验目录](../../.artifacts/hmi-visual-audit-20261011/)。初验阶段未改产品源码、环境文件、密钥或部署配置，未推送/部署。检查期间共享 main 增加纯文档提交 `3ee90358824b397c2dca109f0c270f1d13ac9e15`，其 `hmi/` 和 `test/hmi_cdp/` 与被测 release 无差异。
+- 初验证据在 [初验目录](../../.artifacts/hmi-visual-audit-20261011/)。初验阶段未改产品源码、环境文件、密钥或部署配置，未推送/部署。检查期间共享 main 增加交接及探针记录提交 `3ee90358824b397c2dca109f0c270f1d13ac9e15`，其 `hmi/` 和 `test/hmi_cdp/` 与被测 release 无差异。
 
 ## 已复现问题
 
@@ -46,7 +46,7 @@
 - 修复方向：隔离舞台的层叠上下文；地图可见时继续保留完整合法署名，不直接删掉 SDK 版权元素。
 - 证据：[深色设置截图](../../.artifacts/hmi-visual-audit-20261011/settings-dark-display.png)、[浅色设置截图](../../.artifacts/hmi-visual-audit-20261011/settings-light-tts.png)、[前后命中读数](../../.artifacts/hmi-visual-audit-20261011/bug-map-layer-evidence.json)、[临时 CSS 诊断截图](../../.artifacts/hmi-visual-audit-20261011/diagnostic-logo-isolation-only.png)。
 
-## 本轮通过的检查
+## 初验通过的检查
 
 | 车道 | 当轮观察与证据 |
 |---|---|
@@ -75,7 +75,7 @@ Figma 本轮只读取 `34:9` 和 `54:9` 截图，用于外壳/设置结构对照
 - 真实麦克风、真人唤醒/声纹/相机、车机 GPU/触控、人耳播报、真实车控、商户下单/付款、云端记忆删除未执行。相关视觉状态只有夹具证据，不算硬件或写操作验收。
 - 按用户已经裁决的契约差异保留离线文案、经历删除范围说明等，不将其重新包装成此次新增 bug。
 
-## 修复记录（2026-10-11，待发布）
+## 修复记录（2026-10-11，发布前验证）
 
 用户要求“修复这些问题”后，在 `3ee90358824b397c2dca109f0c270f1d13ac9e15` 基础上完成同一批修复：
 
@@ -106,4 +106,21 @@ Figma 本轮只读取 `34:9` 和 `54:9` 截图，用于外壳/设置结构对照
 - [修复版深色地图](../../.artifacts/hmi-visual-fix-20261011/fixed-live-dark-map-return.png) / [浅色设置](../../.artifacts/hmi-visual-fix-20261011/fixed-live-light-map-settings.png)。
 - [源码指纹](../../.artifacts/hmi-visual-fix-20261011/candidate-fingerprint.json)、构建与单测日志在 [修复目录](../../.artifacts/hmi-visual-fix-20261011/)。提交后对账 Git blob 与指纹，不转借其他源码的读数。
 
-生产推送/部署仍按项目规则另行授权；硬件与真实写操作的未验范围保留。
+上述结果属于发布前候选。用户随后明确授权“推送部署验证”，执行与线上证据如下；硬件与真实写操作的未验范围保留。
+
+## 授权发布与线上复验（2026-10-11）
+
+- 精确推送并部署修复提交 `64be4936cd6898a44660f768d6233d7ef8ed0aa4`；部署基线 `0c07bc3341ef74d96467dbbb4e4e8163b29fca7d`。干净隔离工作树只复制 `dev-stack.local`，没有复制 `.env`。dry-run 无阻塞，既有基础设施摘要一致；没有新增 schema、Compose、CI/CD、密钥或系统配置变更。
+- [该 SHA 的 CI](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38107072447) 8 项全部成功。apply 完成后独立 `status` / `verify` 通过，具体权威发布字段与 artifact 只维护在 QA 交接 §2。
+- 线上页面、真实业务 WebSocket 与实际高德 SDK：3 轮两城市天气完成后距底部均为 0，无误判历史；主动上翻位置保持、点击胶囊回底部；停止后下一轮正常恢复。真实杭州路线在深浅主题下返回按钮中心均命中，`y=104` 位于状态栏底 `73` 下方，点击能够返回；设置完整覆盖两项 SDK 署名。业务 action 为 0。
+- 同一已加载浏览器再隔离业务 `/ws`、跑线上资源的 8 组地图层级矩阵（深浅 × 标准/大字 × 1080/720）：全部通过。该矩阵是业务夹具，单列于真实对话证据，不冒充 8 条真实业务旅程。
+- 浏览器复验前后 release 固定，active 为 `minimax / MiniMax-M3.1-Flash-Preview`，未切换。没有捕获到 JS 异常、console error/warning 或非取消网络失败；首次页面等待超时另记在 B04，不能被这条“无运行时错误”覆盖。
+- 留证在 [发布目录](../../.artifacts/hmi-visual-release-20261011/)：`dry-run.stdout.log`、`apply-result.json` / `apply.stdout.log`、`verification-bound.json`、`ci.json`、`status-before.json` / `status-after.json`；浏览器 [真实复验结论](../../.artifacts/hmi-visual-release-20261011/online-result.json)、[三轮滚动](../../.artifacts/hmi-visual-release-20261011/online-tail-results.json)、[真实地图](../../.artifacts/hmi-visual-release-20261011/online-map-results.json)、[8 组层级矩阵](../../.artifacts/hmi-visual-release-20261011/map-layer-evidence.json)。
+
+### V2-B04 · P2：首屏/页面重载偏慢（仅记录，未修）
+
+- 本次 Windows Edge + 私网链路下，两次独立浏览器会话的 DOMContentLoaded 为 **127.1 s / 107.5 s**。第一次实际 UI 最终正常显示，但超过原驱动 30 s 等待；并行启动的地图矩阵也超过其 20 s 本地默认等待。两次超时均不计作通过。
+- 第一趟记录了 94 个资源；页面使用 Vite 开发模块入口（`/@vite/client`、`/src/main.tsx`），多个资源请求耗时 20–37 s。后续已加载浏览器内 8 次页面导航仍在 **2.7–38.2 s** 之间波动。
+- 仅将本次验收驱动的页面就绪等待扩至 180 s，保留全部交互和几何断言；等待正常渲染后完成上述三项修复复验。没有修改产品超时、服务器配置或部署方式。
+- 尚未区分私网传输、开发模块加载、首次编译的各自影响，不宣称由这 4 个 HMI 文件改动导致，也不据此关闭性能验收。下一批应单独测首屏资源与加载链路。
+- 证据：[首次资源时序](../../.artifacts/hmi-visual-release-20261011/bootstrap-attempt-1.json)、[第二次冷加载](../../.artifacts/hmi-visual-release-20261011/bootstrap-attempt-2.json)、[后续导航时序](../../.artifacts/hmi-visual-release-20261011/warm-navigation-timings.json)。
