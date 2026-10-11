@@ -1,0 +1,44 @@
+# 范例库 · datetime 域（2026-10-11）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+#
+# 时钟问句（现在几点 / 今天几号 / 今天星期几）的答案是系统自己持有的事实，由内置时间工具按墙钟直答
+# （判据 runtime/clock_question.py，与闲聊同一份）。这里只教一件事：**车控 + 顺便问时间**的混合句，
+# 时钟那一分句落内置时间工具——别落成天气，也别把它丢掉。
+#
+# 触发的 badcase：核心旅程 P06「打开充电口，顺便告诉我今天几号」，线上 MiniMax-M3 长期两成左右
+# 把「今天几号」落成 `info.weather`（答了一段天气），偶尔只规划车控一步（日期整句丢掉）。
+# 工具一侧早已兜住空槽（`7035ef68`），剩下的是规划方差。
+#
+# 纪律：
+# - 说法**刻意避开 P06 原句**，换了车控对象与问法（时间 / 日期 / 星期各一条）——教的是组合，不是那一句；
+# - 不改 `datetime.parse` 的能力描述（会把「明天几号」这类相对日期引到只会答当下的工具）；
+# - 范例检回靠语义相近，「今天…」开头的天气问句可能被吸过来：上线前后都回归信息家族（天气）。
+domain: datetime
+exemplars:
+- text: 打开后备箱，顺便告诉我今天几号
+  plan:
+  - intent: datetime.parse
+  - intent: trunk.open
+  source: manual
+  added: '2026-10-11'
+  tags:
+  - badcase
+  note: 车控 + 问日期：日期分句落内置时间工具（P06 同族）
+- text: 把座椅加热打开，再跟我说下今天星期几
+  plan:
+  - intent: datetime.parse
+  - intent: seat.heating.on
+  source: manual
+  added: '2026-10-11'
+  tags:
+  - badcase
+  note: 车控 + 问星期
+- text: 现在几点了，顺便把车窗关上
+  plan:
+  - intent: datetime.parse
+  - intent: window.close
+  source: manual
+  added: '2026-10-11'
+  tags:
+  - badcase
+  note: 问时间在前、车控在后
