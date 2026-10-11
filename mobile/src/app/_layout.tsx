@@ -1,5 +1,5 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
-import { Stack } from 'expo-router'
+import { Stack, useNavigationContainerRef } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useEffect } from 'react'
 import { StatusBar } from 'react-native'
@@ -8,6 +8,7 @@ import { useStore } from 'zustand'
 import { hydrateSettings, settingsStore } from '@/core/settings/store'
 import { AssistantProvider } from '@/features/assistant/AssistantProvider'
 import { AssistantFrame, AssistantSurface, CrossPageVoiceLayer } from '@/features/assistant/AssistantSurface'
+import { registerNavigatorProbe } from '@/core/nav/navReady'
 import { installAudioFocusHandlers } from '@/core/voice/audioFocus'
 import { usePalette } from '@/ui/theme'
 import { textStyle } from '@/ui/tokens'
@@ -23,6 +24,9 @@ export const unstable_settings = { anchor: 'index' }
 export default function RootLayout() {
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
+  // 运行期深链要等根导航器就绪才发命令式导航（`core/nav/navReady`）：判据是导航容器自己的 isReady，在这里登记
+  const navRef = useNavigationContainerRef()
+  useEffect(() => registerNavigatorProbe(() => navRef.isReady()), [navRef])
   useEffect(() => {
     void hydrateSettings() // 根布局水合一次：任何入口路由（含直进设置页）都拿到持久化设置
     installAudioFocusHandlers() // M2-4：来电/闹钟/拔耳机时停播报（幂等，原生模块缺席则 no-op）

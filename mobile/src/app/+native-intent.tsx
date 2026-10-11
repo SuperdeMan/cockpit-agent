@@ -12,7 +12,8 @@
 // 那正是本次要修的缺陷。
 import { router, type Href } from 'expo-router'
 
-import { intentSteps, planIntent } from '@/core/nav/deepLink'
+import { intentSteps, planIntent, type IntentPlan } from '@/core/nav/deepLink'
+import { navigatorReady, whenNavigatorReady } from '@/core/nav/navReady'
 
 /**
  * 外部 URL 是运行期字符串，类型化路由那个字面量联合描述不了它，所以断言只能发生在这里
@@ -21,9 +22,23 @@ import { intentSteps, planIntent } from '@/core/nav/deepLink'
  */
 const asHref = (href: string): Href => href as Href
 
-export function redirectSystemPath({ path, initial }: { path: string; initial: boolean }): string | null {
+export function redirectSystemPath({
+  path,
+  initial,
+}: {
+  path: string
+  initial: boolean
+}): Promise<string | null> | string | null {
   const plan = planIntent(path, { initial })
   if (plan.kind === 'handoff') return plan.href
+  if (navigatorReady()) return enter(plan)
+  // 根导航器还没就绪（理由见 `core/nav/navReady`）：此时发 `router.*` 会在 expo-router 自己的 effect 里抛、
+  // 整个 App 闪退。先等它就绪再按序发；等不到就把 URL 原样交回 router——它自己的 linking listener
+  // 带 try/catch，最坏是这一跳没生效，而不是闪退。
+  return whenNavigatorReady().then((ready) => (ready ? enter(plan) : plan.href))
+}
+
+function enter(plan: Extract<IntentPlan, { kind: 'enter' }>): null {
   for (const step of intentSteps(plan, router.canDismiss())) {
     if (step.op === 'dismissTo') router.dismissTo(asHref(step.href))
     else router.navigate(asHref(step.href))
