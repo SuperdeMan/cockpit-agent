@@ -646,7 +646,7 @@ function mockVoiceCue({ ready = true, ackMs = 500 }: { ready?: boolean; ackMs?: 
   const cue = {
     ready,
     ackMs,
-    playVoiceCue: jest.fn((kind: string, _key: string) => (cue.ready ? (kind === 'wake' ? cue.ackMs : 400) : 0)),
+    playVoiceCue: jest.fn((kind: string, _key: string): number => (cue.ready ? (kind === 'wake' ? cue.ackMs : 400) : 0)),
     prepareVoiceCues: jest.fn(async (_url: string, _provider: string, _voice: string) => true),
     muteNextWakeTone: jest.fn(),
     stopVoiceCue: jest.fn(),
