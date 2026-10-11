@@ -1,6 +1,6 @@
 # Dashboard Visual v2 浏览器验收（2026-10-11）
 
-结论：**3 个问题已完成本地修复与浏览器重证，尚未发布。** 初验事实保留在下文；本地修复、用户批准的两处配置映射与验证边界见 §5。不能据此宣布线上已经修复或项目 QA 全绿。
+结论：**3 个问题已在 `cbf6dcdf50cfc900fe145abcc5d612d9f8c25319` 发布并完成线上浏览器重证。** 初验事实保留在 §1–§4，本地修复证据见 §5，授权发布与线上验证见 §6。本轮只关闭 DV2-B01–B03，不代表项目 QA 全绿。
 
 ## 1. 被测版本与执行边界
 
@@ -46,7 +46,7 @@
 - 修复方向：按现有双闪契约映射到灯光组的开/关展示；保留缺失或过期状态，不把它解释成车辆故障诊断。
 - 证据：[局部截图](../../.artifacts/dashboard-browser-audit-20261011/bug-warning-light-detail.png)、[整页截图](../../.artifacts/dashboard-browser-audit-20261011/bug-warning-light.png)、[接口值与渲染文案](../../.artifacts/dashboard-browser-audit-20261011/bug-warning-light.json)。
 
-以上是现版本缺陷；引入提交尚未逐项追溯。
+以上是初验版本的缺陷；引入提交尚未逐项追溯，后续修复与发布见 §5–§6。
 
 ## 3. 通过的检查与范围
 
@@ -74,10 +74,10 @@
 - 首轮日志定位把非可见第一行滚到 sticky 表头下，导致命中失败；改为可见区域居中和显式滚到列表起点后复测通过。一次选择器引号错误也已校正。
 - 夹具长日志查看/缩放会改变跟随状态；分开的“暂停/恢复”测试需先明确恢复跟随。原始失败日志保留，校准后 66 组完整重跑。
 - Edge guest 的 `Browser.setDownloadBehavior` 未正确作用到目标页，使用其 browserContextId 又被拒绝；改为目标页的 `Page.setDownloadBehavior` 后收到实际完成事件与 JSON 文件。下载面板产生的新调试目标还曾被误选，现按 Dashboard origin 选择页面。这些不列为产品缺陷。
-- 固定夹具、模拟网络与旧接口状态不算真实后端故障演练；真实重放、生产标记保存、模拟车参数写入、车控、商户与支付未执行。剪贴板跨原生应用读取、屏幕阅读器和真人触控也未验。
+- 固定夹具、模拟网络与旧接口状态不算真实后端故障演练；初验未执行真实重放，后续只读重放验证见 §5–§6。生产标记保存、模拟车参数写入、车控、商户与支付未执行。剪贴板跨原生应用读取、屏幕阅读器和真人触控也未验。
 - 初验为浏览器功能/视觉验收，没有修改产品代码，因此未重跑前后端全量，也未重新逐节点比对 Figma。后续修复应对每个问题补与真实接口口径一致的回归，再做浏览器重证；实际修复验证见 §5。
 
-## 5. 本地修复与浏览器重证（2026-10-11，待发布）
+## 5. 本地修复与浏览器重证（2026-10-11，发布前记录）
 
 用户要求修复后完成：
 
@@ -100,4 +100,27 @@
 
 初次新增车辆显示用例把 SVG 附带空白误算进文本，修正断言的空白处理后完整重跑通过。浏览器功能检查全部通过后，第一次收尾 `status` 命令失败；原始尝试保留于 `live-regression.json`，随后独立 `status-after-recheck.json` 确认仍为同一后端 SHA、5/5 healthy、零 warning。汇总同时保留该校准情况，不把失败记录覆盖为成功。
 
-上述真实链路验证属于**本地修复前端连接真实后端**，不是线上 Dashboard 已更新。此批尚未提交、推送或部署；上线后应再核对 Dashboard 的实际环境映射并复验。
+本节属于发布前的**本地修复前端连接真实后端**证据，不能转借为线上前端验证；后续授权发布与线上独立取证见 §6。
+
+
+## 6. 授权发布与线上重证（2026-10-11）
+
+用户明确要求“提交推送部署”。修复提交 `cbf6dcdf50cfc900fe145abcc5d612d9f8c25319` 已精确推送并部署，前版为 `eb098eddc2b1bac00aa0ba152adfdc99013af75c`。发布使用干净隔离工作树，只复制 `dev-stack.local`。当前发布权威字段仍见 [QA 交接 §2](2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
+
+- 用户此前逐项批准两处 Dashboard `VITE_WS_TOKEN` 映射；本次基础设施安装项只有 `/opt/car-agent/shared/compose.cloud.yaml`，沿用 HMI 现有凭据。批准锚由 `b3d94a4157ac5e60942806fe03cd8c0a4aba71f69a3bbaf12c32986f22131d70` 更新为 `72610c4a424e517deb4ed587f4d7016ccd1880eb6d12b41aabd110819967a768`；通用 Compose 一次性批准摘要为 `193dc56e00dc5c7265428ff1a5bd952f2ac4c2d4352b2916c0698578560401db`。没有修改 `.env`、任何令牌值、数据库或 CI/CD。
+- 首次 dry-run 只报告已获授权的 Compose 映射需携带摘要；补齐批准摘要后的 dry-run 无阻塞，再 apply。独立 `status` 确认 release = running = 本提交、5/5 healthy、零 warning；`verify` 为 `verified`，证据 `.artifacts/dev-stack-verifications/20261011T090544Z-cbf6dcd.json`。
+- 同一修复源码重跑 Dashboard **19 文件 / 170 passed**、启动器 **170 passed / 3 skipped**、TypeScript/Vite build；三个跳过分别为 Windows 符号链接条件、POSIX FIFO 和 POSIX unlink 语义。该提交 [CI 8 项成功](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38126196885)。证据为本目录下 `release-cbf6dcdf-*.log` 与 `release-ci.json`，不转借历史全量数字。
+
+线上浏览器从实际 `:8445` 页面加载，真实鼠标/键盘登录及操作。整段测试持有项目发布事务锁，前后独立 status 固定同一 SHA、5/5 healthy、零 warning。容器内只返回布尔值，确认 Dashboard 凭据存在且与 HMI 相同，没有输出凭据值或摘要。
+
+| 线上复验 | 实际结果 |
+|---|---|
+| 部署凭据 | 指令与重放分别捕获前端自身生成的、已携带凭据的 WS 地址；各用原部署凭据实际握手一次，均成功且业务帧为 0。 |
+| 测试身份边界 | 业务连接仅把该已存在凭据换成签名只读测试身份，并按其契约使用独立会话、关闭测试记忆。没有注入业务答案、替换 collector 响应或绕过缺凭据判断；原部署身份仅做上行零业务帧握手。 |
+| 指令台 | 天气查询显示完成，final 为“深圳当前晴，气温29℃，体感31℃，南风3级。”；trace `d958ba9b790b2e1c`，14 spans，`minimax / MiniMax-M3.1-Flash-Preview`，actions 为 0。 |
+| 重放对照 | UI 确认后得到 trace `f388f80314613151`；不同会话、`is_confirmation=false`、actions 为 0，观测已到达，显示原轮与重放两条时间线。 |
+| 真实数据显示 | 读取真实 Agent 心跳为 1–8 秒前；双闪为“灯光 / 双闪 / 关”，不再出现数千万分钟前或原始 `false`。 |
+| 尺寸与缺失态 | 查看 1920×1080、1280×800、3440×1440 截图；夹具双闪缺失仍为“读不到”，心跳为 2 秒前。 |
+| 浏览器错误 | 本轮未捕获未处理 JS 异常、console error、HTTP 错误或网络请求失败；测试后清除登录存储并关闭专用浏览器。 |
+
+证据根目录：`.artifacts/dashboard-v2-bugfix-20261011/`（本地 ignored，不随 clone 分发）。[线上汇总](../../.artifacts/dashboard-v2-bugfix-20261011/online/summary.json)、[完整结果](../../.artifacts/dashboard-v2-bugfix-20261011/online/live-regression.json)、[真实重放截图](../../.artifacts/dashboard-v2-bugfix-20261011/online/fixed-real-replay.png)、[3440 宽屏截图](../../.artifacts/dashboard-v2-bugfix-20261011/online/fixed-live-3440.png)。本轮没有重跑初验的完整 40 组矩阵，不把本次三个缺陷的复验扩大为全部业务旅程验收。

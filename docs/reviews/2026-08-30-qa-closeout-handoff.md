@@ -1,7 +1,7 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-10-11（HMI 首屏性能修复已授权发布并完成线上复验；历史测试保留原 SHA，其余 QA 活项不因此关闭）
+> 更新时间：2026-10-11（Dashboard 三项浏览器缺陷已授权发布并完成线上复验；历史测试保留原 SHA，其余 QA 活项不因此关闭）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
@@ -25,12 +25,14 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 
 ## 2. 当前发布与证据边界
 
-2026-10-11 Dashboard 浏览器验收在 `32bd007c` 确认的 **3 项已完成本地修复、尚未发布**：指令台/重放补 Edge 鉴权、Agent 心跳统一秒级口径、双闪按灯光开关显示。已取得两处 Compose 令牌映射授权；本地前端连接真实后端的指令/重放重证与源码测试单列在 [Dashboard 验收报告 §5](2026-10-11-dashboard-visual-v2-browser-audit.md#5-本地修复与浏览器重证2026-10-11待发布)，不能当作线上已经更新。
+2026-10-11 Dashboard 浏览器验收确认的 **DV2-B01–B03 已发布并在线上重证通过**：指令台/重放补 Edge 鉴权、Agent 心跳统一秒级口径、双闪按灯光开关显示。本地、原线上初验和本次发布验证按 SHA 分开，见 [Dashboard 验收报告 §6](2026-10-11-dashboard-visual-v2-browser-audit.md#6-授权发布与线上重证2026-10-11)。
 
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
-| 当前生产 release | `eb098eddc2b1bac00aa0ba152adfdc99013af75c`，2026-10-11 授权上线：语义打断——播报中有人插话先压低旧回答，插话那句先问 llm-gateway `/api/voice/admission`（与云端续问窗判定同一份判据），判受话才停旧回答、带「已判过」发出，判非受话恢复音量接着播。前版 `32bd007c03a748fa7eddd8a10f409a57f4a8bf0f`（HMI 首屏 B04，其 `deploy/cloud/` 启动配置沿用）；未改环境/密钥/数据库/CI/CD。记录见 [语义打断](../design/2026-10-11-semantic-barge-in.md) |
-| 当前 status / verify | release = running = `eb098eddc2b1bac00aa0ba152adfdc99013af75c`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T083355Z-eb098ed.json`，`minimax:MiniMax-M3.1-Flash-Preview`（用户的测试设置），`e2e_remote_safe` 通过；该 SHA 的 [CI 8 项全过](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38124684846) |
+| 当前生产 release | `cbf6dcdf50cfc900fe145abcc5d612d9f8c25319`，2026-10-11 授权上线：Dashboard 指令/重放鉴权、Agent 心跳单位、双闪名称与布尔展示。前版 `eb098eddc2b1bac00aa0ba152adfdc99013af75c`（语义打断）。用户逐项批准两处 Dashboard 凭据环境映射并批准推送/部署；共享 Compose 与批准锚同步，未改 `.env`、令牌值、数据库或 CI/CD。完整接线与回归边界见 [Dashboard 验收 §6](2026-10-11-dashboard-visual-v2-browser-audit.md#6-授权发布与线上重证2026-10-11) |
+| 当前 status / verify | release = running = `cbf6dcdf50cfc900fe145abcc5d612d9f8c25319`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T090544Z-cbf6dcd.json`，`minimax:MiniMax-M3.1-Flash-Preview`（沿用用户设置），`e2e_remote_safe` 通过；该 SHA 的 [CI 8 项成功](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38126196885) |
+| Dashboard 线上修复（cbf6dcdf） | 原部署凭据在指令与重放各成功握手一次、零业务帧；业务流使用隔离签名只读身份，天气查询 `d958ba9b790b2e1c` 与重放 `f388f80314613151` 均真实完成、actions 为 0，重放独立会话/`is_confirmation=false`/双时间线。Agent 心跳 1–8 秒、双闪关，1920/1280/3440 宽度与夹具缺失态通过，无 JS/HTTP 错误。全程发布锁、前后同 SHA；证据 `.artifacts/dashboard-v2-bugfix-20261011/online/summary.json` |
+| Dashboard 本地修复证据（cbf6dcdf） | Dashboard 19 文件 / 170 tests、TypeScript/Vite build；启动器 170 passed / 3 skipped（平台条件）通过，证据 `.artifacts/dashboard-v2-bugfix-20261011/release-cbf6dcdf-*.log`。本轮只重证三个缺陷，初验完整视觉矩阵仍属于旧版本，不宣称完整 QA 全绿 |
 | HMI 浏览器修复（64be4936） | 该 SHA 的真实 WebSocket + 高德 SDK：3 轮两城市天气保持底部跟随，主动历史阅读/跳转、中断恢复、深浅地图返回与设置遮盖通过，action 0；另有业务隔离的 8 组地图矩阵通过。本地 HMI 413 tests、typecheck、build 通过。该轮首屏 127.1 / 107.5 s、后续导航 2.7–38.2 s 另列 B04，原 20/30 s 启动超时不计通过；B04 后续修复见下一行。历史证据 `.artifacts/hmi-visual-release-20261011/`；[详细记录](2026-10-11-hmi-visual-v2-browser-audit.md) |
 | HMI 首屏 B04（32bd007c） | 三个独立 Edge 进程/端口、禁用缓存、实际私网：UI 就绪 1.012 / 1.013 / 1.014 s（中位数 1.013 s），DOMContentLoaded 0.727 / 0.724 / 0.695 s；均 6 请求，传输中位数 296,573 bytes，源码/HMR 请求 0。真实对话重新通过三轮底部跟随、主动历史、中断恢复和深浅地图；业务隔离地图矩阵 8 组、声音资源 6 项通过，两份 WASM 可编译，麦克风调用 0。HMI 本地 420 tests、typecheck/build，部署资产 205 passed / 1 skipped。探针校准失败保留且不计通过，见 `calibration-exclusions.json`；结果见 `release-summary.json`。本地受控 A/B 与线上读数分开，不宣称硬件或完整 QA 已验收 |
 | 语义打断真栈（eb098edd） | `scripts/probe_bargein_admission.py`（签名合成用户、只读）：判定接口 48 次 ×2 轮，负例 60 / 60 判非受话；正例首跑 16 / 18（「要带伞吗」配放歌回答两问都判否、1 例第一问超 5 s 判不出），复跑 16 / 18（2 例超 5 s 判不出、误拒 0；复跑与首跑重叠的消息命中 300 s 缓存，只有 9 次独立）；判非受话中位 2.0 s、判受话中位 1.0 s；带 `voice_admitted=1` 的插话轮只有 exit=bargein_preadmitted、正常作答，不带标记的负例照旧被拒；不带身份 401；零动作。Android 常驻包 `eb098eddc` 已装 OPPO。证据 `.artifacts/semantic-bargein/` |
