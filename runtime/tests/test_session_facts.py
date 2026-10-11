@@ -213,6 +213,37 @@ def test_pending_answer_survives_a_pending_without_a_goal():
     assert "刚才那个操作" in got
 
 
+# ── P10（核心旅程）：执行审计也要说出在等确认的那件事 ──────────────────────
+
+_WAITING = [{"what": "打开油箱盖", "phase": "wait_confirm"}]
+_DONE = [{"role": "user", "text": "把车窗打开", "exchange_id": "A"},
+         {"role": "assistant", "text": "开了", "exchange_id": "A", "actions": ["window.open"]}]
+
+
+def test_audit_without_pendings_is_byte_identical_to_before():
+    """不传 / 读不到 / 空表：逐字是修前的答案（chitchat 兜底位不传，行为不能变）。"""
+    for pendings in (None, []):
+        assert sf.audit_answer([], pendings=pendings) == "这次对话里我还没有执行过任何操作。"
+        assert sf.audit_answer(_DONE, pendings=pendings) == "这次对话里执行过 1 个操作：把车窗打开。"
+
+
+def test_audit_names_a_waiting_operation_and_says_it_has_not_run():
+    got = sf.audit_answer([], pendings=_WAITING)
+    assert got == "这次对话里我还没有执行过任何操作；「打开油箱盖」等你确认，还没执行。"
+    assert not any(claim in got for claim in ("已打开", "已经打开", "已为您打开"))
+
+
+def test_audit_reports_done_and_waiting_together():
+    got = sf.audit_answer(_DONE, pendings=_WAITING)
+    assert got == "这次对话里执行过 1 个操作：把车窗打开。另外「打开油箱盖」等你确认，还没执行。"
+
+
+def test_the_waiting_clause_is_worded_like_the_pending_outlet():
+    """同一条挂起在「还有待确认的操作吗」与「我刚才让你做了什么」里是同一个说法。"""
+    clause = "「打开油箱盖」等你确认"
+    assert clause in sf.pending_answer(_WAITING) and clause in sf.audit_answer([], pendings=_WAITING)
+
+
 # ── 共用纪律的源码级守卫 ──────────────────────────────────────────────────
 
 def test_this_module_never_asks_an_llm_or_the_network():

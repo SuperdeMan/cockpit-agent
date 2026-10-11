@@ -117,6 +117,13 @@ exemptions:
     reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
     owner: 泓舟
     reviewed_at: 2026-08-02
+  # ── 2026-10-11（核心旅程 P3 C02）新增一条：香氛开关现状查询 ──
+  # 与 fragrance.on/off/set 同族（非危险、只读的端侧原子意图），沿用 2026-08-02 的概括授权判据，不是逐条人裁。
+  - intent: fragrance.query
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子只读查询，走端侧确定性快路径不经 LLM 落域；判句在 runtime/question_shape.py::asks_switch_state，已由 runtime/tests/test_switch_state_question.py（问法正反例）、orchestrator/edge/tests/test_fragrance_state_query.py（原话 → 意图 → VAL → 话术，含只读不改状态、不回传动作）与 orchestrator/edge/tests/corpus/ 参数化语料覆盖。
+    owner: 泓舟
+    reviewed_at: 2026-10-11
   - intent: fragrance.set
     requirements: [positive, hard_negative, relation]
     reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。

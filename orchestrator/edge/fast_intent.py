@@ -13,7 +13,7 @@ from runtime.positions import SEAT_IDS, ids_of, position_spans, scan_positions
 from runtime.reported_speech import is_reported_speech
 from runtime.anaphora import has_anaphoric_subject
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
-from runtime.question_shape import asks_for_explanation, is_non_directive_question
+from runtime.question_shape import asks_for_explanation, asks_switch_state, is_non_directive_question
 
 LOCAL_INTENTS = {
     # ⚠ `hvac.inc/dec` 2026-08-04 补入：温度增减此前**只以别名 `aircon.inc/dec` 登记**
@@ -49,6 +49,8 @@ LOCAL_INTENTS = {
     # 后视镜加热（评审四轮待办 2026-09-25）：`commands.yaml` 早就在 modes 里声明了 heating，缺的是意图、规则、VAL 与话术
     "rear_view_mirror.heating.open", "rear_view_mirror.heating.close",
     "fragrance.on", "fragrance.off", "fragrance.set",
+    # 香氛开关现状查询（2026-10-11，核心旅程 P3 C02「香氛现在开着吗」修前落到闲聊答「看不了当前状态」）
+    "fragrance.query",
     "volume.set", "volume.inc", "volume.dec",
     # 油箱盖 / 充电口盖
     "fuel_tank_cover.open", "fuel_tank_cover.close",
@@ -741,6 +743,11 @@ def _classify_structured(text: str) -> dict | None:
 
     # ── 香氛 ──────────────────────────────────────────────
     if "香氛" in t or "香薰" in t:
+        # 问开关现状（「香氛现在开着吗 / 开了没 / 什么状态」）是只读查询：读车态作答，排在开 / 关之前——
+        # 修前这句被认成 `open`（再被出口的问句闸拦下上云），落到闲聊答「我看不了当前状态」（核心旅程 P3 C02）。
+        # 判据在 runtime/question_shape.py（零对象词，别的开关对象要支持时复用同一条）
+        if asks_switch_state(t):
+            return _s("query", "query", "query", "fragrance", conf=0.9)
         if "关" in t:
             return _s("setting", "control", "close", "fragrance", conf=0.9)
         m = _LEVEL_RE.search(t)

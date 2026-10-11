@@ -458,10 +458,13 @@ objects:
     - project-c
   fragrance:
     display_name: 香氛
+    # query：开关现状查询（2026-10-11，核心旅程 P3 C02）。只读，读 `fragrance` / `fragrance_level` 作答、不改状态；
+    # 意图级效果由 operate 推导为 read（`runtime.intent_effect`），对象级 effect 仍是 write。
     operates:
     - open
     - close
     - set
+    - query
     attrs: []
     modes: []
     positions: false
@@ -474,6 +477,7 @@ objects:
     edge_intents:
     - fragrance.off
     - fragrance.on
+    - fragrance.query
     - fragrance.set
     voice_forbidden: false
     projects:

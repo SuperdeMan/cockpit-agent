@@ -2095,8 +2095,12 @@ class PlannerEngine:
                 speech = (memory_read.HISTORY_OFF_SPEECH if working_set.history_state == memory_read.OFF
                           else memory_read.HISTORY_UNAVAILABLE_SPEECH)
                 return ("execution_audit", speech)
+            # P10（核心旅程，2026-10-09 立）：挂起中问「我刚才让你做了什么」，等确认的那件事也是「刚才让你做的」——
+            # 修前只念执行史，答「还没有执行过任何操作」。挂起表与「还有待确认的操作吗」同一份取数（`_pending_digest`）；
+            # 读不到（None）只报执行史，不替它说「没有」。只读：确认 / 取消闭环不变。
+            pendings = await self._pending_digest(ctx)
             return ("execution_audit", session_facts.audit_answer(
-                history, with_time=session_facts.asks_when(text)))
+                history, with_time=session_facts.asks_when(text), pendings=pendings))
         return None
 
     @staticmethod

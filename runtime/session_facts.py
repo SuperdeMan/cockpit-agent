@@ -177,28 +177,38 @@ def asks_when(raw_text: str) -> bool:
     return bool(_WHEN_ASK_RE.search(str(raw_text or "")))
 
 
-def audit_answer(history, *, with_time: bool = False) -> str:
-    """审计问题的确定性回答。**同一份历史 → 逐字同一个答案。**
+def audit_answer(history, *, with_time: bool = False, pendings=None) -> str:
+    """审计问题的确定性回答。**同一份历史（+ 同一份挂起表）→ 逐字同一个答案。**
 
     `with_time` 由调用方按原话判（`asks_when`）：账本里本来就有 `ts`，
     但不问不报——多说一个维度也是改行为。时刻一律走 `runtime.clock`
     的业务时区，**不用 `time.localtime`**（容器 TZ=UTC，那条老账已经犯过四次）。
+
+    `pendings`（P10，核心旅程 2026-10-09 立）：挂起表摘要，形状同 `pending_answer`。挂起中问「我刚才让你做了什么」，
+    修前只念执行史、答「还没有执行过任何操作」，等确认的那件事一字不提——它也是「刚才让你做的事」，只是**还没执行**。
+    念出来用与「还有待确认的操作吗」同一份措辞（`_pending_clauses`），并明说还没执行；不传或读不到（None）就只报执行史，
+    不替挂起表说「没有」。只读，不碰确认语义：要不要执行仍只认确认 / 取消那条闭环。
     """
+    waiting = _pending_clauses(pendings)
+    pending_tail = "、".join(waiting) + "，还没执行。" if waiting else ""
     done = executed_exchanges(history)
     if not done:
-        return "这次对话里我还没有执行过任何操作。"
+        head = "这次对话里我还没有执行过任何操作"
+        return f"{head}；{pending_tail}" if waiting else f"{head}。"
     n = sum(len(acts) for _u, acts, _ts in done)
     said = [(u.strip(), ts) for u, _acts, ts in done if u.strip()]
     if not said:
         # 有动作但取不到原话（存量轮次/异常形状）——**报数仍然是真的**，
         # 别因为凑不齐人话就退回「没有执行过」，那是把事实说反。
-        return f"这次对话里执行过 {n} 个操作，但我没能取到对应的原话。"
+        speech = f"这次对话里执行过 {n} 个操作，但我没能取到对应的原话。"
+        return speech + (f"另外{pending_tail}" if waiting else "")
     if with_time:
         parts = [f"{u}（{local_dt(ts).strftime('%H:%M')}）" if ts else u
                  for u, ts in said]
     else:
         parts = [u for u, _ts in said]
-    return f"这次对话里执行过 {n} 个操作：" + "、".join(parts) + "。"
+    speech = f"这次对话里执行过 {n} 个操作：" + "、".join(parts) + "。"
+    return speech + (f"另外{pending_tail}" if waiting else "")
 
 
 # ── ② 数据源：「这个数据是哪来的、什么时候的」 ────────────────────────────
@@ -330,16 +340,24 @@ def pending_answer(pendings) -> str:
     同 §9.x 那条「无账明说」。目标描述由调用方从挂起态里取（编排层才有那个结构），
     这里只负责把它念成人话：**判据与话术在一起，取数在调用方**。
     """
-    live = [p for p in (pendings or []) if isinstance(p, dict)]
-    if not live:
+    parts = _pending_clauses(pendings)
+    if not parts:
         return "当前没有待确认的操作。"
+    head = f"有 {len(parts)} 条待确认的操作：" if len(parts) > 1 else "有 1 条待确认的操作："
+    return head + "、".join(parts) + "。说「确认」就执行，说「取消」就作废。"
+
+
+def _pending_clauses(pendings) -> list[str]:
+    """挂起表摘要 → 「「打开油箱盖」等你确认」这样的分句。挂起读出口与执行审计（P10）共用这一份措辞：
+    同一条挂起在两处出现必须是同一个说法，否则用户会以为是两件事。"""
     parts = []
-    for item in live:
+    for item in (pendings or []):
+        if not isinstance(item, dict):
+            continue
         what = str(item.get("what") or "").strip() or "刚才那个操作"
         phase = str(item.get("phase") or "")
         ask = ("确认" if phase == "wait_confirm"
                else "选择" if phase == "wait_clarify"      # W10：澄清也在挂起表里
                else "补充信息")
         parts.append(f"「{what}」等你{ask}")
-    head = f"有 {len(parts)} 条待确认的操作：" if len(parts) > 1 else "有 1 条待确认的操作："
-    return head + "、".join(parts) + "。说「确认」就执行，说「取消」就作废。"
+    return parts

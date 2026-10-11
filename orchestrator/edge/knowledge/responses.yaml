@@ -426,6 +426,21 @@ fragrance_off_success:
   - 香氛已关闭
   speech_brief:
   - 关了
+# 香氛开关现状（2026-10-11，核心旅程 P3 C02）：{value} 由 VAL 按车态填「开着，浓度3档」/「开着」/「关着」
+fragrance_query_success:
+  scene: 香氛状态
+  status: 成功
+  speech_full:
+  - 香氛现在{value}
+  speech_brief:
+  - 香氛{value}
+fragrance_query_unavailable:
+  scene: 香氛状态
+  status: 未读到
+  speech_full:
+  - 暂时读不到香氛的状态，可以看一下中控屏
+  speech_brief:
+  - 暂时读不到香氛状态
 driving_mode_set_success:
   scene: 驾驶模式已切换
   status: 成功

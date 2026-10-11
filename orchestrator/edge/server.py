@@ -21,6 +21,7 @@ from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from runtime import voice_attestation
 from runtime.grpcio import aio_channel
 from runtime.deferred_condition import is_deferred_instruction
+from runtime.intent_effect import is_write_intent
 from runtime.choice_answer import answers_offered_choice
 from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, is_negated_write_directive, is_sequence_connector, split_and_classify, split_and_classify_any, structured_to_legacy
 import nlu as edge_nlu          # M5 P3 端侧语义 NLU（默认 shadow：只算不用）
@@ -177,6 +178,19 @@ def _local_action_payload(name: str, slots: dict | None, structured: dict | None
         if clean:
             payload["positions"] = clean
     return payload
+
+
+def _reports_action(intent_name: str) -> bool:
+    """本地执行成功后要不要回传动作：只读意图（问状态 / 读数，`*.query`）不是动作。
+
+    动作是「这一轮对车 / 媒体做了什么」，下游三处都按这个语义读它：执行审计（「刚才执行了什么」）、
+    执行事实账本（上云的 `_edge_previous_local_actions`）、核心旅程判定（只读车道出现任何动作都是失败）。
+    修前快路径给读数查询也回传一个动作，于是「香氛现在开着吗」（2026-10-11 新增 `fragrance.query`）会在
+    写车道被判成未声明动作、审计会说「执行过：香氛现在开着吗」；电量 / 胎压查询同样如此——测试与云端上下文
+    一直把它们当「无动作」的一轮建模（`test_local_turn_memory`、`context.py` 的 actionless battery query）。
+    读写判据只有一份：`runtime.intent_effect.is_write_intent`（只看操作名）。本轮意图名照旧记在 turn 上。
+    """
+    return is_write_intent(intent_name)
 
 
 class _MemoryClient:
@@ -932,6 +946,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         if multi:
             speeches = []
             actions = []
+            executed = []          # 本轮执行成功的意图名（含只读查询）；动作只收写意图（`_reports_action`）
             for m_intent in multi:
                 legacy = structured_to_legacy(m_intent)
                 if (legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"])
@@ -952,6 +967,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     # 仅在 VAL 真正执行成功(ok)时回传 action。被安全门控拒绝时只播报原因、
                     # 不下发动作——否则 HMI 会把被拒动作显示成"已执行"，与"已禁用"自相矛盾。
                     if ok:
+                        executed.append(legacy["name"])
+                    if ok and _reports_action(legacy["name"]):
                         obj = m_intent.get("data", {}).get("object", "")
                         action_type = action_type_for(obj)
                         actions.append(common_pb2.AgentAction(
@@ -968,7 +985,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     break
             if speeches:
                 turn["path"] = "local"
-                turn["intents"] = self._executed_names(actions)
+                turn["intents"] = executed
                 await self._emit_span(
                     trace_id,
                     "route.multi",
@@ -991,6 +1008,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         if mixed_intents:
             local_speeches = []
             local_actions = []
+            local_executed = []  # 本轮端侧执行成功的意图名（含只读查询）；动作只收写意图（`_reports_action`）
             cloud_parts = []  # 非本地意图的原始文本片段
             for group in _group_mixed_intents(mixed_intents):
                 effective_group = [
@@ -1028,6 +1046,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         local_speeches.append(speech)
                         # 同快路径 A：门控拒绝(ok=False)只播报、不下发 action。
                         if ok:
+                            local_executed.append(legacy["name"])
+                        if ok and _reports_action(legacy["name"]):
                             obj = m_intent.get("data", {}).get("object", "")
                             action_type = action_type_for(obj)
                             local_actions.append(common_pb2.AgentAction(
@@ -1051,7 +1071,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
             if cloud_parts:
                 turn["path"] = "mixed"
-                turn["intents"] = self._executed_names(local_actions)
+                turn["intents"] = local_executed
                 await self._emit_span(
                     trace_id,
                     "route.mixed",
@@ -1130,7 +1150,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             else:
                 # 全部本地（不应该到这里，multi 应该已经捕获）
                 turn["path"] = "local"
-                turn["intents"] = self._executed_names(local_actions)
+                turn["intents"] = local_executed
                 if local_speeches:
                     combined = _join_speeches(local_speeches)
                     final = orchestrator_pb2.FinalResult(speech=combined)
@@ -1213,11 +1233,14 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                                 "changes": _state_changes(before, self.val.state),
                             },
                         )
+                # 回传与写账本用 `reported`：只读意图（问状态 / 读数）执行成功也不是动作（`_reports_action`）；
+                # `action` 本身保持原样——上面旧路径的 span 拿它判成败
+                reported = action if action and _reports_action(intent["name"]) else None
                 final = orchestrator_pb2.FinalResult(speech=speech)
-                if action:
+                if reported:
                     final.actions.append(common_pb2.AgentAction(
-                        type=action["type"], payload=_struct(action["payload"]),
-                        require_confirm=action["require_confirm"]))
+                        type=reported["type"], payload=_struct(reported["payload"]),
+                        require_confirm=reported["require_confirm"]))
                 logger.info("LOCAL %s -> %s", intent["name"], speech)
                 turn["path"] = "local"
                 turn["intents"] = [intent["name"]]
@@ -1234,7 +1257,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 # 意味着「模型认为你说的是另一个对象，而车已经动了」，是最该被人看的一档。
                 self._nlu_shadow_bg(trace_id, request.text, "local")
                 self._record_local_turn(request, request.text, speech,
-                                        actions=[action] if action else [], memory_epoch=turn.get("memory_epoch"))
+                                        actions=[reported] if reported else [], memory_epoch=turn.get("memory_epoch"))
                 return
             logger.info("LOCAL confirm-required %s -> route to cloud", intent["name"])
             # 评审四轮 §5.5 b：把这条确定性解析盖章带上云——云侧计划里同一对象的写步方向与它不同时以它为准
@@ -1336,16 +1359,14 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 )
                 if ok and speech:
                     obj = local_structured.get("data", {}).get("object", "")
-                    action_type = action_type_for(obj)
-                    action = common_pb2.AgentAction(
-                        type=action_type,
-                        payload=_struct(_local_action_payload(
-                            f"{obj}.{local_structured['data'].get('operate', '')}", {},
-                            local_structured)),
-                        require_confirm=False,
-                    )
+                    command = f"{obj}.{local_structured['data'].get('operate', '')}"
                     final = orchestrator_pb2.FinalResult(speech=speech)
-                    final.actions.append(action)
+                    if _reports_action(command):      # 只读查询不回传动作（同快路径）
+                        final.actions.append(common_pb2.AgentAction(
+                            type=action_type_for(obj),
+                            payload=_struct(_local_action_payload(command, {}, local_structured)),
+                            require_confirm=False,
+                        ))
                     logger.info("CLOUD-DEGRADED-LOCAL %s -> %s", obj, speech)
                     yield orchestrator_pb2.HandleEvent(final=final)
 

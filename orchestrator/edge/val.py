@@ -33,6 +33,25 @@ def _tire_pressure_normal(value) -> bool:
     return isinstance(value, dict) and value.get("status") == "normal"
 
 
+#: 开关现状查询（2026-10-11，核心旅程 P3 C02「香氛现在开着吗」）：对象 → (开关键, 档位键, 档位说法)。
+#: 只读：不改状态、不过写操作门控（行车限制 / 低电量禁高耗电 / 倒挡 / 儿童锁都是管「做」的）；读不到如实说。
+#: 判句在 `runtime.question_shape.asks_switch_state`，这里只管读哪一个键、怎么念——别的开关对象要支持时加一行。
+_SWITCH_STATE_QUERIES = {
+    "fragrance": ("fragrance", "fragrance_level", "浓度{}档"),
+}
+
+
+def _switch_state_phrase(obj: str, reading) -> str:
+    """`_simulate` 读到的开关现状 → 话术里 `{value}` 那一截：「开着，浓度3档」/「开着」/「关着」。"""
+    _on_key, _level_key, level_words = _SWITCH_STATE_QUERIES[obj]
+    if not reading.get("on"):
+        return "关着"
+    level = reading.get("level")
+    if isinstance(level, int) and not isinstance(level, bool) and level_words:
+        return "开着，" + level_words.format(level)
+    return "开着"
+
+
 class VAL:
     def __init__(
         self,
@@ -250,18 +269,25 @@ class VAL:
         # 6. 选话术（相对调温把模拟后的目标温度并入，便于话术回显"当前26度"）
         response_key = self._build_response_key(obj, operate, normalized)
         resp_data = normalized
+        switch_query = operate == "query" and obj in _SWITCH_STATE_QUERIES
         if state_key in ("hvac_temp", "hvac_wind_speed") and operate in ("inc", "dec"):
             resp_data = {**normalized, "value": new_value}
         elif obj == "battery":
             resp_data = {**normalized, "value": new_value}
+        elif switch_query and new_value is not None:
+            resp_data = {**normalized, "value": _switch_state_phrase(obj, new_value)}
         # CA2-19 S1：读数类查询读不到就如实说，不报缺省值；胎压只有读数明确说「正常」才说正常
         if obj == "battery" and new_value is None:
             response_key = "battery_query_unavailable"
         elif obj == "tire_pressure_monitoring" and operate == "query" and not _tire_pressure_normal(new_value):
             response_key = "tire_pressure_query_unavailable"
+        elif switch_query and new_value is None:
+            response_key = f"{obj}_query_unavailable"
         speech = self._pick_response(response_key, resp_data)
         if obj == "battery" and new_value is not None:
             speech += Reading("battery", new_value, source_kind=self.source_kind).spoken_note()
+        elif switch_query and new_value is not None:
+            speech += Reading(obj, new_value["on"], source_kind=self.source_kind).spoken_note()
 
         return True, speech
 
@@ -367,6 +393,12 @@ class VAL:
         if obj_def.get("voice_forbidden", False):
             return False, self._pick_response("Car_general_restrictions_4")
 
+        # 开关现状查询只读：下面这些门控管的都是「做」——行车限制、低电量禁高耗电、倒挡、儿童锁，
+        # 拿来拦「香氛开着吗」只会让用户在电量低 / 倒车时问不到现状。读不到由话术如实说，不在这里拒。
+        # 电量 / 胎压查询沿用原口径（本次不动）。
+        if operate == "query" and obj in _SWITCH_STATE_QUERIES:
+            return True, ""
+
         # These are the local inputs read by the existing guards below. Cloud
         # observations never substitute for this execution-time check.
         required_inputs = ({"battery"} if operate == "query" and obj == "battery"
@@ -464,6 +496,15 @@ class VAL:
         """模拟状态变更；返回 (state_key, new_value)。"""
         value = data.get("value")
         mode = data.get("mode")
+
+        if operate == "query" and obj in _SWITCH_STATE_QUERIES:
+            # 开关现状查询：不改状态，回传 {"on", "level"} 供话术回显。开关键读不到或不是布尔 ⇒ None（话术说「读不到」），
+            # 不按缺省当「关着」念——同电量 / 胎压查询那条「不编车况」（CA2-19 S1）
+            on_key, level_key, _words = _SWITCH_STATE_QUERIES[obj]
+            on = self.state.get(on_key)
+            if not isinstance(on, bool):
+                return None, None
+            return None, {"on": on, "level": self.state.get(level_key) if level_key else None}
 
         if obj == "aircon":
             # 风速：attr=="speed"（edge_call 路径）或 mode=="wind_speed"（fast_intent 路径）
@@ -916,6 +957,8 @@ class VAL:
         if obj == "fragrance":
             if operate == "set":
                 return "fragrance_level_success"
+            if operate == "query":
+                return "fragrance_query_success"     # 读不到时 `execute` 换成 `fragrance_query_unavailable`
             return "fragrance_on_success" if operate == "open" else "fragrance_off_success"
 
         if obj in ("lane_assistance", "lane_departure_assistance"):
