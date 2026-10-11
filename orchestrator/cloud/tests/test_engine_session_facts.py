@@ -324,6 +324,64 @@ def test_an_unreadable_pending_table_says_so_instead_of_saying_none():
     assert "没有待确认" not in final["speech"]
 
 
+# ── P10（核心旅程 2026-10-09 立）：挂起中问「我刚才让你做了什么」——等确认的那件事也要说 ──────
+
+_UNSAFE_CLAIMS = ("已打开", "已经打开", "已为您打开")
+
+
+def test_audit_while_pending_names_the_operation_waiting_for_confirmation():
+    """修前只念执行史，答「这次对话里我还没有执行过任何操作」，在等确认的「打开油箱盖」一字不提（P13 known_red）。"""
+    session = SessionStore(redis_url="")
+    spy = _Spy()
+    engine = _engine(spy, session=session)
+    asyncio.run(session.save("sess-audit-pending-1", SessionState(
+        phase="wait_confirm", owner_user_id="u1", operation_id="op1",
+        pending_plan={"goal": "打开油箱盖"}, pending_step_id="s1")))
+
+    final = _finals(_run(engine, "我刚才让你做了什么？", "sess-audit-pending-1"))[-1]
+
+    assert "油箱盖" in final["speech"] and "等你确认" in final["speech"] and "还没执行" in final["speech"]
+    assert not any(claim in final["speech"] for claim in _UNSAFE_CLAIMS)   # P10 必过：不得说已打开
+    assert spy.unary_calls == [] and spy.llm_calls == 0
+    # 只读：问一句不消费、不取消那条挂起
+    entries, _state = asyncio.run(session.load_all_result("sess-audit-pending-1", owner_user_id="u1"))
+    assert [e.operation_id for e in entries] == ["op1"]
+
+
+def test_audit_reports_both_what_was_done_and_what_is_waiting():
+    session = SessionStore(redis_url="")
+    spy = _Spy()
+    engine = _engine(spy, session=session)
+    asyncio.run(spy.append_turn("s", "user", "把车窗打开", exchange_id="A"))
+    asyncio.run(spy.append_turn("s", "assistant", "开了", exchange_id="A", actions=["window.open"]))
+    asyncio.run(session.save("sess-audit-pending-2", SessionState(
+        phase="wait_confirm", owner_user_id="u1", operation_id="op2",
+        pending_plan={"goal": "打开油箱盖"}, pending_step_id="s1")))
+
+    final = _finals(_run(engine, "刚才执行了什么", "sess-audit-pending-2"))[-1]
+
+    assert "1 个操作" in final["speech"] and "把车窗打开" in final["speech"]
+    assert "「打开油箱盖」等你确认，还没执行" in final["speech"]
+
+
+def test_audit_without_a_readable_pending_table_only_reports_the_ledger():
+    """挂起表读不到：只报执行史，不替它说「没有待确认」，也不编一条出来。"""
+    class _Broken(SessionStore):
+        calls = 0
+
+        async def load_all_result(self, session_id, *, owner_user_id=""):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                from orchestrator.cloud.session import PENDING_EMPTY
+                return [], PENDING_EMPTY
+            raise RuntimeError("redis down")
+
+    spy = _Spy()
+    final = _finals(_run(_engine(spy, session=_Broken(redis_url="")), "刚才执行了什么",
+                         "sess-audit-pending-3"))[-1]
+    assert final["speech"] == "这次对话里我还没有执行过任何操作。"
+
+
 # ── 误伤对照：短路挂在全部流量上，宽一格就是吞掉正常请求 ───────────────────
 
 def test_ordinary_requests_still_reach_the_planner():
