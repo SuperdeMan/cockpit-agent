@@ -29,7 +29,7 @@ cases:
     turns:
       - {say: "打开香氛", expect: {actions_required: ["fragrance.on"], actions_allowed: ["fragrance.on"],
                                 vehicle_values: {fragrance: true}}}
-      - {say: "香氛现在开着吗", expect: {actions_allowed: [], speech_not: ["关着", "没有开"]}}
+      - {say: "香氛现在开着吗", expect: {actions_allowed: [], speech_any: ["开着"], speech_not: ["关着", "没有开"]}}
     cleanup:
       - {say: "关闭香氛"}
   - id: N01

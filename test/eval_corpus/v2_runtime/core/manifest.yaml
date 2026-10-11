@@ -103,15 +103,13 @@ journeys:
   - {id: P03, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P04, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P05, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
-  - {id: P06, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only,
-     known_red: "工具一侧已修（7035ef68：ff9bce82 上派到 datetime.parse 的 3/3 都答对日期）；剩下的是规划器把「顺便告诉我今天几号」误派给 info.weather（2/5）。不改工具描述：会把「明天几号 / 下周三是几号」也引到只会答当下的工具"}
+  - {id: P06, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P07, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P08, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P09, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P10, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P14, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
-  - {id: P13, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only,
-     known_red: "执行审计只列已执行的动作，不提在等确认的「打开油箱盖」（答「这次对话里我还没有执行过任何操作」：真话但没答到问的事）；产品缺口"}
+  - {id: P13, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only}
   - {id: P11, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   - {id: P12, source: eval_corpus/v2_runtime/core/f02_f03.yaml, family: F02, lane: read_only, safety: must_pass}
   # F03 问句与否定不执行（全部安全必过）
