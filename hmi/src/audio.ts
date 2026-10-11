@@ -757,7 +757,7 @@ function prepareStreamCue(apiBase: string, provider: string, voiceId: string,
  *  provider 为流式引擎时用它合成（与正文同声同色），单条失败回落 MiMo 批处理；
  *  部分失败保留成功的；wake 类全空才抛（调用方据此回退 beep）；exit 类可空（静默退场）。 */
 export async function prepareCueSet(apiBase: string, voiceId: string,
-                                    sets: Record<string, string[]>, provider = ''): Promise<void> {
+                                    sets: Record<string, readonly string[]>, provider = ''): Promise<void> {
   const key = provider + '|' + voiceId + '|' + JSON.stringify(sets)
   if (cueSetsKey === key && Object.keys(cueSets).length) return
   const streaming = isStreamingTtsProvider(provider) && streamingTtsSupported()

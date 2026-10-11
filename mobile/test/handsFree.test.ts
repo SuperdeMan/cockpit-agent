@@ -33,6 +33,10 @@ class FakeVad {
   }
   accept() {}
   setSilenceTail() {}
+  resets = 0
+  resetEndpoint() {
+    this.resets += 1
+  }
   stats() {
     return { backlog: 0, dropped: 0, processed: 0, lastInferMs: 0, maxBacklog: 30 }
   }
@@ -65,6 +69,8 @@ class FakeKws {
 const asrLog: string[] = []
 class FakeAsr {
   static last: FakeAsr | null = null
+  /** 推进 ASR 的帧（前滚 + 实时帧）：验精确前滚取的是哪一段 */
+  frames: Int16Array[] = []
   constructor(
     public cfg: any,
     public cb: any,
@@ -74,7 +80,7 @@ class FakeAsr {
   }
   async start() {
     asrLog.push('start')
-    await this.rec.start(() => {}) // 真实 AsrSession 也是这么开「录音」的
+    await this.rec.start((f: Int16Array) => this.frames.push(f)) // 真实 AsrSession 也是这么开「录音」的
   }
   async stop() {
     asrLog.push('stop')
@@ -133,6 +139,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  jest.useRealTimers()
   for (const ctl of controllers.splice(0)) await ctl.dispose()
   globalThis.WebSocket = originalWebSocket
 })
@@ -628,4 +635,148 @@ test('语义打断：判定接口失败（旧网关 404 / 断网）⇒ 判不出
     ;(globalThis as any).fetch = original
     jest.useRealTimers()
   }
+})
+
+// ─── 唤醒应答（2026-10-11，设计 docs/design/2026-10-11-wake-acknowledgement.md）───
+// 状态机的判断窗 / 应答逻辑在 hmi/src/voiceLoop.test.mjs 里验；这里只验控制器的接线：
+// 什么时候走人声应答、提示音让不让位、片段什么时候准备、应答播完才开 ASR、精确前滚取的是哪一段。
+
+/** 应答片段模块换成可控的假件：就绪与否、播一条报多长由测试定 */
+function mockVoiceCue({ ready = true, ackMs = 500 }: { ready?: boolean; ackMs?: number } = {}) {
+  const cue = {
+    ready,
+    ackMs,
+    playVoiceCue: jest.fn((kind: string, _key: string) => (cue.ready ? (kind === 'wake' ? cue.ackMs : 400) : 0)),
+    prepareVoiceCues: jest.fn(async (_url: string, _provider: string, _voice: string) => true),
+    muteNextWakeTone: jest.fn(),
+    stopVoiceCue: jest.fn(),
+    warmCueOutput: jest.fn(),
+  }
+  jest.doMock('@/core/voice/voiceCue', () => ({
+    voiceCueKey: (p: string, v: string) => `${p}|${v}`,
+    voiceCuesReady: () => cue.ready,
+    voiceCueCounts: () => ({ wake: 5, exit: 3 }),
+    playVoiceCue: cue.playVoiceCue,
+    prepareVoiceCues: cue.prepareVoiceCues,
+    muteNextWakeTone: cue.muteNextWakeTone,
+    stopVoiceCue: cue.stopVoiceCue,
+    warmCueOutput: cue.warmCueOutput,
+  }))
+  return cue
+}
+
+const VOICE = { getTtsVoice: () => ({ provider: 'minimax', voice: 'female-shaonv' }) }
+
+/** 往前滚环里灌 n 个 VAD 窗（512 样本 / 32ms） */
+function fillRing(n: number) {
+  for (let i = 0; i < n; i += 1) vad.onWindow!(new Float32Array(512).fill(0.01))
+}
+
+const pushedSamples = () => (FakeAsr.last?.frames ?? []).reduce((s, f) => s + f.length, 0)
+
+test('唤醒应答：KWS 命中且片段就绪 ⇒ 光球进聆听、ASR 先不开；停下来 ⇒ 播「我在」，播完 + 余音才重置 VAD、开 ASR', async () => {
+  const cue = mockVoiceCue({ ackMs: 500 })
+  const wakeTone = jest.fn()
+  const { ctl } = makeCtl({ ...VOICE, onWakeTone: wakeTone })
+  await ctl.enable()
+  expect(cue.prepareVoiceCues).toHaveBeenCalledWith('https://x', 'minimax', 'female-shaonv')
+  jest.useFakeTimers()
+  kws.cb.onKeyword('小舟小舟')
+  expect(ctl.state).toBe('LISTENING')
+  expect(asrLog).not.toContain('start')
+  expect(cue.muteNextWakeTone).toHaveBeenCalledTimes(1) // 在场层的两音提示让位
+  expect(cue.warmCueOutput).toHaveBeenCalledTimes(1)
+  for (const p of [0.1, 0.05, 0.2, 0.1]) vad.onProb!(p)
+  jest.advanceTimersByTime(240)
+  expect(cue.playVoiceCue).toHaveBeenCalledWith('wake', 'minimax|female-shaonv')
+  expect(asrLog).not.toContain('start')
+  jest.advanceTimersByTime(649)
+  expect(asrLog).not.toContain('start')
+  jest.advanceTimersByTime(1)
+  expect(vad.resets).toBe(1)
+  expect(asrLog).toContain('start')
+  expect(wakeTone).not.toHaveBeenCalled()
+})
+
+test('唤醒应答：一口气接着说 ⇒ 不回应答，ASR 带唤醒之后那段的精确前滚开（不再叠固定前滚）', async () => {
+  // 状态机的时钟是构造时取的 Date.now：假定时器要在建控制器之前装上，判断窗的时长才对得上
+  jest.useFakeTimers()
+  const cue = mockVoiceCue()
+  const { ctl } = makeCtl(VOICE)
+  await ctl.enable()
+  fillRing(40)
+  kws.cb.onKeyword('小舟小舟')
+  for (const p of [0.9, 0.8, 0.95, 0.7]) vad.onProb!(p)
+  jest.advanceTimersByTime(240)
+  expect(cue.playVoiceCue).not.toHaveBeenCalled()
+  expect(asrLog).toContain('start')
+  expect(pushedSamples()).toBe(8 * 512) // 240ms ⇒ ceil(240/32)=8 窗；旧规则（固定 200ms + 0）是 7 窗
+})
+
+test('唤醒应答：轻点光球 = 手动唤醒 ⇒ 不回应答、不让位，立刻开 ASR（不注入前滚）', async () => {
+  const cue = mockVoiceCue()
+  const { ctl } = makeCtl(VOICE)
+  await ctl.enable()
+  fillRing(40)
+  ctl.wakeManually()
+  expect(asrLog).toContain('start')
+  expect(pushedSamples()).toBe(0)
+  expect(cue.playVoiceCue).not.toHaveBeenCalled()
+  expect(cue.muteNextWakeTone).not.toHaveBeenCalled()
+})
+
+test('唤醒应答：片段还没就绪 ⇒ 这一次走旧路径（立刻开听、提示音照在场层响），顺手去准备', async () => {
+  const cue = mockVoiceCue({ ready: false })
+  const { ctl } = makeCtl(VOICE)
+  await ctl.enable()
+  cue.prepareVoiceCues.mockClear()
+  kws.cb.onKeyword('小舟小舟')
+  expect(asrLog).toContain('start')
+  expect(cue.muteNextWakeTone).not.toHaveBeenCalled()
+  expect(cue.prepareVoiceCues).toHaveBeenCalledTimes(1)
+})
+
+test('唤醒应答：播报静音（没有音色）⇒ 不准备、不说话，唤醒照旧', async () => {
+  const cue = mockVoiceCue()
+  const { ctl } = makeCtl({ getTtsVoice: () => null })
+  await ctl.enable()
+  kws.cb.onKeyword('小舟小舟')
+  expect(asrLog).toContain('start')
+  expect(cue.prepareVoiceCues).not.toHaveBeenCalled()
+  expect(cue.playVoiceCue).not.toHaveBeenCalled()
+})
+
+test('唤醒应答：原定人声、提示音已让位，结果应答没播成 ⇒ 补一声提示音并立刻开听', async () => {
+  const cue = mockVoiceCue({ ackMs: 0 })
+  const wakeTone = jest.fn()
+  const { ctl } = makeCtl({ ...VOICE, onWakeTone: wakeTone })
+  await ctl.enable()
+  jest.useFakeTimers()
+  kws.cb.onKeyword('小舟小舟')
+  jest.advanceTimersByTime(240)
+  expect(cue.playVoiceCue).toHaveBeenCalledTimes(1)
+  expect(wakeTone).toHaveBeenCalledTimes(1)
+  expect(asrLog).toContain('start')
+})
+
+test('唤醒应答：退出词 ⇒ 播退场应答（exit 一类）', async () => {
+  const cue = mockVoiceCue()
+  const { ctl } = makeCtl(VOICE)
+  await ctl.enable()
+  ctl.wakeManually()
+  vad.cb.onSpeechStart()
+  vad.cb.onSpeechEnd()
+  FakeAsr.last!.cb.onFinal('退下吧')
+  expect(cue.playVoiceCue).toHaveBeenCalledWith('exit', 'minimax|female-shaonv')
+  expect(ctl.state).toBe('ARMED')
+})
+
+test('唤醒应答：停播 / 系统抢占 / 停用都把正在播的应答一起停掉', async () => {
+  const cue = mockVoiceCue()
+  const { ctl } = makeCtl(VOICE)
+  await ctl.enable()
+  ctl.stopSpeaking()
+  ctl.systemInterrupt()
+  await ctl.disable()
+  expect(cue.stopVoiceCue).toHaveBeenCalledTimes(3)
 })

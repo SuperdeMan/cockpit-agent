@@ -5,6 +5,7 @@ import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
 import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues, makeS2sPlayer, memoryAuthToken } from './audio'
+import { EXIT_CUE_TEXTS, WAKE_CUE_TEXTS } from './voiceCues.mjs'
 import { PcmRing } from './pcmRing.mjs'
 import { VoiceprintIdentifier, postIdentify } from './voiceprintIdentifier.mjs'
 import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
@@ -20,10 +21,8 @@ const RESUME_PRE_ROLL_MS = 200
 // FSM 会带来 sinceSpeechStartMs，pre-roll = 它 + RESUME_PRE_ROLL_MS，按此上限截断（pcmRing 容量 1500ms）。
 const MAX_PRE_ROLL_MS = 1200
 
-// 唤醒提示语候选（issue①）：短促，唤醒时随机播一条求变化；回声靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。
-const WAKE_CUE_TEXTS = ['在呢', '我在', '你说', '请讲', '我在听']
-// 退场应答候选（R4.3b P1 U3）：说「退下吧」等退出词后短促回一句再闭麦回待机（TTS 关时静默）。
-const EXIT_CUE_TEXTS = ['好的', '好嘞', '我先退下了']
+// 唤醒应答 / 退场应答的句子与 App 同一份（voiceCues.mjs）；HMI 回声靠 getUserMedia 的 AEC 兜底（同 barge-in 前提），
+// 所以不接状态机的唤醒判断窗（onWakeAck）——唤醒必播、立刻开听，见设计 2026-10-11-wake-acknowledgement §3.3。
 
 // M4：FSM 判为「本地消化、不上云」的语义事件——S2S 下须额外取消 provider 在飞的生成
 // （它不知道我们把这句判成了噪声/退出）。名字与 voiceLoop.onMetric 的事件名一一对应。

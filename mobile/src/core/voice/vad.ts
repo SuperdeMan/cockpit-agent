@@ -110,9 +110,9 @@ export class VadEngine {
    *  `FRAME_MS = 512/16000` 折算帧数，喂 1600 的帧会让「取 200ms」实际取到 700ms，
    *  pre-roll 里带上一轮 TTS 的尾巴 ⇒ ASR 把播报当用户说话。 */
   onWindow: ((win: Float32Array) => void) | null = null
-  /** 逐窗概率旁路（**只给诊断屏**，不参与任何判定）。留它是因为 spike 取证要的是
-   *  「概率分布长什么样」而不是「有没有触发」——只看事件的话，模型压根没跑起来
-   *  （恒 0）和「跑了但没人说话」在屏上一模一样。 */
+  /** 逐窗概率旁路。两个读者：诊断屏（spike 取证要的是「概率分布长什么样」而不是「有没有触发」——
+   *  只看事件的话，模型压根没跑起来（恒 0）和「跑了但没人说话」在屏上一模一样）；免唤醒控制器把它报给
+   *  状态机的唤醒判断窗（voiceLoop.vadProb：唤醒后是一口气接着说还是停下来等应答，2026-10-11）。 */
   onProb: ((prob: number) => void) | null = null
 
   constructor(silenceTailMs = 800) {
@@ -130,6 +130,12 @@ export class VadEngine {
 
   setSilenceTail(ms: number): void {
     ;(this.ep as any).cfg.minSilenceMs = ms
+  }
+
+  /** 清掉端点判定状态（不动模型的递归状态）。唤醒应答播完时调：应答的回声会让端点停在说话段里，
+   *  不清的话用户紧接着开口不会有新的 speech-start（设计 2026-10-11-wake-acknowledgement §3.1）。 */
+  resetEndpoint(): void {
+    this.ep.reset()
   }
 
   /** 积压 / 丢窗 / 推理耗时（诊断屏与 HandsFreeController.stats 读）。数字属于当前生命周期，start() 归零 */

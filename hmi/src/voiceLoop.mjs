@@ -9,6 +9,8 @@
 //   SPEAKING ─barge-in（VAD≥300ms 过护栏）→ stopTTS + LISTENING
 //            （语义打断，2026-10-11：注入了插话判定时改为压低旧回答 + LISTENING，定稿后 THINKING 等判定——
 //             判受话才停旧回答、发出这一句；判非受话恢复音量回 SPEAKING。设计 2026-10-11-semantic-barge-in.md）
+//   ARMED ─wake（外设注入了唤醒应答）→ LISTENING（先不开 ASR：240ms 判断窗看用户是不是一口气接着说——
+//            接着说 ⇒ 判断窗那段作前滚开 ASR、不回应答；停下来 ⇒ 播「我在」，播完才开 ASR。设计 2026-10-11-wake-acknowledgement.md）
 //   LISTENING ─唤醒后 5s 无 speech→ ARMED（误唤醒静默回收，不发请求）
 //   THINKING/SPEAKING/FOLLOWUP ─turnRejected（云端判非受话）→ ARMED（结束这次连续对话，不再开续问窗）
 //   任意态 ─handsFreeOff→ IDLE（拆机）
@@ -109,6 +111,12 @@ export const DEFAULTS = {
   bargeInStopWords: ['停', '停下', '停一下', '停停', '别说了', '别念了', '别讲了', '不用说了', '不用念了',
     '闭嘴', '安静', '够了', '好了', '可以了', '行了', '知道了'],
   bargeInJudgeMs: 6000,   // 插话判定的等待上限；到点按「判不出」处理（停旧回答、照今天的路径发出）
+  // 唤醒应答（2026-10-11）：只对注入了 onWakeAck 的外设生效。看的是唤醒之后的**逐窗原始概率**，不是 VAD 的说话段——
+  // 唤醒词刚说完时端点检测的静音尾还没走完，平滑状态几乎总在说话段里（R4.3b P4 用它跳过提示音就是这样失败的）。
+  wakeAckDecisionMs: 240,   // 判断窗：唤醒后看这么久再决定「一口气接着说」还是「停下来等应答」
+  wakeAckSpeechProb: 0.5,   // 单窗算「在说话」的概率阈值（Silero 口径）
+  wakeAckOneshotRatio: 0.4, // 判断窗里说话窗占比到此即「接着说」：不回应答，直接收这句
+  wakeAckTailMs: 150,       // 应答播完后再等这么久才开 ASR（扬声器余音 / 车厢混响）
 }
 
 export class VoiceLoop {
@@ -134,6 +142,10 @@ export class VoiceLoop {
       onJudgeBargeIn = null,
       onDuckTts = () => {},        // (on) 播报压低 / 恢复（只调音量，不停播）
       holdBargeIn = () => true,    // 此刻能不能「先压低、后判定」（S2S 挡位等不能时走旧行为）
+      // 唤醒应答（2026-10-11）：() => ms，播一句「我在 / 在呢…」并返回它的时长；0 = 没播（没就绪 → 回落 onWakeChime）。
+      // 不传 = 旧行为（提示音 + 立刻开 ASR）。注入了就由 wake({ack}) 决定这一次走不走判断窗。
+      onWakeAck = null,
+      onVadReset = () => {},       // 应答播完：清掉 VAD 端点状态（应答的回声会让它停在说话段里）
       config = {},
     } = opts
 
@@ -154,6 +166,8 @@ export class VoiceLoop {
     this.onJudgeBargeIn = onJudgeBargeIn
     this.onDuckTts = onDuckTts
     this.holdBargeIn = holdBargeIn
+    this.onWakeAck = onWakeAck
+    this.onVadReset = onVadReset
     this.cfg = { ...DEFAULTS, ...config }
 
     this.state = VoiceState.IDLE
@@ -179,6 +193,9 @@ export class VoiceLoop {
     this._heldEnded = false
     this._judge = null        // { token, text, voice } 在等判定的那句；null = 没有
     this._judgeSeq = 0
+    // 唤醒应答：判断窗 / 应答播放中（状态是 LISTENING，ASR 还没开）。null = 不在这一段。
+    // { phase: 'deciding' | 'acking', at: 唤醒时刻, windows: 判断窗收到的窗数, speech: 其中算说话的窗数 }
+    this._wake = null
   }
 
   // ─── 定时器封装（全部走注入，node 测试用 fake clock）───
@@ -204,6 +221,7 @@ export class VoiceLoop {
 
   // ─── 状态进入（集中触发 onState；ASR 开关与定时器由各 goto 显式管理）───
   _enter(state) {
+    if (state !== VoiceState.LISTENING) this._wake = null // 离开聆听（拆机 / 抢占 / 回待机）：判断窗与应答作废
     this.state = state
     this.onState(ORB_FOR[state], state)
   }
@@ -283,7 +301,10 @@ export class VoiceLoop {
     this._enter(VoiceState.FOLLOWUP)
     this._setTimer('followup', left, () => this._gotoArmed())
   }
-  _enterListening({ speechAlreadyStarted = false, fromBargeIn = false, source = '' } = {}) {
+  // preRollMs：外设按它**精确**回取前滚（不再叠固定前滚）——只有唤醒后一口气接着说时给，回取的正好是唤醒之后那段。
+  // speechStartAt：本段 speech 的起点（now() 口径）；不给就按「此刻 − 打断确认窗」推。
+  _enterListening({ speechAlreadyStarted = false, fromBargeIn = false, source = '', preRollMs = 0, speechStartAt = null } = {}) {
+    this._wake = null // 正式开听：唤醒判断窗 / 应答到此结束
     this._clearAllTimers()
     this._cameFromBargeIn = fromBargeIn
     // R4.4：source 仅在新一轮聆听进入时给（wake/followup/bargein）；宽限续说/merge 不传 →
@@ -301,12 +322,13 @@ export class VoiceLoop {
     // 打断进入从 VAD 判到开口那一刻算起（含 300ms 确认窗）：否则「暂停」「换台」这类两字指令只剩确认之后那一截，
     // 会被短语音规则当噪声丢掉（2026-10-11 语义打断补）。
     this._utteranceMs = 0
-    this._speechStartAt = speechAlreadyStarted ? this.now() - sinceSpeechStartMs : null
+    this._speechStartAt = speechAlreadyStarted ? (speechStartAt ?? this.now() - sinceSpeechStartMs) : null
     if (!this._asrOpen) {
       this._asrOpen = true
       // resume=true（续问/打断/宽限续说）→ 控制器可注入短 pre-roll 补 VAD 判定延迟首字；
       // resume=false（KWS 唤醒进入）→ 不注入 pre-roll，避免把唤醒词本身喂进 ASR（真麦「小周」误上屏根因）。
-      this.onOpenAsr({ resume: speechAlreadyStarted, sinceSpeechStartMs })
+      // 唤醒后一口气接着说：精确回取唤醒之后那段（不含唤醒词本身——KWS 命中在唤醒词说完之后）。
+      this.onOpenAsr({ resume: speechAlreadyStarted, sinceSpeechStartMs, ...(preRollMs > 0 ? { preRollMs } : {}) })
     }
     this._enter(VoiceState.LISTENING)
     // 唤醒进入且尚无 speech → 挂误唤醒回收窗；续问/打断进入时 speech 已起，不挂。
@@ -336,18 +358,19 @@ export class VoiceLoop {
   }
 
   // KWS 唤醒词命中。ARMED/FOLLOWUP 待机中 → 进聆听；SPEAKING 中 → 唤醒词打断（KWS 在 D6 保持有效）。
-  wake() {
+  // ack：这一次要不要走唤醒应答（外设注入了 onWakeAck 才有意义）。唤醒词命中传 true；
+  // 轻点光球这类手动唤醒传 false——人已经准备开口了，照旧提示音 + 立刻开听。
+  wake({ ack = true } = {}) {
+    if (this._wake) return // 判断窗 / 应答播放中：同一声唤醒词的重复命中不再起一轮
     if (this.state === VoiceState.ARMED || this.state === VoiceState.FOLLOWUP) {
       this._clearPending() // 唤醒是新意图 → 放弃任何在宽限中的续说残留
       this.onMetric('wake')
-      this.onWakeChime()
-      this._enterListening({ source: 'wake' })
+      this._beginWake(ack)
     } else if (this.state === VoiceState.SPEAKING) {
       // 唤醒词打断不受 300ms VAD 护栏约束（显式意图）；若唤醒词恰在播报文本内则由 Worker 抑制。
       this._clearPending()
       this.onStopTts()
-      this.onWakeChime()
-      this._enterListening({ source: 'wake' })
+      this._beginWake(ack)
     } else if (this.state === VoiceState.THINKING) {
       // U2 真打断（P2）：处理中喊唤醒词 → 取消在飞的云端处理 + 提示音 + 重新聆听。
       // 仅 KWS 唤醒词可打断 THINKING（显式意图）；VAD speech 不行（THINKING 期环境音太易误触）。
@@ -360,12 +383,73 @@ export class VoiceLoop {
         this.onMetric('turn_cancelled')
         this.onCancelTurn()
       }
-      this.onWakeChime()
-      this._enterListening({ source: 'wake' })
+      this._beginWake(ack)
     }
   }
 
+  // 唤醒进入聆听。外设没注入应答 / 这一次不要应答 ⇒ 旧路径逐字不变：提示音 + 立刻开 ASR（不注入前滚）。
+  // 要应答 ⇒ 先进聆听态（光球立刻变），ASR 先不开：判断窗里看用户是不是一口气接着说。
+  _beginWake(ack) {
+    if (!ack || !this.onWakeAck) {
+      this.onWakeChime()
+      this._enterListening({ source: 'wake' })
+      return
+    }
+    this._clearAllTimers()
+    this._closeAsr()
+    this._speechActive = false
+    this._speechStartAt = null
+    this._utteranceMs = 0
+    this._listenSource = 'wake'
+    this._wake = { phase: 'deciding', at: this.now(), windows: 0, speech: 0 }
+    this._enter(VoiceState.LISTENING)
+    this._setTimer('wake', this.cfg.wakeAckDecisionMs, () => this._decideWake())
+  }
+
+  // 判断窗满：接着说 ⇒ 不应答，判断窗那段作前滚开 ASR；停下来 ⇒ 播应答，播完（+余音）才开 ASR。
+  _decideWake() {
+    const w = this._wake
+    if (!w || w.phase !== 'deciding' || this.state !== VoiceState.LISTENING) return
+    if (w.windows > 0 && w.speech / w.windows >= this.cfg.wakeAckOneshotRatio) {
+      // 「小舟小舟打开空调」：KWS 命中时人还在说——回应答只会盖住他，ASR 晚开的这一截用精确前滚补回
+      this.onMetric('wake_oneshot')
+      this._enterListening({ speechAlreadyStarted: true, preRollMs: Math.max(1, this.now() - w.at), speechStartAt: w.at })
+      return
+    }
+    let ms = 0
+    try {
+      ms = Number(this.onWakeAck()) || 0
+    } catch {
+      ms = 0
+    }
+    if (ms <= 0) {
+      // 应答没就绪（播报静音 / 片段还在合成 / 合成失败）：回落提示音，立刻开听（同旧路径）
+      this.onWakeChime()
+      this._enterListening({ source: 'wake' })
+      return
+    }
+    // 应答播放期间不开 ASR、不认 VAD 起止：端上没有回声消除时，自己的「我在」会被麦收进来当成用户的话
+    this.onMetric('wake_ack')
+    w.phase = 'acking'
+    this._setTimer('wake', ms + this.cfg.wakeAckTailMs, () => {
+      if (this._wake !== w || this.state !== VoiceState.LISTENING) return
+      // 应答的回声让 VAD 端点停在说话段里：清掉，用户紧接着开口才会有自己的起点（否则短指令会被当短噪声丢掉）
+      this.onVadReset()
+      this._enterListening({ source: 'wake' })
+    })
+  }
+
+  // 逐窗语音概率（外设每个 VAD 窗报一次）。只在唤醒判断窗里有用：判断用户是不是一口气接着说。
+  vadProb(prob) {
+    const w = this._wake
+    if (!w || w.phase !== 'deciding') return
+    w.windows += 1
+    if (Number(prob) >= this.cfg.wakeAckSpeechProb) w.speech += 1
+  }
+
   vadSpeechStart() {
+    // 唤醒判断窗 / 应答播放中：开没开口看逐窗概率（vadProb），应答期间的「开口」多半是自己的回声
+    if (this._wake) return
     switch (this.state) {
       case VoiceState.LISTENING:
         if (this._pendingText) {
@@ -399,6 +483,7 @@ export class VoiceLoop {
   }
 
   vadSpeechEnd() {
+    if (this._wake) return // 同 vadSpeechStart：ASR 还没开，没有可定稿的东西
     if (this.state === VoiceState.LISTENING) {
       if (this._speechActive) {
         this._speechActive = false
@@ -413,6 +498,7 @@ export class VoiceLoop {
   }
 
   asrPartial(text) {
+    if (this._wake) return // 唤醒判断 / 应答期间 ASR 没开：到这里的只能是上一条会话的迟到回调
     const t = (text || '').trim()
     if (!t) return
     if (this.state === VoiceState.LISTENING) {
@@ -425,7 +511,7 @@ export class VoiceLoop {
   }
 
   asrFinal(text) {
-    if (this.state !== VoiceState.LISTENING) return
+    if (this.state !== VoiceState.LISTENING || this._wake) return
     // 端点宽限合并：本轮若在续说前缀之后 → 拼接（「导航去」+「西溪湿地」）。前缀已消费即清。
     const prefix = this._pendingPrefix
     this._pendingPrefix = ''

@@ -23,6 +23,7 @@ import {
 } from '@/core/voice/handsFree'
 import { setFocusHold } from '@/core/voice/audioFocus'
 import { duckTts } from '@/core/voice/audioCtx'
+import { playCueTone } from '@/core/voice/cueTone'
 import { REJECT_NOTICE_SHOW_MS } from '@/core/presence/presence'
 import { nativeErrorText } from '@/core/voice/nativeErrorText'
 import { speechController } from '@/core/voice/speech'
@@ -214,6 +215,13 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       onEchoDismissed: () => setEchoAt(Date.now()),
       onPipelineDegraded: (_k, m) => setPipelineDegraded(m),
       wakeWord: () => settingsStore.getState().settings.wakeWord,
+      // 唤醒 / 退场应答与正文同一组引擎 + 音色；播报静音就不说话（唤醒照旧只有提示音）
+      getTtsVoice: () => {
+        const s = settingsStore.getState().settings
+        return s.speakPolicy === 'silent' ? null : { provider: s.ttsProvider, voice: s.voiceId }
+      },
+      // 原定人声应答、在场层的两音提示已让位，结果应答没播成：补一声（照旧遵守「提示音」开关）
+      onWakeTone: () => { if (settingsStore.getState().settings.cueToneEnabled) playCueTone('wake') },
       getVoicePipeline: () => settingsStore.getState().settings.voicePipeline,
       // S2S 的 provider / 音色**不是** TTS 的那两个（值域不同：网关 S2S provider 只认
       // dashscope / mock / off，`llm-gateway/s2s/provider.py:388-419`）。B1 这里填的是
@@ -265,7 +273,12 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     }
     // Zustand 通知同步发生：设置关掉的同一调用栈就撤回采集，不能等 React effect。
     const unsubscribeSettings = settingsStore.subscribe((state, previous) => {
-      if (state.settings.handsFree === previous.settings.handsFree || !live) return
+      if (!live) return
+      // 换了播报引擎 / 音色 / 播报策略：按新的一组重新准备唤醒应答（同一组已就绪即空转）
+      const a = state.settings
+      const b = previous.settings
+      if (a.ttsProvider !== b.ttsProvider || a.voiceId !== b.voiceId || a.speakPolicy !== b.speakPolicy) ctl.refreshCues()
+      if (state.settings.handsFree === previous.settings.handsFree) return
       if (!state.settings.handsFree) void ctl.disable().catch(() => {})
       else if (cbRef.current.enabled && (!opts.scope || opts.scope.canCapture())) {
         pausedRef.current = false

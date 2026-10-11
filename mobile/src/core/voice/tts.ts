@@ -96,6 +96,93 @@ export async function synthesizeBatch(
   return { pcm: toMono(wav), sampleRate: wav.sampleRate }
 }
 
+/**
+ * 整句合成成 PCM、**不播**：唤醒 / 退场应答的预合成用（设计 2026-10-11-wake-acknowledgement §3.2）。
+ * 先走流式（与正文同一引擎同一音色——HMI 07-18 修过「应答与正文音色不一致」，原因就是应答走了批处理的另一套），
+ * 流式不可用再回落批处理（同一个 cfg，传输回退不是引擎回退，同 TtsSession.fallback）。
+ * 协议同 TtsSession：start → text → finish；收 meta / 二进制 PCM / done，unsupported / error 即失败。
+ */
+export async function collectTtsPcm(
+  cfg: TtsConfig,
+  text: string,
+  timeoutMs = 8000,
+): Promise<{ pcm: Int16Array; sampleRate: number }> {
+  try {
+    return await collectTtsStream(cfg, text, timeoutMs)
+  } catch {
+    const batch = await synthesizeBatch(cfg, text)
+    if (!batch || !batch.pcm.length) throw new Error('提示音合成失败')
+    return batch
+  }
+}
+
+function collectTtsStream(cfg: TtsConfig, text: string, timeoutMs: number): Promise<{ pcm: Int16Array; sampleRate: number }> {
+  return new Promise((resolve, reject) => {
+    let ws: WebSocket
+    try {
+      ws = new WebSocket(ttsStreamUrl(cfg.audioUrl))
+    } catch (e) {
+      reject(e instanceof Error ? e : new Error(String(e)))
+      return
+    }
+    ws.binaryType = 'arraybuffer'
+    const chunks: Int16Array[] = []
+    let sampleRate = 24000
+    let settled = false
+    const settle = (err?: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null
+      try {
+        ws.close()
+      } catch {
+        /* ignore */
+      }
+      if (err) {
+        reject(err)
+        return
+      }
+      const total = chunks.reduce((n, c) => n + c.length, 0)
+      if (!total) {
+        reject(new Error('提示音合成为空'))
+        return
+      }
+      const pcm = new Int16Array(total)
+      let at = 0
+      for (const c of chunks) {
+        pcm.set(c, at)
+        at += c.length
+      }
+      resolve({ pcm, sampleRate })
+    }
+    // 断网时新 WebSocket 可能停在 CONNECTING、onerror / onclose 一个都不来（asr.ts 2026-08-26 同一坑）：必须有人看着
+    const timer = setTimeout(() => settle(new Error('提示音合成超时')), timeoutMs)
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'start', provider: cfg.provider, voice: cfg.voice }))
+      ws.send(JSON.stringify({ type: 'text', delta: text }))
+      ws.send(JSON.stringify({ type: 'finish' }))
+    }
+    ws.onmessage = (ev) => {
+      if (typeof ev.data !== 'string') {
+        chunks.push(new Int16Array(ev.data as ArrayBuffer))
+        return
+      }
+      let m: { type?: string; sample_rate?: number; message?: string }
+      try {
+        m = JSON.parse(ev.data)
+      } catch {
+        return
+      }
+      if (m.type === 'meta') sampleRate = m.sample_rate || sampleRate
+      else if (m.type === 'done') settle()
+      else if (m.type === 'unsupported' || m.type === 'error') settle(new Error(m.message || m.type))
+    }
+    ws.onerror = () => settle(new Error('提示音合成连接失败'))
+    ws.onclose = () => settle(new Error('提示音合成连接中断'))
+  })
+}
+
  
 
 export class TtsSession {

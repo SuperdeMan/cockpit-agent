@@ -62,7 +62,7 @@ function makeHarness(config = {}, extra = () => ({})) {
 // 常用推进：把回路带到 SPEAKING 态（wake→说话→定稿→播报开始）
 function driveToSpeaking(h, { final = '放首歌', tts = '好的，正在为您播放音乐' } = {}) {
   h.vl.handsFreeOn()
-  h.vl.wake()
+  h.vl.wake({ ack: false }) // 手动唤醒：不经唤醒应答的判断窗（没注入应答的夹具里两者一样）
   h.vl.vadSpeechStart()
   h.vl.vadSpeechEnd()
   h.vl.asrFinal(final)
@@ -1283,4 +1283,251 @@ test('语义打断：此刻不能压低（S2S 挡位）⇒ 逐字是旧行为：
   assert.equal(h.judges.length, 0)
   assert.equal(h.last('send')[2].source, 'bargein')
   assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+// ─── 唤醒应答（2026-10-11，设计 docs/design/2026-10-11-wake-acknowledgement.md）───
+
+function makeAckHarness({ ackMs = 600, config = {}, onStopTts } = {}) {
+  let ms = ackMs
+  let vlRef = null
+  const h = makeHarness(config, (rec) => ({
+    onWakeAck: () => {
+      rec('wakeAck')()
+      if (ms instanceof Error) throw ms
+      return ms
+    },
+    onVadReset: rec('vadReset'),
+    ...(onStopTts ? { onStopTts: (...args) => { rec('stopTts')(...args); onStopTts(vlRef) } } : {}),
+  }))
+  vlRef = h.vl
+  return { ...h, setAckMs: (v) => { ms = v } }
+}
+
+// 判断窗里外设逐窗报的语音概率
+function feedProbs(h, probs) {
+  for (const p of probs) h.vl.vadProb(p)
+}
+
+const QUIET = [0.1, 0.05, 0.2, 0.1, 0.0, 0.1, 0.1]
+const TALKING = [0.9, 0.95, 0.8, 0.2, 0.9, 0.7, 0.9]
+
+test('唤醒应答：外设没注入 ⇒ 旧路径逐字不变（提示音 + 立刻开 ASR、不注入前滚）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  assert.equal(h.count('chime'), 1)
+  assert.equal(h.count('openAsr'), 1)
+  assert.deepEqual(h.last('openAsr')[1], { resume: false, sinceSpeechStartMs: 0 })
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+})
+
+test('唤醒应答：停下来等 ⇒ 光球立刻进聆听、ASR 先不开；判断窗满播应答，播完 + 余音才重置 VAD、开 ASR', () => {
+  const h = makeAckHarness({ ackMs: 600 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  assert.equal(h.vl.orbState, 'listening')
+  assert.equal(h.count('openAsr'), 0)
+  assert.equal(h.count('chime'), 0)
+  feedProbs(h, QUIET)
+  h.advance(239)
+  assert.equal(h.count('wakeAck'), 0)
+  h.advance(1)
+  assert.equal(h.count('wakeAck'), 1)
+  assert.ok(h.events.some((e) => e[0] === 'metric' && e[1] === 'wake_ack'))
+  h.advance(600 + 149)
+  assert.equal(h.count('openAsr'), 0)
+  h.advance(1)
+  assert.equal(h.count('openAsr'), 1)
+  assert.deepEqual(h.last('openAsr')[1], { resume: false, sinceSpeechStartMs: 0 })
+  const order = h.events.filter((e) => e[0] === 'vadReset' || e[0] === 'openAsr').map((e) => e[0])
+  assert.deepEqual(order, ['vadReset', 'openAsr'])
+  // 误唤醒回收从开听那一刻算起
+  h.advance(4999)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  h.advance(1)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('唤醒应答：一口气接着说 ⇒ 不回应答，判断窗那段作精确前滚开 ASR，本轮时长从唤醒算起', () => {
+  const h = makeAckHarness()
+  h.vl.handsFreeOn()
+  h.advance(1000)
+  h.vl.wake()
+  feedProbs(h, TALKING)
+  h.advance(240)
+  assert.equal(h.count('wakeAck'), 0)
+  assert.equal(h.count('chime'), 0)
+  assert.equal(h.count('openAsr'), 1)
+  assert.deepEqual(h.last('openAsr')[1], { resume: true, sinceSpeechStartMs: 0, preRollMs: 240 })
+  assert.ok(h.events.some((e) => e[0] === 'metric' && e[1] === 'wake_oneshot'))
+  h.advance(760)
+  h.vl.vadSpeechEnd()
+  assert.equal(h.count('endpoint'), 1)
+  h.vl.asrFinal('帮我把空调打开')
+  const send = h.last('send')
+  assert.equal(send[1], '帮我把空调打开')
+  assert.equal(send[2].source, 'wake')
+  assert.equal(send[2].utteranceMs, 1000)
+})
+
+test('唤醒应答：说话窗占比正好到阈值判接着说，低于阈值判停下来', () => {
+  const a = makeAckHarness()
+  a.vl.handsFreeOn()
+  a.vl.wake()
+  feedProbs(a, [0.9, 0.5, 0.1, 0.1, 0.1]) // 2/5 = 0.4；0.5 本身算在说话
+  a.advance(240)
+  assert.equal(a.count('wakeAck'), 0)
+  assert.equal(a.last('openAsr')[1].resume, true)
+
+  const b = makeAckHarness()
+  b.vl.handsFreeOn()
+  b.vl.wake()
+  feedProbs(b, [0.9, 0.49, 0.1, 0.1, 0.1]) // 1/5
+  b.advance(240)
+  assert.equal(b.count('wakeAck'), 1)
+})
+
+test('唤醒应答：外设一个概率都没报 ⇒ 按停下来处理（播应答）', () => {
+  const h = makeAckHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.advance(240)
+  assert.equal(h.count('wakeAck'), 1)
+})
+
+test('唤醒应答：应答没就绪（返回 0）或外设抛错 ⇒ 回落提示音，立刻开听', () => {
+  for (const ack of [0, new Error('boom')]) {
+    const h = makeAckHarness({ ackMs: ack })
+    h.vl.handsFreeOn()
+    h.vl.wake()
+    feedProbs(h, QUIET)
+    h.advance(240)
+    assert.equal(h.count('wakeAck'), 1)
+    assert.equal(h.count('chime'), 1)
+    assert.equal(h.count('openAsr'), 1)
+    assert.equal(h.last('openAsr')[1].resume, false)
+    assert.equal(h.count('vadReset'), 0)
+  }
+})
+
+test('唤醒应答：手动唤醒（ack:false）⇒ 旧路径，提示音 + 立刻开听', () => {
+  const h = makeAckHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake({ ack: false })
+  assert.equal(h.count('chime'), 1)
+  assert.equal(h.count('openAsr'), 1)
+  h.advance(2000)
+  assert.equal(h.count('wakeAck'), 0)
+})
+
+test('唤醒应答：判断窗 / 应答期间不认 VAD 起止与 ASR 回调，同一声唤醒词的重复命中不再起一轮', () => {
+  const h = makeAckHarness({ ackMs: 500 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart() // 唤醒词的尾巴
+  h.vl.vadSpeechEnd()
+  h.vl.asrPartial('小舟') // 上一条会话的迟到回调
+  h.vl.asrFinal('小舟')
+  h.vl.wake() // 第二次命中
+  feedProbs(h, QUIET)
+  h.advance(240)
+  assert.equal(h.count('wakeAck'), 1)
+  h.vl.vadSpeechStart() // 应答的回声
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('我在')
+  h.vl.wake()
+  assert.equal(h.count('endpoint'), 0)
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.count('wakeAck'), 1)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  h.advance(650)
+  assert.equal(h.count('openAsr'), 1)
+  // 开听后用户真开口：照常收、照常发
+  h.vl.vadSpeechStart()
+  h.advance(800)
+  h.vl.vadSpeechEnd()
+  assert.equal(h.count('endpoint'), 1)
+  h.vl.asrFinal('明天深圳天气怎么样')
+  assert.equal(h.last('send')[1], '明天深圳天气怎么样')
+})
+
+test('唤醒应答：判断窗里拆机 / 应答中被系统抢占 ⇒ 到点不再开 ASR，之后再喊照常', () => {
+  const h = makeAckHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.handsFreeOff()
+  h.advance(2000)
+  assert.equal(h.vl.state, VoiceState.IDLE)
+  assert.equal(h.count('openAsr'), 0)
+  assert.equal(h.count('wakeAck'), 0)
+
+  const g = makeAckHarness()
+  g.vl.handsFreeOn()
+  g.vl.wake()
+  g.advance(240) // 应答开始播
+  g.vl.systemInterrupt()
+  g.advance(2000)
+  assert.equal(g.vl.state, VoiceState.ARMED)
+  assert.equal(g.count('openAsr'), 0)
+  g.vl.wake()
+  g.advance(240)
+  assert.equal(g.count('wakeAck'), 2)
+  g.advance(750)
+  assert.equal(g.count('openAsr'), 1)
+})
+
+test('唤醒应答：播报中喊唤醒词 ⇒ 先停播再走判断窗；Android 停播同步回 ttsEnd 也不会被续问窗踢走', () => {
+  const h = makeAckHarness({ onStopTts: (vl) => vl.ttsEnd() })
+  driveToSpeaking(h)
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+  const asrBefore = h.count('openAsr')
+  h.vl.wake()
+  assert.equal(h.count('stopTts'), 1)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  feedProbs(h, QUIET)
+  h.advance(240)
+  assert.equal(h.count('wakeAck'), 1)
+  h.advance(4000) // 应答播完开听；续问窗的 8s 定时器若残留会在开听前后把它踢回待机
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  assert.equal(h.count('openAsr'), asrBefore + 1)
+})
+
+test('唤醒应答：处理中喊唤醒词 ⇒ 取消在飞那一轮，再走判断窗', () => {
+  const h = makeAckHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake({ ack: false })
+  h.vl.vadSpeechStart()
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('放首歌')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.wake()
+  assert.equal(h.count('cancelTurn'), 1)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  feedProbs(h, TALKING)
+  h.advance(240)
+  assert.equal(h.count('wakeAck'), 0)
+  assert.equal(h.last('openAsr')[1].preRollMs, 240)
+})
+
+test('唤醒应答：判断窗以外报的概率不计数（待机时的环境音、正式开听后都不影响判断）', () => {
+  const h = makeAckHarness()
+  h.vl.handsFreeOn()
+  feedProbs(h, TALKING) // 待机时的环境音
+  h.vl.wake()
+  feedProbs(h, QUIET)
+  h.advance(240)
+  assert.equal(h.count('wakeAck'), 1)
+  h.advance(750)
+  feedProbs(h, TALKING) // 正式开听后
+  h.vl.vadSpeechStart()
+  h.advance(500)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('退下吧')
+  assert.equal(h.count('exitAck'), 1)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  h.vl.wake()
+  feedProbs(h, QUIET)
+  h.advance(240)
+  assert.equal(h.count('wakeAck'), 2)
 })

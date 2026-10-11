@@ -27,6 +27,7 @@ import { DRIVING_EXIT_GRACE_MS, drivingActive, drivingSuggested } from '@/core/p
 import { hapticCueForTransition } from '@/core/presence/hapticCue'
 import { cueToneAllowed, soundCueForTransition, type CueSlice } from '@/core/presence/soundCue'
 import { playCueTone } from '@/core/voice/cueTone'
+import { takeWakeToneMuted } from '@/core/voice/voiceCue'
 import { presenceTrail } from '@/core/presence/presenceTrail'
 
 import type { HandsFreeUi } from './useHandsFree'
@@ -283,7 +284,10 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
     cuePrev.current = cur
     if (!interactive || !prev || !cueToneAllowed(settings.cueToneEnabled, snapshot.driving)) return
     const kind = soundCueForTransition(prev, cur)
-    if (kind) playCueTone(kind)
+    if (!kind) return
+    // 唤醒应答（2026-10-11）：控制器这次走人声「我在」时登记过让位——两音提示不响，不叠两层声音
+    if (kind === 'wake' && takeWakeToneMuted()) return
+    playCueTone(kind)
   })
 
   return snapshot

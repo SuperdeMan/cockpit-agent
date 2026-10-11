@@ -16,7 +16,10 @@
 //     连开关都不渲染（坑账 §9.27——原生缺席时崩的是原生线程，ErrorBoundary 兜不住）。
 //
 // 本批**刻意不做**的（写清楚免得被读成遗漏）：声纹识别（红线：声纹不作鉴权因子，
-// 且 §2.3 信道约束下 App 不做注册入口）、唤醒提示音（要 mp3 解码，而 M2 关掉了 FFmpeg——见 app.config.ts）。
+// 且 §2.3 信道约束下 App 不做注册入口）。
+// 唤醒应答语 2026-10-11 补上（原先以「要 mp3 解码、M2 关了 FFmpeg」为由不做，但流式 TTS 回的是 PCM、批处理也要的是 wav）：
+// 状态机的唤醒判断窗决定这一次回不回「我在」（一口气接着说就不回），应答播完才开 ASR——端上没有回声消除，
+// 应答期间开着 ASR 会把自己的「我在」当成用户的话（设计 docs/design/2026-10-11-wake-acknowledgement.md）。
 // 云端拒识信号 2026-10-10 接出来了：拒掉的那一轮 `turnRejected()` 结束这次连续对话（FSM 回 ARMED）。
 // HMI 另有跨会话的连续拒识收紧（rejectPolicy.mjs）——拒识即结束会话之后它很少再触发，App 侧不搬。
 import { PcmRing } from '@shared/pcmRing.mjs'
@@ -38,6 +41,16 @@ import { PRODUCTION_PROFILE, type KwsProfile } from './kwsProfile'
 import { micLease } from './micBus'
 import { FRAME_SAMPLES, type FrameSink, type Recorder } from './recorder'
 import { VadEngine, vadNativeAvailable } from './vad'
+import {
+  muteNextWakeTone,
+  playVoiceCue,
+  prepareVoiceCues,
+  stopVoiceCue,
+  voiceCueCounts,
+  voiceCueKey,
+  voiceCuesReady,
+  warmCueOutput,
+} from './voiceCue'
 
  
 
@@ -45,6 +58,13 @@ import { VadEngine, vadNativeAvailable } from './vad'
 const RESUME_PRE_ROLL_MS = 200
 /** pre-roll 上限（PcmRing 容量 1500ms，同 HMI 的 MAX_PRE_ROLL_MS） */
 const MAX_PRE_ROLL_MS = 1200
+
+/** 前滚取多长：状态机给了精确值（唤醒后一口气接着说，取的正好是唤醒之后那段）就按它取，
+ *  否则 = 固定前滚 + 打断确认窗（续说 / 打断）；都按 PcmRing 容量截断。 */
+function preRollMsOf(opts: { sinceSpeechStartMs: number; preRollMs?: number }): number {
+  const raw = opts.preRollMs !== undefined ? opts.preRollMs : RESUME_PRE_ROLL_MS + Math.max(0, opts.sinceSpeechStartMs || 0)
+  return Math.min(Math.max(0, raw), MAX_PRE_ROLL_MS)
+}
 /** 唤醒词也会被 ASR 听见 → 定稿前剥掉（同 HMI；词表与 KWS 预设同源） */
 const WAKE_WORDS = ['小舟小舟', '小舟']
 /** 唤醒词的显示文字（KWS 预设 `拼音 @显示`）：拒识提示里告诉用户怎么再叫它 */
@@ -111,6 +131,10 @@ export interface HandsFreeDeps {
   onPipelineDegraded?(kind: 'degraded' | 'unsupported', message: string): void
   /** 是否开唤醒词（关掉则只有「答完续问」，没有常开唤醒） */
   wakeWord?(): boolean
+  /** 唤醒 / 退场应答用的播报引擎与音色（与正文同一组）；返回 null = 播报静音，不说话（唤醒照旧只有提示音） */
+  getTtsVoice?(): { provider: string; voice: string } | null
+  /** 这次唤醒原定走人声应答、在场层的两音提示已经让位，结果应答没播成 ⇒ 由调用方补一声提示音（照旧遵守「提示音」开关） */
+  onWakeTone?(): void
   config?: {
     followupWindowMs?: number
     silenceTailMs?: number
@@ -169,6 +193,8 @@ export class HandsFreeController {
   private ttsSpeaking = false
   /** 「本次收尾是用户按的停播」——只在 stopSpeaking() 的同步调用栈内为真 */
   private userStopping = false
+  /** 这次唤醒让在场层的两音提示让过位（走人声应答）：应答没播成时由 onWakeChime 补一声 */
+  private toneMuted = false
 
   constructor(private deps: HandsFreeDeps) {
     const cfg = deps.config ?? {}
@@ -181,7 +207,7 @@ export class HandsFreeController {
         ...(cfg.endpointGraceMs !== undefined ? { endpointGraceMs: cfg.endpointGraceMs } : {}),
       },
       onState: (orb: string | null, fsm: string) => this.deps.onOrbState(orb, fsm),
-      onOpenAsr: (o: { resume: boolean; sinceSpeechStartMs: number }) => this.openAsr(o),
+      onOpenAsr: (o: { resume: boolean; sinceSpeechStartMs: number; preRollMs?: number }) => this.openAsr(o),
       onCloseAsr: () => this.closeAsr(),
       onEndpoint: () => {
         // 无 server VAD 的引擎靠这一步请定稿。**S2S 下这一步同样不能省**：停推流后
@@ -209,6 +235,20 @@ export class HandsFreeController {
         if (this.s2s) this.s2s.cancelTurn()
         this.deps.onCancelTurn?.()
       },
+      // 唤醒应答（2026-10-11）：状态机判断窗满、用户停下来等 ⇒ 播一句「我在」，时长交给它（播完才开 ASR）
+      onWakeAck: () => this.playWakeAck(),
+      // 旧路径的提示音由在场层在「待命 → 收音」时播；只有这次已经让过位（原定人声应答没播成）才在这里补一声
+      onWakeChime: () => {
+        if (!this.toneMuted) return
+        this.toneMuted = false
+        this.deps.onWakeTone?.()
+      },
+      // 退出词（「退下吧」）：与 HMI 同一句退场应答；没就绪 / 播报静音就不出声
+      onExitAck: () => {
+        const v = this.deps.getTtsVoice?.()
+        if (this.on && v) playVoiceCue('exit', voiceCueKey(v.provider, v.voice))
+      },
+      onVadReset: () => this.vad.resetEndpoint(),
       // 语义打断：插话那句先问 llm-gateway 是不是对助手说的（不占对话通道），旧回答压低接着播。
       // S2S 挡位不压低（自答轮不经主链），逐字是旧行为：立即停播（设计 2026-10-11-semantic-barge-in §4.3）。
       onJudgeBargeIn: (text: string, previous: string, done: (addressed: boolean | null) => void) => {
@@ -283,6 +323,10 @@ export class HandsFreeController {
         this.ring.push(w)
         this.s2s?.pushFrame(w) // LISTENING 门控在 s2sClient 内部（非 collecting 期静默丢）
       }
+      // 逐窗概率报给状态机：只在唤醒判断窗里被用到（一口气接着说 / 停下来等应答），其余时候它自己不计
+      this.vad.onProb = (p) => {
+        if (alive() && this.on) this.vl.vadProb(p)
+      }
       if (this.deps.getVoicePipeline?.() === 's2s') this.startS2s()
       await this.mic.start((f) => this.onFrame(f))
       if (!alive()) {
@@ -294,6 +338,7 @@ export class HandsFreeController {
       // ARMED 期就把识别连接握好：唤醒进 LISTENING 时直接发 start，定稿不再欠一个握手（warmSocket.ts）。
       // S2S 挡位不建 ASR 流（收音走 s2s 常驻连接），不预热
       if (!this.s2s && this.deps.getAsrConfig().provider !== 'off') warmSocket(asrStreamUrl(this.deps.audioUrl))
+      this.refreshCues()
     } catch (e) {
       await this.teardown()
       // 权限被拒是用户的决定，不随代际作废（2026-09-19 真机 E-23）：系统权限弹窗本身会把 App 切到后台，
@@ -313,6 +358,7 @@ export class HandsFreeController {
     this.requested = false
     this.on = false
     this.vl.handsFreeOff()
+    stopVoiceCue()
     // 立即关闭传输/麦 lease，不把撤回排到模型加载或权限弹窗之后。
     const stopping = this.teardown()
     const pending = this.lifecycle.then(() => stopping)
@@ -361,8 +407,9 @@ export class HandsFreeController {
     try {
       // S2S 自答：本地立刻停播 + 上行让网关 cancel provider（同 barge-in 的既有出口）
       this.s2s?.bargeIn()
-      // 主链 TTS：与 barge-in 走同一个停播出口
+      // 主链 TTS：与 barge-in 走同一个停播出口；唤醒应答是另一个播放器，一起停
       this.deps.onStopTts()
+      stopVoiceCue()
       this.vl.stopSpeaking()
     } finally {
       this.userStopping = false
@@ -380,6 +427,7 @@ export class HandsFreeController {
       this.s2s?.bargeIn()
       if (capturing) this.s2s?.cancelTurn()
       this.deps.onStopTts()
+      stopVoiceCue()
       this.vl.systemInterrupt()
     } finally {
       this.userStopping = false
@@ -405,7 +453,8 @@ export class HandsFreeController {
   wakeManually(): void {
     if (!this.on) return
     void this.kws.reset()
-    this.vl.wake()
+    // 轻点光球：人已经准备开口了——不回「我在」、不等判断窗，照旧提示音 + 立刻开听（设计 2026-10-11 §2）
+    this.vl.wake({ ack: false })
   }
 
   /** 录音中轻点 = 结束并提交：与 FSM 的 onEndpoint 效果逐字同构（S2S 请收尾 / classic 请定稿） */
@@ -446,7 +495,41 @@ export class HandsFreeController {
     // 没在实验会话里时这一句是空转（生产路径零开销、零常态日志）。
     noteKeywordHit()
     void this.kws.reset()
-    this.vl.wake()
+    // 唤醒词命中：片段就绪、播报没静音、不在 S2S ⇒ 走唤醒应答（状态机先看判断窗，接着说就不回）。
+    // 待命态那次「待命 → 收音」在场层原本要响两音提示——这次让位给人声；应答没播成时 onWakeChime 补一声。
+    const ack = this.wakeAckArmed()
+    this.toneMuted = ack && this.vl.state === 'ARMED'
+    if (this.toneMuted) muteNextWakeTone()
+    if (ack) warmCueOutput() // 判断窗那 240ms 把空闲挂起的输出上下文等醒，「我在」按时出声
+    this.vl.wake({ ack })
+  }
+
+  /** 这一次唤醒能不能走人声应答；没就绪就顺手在后台准备（这一次照旧提示音） */
+  private wakeAckArmed(): boolean {
+    if (!this.on || this.s2s) return false
+    const v = this.deps.getTtsVoice?.()
+    if (!v) return false
+    if (voiceCuesReady(voiceCueKey(v.provider, v.voice))) return true
+    this.refreshCues()
+    return false
+  }
+
+  /** 状态机判断窗满、用户停下来等：播一句唤醒应答，返回时长（0 = 没播 → 状态机回落提示音） */
+  private playWakeAck(): number {
+    const v = this.deps.getTtsVoice?.()
+    if (!this.on || this.s2s || !v) return 0
+    return playVoiceCue('wake', voiceCueKey(v.provider, v.voice))
+  }
+
+  /** 按当前播报引擎 + 音色预合成应答片段。开免唤醒时、改音色 / 播报策略时调；同一组已就绪即空转。 */
+  refreshCues(): void {
+    const v = this.deps.getTtsVoice?.()
+    if (!this.on || !v) return
+    void prepareVoiceCues(this.deps.audioUrl, v.provider, v.voice).then((ok) => {
+      // logcat 取证通道：只有条数，没有内容（同 [handsfree] fsm）
+      const n = voiceCueCounts()
+      console.log('[handsfree] cues', ok ? 'ready' : 'unavailable', n.wake, n.exit)
+    })
   }
 
   /** 建 S2S 会话。**会话级常驻**（唤醒后零建连延迟），收音门控靠 setCollecting。 */
@@ -512,13 +595,13 @@ export class HandsFreeController {
     })
   }
 
-  private openAsr(opts: { resume: boolean; sinceSpeechStartMs: number }): void {
+  private openAsr(opts: { resume: boolean; sinceSpeechStartMs: number; preRollMs?: number }): void {
     if (!this.on) return
     if (this.s2s) {
       // S2S：不建 ASR，只开收音门控 + 注入 pre-roll
       this.s2s.setCollecting(true)
       if (opts.resume) {
-        const ms = Math.min(RESUME_PRE_ROLL_MS + Math.max(0, opts.sinceSpeechStartMs || 0), MAX_PRE_ROLL_MS)
+        const ms = preRollMsOf(opts)
         const pre = this.ring.takeLast(ms)
         if (pre.length) this.s2s.pushPreRoll(pre)
       }
@@ -555,7 +638,7 @@ export class HandsFreeController {
     })
     // pre-roll：唤醒进入不注入（resume=false），否则把唤醒词本身喂给 ASR
     if (opts.resume) {
-      const ms = Math.min(RESUME_PRE_ROLL_MS + Math.max(0, opts.sinceSpeechStartMs || 0), MAX_PRE_ROLL_MS)
+      const ms = preRollMsOf(opts)
       const pre = this.ring.takeLast(ms)
       if (pre.length) this.pushPreRoll(pre)
     }
