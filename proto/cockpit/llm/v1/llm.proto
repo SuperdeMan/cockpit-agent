@@ -33,7 +33,9 @@ message Message {
 message CompleteRequest {
   repeated Message messages = 1;
   string model = 2;                 // 空则用网关默认（含降级链）
-  float temperature = 3;
+  // optional（2026-10-11）：0 是合法取值（确定性判定 / 抽取都传 0）。普通 float 的 0 不上线路，网关分不清「传了 0」与
+  // 「没传」——此前一律按没传处理成 0.7。没传仍由网关取缺省。
+  optional float temperature = 3;
   uint32 max_tokens = 4;
   google.protobuf.Struct tools = 5; // 可选：工具/函数定义（Planner 规划用）
   map<string, string> meta = 6;     // trace_id, session_id ...

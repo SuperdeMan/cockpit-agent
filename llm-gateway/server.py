@@ -159,6 +159,13 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         return msgs
 
     @staticmethod
+    def _temperature(request) -> float:
+        """调用方传了就用，包括 0（受话判定、手册目录路由、提醒时间抽取、场景编译首轮都传 0）；没传才取缺省 0.7。
+        字段是 `optional`：此前是普通 float，0 不上线路，`temperature or 0.7` 把「传了 0」当「没传」，
+        这些调用实际都跑在 0.7（2026-10-11 查出；MiniMax-M3 / M3.1-Flash 与备份档 DeepSeek 实测接受 0）。"""
+        return request.temperature if request.HasField("temperature") else 0.7
+
+    @staticmethod
     def _thinking(request):
         """从 meta 读本次思考开关：``on``=开、``off``=关、缺省=None（用 provider 默认）。
         复杂任务（行程/调研）由编排层传 ``on``，结构化 JSON（Planner）不传/传 ``off``。"""
@@ -187,7 +194,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         except FrameUnavailable as e:
             # 调用方（vision Agent）据此诚实说「画面已过期」，而不是让模型对着空气编。
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
-        temp = request.temperature or 0.7
+        temp = self._temperature(request)
         max_tokens = request.max_tokens or 512
         thinking = self._thinking(request)
         tools_spec = self._tools_spec(request)   # M1a：非 None 即 tool-calling 路径
@@ -366,7 +373,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             first_token = False
             try:
                 async for delta in a_provider.stream(
-                        msgs, model, request.temperature or 0.7, request.max_tokens or 512,
+                        msgs, model, self._temperature(request), request.max_tokens or 512,
                         thinking=thinking):
                     if delta:
                         first_token = True
