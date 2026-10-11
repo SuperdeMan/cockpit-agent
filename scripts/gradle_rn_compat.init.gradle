@@ -1,4 +1,4 @@
-// gradle_rn_compat.init.gradle — 第三方 RN 原生库对 Gradle 版本的假设与本工程不符时的垫片。
+// gradle_rn_compat.init.gradle — 第三方 RN 原生库对 Gradle 版本 / 依赖版本的假设与本工程不符时的垫片。
 // 与本机网络 / 路径形态无关（那些在 gradle_cn_mirrors.init.gradle），所以 CI 的 Linux runner 也要 -I 它：
 //   本机：scripts/build_mobile.ps1 传 -I；CI：.github/workflows/mobile-apk.yml 的 gradlew 一行传 -I。
 // 垫片只留这一份；谁漏了谁先红（G-05 首次 dispatch 2026-09-20 就是 CI 漏了）。
@@ -34,9 +34,30 @@ class RnVersionNumber implements Comparable<RnVersionNumber> {
     String toString() { parts.join('.') }
 }
 
+// ── onnxruntime-react-native 取的 ORT 原生库版本是浮动的（2026-10-11 实测）──
+// 它的 android/build.gradle 写着 `extractLibs "com.microsoft.onnxruntime:onnxruntime-android:latest.integration@aar"`：
+// 每次构建取 Maven 上的最新版，解压到 build/onnxruntime-android-<版本>.aar/；CMakeLists 在**配置时** GLOB 这个目录，
+// 链接并打包里面的 libonnxruntime.so。两个后果：
+//   1. 设备包里的 ORT 跟着上游发布漂（Gradle 缓存里已有 1.29.0 / 1.30.0 / 1.31.0），同一个提交隔几天打出来的原生库不同；
+//   2. 本机 .cxx 挪到镜像外长期保留（gradle_cxx_staging.init.gradle），robocopy /MIR 却每次清掉镜像里的 build/ 重新解压——
+//      上游一发新版，解压目录名变了，CMake 配置不变（GLOB 不追踪），ninja 仍找旧路径：1.31.0 发布后
+//      `ninja: error: '.../onnxruntime-android-1.30.0.aar/jni/arm64-v8a/libonnxruntime.so' ... missing and no known rule to make it`。
+// ⇒ 钉成设备包一直在用的版本（10-04 / 10-05 两个常驻包里的 libonnxruntime.so 都是 1.30.0）。升级要有意为之：改这里 + 真机验 VAD。
+def ORT_ANDROID_VERSION = '1.30.0'
+
 gradle.beforeProject { proj ->
+    if (proj.name != 'onnxruntime-react-native') return
     // beforeProject 而不是 afterEvaluate：ext 必须在它自己的 build.gradle **求值前**就位
-    if (proj.name == 'onnxruntime-react-native' && !proj.ext.has('VersionNumber')) {
+    if (!proj.ext.has('VersionNumber')) {
         proj.ext.set('VersionNumber', RnVersionNumber)
+    }
+    // configureEach 对之后才在它 build.gradle 里声明的 extractLibs 同样生效
+    proj.configurations.configureEach { conf ->
+        conf.resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'com.microsoft.onnxruntime' && details.requested.name == 'onnxruntime-android') {
+                details.useVersion(ORT_ANDROID_VERSION)
+                details.because('scripts/gradle_rn_compat.init.gradle pins the ORT native library')
+            }
+        }
     }
 }
