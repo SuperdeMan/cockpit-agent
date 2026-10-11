@@ -4,8 +4,8 @@
 对条件指令放行（`2085fc7a`）：再规划在前件为假时照样派出后件——核心旅程 D02「如果深圳今天下雪，就把空调打开」3/3 开了空调，
 话术「深圳今天不会下雪……不过空调已经帮你打开了」。当天撤回。条件判定可靠之前，这类句子里的端侧写和需确认步一律按问句拦。
 
-带「帮我 / 请」或以「若」起头的条件句目前不算提问，问句闸拦不住后件，见核心旅程 D04（设计
-docs/design/2026-10-12-conditional-consequent-and-clock-clause.md）。
+带「帮我 / 请」或以「若」起头的条件句不算提问，由条件指令判据另行拦住（`deferred_condition.is_conditional_instruction`，
+核心旅程 D04；设计 docs/design/2026-10-12-conditional-consequent-and-clock-clause.md）。
 """
 from __future__ import annotations
 

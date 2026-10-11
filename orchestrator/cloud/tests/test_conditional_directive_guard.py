@@ -36,6 +36,24 @@ def test_the_consequent_of_a_conditional_instruction_is_blocked(origin):
     assert kept == [] and [s.intent for s in blocked] == ["hvac.on", "trunk.open"]
 
 
+@pytest.mark.parametrize("origin", [
+    "如果深圳今天下雪，就帮我把空调打开",   # 核心旅程 D04：修前带「帮我」不算提问，条件为假照样开了空调
+    "如果深圳今天下雪，请把空调打开",
+    "若深圳今天下雪，就把空调打开",
+    "如果深圳今天下雪的话，帮我打开空调",
+])
+def test_a_conditional_instruction_that_is_not_question_shaped_is_blocked_too(origin):
+    kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps([_weather(), _hvac_on(), _trunk_open()], origin)
+    assert [s.intent for s in kept] == ["info.weather"]
+    assert [s.intent for s in blocked] == ["hvac.on", "trunk.open"]
+
+
+@pytest.mark.parametrize("origin", ["如果可以的话，帮我把空调打开", "帮我把空调打开"])
+def test_politeness_and_plain_requests_still_execute(origin):
+    kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps([_hvac_on()], origin)
+    assert [s.intent for s in kept] == ["hvac.on"] and blocked == []
+
+
 def test_the_read_that_checks_the_condition_still_runs():
     kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps([_weather(), _hvac_on()], COND_FALSE)
     assert [s.intent for s in kept] == ["info.weather"] and [s.intent for s in blocked] == ["hvac.on"]

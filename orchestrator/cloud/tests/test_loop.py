@@ -237,6 +237,20 @@ def test_conditional_instruction_consequent_is_still_blocked_after_replan():
     assert events[-1]["kind"] == "final"
 
 
+def test_polite_conditional_instruction_consequent_is_blocked_after_replan():
+    """核心旅程 D04（2026-10-12）：带「帮我」整句不算提问，修前 T2 照派后件——前件为假也开了空调。"""
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="hvac.on",
+        deployment="edge", kind="edge_fast", capability_description="打开空调",
+    )
+
+    _, executor, _ = _replan_case(
+        [step], user_text="如果深圳今天下雪，就帮我把空调打开",
+    )
+
+    assert executor.runs == [["s1"]]
+
+
 def test_hypothetical_question_consequent_still_never_dispatches():
     step = Step(
         id="r1", agent_id="edge-vehicle", intent="hvac.on",

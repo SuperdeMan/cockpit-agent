@@ -3395,9 +3395,15 @@ class PlanBuilder:
 
         追加批 L：问的是规范 / 注意事项 / 条件（`is_reference_question`）时，声明为写的云侧步也拦——「开长途前要注意些什么」
         被规划成 `scene.activate` / `scene.create`。只扩这一类问法：扩到全部问句在历史 13 轮上全是误伤（设计 §15.1）。
+
+        条件指令（2026-10-12）：「如果深圳今天下雪，就帮我把空调打开」带了「帮我」整句不算提问，后件却同样要等条件判过；再规划
+        判不了前件（看到「今天不会下雪」照样开空调，核心旅程 D02 / D04），所以条件判定可靠之前它的副作用一律不执行。
         """
-        if not steps or not is_non_directive_question(text or ""):
+        if not steps:
             return []
+        if not is_non_directive_question(text or ""):
+            return (PlanBuilder._side_effect_steps(steps)
+                    if deferred_condition.is_conditional_instruction(text or "") else [])
         # CA2-01: a definition-only question also cannot activate a declared cloud write.
         # Some Agents request confirmation dynamically, so require_confirm alone misses them.
         declared_write_question = (is_reference_question(text or "")
