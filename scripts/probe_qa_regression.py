@@ -2861,10 +2861,11 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
     meta = dict(PROBE_META)
     overrides = meta_overrides or {}
     # 只认评测 pin：LLM pin（D2）、历史视窗 pin（批 5 W19，`meta.planner_history_exchanges`）、
-    # 输入来源（评审二轮 R3：`input_source=voice_followup / ptt` 走语音受话判定；文字轮不传）与
+    # 输入来源（评审二轮 R3：`input_source=voice_followup / ptt` 走语音受话判定；文字轮不传）、
+    # 插话已判过受话（语义打断 2026-10-11：`voice_admitted=1` 时云端不再起续问窗判定）与
     # 会话位置（核心旅程冻结 2026-10-09：7 月旅程的 `setup.location` 覆盖缺省坐标，必须是合法经纬度）
     if not isinstance(overrides, dict) or set(overrides) - {
-            "llm_provider", "llm_model", "planner_history_exchanges", "input_source",
+            "llm_provider", "llm_model", "planner_history_exchanges", "input_source", "voice_admitted",
             "occupant_id", "current_lat", "current_lng"}:
         raise ValueError("unsupported meta override")
     for key, value in overrides.items():
