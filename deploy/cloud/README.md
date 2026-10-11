@@ -73,7 +73,7 @@
 ```
 
 每个 release 根 `.env` 都是指向 `/opt/car-agent/shared/.env` 的符号链接。共享配置权限必须为 `0600`，不得在 release 中复制第二份。
-`vite.hmi.cloud.config.mjs` 只为固定镜像内的 Vite 5 注入当前 Tailnet Host 白名单，必须以只读方式挂载；不得把公网域名或通配 Host 写入该文件。
+`vite.hmi.cloud.config.mjs` 保留当前 Tailnet Host 的受控配置，必须以只读方式挂载；不得把公网域名或通配 Host 写入该文件。云端 HMI 由 `npm run serve` 先用该配置及运行时 `VITE_*` 构建，再提供 gzip/缓存资源、高德代理与语音跨源隔离；资源服务沿用同一 Host 环境变量。本地开发仍用 Vite，见 [首屏加载修复](../../docs/design/2026-10-11-hmi-startup-performance.md)。
 
 ## 唯一运维命令形态
 

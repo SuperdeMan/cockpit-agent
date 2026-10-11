@@ -27,7 +27,7 @@ npm run dev      # http://localhost:5173
 
 地图的 `/api/maps/config` 和 `/_AMapService/` 由开发 Vite 与构建产物入口共用同一服务端中间件，不能只把 `dist/` 放到无代理的静态服务器。JS Key 通过运行时接口提供给浏览器，`jscode` 仅在服务端转发时附加；代理只接受地图初始化和样式的固定路径，不代理 POI 搜索或路线规划。真实底图视觉样例：`?demo=map-sdk`（明确标注示例数据，路线不是实际规划结果）。
 
-云端构建产物候选入口是 `npm run serve`：用容器已有运行时配置先 build，再由 Node 提供 gzip/缓存资源及高德代理；构建失败不会开放旧产物。这个云端启动方式变更尚待基础设施批准，当前发布以 QA 交接为准。开发仍用 `dev_stack.py hmi`（Vite）。根因、对照与复现见 [首屏加载修复](../docs/design/2026-10-11-hmi-startup-performance.md)。
+云端运行 `npm run serve`：用容器已有运行时配置先 build，再由 Node 提供 gzip/缓存资源及高德代理；构建失败不会开放旧产物。该启动方式已获基础设施批准并完成线上复验，当前发布以 QA 交接为准。本地开发仍用 `dev_stack.py hmi`（Vite）。根因、对照与复现见 [首屏加载修复](../docs/design/2026-10-11-hmi-startup-performance.md)。
 
 > 麦克风需安全上下文：经 `localhost` 或 HTTPS 访问才可录音（浏览器限制）。
 

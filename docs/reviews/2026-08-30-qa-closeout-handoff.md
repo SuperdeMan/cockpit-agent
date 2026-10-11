@@ -1,7 +1,7 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-10-10（HMI 真实地图已上线并完成独立验证；历史测试保留原 SHA，QA 活项不因此关闭）
+> 更新时间：2026-10-11（HMI 首屏性能修复已授权发布并完成线上复验；历史测试保留原 SHA，其余 QA 活项不因此关闭）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
@@ -27,9 +27,10 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
-| 当前生产 release | `64be4936cd6898a44660f768d6233d7ef8ed0aa4`，2026-10-11 授权上线：HMI Visual v2 修复内容变高时误停底部跟随、地图返回按钮被顶栏遮挡、SDK 署名穿透设置页；服务端运行代码沿用前版。前版 / 回退基线 `0c07bc3341ef74d96467dbbb4e4e8163b29fca7d`。无 schema、Compose、CI/CD、密钥或基础设施变更；记录见 [浏览器验收与发布](2026-10-11-hmi-visual-v2-browser-audit.md) |
-| 当前 status / verify | release = running = `64be4936cd6898a44660f768d6233d7ef8ed0aa4`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T032046Z-64be493.json`，`minimax:MiniMax-M3.1-Flash-Preview`，`e2e_remote_safe` 通过。线上浏览器复验前后同 SHA；本轮未切换模型。该 SHA 的 [CI 8 项全过](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38107072447) |
-| HMI 浏览器修复（64be4936） | 线上真实 WebSocket + 高德 SDK：3 轮两城市天气均保持底部跟随，主动历史阅读/跳转、中断后恢复、深浅主题地图返回和设置遮盖通过，action 0；另有业务隔离的线上 8 组地图层级矩阵通过。HMI 本地 413 tests、typecheck、build 通过，构建保留原大 bundle 提示。**性能活项 B04 线上未修**：本次两次新浏览器首屏约 127.1 / 107.5 s，后续导航 2.7–38.2 s；原 20/30 s 启动超时不计通过，延长测试等待后才完成交互验收。后续构建产物服务的候选代码与本地对照已完成，待基础设施批准及线上复验，见 [B04 修复记录](../design/2026-10-11-hmi-startup-performance.md)。证据 `.artifacts/hmi-visual-release-20261011/online-result.json`、`map-layer-evidence.json`、`bootstrap-attempt-1.json` / `bootstrap-attempt-2.json`；[详细记录](2026-10-11-hmi-visual-v2-browser-audit.md) |
+| 当前生产 release | `32bd007c03a748fa7eddd8a10f409a57f4a8bf0f`，2026-10-11 授权上线：HMI 首屏 B04 改为启动时构建、Node 提供 gzip/缓存资源，沿用高德代理与语音跨源隔离。前版 `64be4936cd6898a44660f768d6233d7ef8ed0aa4`；若回退须配套恢复旧 HMI 启动配置与基础设施批准锚。两处 `deploy/cloud/` 启动命令及摘要已单独批准，未改环境/密钥/数据库/CI/CD。记录见 [B04 修复与复验](../design/2026-10-11-hmi-startup-performance.md) |
+| 当前 status / verify | release = running = `32bd007c03a748fa7eddd8a10f409a57f4a8bf0f`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T072041Z-32bd007.json`，`minimax:MiniMax-M3.1-Flash-Preview`，`e2e_remote_safe` 通过。线上浏览器复验前后同 SHA，未切换模型。该 SHA 的 [CI 8 项全过](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38119993184)；完整证据 `.artifacts/hmi-cold-load-release-20261011/` |
+| HMI 浏览器修复（64be4936） | 该 SHA 的真实 WebSocket + 高德 SDK：3 轮两城市天气保持底部跟随，主动历史阅读/跳转、中断恢复、深浅地图返回与设置遮盖通过，action 0；另有业务隔离的 8 组地图矩阵通过。本地 HMI 413 tests、typecheck、build 通过。该轮首屏 127.1 / 107.5 s、后续导航 2.7–38.2 s 另列 B04，原 20/30 s 启动超时不计通过；B04 后续修复见下一行。历史证据 `.artifacts/hmi-visual-release-20261011/`；[详细记录](2026-10-11-hmi-visual-v2-browser-audit.md) |
+| HMI 首屏 B04（32bd007c） | 三个独立 Edge 进程/端口、禁用缓存、实际私网：UI 就绪 1.012 / 1.013 / 1.014 s（中位数 1.013 s），DOMContentLoaded 0.727 / 0.724 / 0.695 s；均 6 请求，传输中位数 296,573 bytes，源码/HMR 请求 0。真实对话重新通过三轮底部跟随、主动历史、中断恢复和深浅地图；业务隔离地图矩阵 8 组、声音资源 6 项通过，两份 WASM 可编译，麦克风调用 0。HMI 本地 420 tests、typecheck/build，部署资产 205 passed / 1 skipped。探针校准失败保留且不计通过，见 `calibration-exclusions.json`；结果见 `release-summary.json`。本地受控 A/B 与线上读数分开，不宣称硬件或完整 QA 已验收 |
 | 续问窗拒识真栈（0c07bc33） | `scripts/probe_followup_rejection.py` ×3（签名合成用户、只读、每例先唤醒问天气再按续问窗来源说一句）：48 轮、链路错误 0、续问窗判定 48/48、超时 0、零动作；负例 30/30 拒（F12 六句 + 4 句电话 / 同事 / 自言自语），正例 0/18 误拒，拒识 2.3–4.0 s 落地。证据 `.artifacts/followup-rejection/probe-0c07bc33-r3.json`。`4142fb2e` 首轮暴露复核被网关缓存吃掉、3 s 上限超时两处，`0c07bc33` 修复。全量 11706 passed / 35 skipped（`4142fb2e` 的 Python 树）；`0c07bc33` 云端编排 2403 / 1 + 五道门禁；HMI 413、Android 1501（首趟 4 个界面计时用例满载抖动，复跑全绿）；CI 两个提交全绿。不代表真麦 / 真车厢声学验收 |
 | 冻结 P2 地图家族（837a4f8e → 47a71942） | 清单 145 条（F06 27 / F07 3 / F09 6）。`837a4f8e` 上 36 条 ×5：完整 180/180、零动作、证据错误 0、27/36 五遍全过，高德约 117 次 / 遍。`47a71942` 上受影响的 9 条 ×3：NV17 / NV18 / NV27 / NB04 / NV11 / NV12 / EN02 全过；NV10 一遍按类目搜索列了门店（登记），B5-2 一遍规划方差。证据 `.artifacts/v2-runtime/p2-maps-837a4f8e-r5.json`、`p2-affected-47a71942-r3.json` |
 | HMI 真实地图线上专项（247244dd） | 线上页面 + 真实高德 SDK / 底图，合成卡片与业务 WebSocket 隔离：9 组浏览器检查通过，覆盖深浅、大字 720 高度、地点 / 充电 / 行程、行车、无轨迹与失败重试；缺坐标零 SDK 请求、取消销毁、编号保序、点选不发业务请求。运行时 Key 与授权输入一致、配置不缓存，安全密钥未出现在网页 / 网络响应；测试浏览器子进程也移除两项凭据环境变量后复核通过。前后 release 固定。证据：`.artifacts/hmi-map-20261010/live-verification.json`、`online/browser-checks.json`、`browser-environment-recheck.json`；这是地图显示验证，不替代真实业务旅程或车机硬件验收 |

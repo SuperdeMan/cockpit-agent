@@ -1,6 +1,6 @@
 # HMI 首屏加载修复（B04，2026-10-11）
 
-状态：代码与本地验证完成，云端启动配置与基础设施批准锚尚未应用。线上仍是原服务方式；部署状态统一见 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
+状态：已按用户单独批准更新基础设施配置并发布，B04 通过线上复验；当前发布与独立验证统一见 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 
 ## 原因与方案
 
@@ -55,10 +55,22 @@ node test/hmi_cdp/startup_performance.mjs
 
 功能证据在 `.artifacts/hmi-visual-v2/cold-load-built-{scroll,map,conversation}/`、`cold-load-voice-assets/`；单测日志在 `.artifacts/hmi-cold-load-20261011/`。
 
-## 待批准的云端改动
+## 已授权的云端改动
 
 受控路径只有 `deploy/cloud/compose.cloud.yaml`（HMI 启动命令）与 `deploy/cloud/hmi.Dockerfile`（同一缺省命令）。实际共享安装项是 Compose override；原 `/app/vite.cloud.config.mjs` 挂载继续用作 build 配置，Node 服务沿用相同 Host 环境变量。
 
-不修改 `.env`、密钥、数据库、CI/CD workflow、Tailscale、安全组、systemd 或保留策略。按 [开发指南的基础设施批准锚规则](../dev-guide.md#基础设施批准锚)，须在候选提交固定后生成只读审批材料，用户批准对应摘要，再更新锚、推送/部署并进行线上复验。
+未修改 `.env`、密钥、数据库、CI/CD workflow、Tailscale、安全组、systemd 或保留策略。按 [开发指南的基础设施批准锚规则](../dev-guide.md#基础设施批准锚)，先生成精确提交的只读材料；用户明确批准“配置、推送、部署及复验”后，应用摘要 `b3d94a4157ac5e60942806fe03cd8c0a4aba71f69a3bbaf12c32986f22131d70`。锚更新后的 deploy dry-run 无阻塞，随后执行部署。材料与执行结果在 `.artifacts/hmi-cold-load-20261011/approval/`、`.artifacts/hmi-cold-load-release-20261011/`。
 
-部署后应固定 release SHA：独立 status/verify，至少 3 次新浏览器加载，核对压缩、请求数、源码/HMR 零请求、高德图层、原 3 项交互及声音资源；同时记录活动 provider/model。未完成这一步前，B04 仅为“候选已修、线上待验证”。
+旧镜像没有 `serve` 入口；若回退本批，旧 release 必须配套恢复本次基础设施备份中的 Compose 与批准锚，不能让旧镜像使用新启动命令。
+
+## 线上复验（2026-10-11）
+
+验证对象固定为 `32bd007c03a748fa7eddd8a10f409a57f4a8bf0f`。本批推送只包含这一条提交；相对上一发布还含 main 已有的 Android 构建工具与文档提交，未代提交其他任务的未提交文件。CI、独立 status/verify 的当前权威字段见 QA 交接 §2。
+
+- **三次独立 Edge 进程、独立 profile/CDP 端口、禁用缓存**，使用实际私网链路而非限速模拟：UI 就绪 **1.012 / 1.013 / 1.014 s**（400 ms 轮询，中位数 **1.013 s**）；DOMContentLoaded 为 **0.727 / 0.724 / 0.695 s**。均为 **6 请求**，传输中位数 **296,573 bytes**。这是本轮样本，不代表任意链路的延迟保证；启动测量隔离业务 WebSocket。
+- 真实线上页面 + 真实 WebSocket：三轮两城市天气均 final、零 action、完成后距底部 0；主动读历史保持位置、点击胶囊才回到底部；中断后下一轮恢复；真实杭州路线的深浅地图返回与设置遮盖通过。前后 active 均为 `minimax / MiniMax-M3.1-Flash-Preview`，未切换。浏览器未捕获运行时/网络错误。
+- 业务隔离的真实地图 SDK 矩阵 **8 组**通过；声音资源 **6 项** gzip、字节指纹核对通过，两份 WASM 在浏览器编译成功，跨源隔离保持，麦克风调用 0。ORT 按线上主脚本实际引用取文件，并和运行镜像的 SHA-256 对账；线上依赖解析为 **1.30.0**，未借用本地构建的 ORT 文件名/指纹。
+- 线上 HTML 不缓存，hash 资源 private/immutable，JS 为 gzip；源码/HMR/dotfile 路径 404；高德 JS Key 与授权输入一致，安全密钥未出现在 HTML/主脚本。没有改契约、交互或硬件验收范围。
+- 驱动校准明确排除：一次浏览器端口复用导致空白页启动失败、一次 eval 指令格式错误（尚未执行业务轮）、一次拿本地 ORT hash 请求线上而 404。均修正探针后重跑；三次最终加载使用不同进程与端口，ORT 最终取线上实际引用。未放宽产品断言，未将校准失败算成通过。
+
+证据主目录 `.artifacts/hmi-cold-load-release-20261011/`：`release-summary.json`、`cold-start.json`、`online-result.json`、`map-layer-evidence.json`、`map-voice-result.json`、`image-wasm-inventory.json`、`http-boundaries.json`、`calibration-exclusions.json`；地图与声音浏览器证据另在 `.artifacts/hmi-visual-v2/b04-online-map-voice/`、`b04-online-voice-verified/`。B04 在本轮覆盖范围内已修复；真人麦克风、唤醒声学与实车仍不在此次验收内。
