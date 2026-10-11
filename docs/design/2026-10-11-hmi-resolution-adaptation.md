@@ -1,6 +1,6 @@
 # HMI Visual v2 分辨率适配（2026-10-11）
 
-状态：候选修复与本地浏览器验证已完成，单独提交；尚未获得本批推送/部署批准。当前发布统一看 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
+状态：已按本批授权推送、部署，并完成线上浏览器复验。当前发布统一看 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 
 ## 问题与设计依据
 
@@ -39,6 +39,22 @@
 
 最终浏览器证据在 `.artifacts/hmi-visual-v2/resolution-integrated-20261011/`、`resolution-live-resize-integrated-20261011/`、`resolution-scroll-integrated-20261011/`；SDK 在 `.artifacts/hmi-resolution-20261011/map-sdk-integrated/`。这证明浏览器布局/交互，不代表真人麦克风、实车或后端模型旅程已验收。
 
+## 授权发布与线上复验
+
+用户批准候选 `fdc5e36ff871bf57d91b22feb57f888404974b01` 的推送、部署与复验；随后合入已发布的交接文档，HMI 源码未变，最终精确推送并部署 `bb7d76b0b11ae866fbf7cded6bd42e5b3a0a4e20`。修复提交为 `772bfad23c3b5da443ac79f0e9441b8c7dba0319`；本地 445 项测试对应的 HMI blob 与最终发布逐一匹配，见 `integrated-source.json`。没有追加配置、凭据或依赖变更。
+
+[该发布 CI](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38127778687) 8/8 成功，干净工作树 dry-run 无阻塞后 apply；独立 status / verify 通过。浏览器复验前后 release 与 running 均固定为该 SHA，5/5 端点健康、无 warning；verify 使用 `minimax:MiniMax-M3.1-Flash-Preview`，通过 `e2e_remote_safe`，证据 `.artifacts/dev-stack-verifications/20261011T093126Z-bb7d76b.json`。
+
+| 线上检查 | 结果 |
+|---|---|
+| 布局矩阵 | 同一套 9 视口、两主题、两字号、5 场景 **180/180** 通过；恢复贴左布局的负向注入仍被拒绝。3440 待机、地图与设置另做截图目视检查。 |
+| 动态适配 | 5 次窗口变化、2 次实际字号切换、7 次鼠标点选地图标记通过，零业务帧。 |
+| 地图 SDK | 9 场景、缺坐标、取消、编号保序与失败重试通过；零 JS/网络错误、零业务帧。未重做安全密钥内容扫描。 |
+| 滚动 | 8 场景、3 次窗口变化通过；单独改变 padding 后距底部 0，主动读历史不被强制滚底。 |
+| 冷启动 | 3 个独立 Edge 进程、缓存禁用、实际私网：UI 就绪 **1.059 / 1.046 / 1.030 s**（中位数 1.046 s）；均 6 请求，传输 298,210 / 298,210 / 298,224 bytes；源码/HMR 请求 0、JS gzip、跨源隔离与 SharedArrayBuffer 均有效。 |
+
+发布、CI、状态和冷启动证据在 `.artifacts/hmi-resolution-release-20261011/`，汇总为 `online-summary.json`；布局、动态与滚动分别在 `.artifacts/hmi-visual-v2/resolution-online-20261011/`、`resolution-online-resize-20261011/`、`resolution-online-scroll-20261011/`。页面与地图 SDK 来自线上服务，业务 WebSocket 使用隔离夹具；这些结果不替代真实后端旅程、真人语音或实车验收。
+
 ## 3440 截图
 
 | 场景 | 修前线上页面（业务隔离） | 修后本地 Vite（业务隔离） |
@@ -47,5 +63,7 @@
 | 对话 | [修前](../../.artifacts/hmi-visual-v2/resolution-before-20261011/3440-1440-conversation.png) | [修后](../../.artifacts/hmi-visual-v2/resolution-integrated-20261011/3440-1440-1-dark-normal-conversation.png) |
 | 地图 | [修前](../../.artifacts/hmi-visual-v2/resolution-before-20261011/3440-1440-map.png) | [修后](../../.artifacts/hmi-visual-v2/resolution-integrated-20261011/3440-1440-1-dark-normal-map.png) |
 | 设置 | [修前](../../.artifacts/hmi-visual-v2/resolution-before-20261011/3440-1440-settings.png) | [修后](../../.artifacts/hmi-visual-v2/resolution-integrated-20261011/3440-1440-1-dark-normal-settings.png) |
+
+发布后的实际浏览器截图：[待机](../../.artifacts/hmi-visual-v2/resolution-online-20261011/3440-1440-1-dark-normal-idle.png)、[对话](../../.artifacts/hmi-visual-v2/resolution-online-20261011/3440-1440-1-dark-normal-conversation.png)、[地图](../../.artifacts/hmi-visual-v2/resolution-online-20261011/3440-1440-1-dark-normal-map.png)、[浅色大字设置](../../.artifacts/hmi-visual-v2/resolution-online-20261011/3440-1440-1-light-large-settings.png)。
 
 复现使用本地 Vite（地图项需既有高德配置），设置 `HMI_VISUAL_URL`、`HMI_VISUAL_BATCH` 后执行 `node test/hmi_cdp/visual_resolution.mjs`；默认全矩阵，`HMI_RESOLUTION_SMOKE=1` 仅跑 3440 标准深色。与其它占用 CDP 9339 的视觉脚本串行运行。地图专项可设 `HMI_MAP_URL`、`HMI_MAP_OUTPUT` 后执行 `node test/hmi_cdp/map_stage.mjs`，使用独立 CDP 9371。

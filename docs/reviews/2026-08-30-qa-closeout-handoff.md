@@ -1,7 +1,7 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-10-11（Dashboard 三项浏览器缺陷已授权发布并完成线上复验；历史测试保留原 SHA，其余 QA 活项不因此关闭）
+> 更新时间：2026-10-11（HMI 分辨率适配已授权发布并完成线上复验；历史测试保留原 SHA，其余 QA 活项不因此关闭）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
@@ -25,12 +25,13 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。前版 `89b19956` 固定
 
 ## 2. 当前发布与证据边界
 
-2026-10-11 Dashboard 浏览器验收确认的 **DV2-B01–B03 已发布并在线上重证通过**：指令台/重放补 Edge 鉴权、Agent 心跳统一秒级口径、双闪按灯光开关显示。本地、原线上初验和本次发布验证按 SHA 分开，见 [Dashboard 验收报告 §6](2026-10-11-dashboard-visual-v2-browser-audit.md#6-授权发布与线上重证2026-10-11)。
+2026-10-11 **HMI 分辨率适配已发布并在线上重证通过**：3440×1440 的前景/设置居中限宽、地图取景随实际边界和标记尺寸变化，尺寸变化后的底部跟随保留历史阅读保护。线上 180 组布局及地图、缩放、滚动专项见 [适配记录](../design/2026-10-11-hmi-resolution-adaptation.md)。前版 Dashboard **DV2-B01–B03** 的修复与真实业务证据继续归属原 SHA，见 [Dashboard 验收报告 §6](2026-10-11-dashboard-visual-v2-browser-audit.md#6-授权发布与线上重证2026-10-11)。
 
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
-| 当前生产 release | `cbf6dcdf50cfc900fe145abcc5d612d9f8c25319`，2026-10-11 授权上线：Dashboard 指令/重放鉴权、Agent 心跳单位、双闪名称与布尔展示。前版 `eb098eddc2b1bac00aa0ba152adfdc99013af75c`（语义打断）。用户逐项批准两处 Dashboard 凭据环境映射并批准推送/部署；共享 Compose 与批准锚同步，未改 `.env`、令牌值、数据库或 CI/CD。完整接线与回归边界见 [Dashboard 验收 §6](2026-10-11-dashboard-visual-v2-browser-audit.md#6-授权发布与线上重证2026-10-11) |
-| 当前 status / verify | release = running = `cbf6dcdf50cfc900fe145abcc5d612d9f8c25319`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T090544Z-cbf6dcd.json`，`minimax:MiniMax-M3.1-Flash-Preview`（沿用用户设置），`e2e_remote_safe` 通过；该 SHA 的 [CI 8 项成功](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38126196885) |
+| 当前生产 release | `bb7d76b0b11ae866fbf7cded6bd42e5b3a0a4e20`，2026-10-11 授权上线 HMI 分辨率适配。前版 `cbf6dcdf50cfc900fe145abcc5d612d9f8c25319`（Dashboard 三项缺陷修复）。批准候选 `fdc5e36f` 后只合入已发布交接文档，HMI 源码未变；本批无配置、凭据或依赖变更。具体范围见 [适配记录](../design/2026-10-11-hmi-resolution-adaptation.md) |
+| 当前 status / verify | release = running = `bb7d76b0b11ae866fbf7cded6bd42e5b3a0a4e20`，独立 status ok、5/5 healthy、warnings 为空；verify `verified`：`.artifacts/dev-stack-verifications/20261011T093126Z-bb7d76b.json`，`minimax:MiniMax-M3.1-Flash-Preview`（沿用用户设置），`e2e_remote_safe` 通过；该 SHA 的 [CI 8 项成功](https://github.com/SuperdeMan/cockpit-agent/actions/runs/38127778687) |
+| HMI 分辨率线上复验（bb7d76b0） | 9 视口 × 两主题 × 两字号 × 5 场景 **180/180**，负向注入有效；5 次动态改窗、2 次字号、7 次鼠标地图点选，SDK 9 场景/失败重试，滚动 8 场景 + 3 次改窗 + 独立 padding 均通过。三个独立冷启动 1.059 / 1.046 / 1.030 s，均 6 请求、gzip、零源码/HMR 请求。真实线上资源/地图 SDK，业务 WS 隔离、零业务帧；前后 release 固定。本地 HMI 445、typecheck/build，已按源码 blob 与发布对账；未重做密钥内容扫描或硬件验收。证据 `.artifacts/hmi-resolution-release-20261011/online-summary.json` |
 | Dashboard 线上修复（cbf6dcdf） | 原部署凭据在指令与重放各成功握手一次、零业务帧；业务流使用隔离签名只读身份，天气查询 `d958ba9b790b2e1c` 与重放 `f388f80314613151` 均真实完成、actions 为 0，重放独立会话/`is_confirmation=false`/双时间线。Agent 心跳 1–8 秒、双闪关，1920/1280/3440 宽度与夹具缺失态通过，无 JS/HTTP 错误。全程发布锁、前后同 SHA；证据 `.artifacts/dashboard-v2-bugfix-20261011/online/summary.json` |
 | Dashboard 本地修复证据（cbf6dcdf） | Dashboard 19 文件 / 170 tests、TypeScript/Vite build；启动器 170 passed / 3 skipped（平台条件）通过，证据 `.artifacts/dashboard-v2-bugfix-20261011/release-cbf6dcdf-*.log`。本轮只重证三个缺陷，初验完整视觉矩阵仍属于旧版本，不宣称完整 QA 全绿 |
 | HMI 浏览器修复（64be4936） | 该 SHA 的真实 WebSocket + 高德 SDK：3 轮两城市天气保持底部跟随，主动历史阅读/跳转、中断恢复、深浅地图返回与设置遮盖通过，action 0；另有业务隔离的 8 组地图矩阵通过。本地 HMI 413 tests、typecheck、build 通过。该轮首屏 127.1 / 107.5 s、后续导航 2.7–38.2 s 另列 B04，原 20/30 s 启动超时不计通过；B04 后续修复见下一行。历史证据 `.artifacts/hmi-visual-release-20261011/`；[详细记录](2026-10-11-hmi-visual-v2-browser-audit.md) |
