@@ -1,5 +1,5 @@
 // Visual v2 I3: answers are text, confirmations are pinned, evidence uses the shared projection.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSettings } from '../settings'
 import { messageTextForView } from '../errorPresentation.mjs'
 import { useDriving } from '../DrivingContext'
@@ -24,6 +24,7 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true)
+  const scrollRef = useRef({ top: 0, height: 0, viewport: 0 })
   const [atTail, setAtTail] = useState(true)
   const [hasNew, setHasNew] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
@@ -41,10 +42,13 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
     followRef.current = true
     setAtTail(true); setHasNew(false)
     const list = listRef.current
-    if (list) list.scrollTo({ top: list.scrollHeight, behavior: 'auto' })
+    if (list) {
+      list.scrollTo({ top: list.scrollHeight, behavior: 'auto' })
+      scrollRef.current = { top: list.scrollTop, height: list.scrollHeight, viewport: list.clientHeight }
+    }
   }
-  // D12 draft: the reader owns their scroll position. Only a pinned reader follows updates.
-  useEffect(() => {
+  // D12: follow a pinned reader before the browser paints; leave a history reader alone.
+  useLayoutEffect(() => {
     if (followRef.current) jump()
     else setHasNew(true)
   }, [messages, partialUser])
@@ -58,6 +62,14 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
   const onScroll = () => {
     const list = listRef.current
     if (!list) return
+    const previous = scrollRef.current
+    const current = { top: list.scrollTop, height: list.scrollHeight, viewport: list.clientHeight }
+    scrollRef.current = current
+    const resized = current.height !== previous.height || current.viewport !== previous.viewport
+    // Scroll anchoring/clamping can emit scroll before ResizeObserver. A changed layout
+    // is not a request to read history. Still honor an upward scroll beyond its new limit.
+    const movedUp = current.top < Math.min(previous.top, current.height - current.viewport) - 1
+    if (followRef.current && resized && !movedUp) { jump(); return }
     const near = list.scrollHeight - list.clientHeight - list.scrollTop <= 48
     followRef.current = near; setAtTail(near)
     if (near) setHasNew(false)

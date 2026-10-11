@@ -89,3 +89,25 @@ buffer source stop 证据。截图只辅助复核，不替代上述机器断言�
 `CDP_COLLECTOR` 与 status 中的 cloud collector 相同；任一不满足即 fail closed。脱敏证据写到
 `.artifacts/dev-stack-verifications/hmi-cdp-c14.json`（gitignore），保留 start/end release SHA、
 MiniMax 锁、五类 PCM/播放及打断读数，不保存 token。
+
+## Visual v2 滚动与地图层级回归
+
+`visual_scroll.mjs` 锁定过程区/流式回复的底部跟随、主动阅读历史、内容异步变高和窗口变高/变矮。
+`visual_map_layers.mjs` 用真实高德 SDK 检查返回按钮中心的实际命中、标题/全览避让，以及设置页覆盖地图署名、关闭设置后署名恢复。
+两个脚本都经 `visual_browser.mjs` 隔离业务 `/ws`，不向云端发送业务指令；Vite HMR 与地图网络仍正常工作。
+
+先确认 `dev-stack.local`。`target=cloud` 只起 Vite，不启动 Compose。地图回归需要 Vite 服务进程
+从根 `.env` 读取既有 `AMAP_JS_KEY` / `AMAP_JS_SECURITY_CODE`，可用 `python scripts/dev_stack.py hmi`
+启动；凭据不要传给浏览器驱动或写进测试。按启动日志设置本地 URL：
+
+```powershell
+$env:HMI_VISUAL_URL='http://localhost:5173'
+$env:HMI_VISUAL_BATCH='scroll-regression-current'
+node test/hmi_cdp/visual_scroll.mjs
+$env:HMI_VISUAL_BATCH='map-layer-regression-current'
+node test/hmi_cdp/visual_map_layers.mjs
+```
+
+两项串行运行（共享 CDP 端口 9339）。截图/几何证据在 `.artifacts/hmi-visual-v2/<batch>/`；
+真实对话另跑，不能用这些业务夹具关闭线上端到端缺陷。修前失败与修后证据见
+[2026-10-11 浏览器验收](../../docs/reviews/2026-10-11-hmi-visual-v2-browser-audit.md)。

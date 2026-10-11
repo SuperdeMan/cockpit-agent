@@ -36,7 +36,7 @@ export async function withVisualPage(batch, run) {
       window.WebSocket=class {
         static OPEN=1; static CLOSED=3;
         constructor(url,...options){
-          if(!String(url).includes('localhost:8090/ws')) return new NativeSocket(url,...options);
+          if(new URL(url,location.href).pathname!=='/ws') return new NativeSocket(url,...options);
           this.readyState=0; window.__visualSocket=this;
           setTimeout(()=>{this.readyState=1;this.onopen?.({})},10);
         }

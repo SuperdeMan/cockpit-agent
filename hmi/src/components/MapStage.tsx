@@ -24,12 +24,12 @@ function Schematic({model}:{model:MapModel}) {
   </svg><p className="au-stage-caption">{model.path.length?'路线形状来自返回的路径点；标注仅作示意。':'按结果顺序示意，不代表实际地理位置。'}</p></div>
 }
 
-export function MapStage({card}:{card:UiCard}) {
+export function MapStage({card,onBack}:{card:UiCard;onBack?:()=>void}) {
   const model=useMemo(()=>projectMap(card),[card])
   const {driving}=useDriving()
   const {settings}=useSettings()
   const canvas=useRef<HTMLDivElement>(null)
-  const header=useRef<HTMLElement>(null)
+  const topbar=useRef<HTMLDivElement>(null)
   const summary=useRef<HTMLDivElement>(null)
   const view=useRef<MapView|null>(null)
   const latest=useRef({model,driving,theme:settings.theme})
@@ -48,7 +48,7 @@ export function MapStage({card}:{card:UiCard}) {
       const bounds=element.getBoundingClientRect()
       const panel=document.querySelector('.au-panel')?.getBoundingClientRect()
       return mapViewPadding({width:bounds.width,height:bounds.height,panelRight:panel?.right,
-        headerBottom:header.current?.getBoundingClientRect().bottom,
+        headerBottom:topbar.current?.getBoundingClientRect().bottom,
         summaryHeight:summary.current?.offsetHeight,
         answerHeight:latest.current.driving&&panel?bounds.bottom-panel.top:0,
         driving:latest.current.driving})
@@ -66,7 +66,7 @@ export function MapStage({card}:{card:UiCard}) {
     const resize=new ResizeObserver(()=>view.current?.fit())
     resize.observe(element)
     if(summary.current)resize.observe(summary.current)
-    if(header.current)resize.observe(header.current)
+    if(topbar.current)resize.observe(topbar.current)
     const panel=document.querySelector('.au-panel')
     if(panel)resize.observe(panel)
     return()=>{active=false;resize.disconnect();view.current?.destroy();view.current=null}
@@ -80,7 +80,8 @@ export function MapStage({card}:{card:UiCard}) {
   return <section className="au-map-stage" data-map-state={displayStatus}>
     <div className="au-map-canvas" ref={canvas} aria-label="地图底图" />
     {fallback&&<Schematic model={model} />}
-    <header ref={header} className="au-map-header">
+    <div ref={topbar} className="au-map-topbar">
+    <header className="au-map-header">
       <div className="au-map-title"><Icon name="route-map" size={28} color="var(--au-primary)" /><h2>{model.title}</h2></div>
       <div className="au-stage-map-meta">{details.estimate&&<span>估算</span>}{present(details.distance_km)&&<span>{details.distance_km} km</span>}{present(details.duration_min)&&<span>约 {details.duration_min} 分钟</span>}<ProvBadge prov={details._prov} /></div>
       {displayStatus==='loading'&&<span className="au-map-loading" role="status">正在加载地图…</span>}
@@ -89,9 +90,11 @@ export function MapStage({card}:{card:UiCard}) {
       {displayStatus==='ready'&&model.missingCoordinates>0&&<span className="au-stage-caption">{model.missingCoordinates} 个地点缺少坐标，未在地图标注</span>}
     </header>
     {!driving&&<div className="au-map-tools">
+      {onBack&&<button className="au-stage-back" onClick={onBack}>回到当前内容</button>}
       {displayStatus==='ready'&&<button onClick={()=>view.current?.fit()}>全览</button>}
       {displayStatus==='unavailable'&&<button onClick={()=>setAttempt(n=>n+1)}>重试地图</button>}
     </div>}
+    </div>
     <div ref={summary} className="au-map-summary">
       <div className="au-map-summary-title">{model.cancelled?'这条导航已结束':model.route?(details.estimate?'路线估算':'路线信息'):'地点一览'}</div>
       {!driving&&<div className="au-map-places">{model.entries.map((entry,index)=><button key={index} className={selected===index?'selected':''}

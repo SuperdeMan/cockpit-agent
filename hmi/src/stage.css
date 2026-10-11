@@ -34,12 +34,15 @@
 .au-stage-forecast strong { font-size: var(--au-type-num-m-size); line-height: var(--au-type-num-m-line); }
 .au-stage-content.scene-map { inset: 0; padding: 0; }
 .au-map-stage { height: 100%; position: relative; overflow: hidden; background: var(--au-map-land); }
-.au-map-canvas { position: absolute; inset: 0; }
-.au-map-header { position: absolute; top: calc(var(--au-status-height) + 32px); left: calc(var(--au-panel-width) + 72px); right: 148px; width: fit-content; max-width: calc(100% - var(--au-panel-width) - 220px); display: flex; flex-direction: column; gap: 8px; padding: 16px 24px; border-radius: var(--au-r-2xl); background: var(--au-material-solid); }
+/* SDK z-indices belong to the canvas; they must not escape above shell/settings layers. */
+.au-map-canvas { position: absolute; inset: 0; isolation: isolate; }
+.au-map-topbar { position: absolute; top: calc(var(--au-status-height) + 32px); left: calc(var(--au-panel-width) + 72px); right: 32px; display: flex; align-items: flex-start; gap: 16px; pointer-events: none; }
+.au-map-header { min-width: 0; width: fit-content; display: flex; flex-direction: column; gap: 8px; padding: 16px 24px; border-radius: var(--au-r-2xl); background: var(--au-material-solid); pointer-events: auto; }
 .au-map-title { display: flex; gap: 12px; align-items: center; }
 .au-map-title h2 { margin: 0; font-size: var(--au-type-label-size); line-height: var(--au-type-label-line); overflow-wrap: anywhere; }
 .au-map-loading { font-size: var(--au-type-caption-size); color: var(--au-text-2); }
-.au-map-tools { position: absolute; top: calc(var(--au-status-height) + 32px); right: 32px; }
+.au-map-tools { display: flex; flex: none; gap: 16px; margin-left: auto; pointer-events: auto; }
+.au-map-tools .au-stage-back { position: static; }
 .au-map-tools button { min-height: var(--au-control-target); padding: 0 20px; border: 1px solid var(--au-line); border-radius: var(--au-r-full); background: var(--au-material-solid); color: var(--au-text); font: inherit; font-size: var(--au-type-label-size); cursor: pointer; }
 .au-map-summary { position: absolute; bottom: 56px; right: 48px; width: min(520px,calc(100% - var(--au-panel-width) - 120px)); max-height: 43%; padding: 24px 28px; background: var(--au-material-solid); border-radius: var(--au-r-2xl); box-shadow: var(--au-shadow-md); display: flex; flex-direction: column; gap: 12px; }
 .au-map-summary-title { font-size: var(--au-type-label-size); line-height: var(--au-type-label-line); font-weight: 500; }
@@ -61,10 +64,10 @@
 .au-map-canvas .amap-logo { left: auto !important; right: 12px !important; bottom: 26px !important; }
 .au-map-canvas .amap-copyright { left: auto !important; right: 12px !important; bottom: 2px !important; }
 :root[data-drive='on'] .au-stage-content.scene-map { padding: 0; }
-:root[data-drive='on'] .au-map-header { left: 32px; max-width: calc(100% - 64px); }
+:root[data-drive='on'] .au-map-topbar { left: 32px; }
 :root[data-drive='on'] .au-map-summary { display: none; }
 :root[data-drive='on'] .au-map-fallback { left: 48px; bottom: 25%; }
-@media(max-width:1200px) { .au-map-header { left: 24px; max-width: calc(100% - 164px); } .au-map-summary { width: 360px; max-width: 45%; } .au-map-fallback { left: 24px; } }
+@media(max-width:1200px) { .au-map-topbar { left: 24px; } .au-map-summary { width: 360px; max-width: 45%; } .au-map-fallback { left: 24px; } }
 .au-stage-map-notice { display: inline-flex; align-items: center; gap: 12px; padding: 12px 20px; border-radius: var(--au-r-full); color: var(--au-warn); background: var(--au-material-solid); font-size: var(--au-type-caption-size); }
 .au-map-stage h2 { margin: 0; }
 .au-stage-map-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--au-text-2); font-size: var(--au-type-body-size); line-height: var(--au-type-body-line); }

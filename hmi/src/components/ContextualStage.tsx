@@ -18,10 +18,11 @@ export function ContextualStage({messages,vehicle={},vehicleLabel,onAction}: {
   const {driving}=useDriving()
   const view=useStageView()
   const scene=selectStage(messages,driving,view?.selected)
+  const onBack=view?.selected&&!driving?view.close:undefined
   return <div className={'au-stage-content scene-'+scene.kind} data-scene={scene.kind}>
-    {view?.selected && !driving && <button className="au-stage-back" onClick={view.close}>回到当前内容</button>}
+    {onBack && scene.kind!=='map' && <button className="au-stage-back" onClick={onBack}>回到当前内容</button>}
     {scene.kind==='weather' && scene.card ? <WeatherStage card={scene.card as WeatherCard|ForecastCard} />
-      : scene.kind==='map' && scene.card ? <MapStage card={scene.card} />
+      : scene.kind==='map' && scene.card ? <MapStage card={scene.card} onBack={onBack} />
       : scene.kind==='agenda' && scene.card ? <AgendaStage card={scene.card} />
       : (scene.kind==='reading'||scene.kind==='payment') && scene.card && !driving ? <div className={'au-stage-document '+(scene.kind==='payment'?'payment':'')}>
           <div className="au-stage-document-label">{cardTitle(scene.card)} · 仅在非行车界面展开</div>
