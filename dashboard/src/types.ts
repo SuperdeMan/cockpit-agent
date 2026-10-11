@@ -22,7 +22,7 @@ export type VehicleState = Record<string, unknown>
 export type AgentInfo = {
   healthy?: boolean
   fail_count?: number
-  last_seen?: number
+  last_seen?: number // Registry heartbeat: Unix seconds, not milliseconds.
   count?: number
   avg_ms?: number
   error_rate?: number

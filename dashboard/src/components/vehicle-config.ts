@@ -37,7 +37,7 @@ export const META: Record<string, KeyMeta> = {
   front_defogger: { label: '前除雾', icon: 'defrost', group: 'body', kind: 'toggle' },
   rear_defogger: { label: '后除雾', icon: 'defrost', group: 'body', kind: 'toggle' },
   volume_muted: { label: '静音', icon: 'volume-off', group: 'media', kind: 'toggle' },
-  warning_light: { label: '故障灯', icon: 'warning', group: 'driving', kind: 'mode' },
+  warning_light: { label: '双闪', icon: 'warning', group: 'lighting', kind: 'toggle' },
   // ── 空调 ──
   fragrance: { label: '香氛', icon: 'droplet', group: 'climate', kind: 'toggle' },
   steering_wheel_heating: { label: '方向盘加热', icon: 'steering', group: 'climate', kind: 'toggle' },

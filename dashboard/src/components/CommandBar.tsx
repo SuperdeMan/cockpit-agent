@@ -1,13 +1,7 @@
 import { CommandConsole } from './live/CommandConsole'
 import { isFixture, fixtureTurns } from '../fixtures'
-
-const EDGE =
-  (import.meta.env.VITE_EDGE_GATEWAY_URL as string | undefined) ||
-  'http://localhost:8090'
-export const EDGE_WS_URL = EDGE.replace(/^http/, 'ws') + '/ws'
-
-
-
+import { createEdgeSocket, EDGE_CONNECTION_FAILURE } from '../edgeGateway'
+export { EDGE_WS_URL } from '../edgeGateway'
 export function genTraceId(): string {
   const bytes = new Uint8Array(8)
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
@@ -34,7 +28,7 @@ export function replayText(
     hooks?.onState?.('离线示例完成')
     return fixtureTurns[1].trace_id
   }
-  const websocket = new WebSocket(EDGE_WS_URL)
+  const websocket = createEdgeSocket()
   const timeout = setTimeout(() => {
     hooks?.onState?.('超时')
     websocket.close()
@@ -68,7 +62,7 @@ export function replayText(
     }
   }
   websocket.onerror = () => {
-    hooks?.onState?.('网关连接失败')
+    hooks?.onState?.(EDGE_CONNECTION_FAILURE)
     clearTimeout(timeout)
     websocket.close()
   }

@@ -189,6 +189,7 @@ services:
       __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: "${TAILNET_FQDN:?TAILNET_FQDN required}"
       VITE_COLLECTOR_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8446"
       VITE_EDGE_GATEWAY_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8443"
+      VITE_WS_TOKEN: "${VITE_WS_TOKEN:?VITE_WS_TOKEN required}"
 
 volumes:
   postgres-data:

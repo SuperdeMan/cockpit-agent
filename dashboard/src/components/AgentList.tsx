@@ -18,7 +18,9 @@ const LABEL: Record<AgentState, string> = { healthy: '健康', offline: '离线'
 export function AgentTile({ id, agent, now }: { id: string; agent: AgentInfo; now: number }) {
   const state = stateOf(agent)
   const tone = state === 'offline' || state === 'circuit-open' ? 'critical' : state === 'half-open' || state === 'degraded' ? 'warn' : 'neutral'
-  const age = agent.last_seen === undefined ? null : Math.max(0, Math.floor((now - agent.last_seen) / 1000))
+  // Registry and collector publish Unix seconds (including fractional seconds).
+  const age = typeof agent.last_seen === 'number' && Number.isFinite(agent.last_seen) && agent.last_seen > 0
+    ? Math.max(0, Math.floor(now / 1000 - agent.last_seen)) : null
   const label = state === 'healthy' && agent.healthy === undefined ? '健康未上报' : LABEL[state]
   return <div className="agent-tile" data-agent={id} data-state={state}>
     <div className="row"><strong className="grow">{id}</strong>{agent.kind && <span className="mono muted">{agent.kind}</span>}</div>

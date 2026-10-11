@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { fixtureName, fixtureTurns, isFixture } from '../../fixtures'
 import { navigate } from '../../navigation'
 import type { StateChange } from '../../types'
-import { EDGE_WS_URL, genTraceId } from '../CommandBar'
+import { genTraceId } from '../CommandBar'
+import { createEdgeSocket, EDGE_CONNECTION_FAILURE, MissingEdgeTokenError } from '../../edgeGateway'
 import { Button, FilterChip, Input } from '../ui'
 import { Tag } from '../data'
 
 export type CommandState = 'idle' | 'connecting' | 'running' | 'done' | 'failed' | 'unreachable'
-type CommandReason = '' | 'gateway-error' | 'connect-error' | 'connect-timeout' | 'send-error' | 'result-timeout' | 'connection-lost' | 'transport-error' | 'invalid-response'
+type CommandReason = '' | 'missing-token' | 'gateway-error' | 'connect-error' | 'connect-timeout' | 'send-error' | 'result-timeout' | 'connection-lost' | 'transport-error' | 'invalid-response'
 const UNKNOWN_RESULT = new Set<CommandReason>(['result-timeout', 'connection-lost', 'transport-error', 'invalid-response'])
 const STATES: Record<CommandState, string> = { idle: '空闲', connecting: '连接中', running: '执行中', done: '完成', failed: '失败', unreachable: '连不上网关' }
 const QUICK = ['空调调到26度', '打开主驾座椅加热', '氛围灯调成绿色', '导航去机场顺便订今晚的餐', '打开后备箱']
@@ -52,9 +53,9 @@ export function CommandConsole({ onTrace, onState, changes, hasEvidence = false 
     }
     const lost = (failureReason: 'connection-lost' | 'transport-error') => sent
       ? fail('请求已发送，但结果未取得，是否执行未知。请在轮次页核对观测记录。', 'failed', failureReason)
-      : fail('无法建立 Edge Gateway 连接，请求尚未发送。', 'unreachable', 'connect-error')
+      : fail(EDGE_CONNECTION_FAILURE, 'unreachable', 'connect-error')
     try {
-      const ws = new WebSocket(EDGE_WS_URL)
+      const ws = createEdgeSocket()
       activeSocket = ws; socket.current = ws
       timer.current = setTimeout(() => sent
         ? fail('请求超时：结果未取得，是否执行未知。请在轮次页核对观测记录。', 'failed', 'result-timeout')
@@ -77,7 +78,10 @@ export function CommandConsole({ onTrace, onState, changes, hasEvidence = false 
       }
       ws.onerror = () => { if (socket.current === ws) lost('transport-error') }
       ws.onclose = () => { if (socket.current === ws && !settled) lost('connection-lost') }
-    } catch { fail('无法建立 Edge Gateway 连接，请求尚未发送。', 'unreachable', 'connect-error') }
+    } catch (error) {
+      if (error instanceof MissingEdgeTokenError) fail(error.message, 'failed', 'missing-token')
+      else fail(EDGE_CONNECTION_FAILURE, 'unreachable', 'connect-error')
+    }
   }
   const busy = state === 'connecting' || state === 'running'
   return <section className="panel command-console" data-command-state={state} data-command-reason={reason || undefined}>

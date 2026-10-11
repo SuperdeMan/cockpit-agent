@@ -2,6 +2,15 @@ import { render, screen } from '@testing-library/react'
 
 import { VehicleState } from './VehicleState'
 
+test.each([[false, '关'], [true, '开'], [null, '读不到']])('hazard light %s follows the VAL boolean contract', (value, label) => {
+  render(<VehicleState state={{ warning_light: value }} changed={new Set()} />)
+  const tile = document.querySelector('[data-key="warning_light"]')
+  expect(tile?.textContent?.trim()).toBe('双闪' + label)
+  expect(screen.getByText('灯光')).toBeTruthy()
+  expect(screen.queryByText('故障灯')).toBeNull()
+  expect(screen.queryByText('驾驶')).toBeNull()
+})
+
 test('a fresh temperature does not invent a missing HVAC switch state', () => {
   render(<VehicleState state={{ hvac_temp: 26 }} changed={new Set()} label="模拟车况" />)
   expect(document.querySelector('[data-key="hvac"]')?.textContent).toContain('未知')

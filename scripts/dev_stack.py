@@ -616,12 +616,13 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
         endpoints = LOCAL_ENDPOINTS
         if selection.name == "cloud":
             keys = {"TAILNET_FQDN"}
-            if args.command == "hmi":
-                keys.add("VITE_WS_TOKEN")
+            keys.add("VITE_WS_TOKEN")
             selected_env = read_root_env(repo, keys)
             endpoints = cloud_endpoints(selected_env.get("TAILNET_FQDN", ""))
         if args.command == "dashboard":
             selected_env["VITE_COLLECTOR_TOKEN"] = operator_token(root=repo)
+            if selection.name == "local":
+                selected_env.update(read_root_env(repo, {"VITE_WS_TOKEN"}))
         if args.command == "hmi":
             selected_env.update(read_root_env(repo, {"AMAP_JS_KEY", "AMAP_JS_SECURITY_CODE"}))
         command = frontend_command(

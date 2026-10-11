@@ -31,8 +31,10 @@ cloud 档只启动 Vite，地址 `http://127.0.0.1:5174`，不启动本地 Compo
 - `VITE_COLLECTOR_URL`：默认 `http://localhost:8092`。
 - `VITE_EDGE_GATEWAY_URL`：默认 `http://localhost:8090`。
 - `VITE_COLLECTOR_TOKEN`：由统一启动器注入；也可在令牌门粘贴 `python scripts/obs_token.py` 的输出。
+- `VITE_WS_TOKEN`：指令台与重放使用的 Edge 访问身份，与 HMI 沿用同一握手契约；统一启动器读取根 `.env` 中已有的值。它和 collector 运维令牌用途不同，未配置时不发起指令连接。
 
-令牌仅保存在当前标签页的 sessionStorage／内存，不进 localStorage、URL 或日志。主题与演示尺寸可本地记住。
+collector 运维令牌仅保存在当前标签页的 sessionStorage／内存，不进 localStorage、URL 或日志。
+Edge 令牌按 HMI 既有的 WebSocket 升级鉴权契约使用，不写入页面地址、localStorage 或应用日志。主题与演示尺寸可本地记住。
 首次、令牌失效、服务端未配置访问、网络失败各有独立形态。
 
 ## 深链与离线预览

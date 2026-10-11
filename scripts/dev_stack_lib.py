@@ -394,6 +394,7 @@ def frontend_environment(
             "VITE_EDGE_GATEWAY_URL": endpoints.edge_http,
             # collector 读写要运维凭据（runtime/obs_access.py）：启动时现签，只进 dev server 进程
             "VITE_COLLECTOR_TOKEN": selected_env.get("VITE_COLLECTOR_TOKEN", ""),
+            "VITE_WS_TOKEN": selected_env.get("VITE_WS_TOKEN", ""),
         }
     raise DevStackError("unknown frontend application")
 

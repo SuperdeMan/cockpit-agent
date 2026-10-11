@@ -967,6 +967,7 @@ services:
     environment:
       VITE_COLLECTOR_URL: http://localhost:8092
       VITE_EDGE_GATEWAY_URL: http://localhost:8090
+      VITE_WS_TOKEN: ${VITE_WS_TOKEN:-}
     ports: ["5174:5174"]
     depends_on: [observability-collector, edge-gateway]
 

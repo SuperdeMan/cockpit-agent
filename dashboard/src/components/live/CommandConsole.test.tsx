@@ -12,22 +12,33 @@ class FakeSocket {
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
-  constructor() { sockets.push(this) }
+  constructor(public url: string) { sockets.push(this) }
   send(value: string) { this.sent.push(value) }
   close() {}
 }
-beforeEach(() => { sockets.length = 0; history.replaceState(null, '', '/'); vi.stubGlobal('WebSocket', FakeSocket) })
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
+beforeEach(() => { sockets.length = 0; history.replaceState(null, '', '/'); vi.stubGlobal('WebSocket', FakeSocket); vi.stubEnv('VITE_WS_TOKEN', 'unit-edge-token') })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 test('only a user send opens the gateway and never authorizes a confirmation', () => {
   render(<CommandConsole />)
   expect(sockets).toHaveLength(0)
   fireEvent.click(screen.getByRole('button', { name: '打开后备箱' }))
+  expect(new URL(sockets[0].url).searchParams.get('token')).toBe('unit-edge-token')
   act(() => sockets[0].onopen?.())
   expect(JSON.parse(sockets[0].sent[0])).toMatchObject({ text: '打开后备箱', is_confirmation: false })
+  expect(sockets[0].sent[0]).not.toContain('unit-edge-token')
   act(() => sockets[0].onmessage?.({ data: JSON.stringify({ type: 'final', speech: '需要你确认。' }) }))
   expect(screen.getByText('完成').className).toContain('neutral')
   expect(screen.getByText('未采到车身变化证据')).toBeTruthy()
   expect(screen.queryByText('成功')).toBeNull()
+})
+
+test('a missing gateway credential fails before connecting or sending a command', () => {
+  vi.stubEnv('VITE_WS_TOKEN', '')
+  render(<CommandConsole />)
+  fireEvent.click(screen.getByRole('button', { name: '打开后备箱' }))
+  expect(sockets).toHaveLength(0)
+  expect(screen.getByText(/未配置网关访问令牌，指令尚未发送/)).toBeTruthy()
+  expect(document.querySelector('.command-console')?.getAttribute('data-command-reason')).toBe('missing-token')
 })
 test('gateway errors and unreachable sockets are distinct states', () => {
   const { unmount } = render(<CommandConsole />)
