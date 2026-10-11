@@ -49,8 +49,10 @@ export function projectMap(card) {
 }
 
 // AMap's avoid order is top, bottom, left, right (not CSS shorthand).
-export function mapViewPadding({width,height,panelRight=0,headerBottom=150,summaryHeight=0,answerHeight=0,driving=false}) {
-  // 64px includes the largest touch target, selection ring and SDK pixel rounding.
-  const left = !driving && width > 1200 ? Math.min(panelRight+64,width-360) : 64
-  return [Math.min(headerBottom+28,height*.28), Math.min(Math.max(summaryHeight+64,answerHeight+40,96),height*.48), Math.max(64,left),64]
+export function mapViewPadding({width,height,panelRight=0,contentLeft=32,contentRight=width,markerInset=32,headerBottom=150,summaryHeight=0,answerHeight=0,driving=false}) {
+  // The SDK fits coordinate centres. markerInset includes the actual radius and selection ring.
+  // Use the rendered foreground bounds, while preserving at least 360px for the route.
+  const right = Math.min(Math.max(64,width-contentRight+markerInset),Math.max(64,(width-360)/2))
+  const left = Math.min(Math.max(64,!driving && width>1200 ? panelRight+64 : contentLeft+markerInset),Math.max(64,width-right-360))
+  return [Math.min(headerBottom+28,height*.28), Math.min(Math.max(summaryHeight+64,answerHeight+40,96),height*.48),left,right]
 }

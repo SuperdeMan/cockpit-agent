@@ -47,8 +47,12 @@ export function MapStage({card,onBack}:{card:UiCard;onBack?:()=>void}) {
     const padding=()=>{
       const bounds=element.getBoundingClientRect()
       const panel=document.querySelector('.au-panel')?.getBoundingClientRect()
-      return mapViewPadding({width:bounds.width,height:bounds.height,panelRight:panel?.right,
-        headerBottom:topbar.current?.getBoundingClientRect().bottom,
+      const controls=topbar.current?.getBoundingClientRect()
+      return mapViewPadding({width:bounds.width,height:bounds.height,panelRight:panel ? panel.right-bounds.left : undefined,
+        contentLeft:controls ? controls.left-bounds.left : undefined,
+        contentRight:controls ? controls.right-bounds.left : undefined,
+        markerInset:Math.max(64,element.querySelector('.au-map-marker')?.getBoundingClientRect().width||0)/2+8,
+        headerBottom:controls ? controls.bottom-bounds.top : undefined,
         summaryHeight:summary.current?.offsetHeight,
         answerHeight:latest.current.driving&&panel?bounds.bottom-panel.top:0,
         driving:latest.current.driving})

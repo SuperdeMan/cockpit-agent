@@ -1,8 +1,8 @@
 /* Figma Visual v2 · SET-01…05 / 31:495. One solid overlay; no nested glass. */
-.au-settings-overlay { background: var(--au-bg); }
-.au-settings-header { height: 96px; padding: 0 40px 0 48px; flex: none; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--au-line); }
+.au-settings-overlay { --au-settings-inset: max(0px, calc((100vw - 1920px) / 2)); background: var(--au-bg); }
+.au-settings-header { height: 96px; padding: 0 calc(var(--au-settings-inset) + 40px) 0 calc(var(--au-settings-inset) + 48px); flex: none; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--au-line); }
 .au-settings-header h1 { margin: 0; font-size: var(--au-type-headline-size); line-height: var(--au-type-headline-line); }
-.au-settings-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 360px minmax(0,1fr); gap: 88px; padding: 24px; }
+.au-settings-body { flex: 1; min-height: 0; width: min(100%,1920px); margin-inline: auto; display: grid; grid-template-columns: 360px minmax(0,1fr); gap: 88px; padding: 24px; }
 .au-settings-nav { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
 .au-settings-nav-item { position: relative; display: flex; align-items: center; gap: 20px; min-height: max(72px,var(--au-control-target)); flex: none; width: 100%; padding: 12px 24px; border: 0; border-radius: var(--au-r-xl); background: transparent; color: var(--au-text-2); text-align: left; font: inherit; font-size: var(--au-type-label-size); line-height: var(--au-type-label-line); cursor: pointer; }
 .au-settings-nav-item[aria-current] { background: var(--au-surface-2); color: var(--au-text); }

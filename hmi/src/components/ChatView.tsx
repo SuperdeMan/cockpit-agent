@@ -55,7 +55,7 @@ export function ChatView({ messages, livePendingOps, onConfirm, onQuick, partial
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => { if (followRef.current) jump() })
-    if (contentRef.current) observer.observe(contentRef.current)
+    if (contentRef.current) observer.observe(contentRef.current, { box: 'border-box' })
     if (listRef.current) observer.observe(listRef.current)
     return () => observer.disconnect()
   }, [])

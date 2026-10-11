@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url'
 import assert from 'node:assert/strict'
 import {Cdp,sleep} from './driver.mjs'
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..')
-const out=resolve(root,'.artifacts/hmi-map-20261010')
+const out=resolve(root,process.env.HMI_MAP_OUTPUT||'.artifacts/hmi-map-20261010')
 mkdirSync(out,{recursive:true})
 const base=process.env.HMI_MAP_URL||'http://127.0.0.1:5197'
 // Optional in ordinary fixture runs; required for a credential non-disclosure claim.
@@ -39,7 +39,7 @@ try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument',{source:`
     const NativeSocket=window.WebSocket;
     window.__mapSent=[];
-    window.WebSocket=class {static OPEN=1;static CLOSED=3;constructor(url,...args){if(!String(url).includes('localhost:8090/ws'))return new NativeSocket(url,...args);this.readyState=0;window.__mapSocket=this;setTimeout(()=>{this.readyState=1;this.onopen?.({})},10)}send(data){window.__mapSent.push(JSON.parse(data))}close(){this.readyState=3}};
+    window.WebSocket=class {static OPEN=1;static CLOSED=3;constructor(url,...args){if(new URL(url,location.href).pathname!=='/ws')return new NativeSocket(url,...args);this.readyState=0;window.__mapSocket=this;setTimeout(()=>{this.readyState=1;this.onopen?.({})},10)}send(data){window.__mapSent.push(JSON.parse(data))}close(){this.readyState=3}};
     localStorage.setItem('cockpit.settings.v1',JSON.stringify({ttsEnabled:false,autoplay:false}));
   `})
   await cdp.send('Page.navigate',{url:base+'/?theme=dark'})

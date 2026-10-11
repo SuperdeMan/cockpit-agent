@@ -1,6 +1,8 @@
 /* HMI visual v2 I2: full stage, one panel, one voice orb. */
 .au-app {
   --au-panel-width: min(var(--au-size-panel), 48vw);
+  /* Keep foreground controls together on ultrawide displays; the stage still bleeds out. */
+  --au-layout-inset: max(0px, calc((100vw - 2240px) / 2));
   --au-status-height: 72px;
   position: relative; height: 100dvh; overflow: hidden; isolation: isolate;
   background: var(--au-stage); color: var(--au-text); font-family: var(--au-font-ui);
@@ -8,15 +10,15 @@
 .au-stage { position: absolute; inset: 0; overflow: hidden; background: var(--au-stage); }
 .au-stage-content {
   position: absolute; top: var(--au-status-height); bottom: 0;
-  left: calc(var(--au-panel-width) + 72px); right: 0;
+  left: calc(var(--au-layout-inset) + var(--au-panel-width) + 72px); right: 0;
 }
 .au-stage-scrim {
-  position: absolute; inset: var(--au-status-height) auto 0 0; width: calc(var(--au-panel-width) + 72px);
+  position: absolute; inset: var(--au-status-height) auto 0 0; width: calc(var(--au-layout-inset) + var(--au-panel-width) + 72px);
   background: linear-gradient(to right, var(--au-stage-scrim) 0%, var(--au-stage-scrim) 90%, transparent);
   pointer-events: none;
 }
 .au-statusbar {
-  position: relative; z-index: 20; min-height: var(--au-status-height); padding: 4px 40px;
+  position: relative; z-index: 20; min-height: var(--au-status-height); padding: 4px calc(var(--au-layout-inset) + 40px);
   display: flex; align-items: center; justify-content: space-between;
   border-bottom: 1px solid var(--au-line); background: var(--au-material-bar);
   -webkit-backdrop-filter: blur(15px); backdrop-filter: blur(15px);
@@ -39,7 +41,7 @@
 .au-icon-btn:hover, .au-driving-toggle:hover { border-color: var(--au-primary-line); }
 .au-driving-toggle { padding: 0 24px; font-size: var(--au-type-label-size); }
 .au-privacy { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: var(--au-r-full); background: var(--au-warn-soft); }
-.au-main { position: absolute; inset: calc(var(--au-status-height) + 24px) auto 24px 24px; z-index: 10; width: var(--au-panel-width); display: flex; align-items: flex-end; pointer-events: none; }
+.au-main { position: absolute; inset: calc(var(--au-status-height) + 24px) auto 24px calc(var(--au-layout-inset) + 24px); z-index: 10; width: var(--au-panel-width); display: flex; align-items: flex-end; pointer-events: none; }
 .au-panel {
   position: relative; display: flex; flex-direction: column; gap: var(--au-space-24); padding: var(--au-space-32);
   width: 100%; max-height: 100%; height: 100%; overflow: hidden; pointer-events: auto;
@@ -103,7 +105,7 @@
 :root[data-drive='on'] .au-composer-bar { gap: var(--au-space-24); }
 :root[data-drive='on'] .au-conv-panel .chat { mask-image: none; }
 :root[data-drive='on'] .au-conv-panel:has(.chat:empty) { display: none; }
-:root[data-drive='on'] .au-stage-content { left: 0; }
+:root[data-drive='on'] .au-stage-content { left: var(--au-layout-inset); }
 :root[data-drive='on'] .au-stage-scrim { display: none; }
 :root[data-drive='on'] .au-edge-glow { opacity: .35; }
 .au-edge-glow { z-index: 40; animation-duration: var(--au-glow-breathe); }

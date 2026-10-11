@@ -72,7 +72,8 @@ export function createMapView(AMap, container, {model,theme,driving,onReady,onEr
       node.title = entry.name
       node.setAttribute('aria-label',entry.label+' '+entry.name)
       node.addEventListener('click',() => { if (!driving) onSelect(entry.index) })
-      const marker = new AMap.Marker({position:entry.position,content:node,anchor:'center',zIndex:60})
+      // CSS centers the live-sized button; SDK's cached centre offset goes stale when drive/font changes.
+      const marker = new AMap.Marker({position:entry.position,content:node,anchor:'top-left',zIndex:60})
       overlays.push(marker)
       markerNodes.push({entry,node})
     }

@@ -6,6 +6,8 @@
 
 预览：`?tokens` 字阶、`?icons` 图标、`?demo[=map|cards|info|states|charge|trip|route|results]`、`?card-gallery=N`（44 份样本）、`?settings[=tts|asr|wake|pipeline|occupants|vision|display|location|assistant|agents|memory|developer]`。加 `&theme=light` 切浅色；大字/大触控/手动行车在「显示」中切换。诊断默认隐藏，`?dev` 或「开发者模式」开启。
 
+分辨率适配：以 1920×1080 为基准，超宽屏前景区域上限 2240 并居中，背景与地图铺满；设置区域上限 1920，正文 1120。字号沿用用户选择，地图按实际标记尺寸取景。候选实现、9 视口矩阵及发布状态见 [适配记录](../docs/design/2026-10-11-hmi-resolution-adaptation.md)。
+
 ## v2 完整结果阅读（CA2-04）
 
 final 可带 ResultBundle v1；`resultBundle.mjs` 与 Android 共用字段选择、旧协议回退和 revision 规则。

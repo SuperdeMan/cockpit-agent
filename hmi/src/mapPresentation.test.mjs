@@ -54,3 +54,23 @@ test('camera avoids the parked conversation and the driving answer, using SDK or
   assert.equal(drive[1],280)
   assert.equal(drive[2],64)
 })
+
+test('ultrawide camera keeps the route inside the centered controls area',()=>{
+  const parked=mapViewPadding({width:3440,height:1440,panelRight:1424,contentLeft:1472,contentRight:2808,headerBottom:224})
+  assert.ok(parked[2]>=1424+64,'markers must clear the conversation')
+  assert.ok(3440-parked[3]<=2808-32,'route must clear the outer right gutter')
+  const driving=mapViewPadding({width:3440,height:1440,contentLeft:632,contentRight:2808,driving:true})
+  assert.equal(driving[2],driving[3],'driving route must remain centered')
+  assert.ok(driving[2]>=632)
+  const constrained=mapViewPadding({width:1366,height:768,panelRight:1100,contentRight:1000})
+  assert.ok(1366-constrained[2]-constrained[3]>=360,'keep a usable map viewport')
+})
+
+test('map bounds contain enlarged markers and their selection rings',()=>{
+  for(const diameter of [64,70,76,84]) {
+    const radius=diameter/2
+    const [, ,left,right]=mapViewPadding({width:3440,height:1440,contentLeft:632,contentRight:2808,markerInset:radius+8,driving:true})
+    assert.ok(left-radius>=632+8,'left marker ring crosses the content boundary')
+    assert.ok(3440-right+radius<=2808-8,'right marker ring crosses the content boundary')
+  }
+})

@@ -69,6 +69,11 @@ await withVisualPage('scroll-regression', async ({ cdp, out, go, screenshot }) =
   }
   // A late image/card measurement and viewport resize may happen without a new message.
   await go('?demo=states')
+  // Isolate padding from viewport changes: a viewport ResizeObserver can otherwise mask this gap.
+  await cdp.eval("document.querySelector('.au-chat-content').style.paddingBottom='220px';true")
+  await sleep(160)
+  const paddingOnly=await metrics()
+  verify(paddingOnly.gap<2&&!paddingOnly.notice,'padding-only resize detached the tail')
   const resizes=[]
   for (const height of [1080,720,1080]) {
     await cdp.send('Emulation.setDeviceMetricsOverride',{width:1920,height,deviceScaleFactor:1,mobile:false})
@@ -83,7 +88,7 @@ await withVisualPage('scroll-regression', async ({ cdp, out, go, screenshot }) =
   await cdp.eval("document.querySelector('.au-chat-content').style.paddingBottom='400px';true")
   await sleep(160)
   verify((await metrics()).top===reader.top,'late content resize moved the history reader')
-  writeFileSync(join(out,'scroll-evidence.json'),JSON.stringify({evidence,resizes,failures},null,2))
-  console.log(JSON.stringify({cases:evidence.length,resizes:resizes.length,failures}))
+  writeFileSync(join(out,'scroll-evidence.json'),JSON.stringify({evidence,paddingOnly,resizes,failures},null,2))
+  console.log(JSON.stringify({cases:evidence.length,paddingOnly:paddingOnly.gap,resizes:resizes.length,failures}))
   assert.deepEqual(failures,[])
 })

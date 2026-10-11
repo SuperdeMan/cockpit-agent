@@ -112,6 +112,12 @@ node test/hmi_cdp/visual_map_layers.mjs
 真实对话另跑，不能用这些业务夹具关闭线上端到端缺陷。修前失败与修后证据见
 [2026-10-11 浏览器验收](../../docs/reviews/2026-10-11-hmi-visual-v2-browser-audit.md)。
 
+## 分辨率与窗口变化
+
+分辨率适配另跑 `visual_resolution.mjs`：设置 `HMI_VISUAL_URL`、`HMI_VISUAL_BATCH`，覆盖 9 种 CSS 视口/DPR、深浅、大字、设置与地图/行车，共 180 组；`HMI_RESOLUTION_SMOKE=1` 仅用于 3440 单组合冒烟。需要地图 Vite 配置，业务 WebSocket 始终在浏览器内隔离。与其它 CDP 9339 用例串行；完整边界与证据见 [分辨率适配](../../docs/design/2026-10-11-hmi-resolution-adaptation.md)。
+
+地图专项 `map_stage.mjs` 的 `HMI_MAP_URL` 指定 Vite 地址，`HMI_MAP_OUTPUT` 可指定本轮证据目录，避免覆盖历史目录；不再依赖后端恰好是 `localhost:8090`。它使用 CDP 9371。
+
 ## 首屏资源回归
 
 `startup_servers.mjs` 只起测试用 Vite（5194/5195），比较开发入口与同一构建产物 HTTP handler。
