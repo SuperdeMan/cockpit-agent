@@ -1,7 +1,7 @@
 """唤醒后连续对话的拒识：真栈探针（docs/design/2026-10-10-handsfree-followup-rejection.md §5）。
 
 只读：每例一个签名的合成 E2E 用户、车辆 v1 的新会话，两轮——
-  1) 按唤醒词那一轮发一句只读问句（`input_source=voice_wake`），让助手先答一句；
+  1) 按唤醒词那一轮发一句只读问句（`input_source=voice_wake`，每轮换一个城市的天气），让助手先答一句；
   2) 按续问窗来源发这一例（`input_source=voice_followup`），看云端拒没拒。
 第二轮读 collector trace：`cloud.voice_admission`（exit=continuation，两次判定与耗时）与 `rejected`（judge）。
 正例只有问句 / 闲聊（不含车控），负例是人人对话 / 电话 / 广播 / 自言自语；全程断言零动作。前后各核一次 release SHA。
@@ -30,7 +30,8 @@ from scripts.e2e_identity import sign_identity  # noqa: E402
 from scripts.render_cloud_env import DEMO_AUTH_SCOPES  # noqa: E402
 
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
-OPENING = "深圳明天天气怎么样"
+#: 每轮换一个城市开场：判定消息里带着助手上一句，逐字相同的重复会命中网关 300 s 缓存、不是独立重复
+OPENINGS = ("深圳明天天气怎么样", "广州明天天气怎么样", "杭州明天天气怎么样", "成都明天天气怎么样", "武汉明天天气怎么样")
 #: (续问窗里收到的这句, 是否对助手说的)。前 8 句是核心旅程 F12 的原句（R01–R08）。
 CASES = (
     ("妈你到哪了，我们在停车场等你", False),
@@ -90,7 +91,8 @@ async def probe(expected_sha: str, repeat: int) -> dict:
                         await asyncio.wait_for(ws.recv(), timeout=wire._HELLO_WAIT_S)
                     except asyncio.TimeoutError:
                         pass
-                    opening = await wire._one_turn(ws, session, OPENING, meta_overrides={"input_source": "voice_wake"})
+                    opening = await wire._one_turn(ws, session, OPENINGS[rep % len(OPENINGS)],
+                                                   meta_overrides={"input_source": "voice_wake"})
                     started = time.monotonic()
                     obs = await wire._one_turn(ws, session, text, trace_id=trace,
                                                meta_overrides={"input_source": "voice_followup"})

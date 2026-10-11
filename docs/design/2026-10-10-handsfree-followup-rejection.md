@@ -1,6 +1,6 @@
 # 唤醒后连续对话的拒识：续问窗收进人人对话
 
-- 状态：落地中（2026-10-10，用户授权提交、推送、部署与真栈验证）
+- 状态：云端与 HMI 已部署 `0c07bc33`（2026-10-11，用户授权提交、推送、部署与真栈验证）；Android 代码已入库、设备包未重打（手机未连接）
 - 交付对象：云端编排（`orchestrator/cloud`）、共享语音状态机（`hmi/src/voiceLoop.mjs`）、HMI、Android
 - 关联：`orchestrator/cloud/admission.py`、`orchestrator/cloud/engine.py`、`hmi/src/voiceLoop.mjs`、
   `hmi/src/handsFreeController.ts`、`hmi/src/App.tsx`、`mobile/src/core/voice/handsFree.ts`、
@@ -145,4 +145,19 @@
   3003 ms 超时，回落规划器的宽松判定放行。
 - **复核被网关缓存吃掉**：判否的两问合计只有 0.7–1.5 s、每次都是「否、否」，第 2 轮里大量判定只要 5–10 ms（两问都命中缓存）。
   离线评测直连厂商所以复核有效，线上等于没做——修法见 §4.1 末条（复核差一个换行、每问上限 5 s），随后重新发布复测。
+
+### 6.3 真栈复测（`0c07bc33`，2026-10-11）
+
+- 发布：status release = running = `0c07bc3341ef74d96467dbbb4e4e8163b29fca7d`、ok、5/5 healthy、无告警、可用 `56,443,088,896` 字节；
+  verify `verified`（`.artifacts/dev-stack-verifications/20261011T012614Z-0c07bc3.json`，全局生效模型仍是
+  `minimax:MiniMax-M3.1-Flash-Preview`）；CI 8 个 job 全绿（`4142fb2e` 同样全绿）。
+- `python scripts/probe_followup_rejection.py --expected-sha 0c07bc33… --repeat 3`（每轮换一个城市的天气开场，免得重复命中缓存）：
+  **48 轮、链路错误 0、续问窗判定 48/48 接上、判定超时 0、零动作、前后 release 一致，PASS**。
+  - 负例 **30/30 拒掉**：F12 的六句（家人对话两句、打电话、新闻播报、公交报站、电台串词）与「你今天几点下班」
+    「张姐，这个月报表弄好了吗」「我这边在开车，晚点给你回过去」「完了，忘带充电器了」，每句 3/3。
+  - 正例 **0/18 误拒**：「现在几点了」「帮我查下明天杭州的天气」「那后天呢」「上海呢」「要带伞吗」「给我讲个笑话」。
+    第 2 轮「现在几点了」第一问判否、复核判受话 ⇒ 放行：复核在线上生效了。
+  - 时延：拒识轮判定 1.3–3.2 s（两问）、整轮 2.3–4.0 s 落地；受话轮判定 0.6–1.7 s，与规划并行，整轮 2.5–5.6 s 由规划决定。
+  - 证据：`.artifacts/followup-rejection/probe-0c07bc33-r3.json`。对照：发布前生产（`47a71942`）同来源 F12 六句 7 趟只拒 20/42。
+- 尚未覆盖：真麦克风、真车厢噪声与多人同时说话（文本层以外的问题）；Android 设备包未重打。
 
