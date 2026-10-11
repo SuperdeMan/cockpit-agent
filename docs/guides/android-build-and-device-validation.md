@@ -145,6 +145,7 @@ AR01 留下过 SDK XML、NODE_ENV、NO_COLOR/FORCE_COLOR、Gradle 废弃项、�
 | ColorOS 内屏仍是窄竖屏 / 平行窗口 | 同时读 active input viewport、App window bounds 和 `native-spike` 的 dp/layout；物理屏变大不等于 App 得到宽窗口。AR04 实测默认兼容窗约 392dp，经授权切全屏才得到 652dp 与 drawer/tabletop。切换可能要求应用重启，需重建样本；恢复入口为系统通知“恢复”或设置→大屏专区→兼容模式 |
 | 物理旋转和折叠接得很快 | 每个姿态保持后取证，并比较采样前后 base/committed state 与 active viewport。变化期间的 XML/截图可能来自相邻姿态；AR04 曾取到两张相同截图，不能按不同前置状态重复签收 |
 | USB 用途弹窗或大屏系统设置分栏 | 先核顶层 package，USB 弹窗遮挡时不能把“读不到草稿”判为 App 丢数据；仅关闭弹窗即可继续，不必更改 USB 模式。ColorOS 设置分栏时 UIAutomator 可能只返回右侧活动窗口，左侧目录按当前截图定位，或在收拢后的单栏中导航 |
+| 深链冒烟只在亮屏前台跑过 | 冷启动深链、运行中深链之外补一条：锁屏下拉起 App、等 JS 启动（`Running "main"`）后**锁屏中**送运行期深链，再解锁。窗口从未布局时根导航器不就绪，`+native-intent` 若当场导航会在 expo-router 自己的 effect 里闪退（2026-10-11 旧包 2 / 2，修复见[语义打断 §8.2](../design/2026-10-11-semantic-barge-in.md)）。解锁与深链同时到、或拉起后立刻被别的页盖住（JS 不启动）都复现不了。设备无锁屏凭据（`dumpsys lock_settings` 的 `CredentialType: NONE`）时用 `input keyevent KEYCODE_SLEEP / KEYCODE_WAKEUP` + `wm dismiss-keyguard`；有凭据的设备不要这样做，锁上就得找人解 |
 | Git Bash 改写 Android 文件路径 | adb 操作用 PowerShell；避免 MSYS 把 `/sdcard/...` 改成宿主路径 |
 | App 卡 connecting、宿主云服务却正常 | 先检查手机 Tailscale 是否在线、手机侧 DNS/连接是否正常。两台设备都曾静默掉线；广播不一定能拉起客户端，前台打开后才恢复。此现象不等于 APK 构建失败 |
 

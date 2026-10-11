@@ -1,6 +1,6 @@
 # 语义打断：播报中有人说话先压低、判定后再决定停不停
 
-- 状态：云端与 HMI 已部署 `eb098edd`（2026-10-11，用户：「可以，开始做语义打断」；提交、推送、部署与真栈验证沿用上一项的授权）；Android 常驻包 `eb098eddc` 已装 OPPO（test），Xiaomi 仍是上一包 `b79daa46b`；真车声学由用户验
+- 状态：云端与 HMI 已部署 `eb098edd`（2026-10-11，用户：「可以，开始做语义打断」；提交、推送、部署与真栈验证沿用上一项的授权）；Android 常驻包 `eb098eddc` 已装 OPPO（test），Xiaomi 仍是上一包 `b79daa46b`；真车声学由用户验；两处遗留缺陷（网关温度 0 被当成没传、Android 深链在根导航器就绪前送达即闪退）已修，发布 `65ddeb85`、Android `1778e22eb` 装 OPPO（§8）
 - 交付对象：共享语音状态机（`hmi/src/voiceLoop.mjs`）、HMI、Android、llm-gateway、云端编排
 - 前置：[唤醒后连续对话的拒识](2026-10-10-handsfree-followup-rejection.md) §4.4「语义打断」；R4.2 流式 TTS + barge-in
 
@@ -91,7 +91,7 @@ Android 拒识提示（续问窗拒识与插话判非受话两条）的显示时
 - 判定期间用户继续说的话不并进这一句（THINKING 期不收音，同今天）。
 - 不改云端续问窗判据本身（系统提示、复核规则）；插话与续问窗共用这份判据，2026-10-10 的离线 / 真栈读数仍然适用。
 - llm-gateway `Complete` 把 `temperature=0` 当成未传（`request.temperature or 0.7`），所以云端判定实际跑在 0.7。
-  影响所有请求 0 温度的调用方，单独立项，不在本项。
+  影响所有请求 0 温度的调用方，单独立项，不在本项。**已修**（`e5d581f9`，§8.1）。
 
 ## 6. 验证
 
@@ -131,4 +131,63 @@ Android 拒识提示（续问窗拒识与插话判非受话两条）的显示时
   包内含判定接口路径与新提示；上一包 `b13e13fd4`。
 - 设备上另记一条**既有**缺陷（与本项无关）：App 被 monkey 启动时系统 USB 弹窗占着焦点、Activity 未进前台，12 s 后深链 `xiaozhou://settings`
   送达即崩（expo-router「Attempted to navigate before mounting the Root Layout component」，`+native-intent` 在根布局挂载前直接导航）；
-  再次打开正常。导航代码本项未改，待用户决定是否修。
+  再次打开正常。导航代码本项未改，待用户决定是否修。**已修**（`1778e22e`，§8.2）：触发条件不是 USB 弹窗本身，而是 App 在锁屏 / 被挡着时拉起、窗口从未布局。
+
+## 8. 两处遗留缺陷的修复（2026-10-11）
+
+用户：「问题要修」（§5 记的网关温度、§7.2 记的 Android 深链闪退），提交、推送、部署与真栈验证沿用同一授权。
+代码 `e5d581f9`（网关）、`1778e22e`（Android），合入当时的 main 后发布 `65ddeb85`。
+
+### 8.1 网关把温度 0 当成没传（`e5d581f9`）
+
+- 根因：`CompleteRequest.temperature` 是 proto3 普通 `float`，0 是缺省值、不上线路；网关 `request.temperature or 0.7`
+  分不清「传了 0」与「没传」。所有请求 0 的调用方实际都跑在 0.7：唤醒轮与续问窗的受话判定（云端编排）、插话判定
+  （llm-gateway 接口）、手册目录路由、提醒时间抽取、场景编译首轮、地标解析。离线评测直连厂商、温度 0，与线上口径不一致。
+- 修：proto 改 `optional float temperature = 3`（同号同类型、线路兼容；从不设它的老调用方照旧拿缺省）；
+  网关 `Complete` 与 `CompleteStream` 共用一个取值：传了就用（含 0），没传取 0.7。响应缓存键用取值之后的温度，0 与缺省不互相命中。
+- 改之前先直连厂商核过：MiniMax-M3、MiniMax-M3.1-Flash-Preview 与备份档 DeepSeek（`deepseek-v4-flash`）温度 0 都正常返回（HTTP 200、业务码 0）。
+- 本地：新增 3 条单测（非流式 / 流式 / 缓存分开）；Python 全量 11594 passed / 37 skipped（`1778e22e`）。
+
+### 8.2 Android 深链在根导航器就绪前送达即闪退（`1778e22e`）
+
+- 根因链：
+  1. expo-router 在原生端不给 `SafeAreaProvider` 初始尺寸，子树要等窗口第一次报 insets 才渲染——在那之前根布局与 Stack 都不挂，根导航器不就绪；
+  2. 锁屏或被系统弹窗挡着时拉起 App：Activity 被短暂 resume、JS 照跑，但窗口从未布局，根导航器一直不就绪；
+  3. 这时送来的运行期深链（`initial: false`，singleTask 走 onNewIntent）进 `+native-intent`，`router.dismissTo / navigate`
+     入 expo-router 的 routingQueue；它自己的 effect 排空队列时 `assertIsReady()` 抛「Attempted to navigate before mounting the
+     Root Layout component」——抛在 expo-router 的 effect 里，release 包是致命异常，我们这边的 try/catch 包不住。
+- 复现（OPPO，旧包 `eb098eddc`）：锁屏下 monkey 拉起、等 10 s（JS 已启动）、锁屏中送 `xiaozhou://settings` ⇒ **2 / 2 闪退**；
+  解锁与深链同时到 0 / 2。冷启动途中第二次 `am start`（0.3–4 s 扫 12 档）0 / 12；拉起后立刻被设置页盖住时 JS 根本不启动，也不触发。
+  §7.2 那一次是同一条路径：拉起时焦点在锁屏 / 通知栏窗口。
+- 修：`core/nav/navReady` 只认导航容器自己的 `isReady()`（与那条断言同一判据），由根布局用官方 `useNavigationContainerRef` 登记，
+  没登记一律当未就绪；`+native-intent` 就绪时行为逐字不变（当场按序两步、返回 null），没就绪就等（50 ms 轮询、最多 10 s）再发，
+  等不到把规范化后的 URL 交回 router（它自己的 listener 带 try/catch，最坏是这一跳没生效，而不是闪退）。
+- 本地：jest 7 条（就绪 / 根布局未登记 / 登记未就绪 / 超时交回 / 判据抛错 / 冷启动与外部 URL / 只撤自己的登记）；
+  去掉就绪判断（即修前行为）4 / 7 变红；tsc、eslint 零告警。
+- 设备：OPPO PEUM00（test）装 `xiaozhou-companion-prod-release-1778e22eb-20261011-1819.apk`（SHA-256 `4978ca0a…ae74c`，
+  设备与本地一致、非 DEBUGGABLE）。同一复现路径 **3 / 3 不崩**：锁屏期间进程在、解锁后停在设置页（等到就绪才导航）；
+  解锁同时送 1 / 1；运行中 voice / settings / vehicle 连送 9 次再逐个各送 1 次都落对页、同一进程、任务栈 1 个 Activity；冷启动深链落设置页。
+  证据在本机 `%LOCALAPPDATA%/car-agent/artifacts/deeplink-ready-apk-20261011-180436/`（界面导出含天气卡街道地址，不入库）。
+  Xiaomi（compare）仍是 `b79daa46b`。
+
+### 8.3 真栈（`65ddeb85`，2026-10-11）
+
+- 发布：干净隔离克隆 dry-run 无阻塞后 apply（共享仓库的本地 `main` 仍被另一会话检出在 `eb65859a`）；status release = running =
+  `65ddeb85b2b3a9c68676ee8238ceee3e5c035aa2`、ok、5/5 healthy、零告警。切换后约 1 分钟的首次 verify 失败、工件未记原因
+  （`20261011T103323Z-unknown.json`），单跑发布核对一步通过后整次重跑 `verified`（`.artifacts/dev-stack-verifications/20261011T103538Z-65ddeb8.json`，
+  `e2e_remote_safe`，全局生效模型仍是用户的测试设置 `minimax:MiniMax-M3.1-Flash-Preview`，判定走 `@fast` = M3）；CI 8 / 8（run 38131941601）。
+- 插话判定（`scripts/probe_bargein_admission.py` ×2，两次相隔 10 分钟以上、零缓存命中，96 次都是独立判定）：负例 **59 / 60** 判非受话，
+  正例 **36 / 36** 判受话，判不出 **0**（0.7 时 96 次里 3 次第一问超 5 s）。漏的那 1 次是「你今天几点下班」：第一问判否、复核判受话。
+  复核共翻转 3 次（2 次救回正例、1 次放过负例）——温度 0 下复核仍有作用。判非受话中位 2.0 s / p90 2.9 s，判受话中位 0.86 s / p90 2.6 s
+  （0.7 首跑：2.0 s / 2.4 s，0.96 s / 2.1 s）。签名车道：带 `voice_admitted=1` 只有 `bargein_preadmitted`、正常作答，不带标记的负例被续问窗判定拒掉，
+  不带身份 401，零动作。证据 `.artifacts/semantic-bargein/probe-65ddeb85-t0-run1.json`、`probe-65ddeb85-t0-run2.json`。
+- 续问窗（`scripts/probe_followup_rejection.py` ×3）：48 轮、链路错误 0、续问窗判定 48 / 48、判不出 0、零动作；负例 **30 / 30** 拒、
+  正例 **0 / 18** 误拒，PASS——与 0.7 下（`0c07bc33`，[续问窗拒识](2026-10-10-handsfree-followup-rejection.md) §6.3）同数。拒识轮判定 1.5–2.9 s、整轮 2.3–3.7 s 落地。
+  证据 `.artifacts/followup-rejection/probe-65ddeb85-t0-r3.json`。
+- 其他改成真 0 的调用方：核心旅程受影响的家族各 1 遍（规划钉 MiniMax-M3，同基线）。只读车道 71 条 70 过：F01 手册 29 / 30、F06 导航 27 / 27、
+  F09 周边 6 / 6、F12 受话 8 / 8；唯一红 M09 第二轮「怎么调」被规划落到闲聊、没派手册（与目录路由无关；`5afd98fd` ×5 基线 2 / 5，已知方差）。
+  F12 的 R03 / R05 / R06 在 `5afd98fd` ×5 基线是 0 / 5、1 / 5、0 / 5，这遍都过；中间隔着续问窗拒识（`0c07bc33`），单遍读数不归因于温度。
+  合成写车道 F10 提醒 N01 / N02 2 / 2、收尾清理核对通过。证据错误、残留挂起、发布连续性错误都是 0。
+  证据 `.artifacts/v2-runtime/temp0-65ddeb85-readonly-r1.json`、`temp0-65ddeb85-f10-r1.json`。
+- 读法：温度 0 下判定接口不再超时判不出，负例多漏 1 / 60，在这个样本量上与 0.7 分不开；续问窗两档同数；其余调用方没有看到回退。
+  按设计的 0 运行，不回退。

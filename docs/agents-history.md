@@ -11090,3 +11090,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 用户批准候选的精确推送、部署与复验；随后只合入已发布的交接文档，HMI 源码与已验证候选一致，最终精确推送。CI 8/8 成功、干净工作树 dry-run 无阻塞后 apply，独立 status / verify 与浏览器前后版本检查通过；当前发布字段集中见 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 - 线上 9 视口 × 两主题 × 两字号 × 5 场景共 180/180，恢复贴左的负向注入能报错；5 次改窗、2 次实际字号切换和 7 次地图鼠标点击通过。SDK 9 场景及缺坐标/取消/保序/失败重试、滚动 8 场景与 3 次 resize、独立 padding 底部跟随均通过；3440 待机、地图与设置另做目视检查。
 - 三个独立 Edge 冷启动为 1.059 / 1.046 / 1.030 s，均 6 请求，gzip、跨源隔离与 SharedArrayBuffer 生效，源码/HMR 请求为 0。线上资源和地图真实加载，业务 WS 隔离，零业务帧；没有重做密钥内容扫描、真人语音或实车验收。证据汇总与线上截图见 [适配记录](design/2026-10-11-hmi-resolution-adaptation.md#授权发布与线上复验)。
+
+## 2026-10-11：网关温度 0 与 Android 深链闪退（`e5d581f9` / `1778e22e`，发布 `65ddeb85`）
+
+- 用户：「问题要修」——语义打断那轮记下的两处遗留缺陷，提交、推送、部署与真栈验证沿用同一授权。根因、修法与读数见 [语义打断 §8](design/2026-10-11-semantic-barge-in.md)。
+- 网关：`CompleteRequest.temperature` 是 proto3 普通 float，0 不上线路，`temperature or 0.7` 把「传了 0」当没传——受话判定、插话判定、手册目录路由、提醒时间抽取、场景编译首轮、地标解析一直跑在 0.7，离线评测（直连厂商、0）与线上口径不一致。改 `optional` + 网关按「有没有传」取值；改前直连核过 MiniMax-M3 / M3.1-Flash-Preview / DeepSeek 都接受 0。
+- Android：锁屏或被系统弹窗挡着时拉起 App，JS 照跑但窗口从未布局，根导航器不就绪（expo-router 原生端 SafeAreaProvider 要等第一次 insets 才渲染子树）；这时的运行期深链让 `+native-intent` 发的 `router.*` 在 expo-router 自己的 effect 里抛 `assertIsReady`，release 闪退（旧包锁屏复现 2 / 2）。改为就绪后才导航、没就绪先等、等不到交回 router；新包同一路径 3 / 3 不崩、解锁后落设置页。
+- 验证：Python 全量 11594 / 37（`1778e22e`）；jest 新增 7 条（去掉就绪判断 4 条变红）、tsc / eslint；CI 8 / 8；status / verify 通过（`20261011T103538Z-65ddeb8.json`；切换后 1 分钟的首次 verify 失败、未记原因，重跑通过）。温度 0 真栈：插话判定 96 次负例 59 / 60、正例 36 / 36、判不出 0；续问窗 48 轮负例 30 / 30、正例误拒 0 / 18；核心旅程受影响家族只读 71 条 70 过（唯一红 M09 为已知规划方差）、F10 提醒 2 / 2。
+- 设备：OPPO（test）装 `1778e22eb`；Xiaomi 仍是 `b79daa46b`。
+- ⛔ 深链闪退只在「锁屏中送深链」时复现：冷启动途中连发、拉起后立刻被别的页盖住（JS 不启动）、解锁与深链同时到都复现不了——复现配方写进了 [Android 构建与设备验证](guides/android-build-and-device-validation.md) §6。
