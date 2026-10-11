@@ -7,6 +7,7 @@
   B) 已判过的一轮走签名车道：唤醒那一轮先答一句，再按插话来源发一句带 `voice_admitted=1` 的问句——
      trace 里只能有 exit=bargein_preadmitted、不能有续问窗判定，且不被拒；对照：同来源不带标记的负例照旧被续问窗判定拒掉。
 全程断言零动作；前后各核一次 release SHA。
+⚠ 两次运行要相隔 5 分钟以上：消息逐字相同的判定会命中网关 300 s 缓存，第二次就不是独立判定了（2026-10-11 复跑实测中位 3 ms）。
 
 用法：
   python scripts/probe_bargein_admission.py --expected-sha <40 位 release> --output <json> [--repeat 3]
@@ -41,6 +42,20 @@ SPOKEN = (
     "已为您规划去公司的路线，全程约二十五分钟，前方三公里有拥堵。",
     "杭州明天小雨，最高气温二十二度，出门记得带伞。",
 )
+#: 天气类追问（「那后天呢」「上海呢」「要带伞吗」）只在助手正在播天气时才是接着说——配天气回答（每轮换城市，避开缓存）。
+#: 2026-10-11 首跑把它们与放歌 / 讲笑话的回答随机配对：放歌时问「要带伞吗」也可能是在问同车的人，判否说得通，那不是该测的场景。
+WEATHER_SPOKEN = (
+    "深圳明天多云转晴，最高气温二十七度，东南风二级，适合出行。",
+    "广州明天阵雨，最高气温二十九度，湿度较大。",
+    "成都明天阴，最高气温二十度，早晚偏凉。",
+)
+WEATHER_FOLLOWUPS = frozenset({"那后天呢", "上海呢", "要带伞吗"})
+
+
+def _spoken_for(text: str, rep: int, index: int) -> str:
+    if text in WEATHER_FOLLOWUPS:
+        return WEATHER_SPOKEN[(rep + index) % len(WEATHER_SPOKEN)]
+    return SPOKEN[(rep + index) % len(SPOKEN)]
 
 
 def _audio_base() -> str:
@@ -51,23 +66,29 @@ def _audio_base() -> str:
 
 
 def _post(url: str, body: dict, token: str, timeout: float = 15.0) -> tuple[int, dict, float]:
+    """回 (HTTP 状态, 回包, 墙钟 ms)。连接级失败（TLS 握手超时、断连）重试一次，仍失败记状态 0——链路问题
+    如实记一行、不中断整轮，也不算判定对错。"""
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    started = time.monotonic()
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8") or "{}")
-            status = resp.status
-    except urllib.error.HTTPError as exc:
-        status = exc.code
+    for attempt in (1, 2):
+        started = time.monotonic()
+        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            payload = json.loads(exc.read().decode("utf-8") or "{}")
-        except ValueError:
-            payload = {}
-    return status, payload, round((time.monotonic() - started) * 1000)
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8") or "{}")
+                return resp.status, payload, round((time.monotonic() - started) * 1000)
+        except urllib.error.HTTPError as exc:
+            try:
+                payload = json.loads(exc.read().decode("utf-8") or "{}")
+            except ValueError:
+                payload = {}
+            return exc.code, payload, round((time.monotonic() - started) * 1000)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            if attempt == 2:
+                return 0, {"error": type(exc).__name__}, round((time.monotonic() - started) * 1000)
+    return 0, {}, 0
 
 
 def judge_endpoint(audio: str, secret: bytes, run_id: str, repeat: int) -> dict:
@@ -80,7 +101,7 @@ def judge_endpoint(audio: str, secret: bytes, run_id: str, repeat: int) -> dict:
         token = sign_identity(secret, run_id=run_id, user_id=user, vehicle_id="v1",
                               scopes=list(followup.SCOPES), timeout_s=900)
         for index, (text, addressed) in enumerate(followup.CASES):
-            previous = SPOKEN[(rep + index) % len(SPOKEN)]
+            previous = _spoken_for(text, rep, index)
             status, payload, wall_ms = _post(url, {"utterance": text, "previous": previous,
                                                     "session_id": f"{user}-session-1"}, token)
             row = {"rep": rep, "text": text, "gold_addressed": addressed, "previous": previous[:16],

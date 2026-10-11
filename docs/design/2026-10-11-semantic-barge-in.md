@@ -1,6 +1,6 @@
 # 语义打断：播报中有人说话先压低、判定后再决定停不停
 
-- 状态：已实现、本地验证通过，待部署（2026-10-11，用户：「可以，开始做语义打断」；提交、推送、部署与真栈验证沿用上一项的授权）
+- 状态：云端与 HMI 已部署 `eb098edd`（2026-10-11，用户：「可以，开始做语义打断」；提交、推送、部署与真栈验证沿用上一项的授权）；Android 常驻包 `eb098eddc` 已装 OPPO（test），Xiaomi 仍是上一包 `b79daa46b`；真车声学由用户验
 - 交付对象：共享语音状态机（`hmi/src/voiceLoop.mjs`）、HMI、Android、llm-gateway、云端编排
 - 前置：[唤醒后连续对话的拒识](2026-10-10-handsfree-followup-rejection.md) §4.4「语义打断」；R4.2 流式 TTS + barge-in
 
@@ -102,4 +102,33 @@ Android 拒识提示（续问窗拒识与插话判非受话两条）的显示时
 
 ## 7. 读数
 
-（实施后填写）
+### 7.1 本地（`eb098edd`）
+
+- HMI node 443 / 443、typecheck、生产构建通过；Android jest 1509 / 1509（全量并发下 3 个界面套件 7 例超时，单独重跑 34 / 34 通过，
+  与 2026-10-10 同一类满载抖动）、tsc、eslint 零告警；Python 全量 11591 passed / 37 skipped（开发工作树，`models/` 只链接了子目录），
+  四道门禁与端侧 smoke 通过。
+- 变异 11 条全部被抓：旧回答播完不再被吸收、先放手后停、确认条可见仍判、去掉本地停词、判非受话也停播、判受话不带已判过、
+  拆机不恢复音量、打断计时不含确认窗、云端不认已判过、网关换档位、网关不要求身份。
+
+### 7.2 真栈（`eb098edd`，2026-10-11）
+
+- 发布：status release = running = `eb098eddc2b1bac00aa0ba152adfdc99013af75c`、ok、5/5 healthy、无告警、可用 51,193,044,992 字节；
+  verify `verified`（`.artifacts/dev-stack-verifications/20261011T083355Z-eb098ed.json`，全局生效模型 `minimax:MiniMax-M3.1-Flash-Preview`，
+  用户的测试设置；判定走 `@fast` = M3）；CI 8 / 8。云上 HMI 下发的前端包含 `/api/voice/admission` 与「我接着说」提示。
+  部署用干净隔离克隆：共享仓库的本地 `main` 当时被另一个会话的工作树检出、停在旧提交，发布闸只认 `refs/heads/main` 可达。
+- `scripts/probe_bargein_admission.py`（签名合成用户，只读）两轮：
+  - 首跑（插话那句与「正在播的回答」随机配对）：48 次判定、HTTP 错误 0，负例 30 / 30 判非受话，正例 16 / 18——
+    「要带伞吗」配的是「为您播放周杰伦的《晴天》」，两问都判否（放歌时问「要带伞吗」也可能是在问同车的人，判否说得通），
+    另一例第一问超过 5 s 判不出（客户端按旧路径发出，不丢话）。判非受话中位 2.0 s / p90 2.4 s，判受话中位 1.0 s / p90 1.6 s。
+  - 复跑（天气类追问配天气回答）：负例 30 / 30、正例 16 / 18，没判对的两例都是第一问超过 5 s 判不出，误拒 0。
+    ⚠ 复跑紧接首跑，负例与非天气正例的消息与首跑逐字相同、命中网关 300 s 缓存（中位 3 ms），只有新配的 9 次是独立判定；
+    探针两次运行要相隔 5 分钟以上。超时的那两对随后单独各问一次都在 0.8–1.0 s 判受话，是模型偶发慢，不是输入问题（96 次里 3 次）。
+  - 签名车道：带 `voice_admitted=1` 的插话轮只有 exit=bargein_preadmitted、正常作答（3.1 / 4.4 s）；不带标记的负例照旧被续问窗判定拒掉；
+    不带身份请求 401；零动作，前后 release 一致。证据 `.artifacts/semantic-bargein/probe-eb098edd-r3-run1-mixed-context.json`、
+    `probe-eb098edd-r3-run2.json`。
+- 设备：OPPO PEUM00（test，Android 14）装 `xiaozhou-companion-prod-release-eb098eddc-20261011-1643.apk`（SHA-256 `d58b74c9…4e7f`，
+  ORT 1.30.0，签名同登记值），设备与本地 SHA-256 一致、非 DEBUGGABLE、设置页底部 `v0.1.0 · prod · eb098eddc · 2026-10-11 16:30`，
+  包内含判定接口路径与新提示；上一包 `b13e13fd4`。
+- 设备上另记一条**既有**缺陷（与本项无关）：App 被 monkey 启动时系统 USB 弹窗占着焦点、Activity 未进前台，12 s 后深链 `xiaozhou://settings`
+  送达即崩（expo-router「Attempted to navigate before mounting the Root Layout component」，`+native-intent` 在根布局挂载前直接导航）；
+  再次打开正常。导航代码本项未改，待用户决定是否修。
