@@ -100,6 +100,13 @@ REASON_ASKS = ("为什么", "为啥", "什么原因", "啥原因", "原因", "�
 #: 「不是什么 / 不是啥」是否定陈述，不算。
 DEFINITION_ASKS = ("是什么", "什么是", "是啥", "啥是", "什么意思", "啥意思",
                    "是干嘛的", "是干什么的", "是做什么的", "干什么用", "干嘛用", "做什么用")
+#: 问开关现状（2026-10-11，核心旅程 P3 C02「香氛现在开着吗」）：问的是「现在开着还是关着」，不是让系统开或关。
+#: 这一组只是**说法**，要与问形同时成立才算（`asks_switch_state`）——「让香氛开着」「香氛开着吧」「香氛开了」是指令或陈述。
+SWITCH_STATE_WORDS = ("开着", "关着", "开了", "关了", "开启了", "关闭了", "打开了", "关上了",
+                      "是开的", "是关的", "没开", "没关")
+#: 自带问形的状态问法：直接问状态、A 不 A（「开没开」「有没有开」），不需要「吗」。
+SWITCH_STATE_ASKS = ("什么状态", "啥状态", "状态怎么样", "状态咋样", "状态如何", "状态是什么",
+                     "开没开", "关没关", "有没有开", "有没有关", "是不是开", "是不是关")
 #: 取宾动词开头（同一批）：定义词落在这类动词的宾语里——「播放爱是什么」「来一首什么是爱」是点一首歌、「导航去一个叫什么是真的的
 #: 地方」是去一个地方，不是提问。只看定义词所在分句的开头（可带礼貌前缀）。零领域词：全是动词。
 TITLE_OPENERS = ("播放", "放一首", "来一首", "来首", "我想听", "我要听", "听一下", "导航去", "导航到", "搜索", "搜一下")
@@ -489,3 +496,45 @@ def _later_clause_operates(t: str, end: int) -> bool:
     later = re.split(r"[，,；;。！!？?]", t[end:], maxsplit=1)
     tail = later[1] if len(later) > 1 else ""
     return any(v in tail for v in OPERATION_VERBS)
+
+
+#: 「开着还是关着」「开还是关」这类选择问：开、关两头夹着「还是」。
+_SWITCH_CHOICE_RE = re.compile(r"(?:开|关).{0,3}还是.{0,3}(?:开|关)")
+#: 句首的「帮我看看 / 查一下」是让系统去**看**，不是让系统去做：剥掉再判后半句。修前「帮我看看香氛开着吗」
+#: 因为带「帮我」过不了问句闸，被端侧执行成打开香氛。只剥句首这一层，剥完仍要满足三段判据。
+_LOOKUP_SHELL_RE = re.compile(
+    r"^(?:请|麻烦)?你?(?:帮我|给我|帮忙|替我)?(?:看看|看一下|看下|瞧瞧|查查|查一下|查下|确认一下|确认下)")
+
+
+def asks_switch_state(t: str | None) -> bool:
+    """这句话在问某个开关**现在是开还是关**（「香氛开着吗」「香氛开了没」「香氛什么状态」「开着还是关着」）。
+
+    三段同时成立才算：
+    1. 说法：`SWITCH_STATE_ASKS` / 选择问（自带问形），或 `SWITCH_STATE_WORDS`（还要第 2 段）；
+    2. 问形：`is_non_directive_question`，或以「没 / 没有」收尾（「香氛开了没」）；
+    3. 说法之后没有另起的操作分句：「香氛开着吗，开着就关掉」还下了指令，交云端。
+    句首的查看壳（「帮我看看 / 查一下」）先剥掉再判；剥完还带祈使标记、或是处置式（「能把香氛开了吗」是请求打开），
+    一律不认，宁可上云慢一点。
+
+    零对象词：认的是哪个对象由调用方定（端侧在对象分支里调用，读哪一个车态键在 VAL）。
+    核心旅程 P3 C02 修前：这句落到闲聊，闲聊手里没有车态，只能答「我看不了当前状态」。
+    """
+    text = strip_ask_prefix(t or "").strip()
+    text = _LOOKUP_SHELL_RE.sub("", text, count=1).strip()
+    if not text or any(w in text for w in DIRECTIVE_MARKERS) or any(w in text for w in ("把", "将")):
+        return False
+    choice = _SWITCH_CHOICE_RE.search(text)
+    if choice:
+        return not _later_clause_operates(text, choice.end())
+    for words, self_question in ((SWITCH_STATE_ASKS, True), (SWITCH_STATE_WORDS, False)):
+        for word in words:
+            at = text.find(word)
+            if at < 0:
+                continue
+            if _later_clause_operates(text, at + len(word)):
+                return False
+            if self_question:
+                return True
+            body = text.rstrip("。！!.~ ")
+            return is_non_directive_question(text) or body.endswith(("没", "没有"))
+    return False

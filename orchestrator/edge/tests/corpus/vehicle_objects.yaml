@@ -50,6 +50,9 @@ intent_recognition:
   # 同族的让路断言守（语料这一组只收「认得出且 VAL 收得下」的句子）。
   - {text: 胎压是多少, object: tire_pressure_monitoring}
   - {text: 帮我查一下胎压, object: tire_pressure_monitoring}
+  # 2026-10-11（核心旅程 P3 C02）：香氛开关现状查询（operate=query，VAL 要收下它）
+  - {text: 香氛现在开着吗, object: fragrance}
+  - {text: 帮我看看香氛开着吗, object: fragrance}
 
 val_execution:
   - {object: aircon, operate: set, value: "23", expect: {hvac_on: true, hvac_temp: 23}}

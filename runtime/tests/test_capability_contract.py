@@ -81,8 +81,8 @@ def test_frozen_production_inventory_and_legacy_roundtrip():
         ("navigation", f"navigation.{name}") for name in (
             "search_poi", "navigate_to", "estimate", "reroute", "cancel", "set_place",
             "reverse_geocode", "locate", "poi_detail")}
-    # 新增即严格契约的能力（不在历史白名单里，不是迁移）：场景定义问（2026-10-05）
-    new_strict = {("scene-orchestrator", "scene.describe")}
+    # 新增即严格契约的能力（不在历史白名单里，不是迁移）：场景定义问（2026-10-05）、香氛开关现状查询（2026-10-11）
+    new_strict = {("scene-orchestrator", "scene.describe"), ("edge-vehicle", "fragrance.query")}
     assert strict_migrations == migrated | new_strict
     assert len(cc.migration_inventory()) == 156  # immutable historical whitelist
 
@@ -324,7 +324,7 @@ def test_inventory_check_turns_red_if_one_current_producer_drops_the_contract(mo
     with pytest.raises(ValueError, match="producer_missing_contract"):
         ci.inventory(validate=True)
     monkeypatch.setattr(ci, "collect_manifests", original)
-    assert len(ci.inventory(validate=True)) == 157      # 2026-10-05 +1：新增 scene.describe
+    assert len(ci.inventory(validate=True)) == 158      # 2026-10-05 +1：新增 scene.describe；2026-10-11 +1：fragrance.query
 
 
 def test_metadata_migration_keeps_the_planner_catalog_projection_identical():
