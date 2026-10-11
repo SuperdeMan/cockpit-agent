@@ -18,6 +18,9 @@ DEFERRED_CONDITION_RE = re.compile(
     r"\bif\b|\bwhen\b|\bunless\b)",
     re.IGNORECASE,
 )
+#: 条件框架到后件之间的那一段（「如果深圳今天不下雪，就」）：匹配结束处之后就是后件。
+#: 与下面的完整条件句同一组框架词与连接词——问句判据切后件用它（`question_shape.is_conditional_directive`）。
+CONDITION_CONSEQUENT_RE = re.compile(r"(?:如果|要是|假如|若|只要|除非).{1,80}?(?:就|则|才|便|的话)")
 COMPLETE_DEFERRED_CONDITION_RE = re.compile(
     r"(?:如果|要是|假如|若|只要|除非).{1,80}?(?:就|则|才|便|的话)"
     r"[^，,。；;！？!?\n]{1,80}"

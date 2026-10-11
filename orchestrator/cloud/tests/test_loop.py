@@ -219,6 +219,35 @@ def test_question_replan_confirmed_cloud_step_never_dispatches():
     assert events[-1]["speech"] == "best effort"
 
 
+def test_conditional_directive_consequent_dispatches_after_the_condition_was_observed():
+    """CA2-10 ② / 核心旅程 D01（2026-10-12）：首轮查了天气，再规划派出的后件 `hvac.on` 要真的派发——
+    修前被「问句」闸在这里再拦一次，条件指令整句作废。"""
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="hvac.on",
+        deployment="edge", kind="edge_fast", capability_description="打开空调",
+    )
+
+    _, executor, events = _replan_case(
+        [step], user_text="如果深圳今天不下雪，就把空调打开",
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+    assert events[-1]["kind"] == "final"
+
+
+def test_hypothetical_question_consequent_still_never_dispatches():
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="hvac.on",
+        deployment="edge", kind="edge_fast", capability_description="打开空调",
+    )
+
+    _, executor, _ = _replan_case(
+        [step], user_text="如果开空调的话会不会更费电",
+    )
+
+    assert executor.runs == [["s1"]]
+
+
 def test_question_replan_cloud_read_still_dispatches():
     step = Step(
         id="r1", agent_id="manual", intent="manual.query",

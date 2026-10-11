@@ -1086,8 +1086,10 @@ class PlannerEngine:
             ctx.safety_origin_text = str(
                 getattr(plan, "safety_origin_text", "") or ""
             )
+            # after_observation：条件指令的后件写步首轮一律被拦、进不了挂起——挂起里的只可能出自看过观察的再规划
+            # （「如果…就打开后备箱」的后件要确认，确认之后恢复这份计划时不能再按问句删一次）
             kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
-                plan.steps, ctx.safety_origin_text,
+                plan.steps, ctx.safety_origin_text, after_observation=True,
             )
             if blocked:
                 logger.warning(

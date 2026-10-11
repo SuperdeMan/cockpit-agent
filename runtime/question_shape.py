@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 
 from runtime.clause_split import split_clauses
+from runtime.deferred_condition import CONDITION_CONSEQUENT_RE
 
 #: 疑问尾词。判据是**结尾**（先剥掉标点），不是「句中出现过问号」。
 QUESTION_TAILS = ("吗", "呢", "吗?", "吗？", "呢?", "呢？", "?", "？")
@@ -538,3 +539,22 @@ def asks_switch_state(t: str | None) -> bool:
             body = text.rstrip("。！!.~ ")
             return is_non_directive_question(text) or body.endswith(("没", "没有"))
     return False
+
+
+def is_conditional_directive(t: str | None) -> bool:
+    """「如果 / 要是 … 就 + 指令」：条件框架 + 后件是给助手的指令（不是提问）。
+
+    整句判提问时假设框架一律算提问（`HYPOTHETICAL_FRAMES`）——那一侧是对的：条件还没查，后件不许执行。
+    本判据只给「条件已经查过之后」用（T2 再规划，`PlanBuilder._filter_safety_origin_side_effect_steps`）：
+    后件是指令 ⇒ 规划器按观察派出的后件可以执行（需确认照旧确认、端侧写照旧过 VAL）；
+    后件本身是提问（「如果开空调的话会不会更费电」「如果下雨就关窗吗」）⇒ 仍是提问。
+    没有完整「如果…就」的句子不在此列：「如果你能去旅行，你想去哪里」是假设提问，
+    「车里温度低于20度的时候打开空调」是等将来的条件（现在查不了），都照旧按提问 / 延后处理。
+    """
+    text = strip_ask_prefix(t or "").strip()
+    m = CONDITION_CONSEQUENT_RE.search(text)
+    if not m:
+        return False
+    consequent = text[m.end():].strip(" ，,、：:")
+    consequent = re.sub(r"^(?:那就|那|你就|就)", "", consequent).strip(" ，,")
+    return bool(consequent) and not is_non_directive_question(consequent)
