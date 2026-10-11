@@ -11070,3 +11070,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 验证：HMI 443、Android 1509（满载 3 个界面套件超时，单跑全过）、Python 全量 11591 / 37、四道门禁 + smoke；变异 11 条全被抓。部署 `eb098edd`：status / verify 通过（`20261011T083355Z-eb098ed.json`），CI 8 / 8。真栈判定接口负例 60 / 60 判非受话、天气类追问配天气回答时误拒 0、96 次里 3 次第一问超 5 s 判不出；已判过的插话轮云端只有 `bargein_preadmitted`。
 - ⛔ 发布闸只认共享仓库 `refs/heads/main` 可达，而本地 `main` 被另一个会话的工作树检出、停在旧提交 ⇒ 用干净隔离克隆部署（克隆的 `main` 指向目标），不动别人的工作树。⛔ 探针两次运行相隔不到 5 分钟时，逐字相同的判定命中网关缓存（复跑中位 3 ms），不是独立判定。
 - 设备：Android 常驻包 `eb098eddc` 装 OPPO（test），Xiaomi 仍是 `b79daa46b`。装机核对时抓到一个既有缺陷：深链在根布局挂载前送达即崩（expo-router「navigate before mounting the Root Layout」），本项未改导航，待用户决定。
+
+
+## 2026-10-11：Dashboard Visual v2 三项浏览器缺陷授权发布
+
+- 用户逐项批准两处 Dashboard 凭据映射，随后要求“提交推送部署”。精确推送修复提交并经干净工作树 dry-run / apply 发布；共享 Compose 安装项仅该映射，未改 `.env` 或凭据值。
+- 关闭 DV2-B01 指令/重放缺 Edge 鉴权、DV2-B02 心跳秒/毫秒混用、DV2-B03 双闪语义/布尔显示。独立 status / verify、CI、前端与启动器回归通过；当前发布字段见 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
+- 线上原部署凭据实际握手成功；真实天气指令与重放使用隔离只读身份完成，观测到达、双时间线、零动作。真实心跳与双闪、1280/3440 尺寸和夹具缺失态通过，前后 release 固定；边界与证据见 [Dashboard 验收 §6](reviews/2026-10-11-dashboard-visual-v2-browser-audit.md#6-授权发布与线上重证2026-10-11)。其余 QA 活项保持开放。
