@@ -479,3 +479,14 @@ def test_the_manifest_carries_scopes_extra_into_the_case():
     cases = {c["id"]: c for c in probe.load_manifest(probe.MANIFEST)}
     assert cases["NB01"]["scopes_extra"] == ["payment.invoke"]
     assert "scopes_extra" not in cases["NV01"]
+
+
+def test_the_read_only_lane_halts_on_writes_and_state_changes_not_on_reads():
+    """冻结设计 §4（2026-10-12）：只读查询判这条旅程失败但不停整条车道；写动作、车态变化、证据错误照旧叫停。"""
+    from scripts.probe_v2_baseline import read_lane_halts
+    assert read_lane_halts(["tire_pressure.query"], set(), []) is False       # P12：车态未变的一次查询误派
+    assert read_lane_halts([], set(), []) is False
+    assert read_lane_halts(["energy_recovery.set"], set(), []) is True        # M09：写动作
+    assert read_lane_halts(["navigation.navigate_to"], set(), []) is True     # 认不出是读的一律当写
+    assert read_lane_halts(["tire_pressure.query"], {"energy_recovery"}, []) is True
+    assert read_lane_halts([], set(), ["trace_incomplete"]) is True

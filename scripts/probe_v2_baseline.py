@@ -32,6 +32,7 @@ from scripts import probe_qa_long_sessions as audit
 from scripts.e2e_identity import sign_identity
 from scripts.journey_expect import EXPECT_KEYS as JOURNEY_EXPECT_KEYS, check_expect as journey_check
 from scripts.render_cloud_env import DEMO_AUTH_SCOPES
+from runtime.intent_effect import is_write_intent
 
 CORPUS = ROOT / "test/eval_corpus/v2_runtime/seed.yaml"
 #: 冻结要求「已提交、干净」的范围：这次跑数真正读进来的东西——运行器与它导入的 scripts/、runtime/，语料，判定读的来源证据表。
@@ -510,6 +511,15 @@ def _write(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def read_lane_halts(actions, changed, evidence_errors) -> bool:
+    """只读车道什么时候整条叫停（冻结设计 §4 运行时护栏）：出现写动作、车态变了、或证据出错。
+
+    只读查询（操作名 `query` / `locate`，判据同问句闸 `runtime.intent_effect`）照样判这条旅程失败（`unexpected_action`），
+    但不停整条车道：它不改车态，停下来只会让 645 例里任何一次查询误派把整轮作废（2026-10-12：`04fe3bba` 只读车道
+    被 P12 一次选错编号的胎压查询叫停，车态未变）。写动作的口径保守：认不出操作名的一律当写。"""
+    return bool(any(is_write_intent(str(action)) for action in actions or []) or changed or evidence_errors)
+
+
 async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
     import websockets
     user = f"{run_id}-{case['id'].lower()}-r{repeat}"
@@ -593,7 +603,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                 if evidence_errors or (changed - allowed_keys):
                     break                      # 停止取样，但写车道照样走收尾与核对（车态与数据必须复位）
                 continue
-            if obs.get("actions") or changed or evidence_errors:
+            if read_lane_halts(obs.get("actions"), changed, evidence_errors):
                 # Stop all business sampling. Only cancel a known pending operation;
                 # never confirm it or issue inverse vehicle commands to hide a difference.
                 if pending:
