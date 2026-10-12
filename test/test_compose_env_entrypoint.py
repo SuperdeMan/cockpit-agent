@@ -53,3 +53,18 @@ def test_cloud_planner_image_installs_shared_redis_client():
     ).read_text(encoding="utf-8").splitlines()
 
     assert "redis==5.0.8" in requirements
+
+
+def test_privacy_delete_key_reaches_only_the_control_plane_services():
+    """专用隐私删除密钥（2026-10-12）只透传给控制面三方：llm-gateway 发起、cloud-planner 与 mcp-bridge 响应——别的服务拿不到。"""
+    compose = yaml.safe_load(
+        (ROOT / "deploy" / "docker-compose.yaml").read_text(encoding="utf-8")
+    )
+    holders = {
+        name
+        for name, service in compose["services"].items()
+        if "PRIVACY_DELETE_KEY" in (service.get("environment") or {})
+    }
+    assert holders == {"llm-gateway", "cloud-planner", "mcp-bridge"}
+    for name in holders:
+        assert compose["services"][name]["environment"]["PRIVACY_DELETE_KEY"] == "${PRIVACY_DELETE_KEY:-}"

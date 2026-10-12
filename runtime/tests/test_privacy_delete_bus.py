@@ -184,6 +184,34 @@ def test_control_key_is_domain_separated_and_missing_file_fails_closed(tmp_path)
         })
 
 
+_INLINE = "ab" * 32
+
+
+def test_dedicated_key_works_where_the_mesh_key_file_is_missing(tmp_path):
+    """demo 档没有网格私钥（2026-10-12 线上三方 `/certs` 都只有 .gitkeep）：专用密钥让发起方与响应方派生出同一把钥匙。"""
+    caller = bus.load_control_key(environ={"PRIVACY_DELETE_KEY": _INLINE, "GRPC_TLS_KEY": str(tmp_path / "missing.key")})
+    responder = bus.load_control_key(environ={"PRIVACY_DELETE_KEY": _INLINE.upper()})
+    assert caller == responder == bus.derive_control_key(bytes.fromhex(_INLINE))
+    assert caller != bytes.fromhex(_INLINE)                     # 仍按用途派生，不直接拿原值当 HMAC 钥匙
+    with pytest.raises(bus.PrivacyDeleteProtocolError):
+        bus.load_control_key(environ={"GRPC_TLS_KEY": str(tmp_path / "missing.key")})
+
+
+@pytest.mark.parametrize("value", ["ab" * 31, "zz" * 32, "a" * 65, "密钥" * 40])
+def test_a_malformed_dedicated_key_fails_closed_without_falling_back(tmp_path, value):
+    key_file = tmp_path / "server.key"
+    key_file.write_bytes(KEY)
+    with pytest.raises(bus.PrivacyDeleteProtocolError):
+        bus.load_control_key(environ={"PRIVACY_DELETE_KEY": value, "GRPC_TLS_KEY": str(key_file)})
+
+
+def test_an_explicit_key_file_still_wins_over_the_dedicated_key(tmp_path):
+    key_file = tmp_path / "server.key"
+    key_file.write_bytes(KEY)
+    assert bus.load_control_key(environ={"PRIVACY_DELETE_KEY_FILE": str(key_file), "PRIVACY_DELETE_KEY": _INLINE}) \
+        == bus.derive_control_key(KEY)
+
+
 @pytest.mark.asyncio
 async def test_responder_without_global_backend_proof_never_subscribes():
     """One queue ACK cannot prove deletion from two process-local replicas."""

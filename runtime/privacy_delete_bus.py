@@ -8,6 +8,10 @@ key is a domain-separated derivative of the already-mounted mesh private key;
 no new secret is persisted.  Missing key material disables both callers and
 responders instead of silently creating an unauthenticated control plane.
 
+部署没有网格私钥时（demo 档关着 gRPC TLS，`/certs` 里没有 server.key），改用运行时密钥源（`.env`）里的专用
+`PRIVACY_DELETE_KEY`（至少 64 位十六进制）作派生材料。只透传给控制面的三方：llm-gateway（发起）、cloud-planner 与
+mcp-bridge（响应）。2026-10-12 之前线上三方都派生不出密钥，「删除我的数据」的这两段一直报 pending。
+
 Responders use one queue group per target.  In production each target stores
 owner state in shared Redis, so one replica deleting the target namespace is
 sufficient; the adapter itself remains idempotent.  A bounded in-process nonce
@@ -49,6 +53,8 @@ _REQUEST_SIGNATURE_CONTEXT = b"car-agent/privacy-delete/request/v1"
 _RESPONSE_SIGNATURE_CONTEXT = b"car-agent/privacy-delete/response/v1"
 _HEX_32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+#: 专用控制密钥：32～512 字节的十六进制（至少 256 bit）。
+_HEX_KEY = re.compile(r"^(?:[0-9a-fA-F]{2}){32,512}$")
 
 _TARGETS = frozenset({MCP_TARGET, CLOUD_TARGET})
 _SUBJECT_BY_TARGET = {
@@ -134,10 +140,19 @@ def derive_control_key(key_material: bytes) -> bytes:
 
 
 def load_control_key(*, environ: Mapping[str, str] | None = None) -> bytes:
-    """Load and derive the runtime key; absent/unreadable material is fatal."""
+    """Load and derive the runtime key; absent/unreadable material is fatal.
+
+    顺序：显式密钥文件 `PRIVACY_DELETE_KEY_FILE` → 专用密钥 `PRIVACY_DELETE_KEY` → 网格私钥（`GRPC_TLS_KEY` / 缺省路径）。
+    专用密钥格式不对（不是十六进制、不足 64 位）一律当不可用，不退回别的材料。"""
     env = os.environ if environ is None else environ
+    explicit_file = (env.get("PRIVACY_DELETE_KEY_FILE") or "").strip()
+    inline = (env.get("PRIVACY_DELETE_KEY") or "").strip()
+    if inline and not explicit_file:
+        if _HEX_KEY.fullmatch(inline) is None:
+            raise PrivacyDeleteProtocolError("invalid control key material")
+        return derive_control_key(bytes.fromhex(inline))
     path_text = (
-        (env.get("PRIVACY_DELETE_KEY_FILE") or "").strip()
+        explicit_file
         or (env.get("GRPC_TLS_KEY") or "").strip()
         or "/certs/server.key"
     )

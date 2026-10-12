@@ -37,6 +37,14 @@
 `deploy/docker-compose.yaml` 透传都要单独确认，见 [Jev 接入执行计划](design/2026-10-04-jev-decide-integration.md) §5。
 本机真请求冒烟：把凭证读进**这一条命令的进程环境**再跑 `python scripts/smoke_decide.py`（凭证不打印、不落盘到仓库）。
 
+### 隐私删除控制面的专用密钥（`.env.example` 里刻意没有）
+
+`PRIVACY_DELETE_KEY`（2026-10-12，用户批准）：「删除我的数据」经 NATS 通知 MCP 桥与 cloud-planner 一起删，帧用 HMAC 鉴权。
+钥匙原本只从网格私钥（`/certs/server.key`）派生，demo 档关着 gRPC TLS、没有这个文件，三方都派生不出，这两段一直报 pending。
+现在用专用密钥：64 位以上十六进制（`secrets.token_hex(32)`），只写在云端 `shared/.env`（root 0600，经 SSH stdin 写入、只回显长度）。
+`deploy/docker-compose.yaml` 只透传给 llm-gateway、cloud-planner、mcp-bridge 三方。本机 local 档有网格证书，不需要这个键。
+格式不对按不可用处理，整条控制面关闭（fail-closed），不会退回别的材料。轮换时写入新值，再部署一次让三方同时重建。
+
 ### cloud 档需要的两个键（`.env.example` 里刻意没有）
 
 新环境按 `.env.example` 配不出 cloud 档，缺的是这两个——**它们只有 `target=cloud` 时才读**：

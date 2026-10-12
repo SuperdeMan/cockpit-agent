@@ -185,6 +185,8 @@ services:
       AUTH_DEFAULT_USER_ID: ${AUTH_DEFAULT_USER_ID:-u1}
       E2E_IDENTITY_ENABLED: ${E2E_IDENTITY_ENABLED:-false}
       E2E_IDENTITY_SECRET: ${E2E_IDENTITY_SECRET-}
+      # 隐私删除控制面的专用密钥（发起方；同 cloud-planner 那条注释）
+      PRIVACY_DELETE_KEY: ${PRIVACY_DELETE_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-xiaomimimo}
       LLM_API_KEY: ${LLM_API_KEY:-}
       # OpenAI 兼容服务商可切换端点/鉴权/思考开关，换服务商只改 .env（详见 .env.example）
@@ -360,6 +362,9 @@ services:
       # 掉出工具通道后是否再要一次工具通道：on|off（默认 on——泓舟 2026-08-10 拍板，
       # findings §23/§24；只管「模型能说话但没用工具」，协议异常仍退 JSON 档）
       PLANNER_TOOLCALL_SALVAGE_RETRY: ${PLANNER_TOOLCALL_SALVAGE_RETRY:-on}
+      # 隐私删除控制面的专用密钥（demo 档没有网格私钥时用，见 runtime/privacy_delete_bus.py）。只给控制面三方：
+      # llm-gateway（发起）、cloud-planner 与 mcp-bridge（响应）。空 = 退回网格私钥，再没有就整条控制面关闭。
+      PRIVACY_DELETE_KEY: ${PRIVACY_DELETE_KEY:-}
     ports: ["50054:50054"]
     depends_on:
       registry:
@@ -789,6 +794,8 @@ services:
       <<: *python-env
       AGENT_PORT: "50076"
       NATS_URL: nats://nats:4222
+      # 隐私删除控制面的专用密钥（响应方；同 cloud-planner 那条注释）
+      PRIVACY_DELETE_KEY: ${PRIVACY_DELETE_KEY:-}
       E2E_NAMESPACE_ADMIN_ENABLED: ${E2E_NAMESPACE_ADMIN_ENABLED:-false}
       E2E_NAMESPACE_ADMIN_SECRET: ${E2E_NAMESPACE_ADMIN_SECRET-}
       # 写操作订单状态机复用 M2 task_ledger（不新建表）；无 PG → 诚实降级不承诺可查
