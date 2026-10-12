@@ -103,12 +103,14 @@ async def serve():
     except Exception as exc:
         print(f"[edge-orchestrator] registry register failed (continuing): {exc}", flush=True)
     reregister_task = asyncio.create_task(_reregister_capabilities(reregister_interval))
+    # CA2-11 v2 §2.8：本地轮发件箱的重放循环（离线时没写进记忆服务的轮，重连后按原 turn_id 补写）
+    outbox_task = asyncio.create_task(servicer.turn_outbox_replayer.run_forever())
     print(f"[edge-orchestrator] serving on :{port}", flush=True)
     try:
         await run_aio_server(server, name="edge-orchestrator",
                              on_shutdown=servicer.cloud.aclose)
     finally:
-        tasks = (state_task, debug_task, snapshot_task, reregister_task)
+        tasks = (state_task, debug_task, snapshot_task, reregister_task, outbox_task)
         for task in tasks:
             task.cancel()
         for task in tasks:
