@@ -49,6 +49,7 @@ from runtime.polarity import is_negated_directive
 from runtime.question_shape import (
     HYPOTHETICAL_FRAMES, carries_operation_cue, is_information_request, is_non_directive_question,
     is_reference_question, is_definition_only_question, is_complete_information_question,
+    asks_switch_state,
 )
 from .step_grounding import opens_as_instruction, step_naming_score
 from .reply_position import reply_position
@@ -1928,7 +1929,8 @@ class PlanBuilder:
             # 两个 build 出口共用同一终结器：blocked 后只允许未确认的 talk 兜底，
             # 否则保持空计划 fail closed；不能由早退路径绕开确认写安全闸。
             return self._apply_ordinal_write_guard(self._apply_ack_write_guard(
-                self._apply_question_side_effect_guard(focused_plan, text, agents),
+                self._apply_switch_state_query_guard(
+                    self._apply_question_side_effect_guard(focused_plan, text, agents), text, agents),
                 text, working_set, agents), text, working_set, agents)
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
@@ -2346,6 +2348,8 @@ class PlanBuilder:
         # 所有 build 出口共用同一终结器：LLM 计划、降级语义路由、route_hints 补步
         # 与 focused 早退均按同一份判据收束，避免任何一路绕开确认写安全闸。
         plan = self._apply_question_side_effect_guard(plan, text, agents)
+        # 开关现状问句的查询步必须点得出名（核心旅程 K12）——同一个终结器位置，两个出口都挂。
+        plan = self._apply_switch_state_query_guard(plan, text, agents)
         # 追加批 I：纯应答（「可以，已为您执行」）长不出写步——同一个终结器位置，两个出口都挂。
         plan = self._apply_ack_write_guard(plan, text, working_set, agents)
         # 评审四轮 R4-02 收尾：裸序数（「第二个」）长不出与所选那一项无关的写步——同一个终结器位置，两个出口都挂。
@@ -3512,6 +3516,35 @@ class PlanBuilder:
             # 这一类句子（「X灯亮了怎么办」）恰恰最需要一个回答。默认 chitchat
             # 自己就带安全信号判据（`runtime.safety_signal`），会给出分级建议；
             # 配置为需确认的兜底能力则保持空计划，不能借回答出口执行写操作。
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                plan.steps = talk.steps
+                plan.clarify = None
+        return plan
+
+    def _apply_switch_state_query_guard(
+            self, plan: Plan, text: str, agents: list = None) -> Plan:
+        """问某个开关现在开着没（`question_shape.asks_switch_state`）时，端侧只读查询步必须被原话点名（`step_grounding`）。
+
+        2026-10-12 核心旅程 K12：加了「查询香氛」之后，「充电口现在开着吗」被规划器拿它顶替（目录里只有这一个开关现状查询），
+        答成「香氛关着」——问东答西。点不出名的查询步去掉；空了交未确认的兜底答一句（同问句闸），不会拿别的对象的读数冒充。
+        只看开关现状问句：「电量还剩多少」这类查询的口语说法常与能力描述对不上字面，不受影响。
+        """
+        if not plan.steps or not asks_switch_state(text or ""):
+            return plan
+        stray = [step for step in plan.steps
+                 if (getattr(step, "deployment", "") == "edge" or getattr(step, "kind", "") == "edge_fast")
+                 and not is_write_intent(getattr(step, "intent", ""))
+                 and step_naming_score(text, step) <= 0]
+        if not stray:
+            return plan
+        logger.warning("Switch-state question planned into unnamed edge query step(s) %s; dropping them (text=%r)",
+                       [step.intent for step in stray], text[:60])
+        stray_ids = {id(step) for step in stray}
+        plan.steps = [step for step in plan.steps if id(step) not in stray_ids]
+        plan.plan_mode = f"{plan.plan_mode or ''}_state_query_unnamed"
+        if not plan.steps:
+            plan.complexity = "simple"
             talk = self._talk_only_plan(text, agents)
             if talk is not None:
                 plan.steps = talk.steps
