@@ -166,14 +166,19 @@ class EdgeOperationLog:
     # ── read-only recovery lookup (EdgeCall.operation_query) ─────────────────
 
     def lookup(self, operation_id: str) -> dict | None:
-        """What the vehicle knows about one operation; never touches VAL."""
-        row = self._one("SELECT status, envelope, result_ref FROM edge_operation WHERE operation_id = ?",
-                        (operation_id,))
+        """What the vehicle knows about one operation; never touches VAL.
+
+        CA2-11 v2：连同最后一次触碰时刻、等确认有效期与读取时刻一起交出去，查询方据此给出「此刻的有效状态」
+        （`runtime.operation.effective_status`），与下一次认领看到的结论一致；这里仍然只读、不标记。
+        """
+        row = self._one("SELECT status, envelope, result_ref, touched_ms FROM edge_operation"
+                        " WHERE operation_id = ?", (operation_id,))
         if row is None:
             return None
         envelope = json.loads(row[1])
         return {"status": row[0], "phase": str(envelope.get("phase") or ""),
-                "result_ref": json.loads(row[2] or "{}")}
+                "result_ref": json.loads(row[2] or "{}"), "touched_ms": int(row[3]),
+                "expires_at_ms": envelope.get("expires_at_ms"), "now_ms": self._now()}
 
     def close(self) -> None:
         with self._lock:

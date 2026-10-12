@@ -6,6 +6,7 @@
 > 依赖：[CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)（operation 身份与判定表）、
 > [CA2-09 确认绑定](2026-10-02-v2-confirmation-binding.md)、[CA2-10 结果证据](2026-10-02-v2-effect-evidence.md)、
 > [CA2-12 故障注入](2026-09-27-v2-vehicle-state-and-simulation.md)。排序见[路线图](../roadmap.md)。
+> 后续（2026-10-12）：结局未知的后台对账、审计补记与告知见 [CA2-11 v2](2026-10-12-v2-edge-operation-sync.md)（§2.4 的「v1 不做后台全量同步」由它补上，车端日志仍是唯一权威）。
 
 ## 1. 缺口（2026-10-02 复核）
 

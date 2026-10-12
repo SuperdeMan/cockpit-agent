@@ -38,6 +38,14 @@ _FOCUS_PREFIX = "planner:focus:"
 # 的 5 分钟寿命不再靠 key 过期，由 `context.expire_short_term` 按 `focus_ts` 判。
 # 此前一个 300s 的 key 让「沉默五分钟」把活动路线和告警一起抹掉——缓存超时不是事实解除。
 _FOCUS_TTL = 7200  # 秒
+# CA2-11 v2：车端操作结局的对账记录（设计 docs/design/2026-10-12-v2-edge-operation-sync.md）。一个会话一个 hash，
+# 字段 = operation_id、值 = 一条记录（JSON，带 owner_user_id）：每条操作单独读写，执行器登记与后台对账互不覆盖。
+# 只存编号、意图、能力描述、车辆与时刻，不存原话。还没定论的同时挂进 `_OPSYNC_ACTIVE`（成员 = "<hash key>|<operation_id>"），
+# 后台对账只扫这一个集合。
+_OPSYNC_PREFIX = "planner:opsync:"
+_OPSYNC_ACTIVE = "planner:opsync-active"
+#: 登记时这条操作已经在册：后台可能已经改过结论，晚到的登记不覆盖它。
+OPSYNC_EXISTS = "exists"
 
 # 评审二轮 R8（2026-09-22）：**读写各三态**。此前「后端连不上」与「表是空的」都是 `[]`、
 # 「存不下」与「隐私删除写栅栏」都是 `False`——一次 Redis 故障因此被说成「当前没有待确认的操作」
@@ -74,6 +82,8 @@ PERSONAL_DATA_TARGETS = (
             "planner:sess-owner:*",
             "planner:sess-owner-fence:*",
             "planner:focus:*",
+            "planner:opsync:*",
+            "planner:opsync-active",
         ),
     },
 )
@@ -100,6 +110,38 @@ if redis.call('EXISTS', KEYS[2]) == 1 then return false end
 return redis.call('GET', KEYS[1])
 """
 
+# 对账记录登记：KEYS = (会话 hash, owner 写栅栏, 待对账集合)；ARGV = (operation_id, 记录, TTL, 集合成员, 是否待对账)。
+# 写栅栏在 ⇒ 0；这条已在册 ⇒ 2（不覆盖）；否则写入并把 hash 的寿命延到至少 TTL ⇒ 1。
+_OPSYNC_NOTE_LUA = r"""
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+if redis.call('HSETNX', KEYS[1], ARGV[1], ARGV[2]) == 0 then return 2 end
+local current_ttl = redis.call('TTL', KEYS[1])
+if current_ttl < tonumber(ARGV[3]) then
+  redis.call('EXPIRE', KEYS[1], ARGV[3])
+end
+if ARGV[5] == '1' then
+  redis.call('SADD', KEYS[3], ARGV[4])
+end
+return 1
+"""
+
+# 后台对账写回：只改还在册的那条（隐私删除 / 过期之后不复活），并按结论进出待对账集合。
+# KEYS 同上；ARGV = (operation_id, 记录, 集合成员, 是否仍待对账)。写栅栏在 ⇒ 0；记录已不在 ⇒ 摘掉成员、0；写入 ⇒ 1。
+_OPSYNC_RESOLVE_LUA = r"""
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then
+  redis.call('SREM', KEYS[3], ARGV[3])
+  return 0
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+if ARGV[4] == '1' then
+  redis.call('SADD', KEYS[3], ARGV[3])
+else
+  redis.call('SREM', KEYS[3], ARGV[3])
+end
+return 1
+"""
+
 
 class SessionStore:
     def __init__(self, redis_url: str = ""):
@@ -109,6 +151,9 @@ class SessionStore:
         # session_id can never overwrite or address another owner's state.
         self._mem: dict[str, tuple[SessionState, float]] = {}
         self._focus_mem: dict[str, tuple[dict, float]] = {}
+        # CA2-11 v2 对账记录的内存兜底：会话 hash key → ({operation_id: 记录}, 到期时刻)；待对账成员集合。
+        self._opsync_mem: dict[str, tuple[dict[str, dict], float]] = {}
+        self._opsync_active_mem: set[str] = set()
         # owner -> expiry; successful privacy deletion retains this tombstone
         # for at least the pending TTL to reject requests already in flight.
         self._owner_fences: dict[str, float] = {}
@@ -535,6 +580,194 @@ class SessionStore:
         self._forget_closed(key)
         return CLEAR_DELETED
 
+    # ── CA2-11 v2：车端操作结局的对账记录 ─────────────────────────────────────────
+
+    @classmethod
+    def _opsync_key(cls, user_id: str, session_id: str) -> str:
+        return f"{_OPSYNC_PREFIX}{cls._digest(user_id)}:{cls._digest(session_id)}"
+
+    @staticmethod
+    def _opsync_member(key: str, operation_id: str) -> str:
+        return f"{key}|{operation_id}"
+
+    @staticmethod
+    def _opsync_decode(raw, owner: str = "") -> dict | None:
+        """一条记录；坏形状、缺 owner，或给了 owner 却对不上 ⇒ None（读不出就当不存在，绝不替别人念）。"""
+        try:
+            record = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(record, dict):
+            return None
+        holder = str(record.get("owner_user_id") or "").strip()
+        if not holder or (owner and holder != owner):
+            return None
+        return record
+
+    async def note_operation(self, session_id: str, record: dict, *, owner_user_id: str,
+                             ttl_s: int, active: bool) -> str:
+        """登记一条车端操作的对账记录，返回 `saved / exists / unavailable / privacy_fenced`。
+
+        同一 operation 只登记一次：后台对账可能已经改过结论，晚到的登记不能把它改回去。`active` = 结论未定、交给后台对账。
+        """
+        owner = str(owner_user_id or "").strip()
+        operation_id = str((record or {}).get("operation_id") or "")
+        if not owner or not str(session_id or "").strip() or not operation_id:
+            return SAVE_UNAVAILABLE
+        key = self._opsync_key(owner, session_id)
+        member = self._opsync_member(key, operation_id)
+        stored = {**record, "owner_user_id": owner}
+        r = await self._redis()
+        if self._url and r is None:
+            return SAVE_UNAVAILABLE
+        if r:
+            try:
+                saved = await r.eval(
+                    _OPSYNC_NOTE_LUA, 3, key, self._owner_fence_key(owner), _OPSYNC_ACTIVE,
+                    operation_id, json.dumps(stored, ensure_ascii=False, sort_keys=True),
+                    max(1, int(ttl_s)), member, "1" if active else "0")
+            except Exception as exc:
+                logger.warning("operation sync note failed (%s); not recorded", type(exc).__name__)
+                return SAVE_UNAVAILABLE
+            saved = int(saved or 0)
+            return SAVE_OK if saved == 1 else OPSYNC_EXISTS if saved == 2 else SAVE_FENCED
+        if self._memory_tombstoned(owner):
+            return SAVE_FENCED
+        now = time.time()
+        table, expires = self._opsync_mem.get(key, ({}, 0.0))
+        if expires and now >= expires:
+            table, expires = {}, 0.0
+        if operation_id in table:
+            return OPSYNC_EXISTS
+        self._opsync_mem[key] = ({**table, operation_id: stored}, max(expires, now + max(1, int(ttl_s))))
+        if active:
+            self._opsync_active_mem.add(member)
+        return SAVE_OK
+
+    async def load_operations(self, session_id: str, *, owner_user_id: str) -> list[dict] | None:
+        """本会话的对账记录（按登记先后）。后端读不到返回 **None**：「读不到」不是「没有」（R8）。"""
+        owner = str(owner_user_id or "").strip()
+        if not owner or not str(session_id or "").strip():
+            return []
+        key = self._opsync_key(owner, session_id)
+        r = await self._redis()
+        if self._url and r is None:
+            return None
+        if r:
+            try:
+                if await r.exists(self._owner_fence_key(owner)):
+                    return []
+                values = list((await r.hgetall(key) or {}).values())
+            except Exception as exc:
+                logger.warning("operation sync read failed (%s)", type(exc).__name__)
+                return None
+        else:
+            if self._memory_tombstoned(owner):
+                return []
+            table, expires = self._opsync_mem.get(key, ({}, 0.0))
+            if expires and time.time() >= expires:
+                self._opsync_mem.pop(key, None)
+                table = {}
+            values = list(table.values())
+        records = [rec for rec in (self._opsync_decode(v, owner) for v in values) if rec]
+        return sorted(records, key=lambda rec: int(rec.get("created_ms") or 0))
+
+    async def active_operations(self) -> list[tuple[str, dict]] | None:
+        """后台对账：结论未定的记录 `[(集合成员, 记录)]`；后端读不到返回 None。
+
+        成员指向的记录已经不在（隐私删除 / 过期）就顺手从集合里摘掉。
+        """
+        r = await self._redis()
+        if self._url and r is None:
+            return None
+        out: list[tuple[str, dict]] = []
+        if r:
+            try:
+                members = sorted(await r.smembers(_OPSYNC_ACTIVE) or ())
+                for member in members:
+                    key, _sep, operation_id = str(member).rpartition("|")
+                    record = self._opsync_decode(await r.hget(key, operation_id)) if key else None
+                    if record is None:
+                        await r.srem(_OPSYNC_ACTIVE, member)
+                        continue
+                    out.append((str(member), record))
+            except Exception as exc:
+                logger.warning("operation sync scan failed (%s)", type(exc).__name__)
+                return None
+            return out
+        now = time.time()
+        for member in sorted(self._opsync_active_mem):
+            key, _sep, operation_id = member.rpartition("|")
+            table, expires = self._opsync_mem.get(key, ({}, 0.0))
+            record = table.get(operation_id) if not expires or now < expires else None
+            if record is None:
+                self._opsync_active_mem.discard(member)
+                continue
+            out.append((member, dict(record)))
+        return out
+
+    async def resolve_operation(self, member: str, record: dict, *, active: bool) -> bool:
+        """后台对账写回一条记录：只改还在册的那条（被删掉 / 过期的不复活），并按 `active` 进出待对账集合。"""
+        key, _sep, operation_id = str(member or "").rpartition("|")
+        owner = str((record or {}).get("owner_user_id") or "").strip()
+        if not key or not operation_id or not owner:
+            return False
+        r = await self._redis()
+        if self._url and r is None:
+            return False
+        if r:
+            try:
+                written = await r.eval(
+                    _OPSYNC_RESOLVE_LUA, 3, key, self._owner_fence_key(owner), _OPSYNC_ACTIVE,
+                    operation_id, json.dumps(record, ensure_ascii=False, sort_keys=True), member,
+                    "1" if active else "0")
+            except Exception as exc:
+                logger.warning("operation sync write-back failed (%s)", type(exc).__name__)
+                return False
+            return int(written or 0) == 1
+        if self._memory_tombstoned(owner):
+            return False
+        table, expires = self._opsync_mem.get(key, ({}, 0.0))
+        if operation_id not in table or (expires and time.time() >= expires):
+            self._opsync_active_mem.discard(member)
+            return False
+        self._opsync_mem[key] = ({**table, operation_id: dict(record)}, expires)
+        if active:
+            self._opsync_active_mem.add(member)
+        else:
+            self._opsync_active_mem.discard(member)
+        return True
+
+    async def _scan_owner_operations(self, r, user_id: str):
+        """隐私删除：这个 owner 名下全部对账记录 `(证据完整?, 会话 hash keys, 待对账成员)`。
+
+        与 `_scan_owner_records` 同一纪律：按**值**里的 owner 归属，不按键长什么样；坏形状或一个 hash 里混装两个 owner
+        ⇒ 证据不完整，删除可重试。
+        """
+        keys: list[str] = []
+        members: list[str] = []
+        cursor: int | str = 0
+        while True:
+            cursor, found = await r.scan(cursor=cursor, match=_OPSYNC_PREFIX + "*", count=128)
+            for key in found:
+                table = await r.hgetall(key)
+                if not table:
+                    continue
+                owners = set()
+                for raw in table.values():
+                    record = self._opsync_decode(raw)
+                    if record is None:
+                        return False, [], []
+                    owners.add(str(record["owner_user_id"]).strip())
+                if len(owners) != 1:
+                    return False, [], []
+                if owners.pop() == user_id:
+                    keys.append(str(key))
+                    members.extend(self._opsync_member(str(key), str(op)) for op in table)
+            if int(cursor) == 0:
+                break
+        return True, keys, members
+
     @staticmethod
     def _owner_key(user_id: str) -> str:
         return _OWNER_PREFIX + SessionStore._digest(user_id)
@@ -614,6 +847,13 @@ class SessionStore:
             if str(focus.get("_owner_user_id") or "").strip() == user_id:
                 memory_fence_expires = max(memory_fence_expires, expires)
                 self._focus_mem.pop(key, None)
+        # CA2-11 v2 对账记录：只有执行器在本轮末尾登记（轮内完成），后台写回只改在册的记录、删掉的不复活——
+        # 所以它的寿命（约 25 h）不进写栅栏时长，否则删一次数据会把这个人的挂起 / 焦点写入挡上一整天。
+        for key, (table, _expires) in list(self._opsync_mem.items()):
+            if any(str(rec.get("owner_user_id") or "").strip() == user_id for rec in table.values()):
+                self._opsync_mem.pop(key, None)
+                self._opsync_active_mem = {m for m in self._opsync_active_mem
+                                           if not m.startswith(key + "|")}
         self._owner_fences[user_id] = max(
             self._owner_fences.get(user_id, 0.0),
             memory_fence_expires,
@@ -632,7 +872,9 @@ class SessionStore:
             if fence == _DELETED:
                 ok, sessions, focuses, _ = await self._scan_owner_records(
                     r, user_id)
-                if not ok or sessions or focuses or await r.exists(owner_key):
+                op_ok, op_keys, _members = await self._scan_owner_operations(r, user_id)
+                if (not ok or sessions or focuses or not op_ok or op_keys
+                        or await r.exists(owner_key)):
                     return False
                 tombstone_ttl = int(await r.ttl(fence_key))
                 if tombstone_ttl < _OWNER_FENCE_TTL:
@@ -648,17 +890,25 @@ class SessionStore:
                 await self._scan_owner_records(r, user_id))
             if not ok:
                 return False
+            op_ok, op_keys, op_members = await self._scan_owner_operations(r, user_id)
+            if not op_ok:
+                return False
             pipe = r.pipeline(transaction=True)
             if sessions:
                 pipe.delete(*sessions)
             if focuses:
                 pipe.delete(*focuses)
+            if op_keys:
+                pipe.delete(*op_keys)
+            if op_members:
+                pipe.srem(_OPSYNC_ACTIVE, *op_members)
             pipe.delete(owner_key)
             await pipe.execute()
 
             ok, sessions, focuses, _ = await self._scan_owner_records(
                 r, user_id)
-            if (not ok or sessions or focuses
+            op_ok, op_keys, _members = await self._scan_owner_operations(r, user_id)
+            if (not ok or sessions or focuses or not op_ok or op_keys
                     or await r.exists(owner_key)):
                 return False
             await r.set(

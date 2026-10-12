@@ -4,6 +4,7 @@ WS3 §5。Kahn 拓扑排序分层 → 每层内 asyncio.gather 并行 → 层间
 """
 from __future__ import annotations
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan
                      step_call_context, step_fingerprint, step_raw_text)
 from observability import events as obs_events
 from . import confirmation
+from .operation_sync import SYNC_SPEECH
 from runtime.slot_fidelity import (restore_dropped_qualifiers,
                                    undeclared_slots)
 
@@ -42,7 +44,6 @@ _RESPONSE_ONLY_CONTRACT_ERROR = "response_only_contract_violation"
 # 晚到的第一份由车端日志去重；不宣称恰好一次，补偿是另一个受控动作。话术零领域词。
 _EDGE_QUERY_TIMEOUT_S = 1.5
 _EDGE_RECOVERED_SPEECH = "刚才没收到执行回执，车端记录显示这个操作已经完成。"
-_EDGE_ABSENT = "absent"
 
 # 流式丢 final 后按 readback 结果分档的话术（B5 §4.2）。三句**零领域字面量**：
 # 不提任何具体对象或动作，只说「发出了 / 生效了 / 不确定」。
@@ -145,12 +146,13 @@ def _struct_dict(value) -> dict:
 
 
 class DagExecutor:
-    def __init__(self, dispatcher=None, call_agent_fn=None, state_mirror=None):
+    def __init__(self, dispatcher=None, call_agent_fn=None, state_mirror=None, operation_sync=None):
         """
         dispatcher: UnifiedDispatcher-compatible object with dispatch(step, ctx).
         call_agent_fn: legacy async callable kept for existing embedders/tests.
         state_mirror: 车况镜像（M2 Verifier 的 state_match 求值源）。None = 无镜像 →
                       state_match 恒 UNKNOWN（不定罪），其余模式不受影响。
+        operation_sync: CA2-11 v2 车端操作的对账登记（`operation_sync.EdgeOperationSync`）。None = 只做 v1 的同步查询。
         """
         if dispatcher is None:
             if call_agent_fn is None:
@@ -158,6 +160,7 @@ class DagExecutor:
             dispatcher = _LegacyDispatcher(call_agent_fn)
         self._dispatcher = dispatcher
         self._mirror = state_mirror
+        self._operation_sync = operation_sync
 
     async def run(self, plan: Plan, ctx: PlanContext,
                   done: dict[str, StepResult] | None = None) -> AsyncIterator[StepResult]:
@@ -278,17 +281,58 @@ class DagExecutor:
         status = await query(step, ctx, _EDGE_QUERY_TIMEOUT_S)
         logger.info("Step %s(%s): edge operation after timeout reads %s",
                     step.id, step.intent, status or "unanswered")
-        if status == _EDGE_ABSENT:
+        if status == _operation.EDGE_ABSENT:
             redo = self._enforce_response_only(step, await self._dispatch_once(step, ctx))
-            return self._enforce_capability_confirm(step, redo)
+            redo = self._enforce_capability_confirm(step, redo)
+            # 重发这一份又没回执：结局未知，交给后台对账（后台只读，绝不再发第三次）
+            if redo.status == StepStatus.FAILED and (redo.error or "") in _UNCERTAIN_ERRORS:
+                return await self._unsettled_edge(step, ctx, redo, status)
+            return redo
         if status == _operation.DONE:
+            # CA2-11 v2：回包丢了，动作也就没落进执行史；补记一条，审计问「刚才执行了吗」才念得出来
+            await self._note_edge(step, ctx, status)
             return StepResult(step_id=step.id, status=StepStatus.OK, speech=_EDGE_RECOVERED_SPEECH,
                               data={"_operation": {"operation_id": step.operation_id,
                                                    "decision": "recovered", "status": status},
                                     "_speech_verbatim": True})
         if status == _operation.FAILED:
             return StepResult(step_id=step.id, status=StepStatus.FAILED, error="edge_reported_failure")
-        return result
+        return await self._unsettled_edge(step, ctx, result, status)
+
+    async def _note_edge(self, step: Step, ctx: PlanContext, edge_status: str) -> bool:
+        """登记进对账记录（best-effort：存不上只是少一份事实，绝不影响这一轮）。"""
+        sync = self._operation_sync
+        if sync is None:
+            return False
+        try:
+            return bool(await sync.note(step, ctx, edge_status))
+        except Exception as exc:
+            logger.warning("Step %s(%s): operation sync note failed (%s)", step.id, step.intent,
+                           type(exc).__name__)
+            return False
+
+    async def _unsettled_edge(self, step: Step, ctx: PlanContext, result: StepResult,
+                              edge_status: str) -> StepResult:
+        """车端没回执、同步路径也问不出定论（CA2-11 v2）：登记给后台对账，并把话说实——不说「请稍后再试」
+        （那会招来一次新的执行），说结果不确定、先别重复下这个指令。
+
+        `error` 与指纹照旧（同轮重出同一动作仍被防抖挡住）；只换话术。「会继续核实」只在真登记上了才说；
+        车端已经给了定论的（等确认过期 = 没有执行、执行方中途死掉 = 确认不了）当场说清楚。
+        """
+        registered = await self._note_edge(step, ctx, edge_status)
+        outcome = _operation.sync_outcome(edge_status)
+        if edge_status == _operation.EDGE_ABSENT or outcome == _operation.SYNC_CHECKING:
+            outcome = _operation.SYNC_CHECKING
+            if not registered:
+                return result
+        speech = SYNC_SPEECH.get(outcome, "")
+        if not speech:
+            return result
+        data = dict(result.data or {})
+        data["_operation"] = {"operation_id": step.operation_id, "decision": "unsettled",
+                              "status": edge_status or "unanswered", "sync": outcome}
+        data["_speech_verbatim"] = True
+        return dataclasses.replace(result, speech=speech, data=data)
 
     @staticmethod
     def _stamp_source(step: Step, result: StepResult) -> StepResult:

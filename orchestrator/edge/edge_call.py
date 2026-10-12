@@ -253,7 +253,11 @@ class EdgeCallExecutor:
         return await operation_gate.admit(agent, request)
 
     def _operation_query(self, call) -> agent_pb2.ExecuteResponse:
-        """What the vehicle's log says about one operation. Read-only: VAL is never touched."""
+        """What the vehicle's log says about one operation. Read-only: VAL is never touched.
+
+        CA2-11 v2：报的是**此刻的有效状态**——执行中已陈旧报 orphaned、等确认已过期报 cancelled，与下一次认领的判定
+        同一口径（`effective_status`），云端后台对账因此能收敛，不必等到车端日志过期。只读，不落标记。
+        """
         from runtime.capability_contract import rejected
         operation_id = call.operation_query
         if call.intent.name or call.intent.slots or not operation_contract.valid_operation_id(operation_id):
@@ -264,8 +268,13 @@ class EdgeCallExecutor:
             found = self.operation_log.lookup(operation_id)
         except operation_contract.OperationStoreError:
             return operation_gate.reject(operation_contract.UNAVAILABLE, operation_id)
-        record = {"operation_id": operation_id, "decision": "query",
-                  "status": found["status"] if found else "absent"}
+        status = "absent"
+        if found:
+            status = operation_contract.effective_status(
+                found["status"], found["phase"], touched_ms=found["touched_ms"],
+                expires_at_ms=found["expires_at_ms"], now_ms=found["now_ms"],
+                stale_ms=int(operation_gate.executing_stale_s() * 1000))
+        record = {"operation_id": operation_id, "decision": "query", "status": status}
         if found:
             record["phase"] = found["phase"]
             record["outcome"] = str((found.get("result_ref") or {}).get("outcome") or "")

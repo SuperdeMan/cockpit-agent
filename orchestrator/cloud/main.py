@@ -5,6 +5,7 @@
 """
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 
@@ -15,6 +16,7 @@ from runtime.grpcio import aio_server, bind_port, run_aio_server
 from .clients import Clients
 from .planning import PlanBuilder
 from .executor import DagExecutor
+from .operation_sync import EdgeOperationSync
 from .dispatch import UnifiedDispatcher
 from .tools import ToolRegistry
 from .aggregator import Aggregator
@@ -22,6 +24,7 @@ from .session import SessionStore
 from .engine import PlannerEngine
 from .server import CloudPlannerServicer
 from .state_mirror import VehicleStateMirror
+from runtime.proactive import publish_proactive
 from runtime.privacy_delete_bus import (
     CLOUD_SUBJECT,
     CLOUD_TARGET,
@@ -100,7 +103,10 @@ async def serve():
     # 连不上 NATS → 镜像恒空 → 对账判 UNKNOWN 不定罪，主链不受影响。
     mirror = VehicleStateMirror()
     await mirror.start()
-    executor = DagExecutor(dispatcher=dispatcher, state_mirror=mirror)
+    # CA2-11 v2：车端操作结局的后台对账（只读恢复查询；告知经主动治理器，发布器在 NATS 连上后再装）
+    operation_sync = EdgeOperationSync(session, clients.query_edge_operation)
+    executor = DagExecutor(dispatcher=dispatcher, state_mirror=mirror,
+                           operation_sync=operation_sync)
     aggregator = Aggregator(llm_fn=clients.llm_complete)
 
     engine = PlannerEngine(
@@ -117,6 +123,7 @@ async def serve():
         )
         await install_privacy_delete_responder(privacy_nc, engine)
         logger.info("cloud pending-session privacy delete responder enabled")
+        operation_sync.publish = functools.partial(publish_proactive, privacy_nc)
     except Exception as exc:
         logger.warning(
             "cloud pending-session privacy delete responder unavailable: %s",
@@ -138,12 +145,14 @@ async def serve():
         print(f"[cloud-planner] tool registry register failed (continuing): {exc}", flush=True)
     interval = float(os.getenv("AGENT_REREGISTER_INTERVAL", "10"))
     tools_task = asyncio.create_task(_reregister_tools(tools, clients, interval))
+    sync_task = asyncio.create_task(operation_sync.run_forever())
     try:
         await run_aio_server(server, name="cloud-planner")
     finally:
-        tools_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await tools_task
+        for task in (tools_task, sync_task):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         if privacy_nc is not None:
             await privacy_nc.close()
         await mirror.close()

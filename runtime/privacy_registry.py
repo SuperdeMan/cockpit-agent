@@ -407,12 +407,15 @@ PRIVACY_TARGETS = (
         # interaction context.  The pending merchant step itself is minimised
         # before persistence; privacy_user_all still deletes both key families
         # immediately through the cloud SessionStore adapter.
+        # CA2-11 v2 起还有第三族：车端操作结局的对账记录（`planner:opsync:*` 与待对账集合），
+        # 只存编号 / 意图 / 能力描述 / 车辆 / 时刻，同一个 `delete_owner` 按值里的 owner 删除。
         id="planner_pending_session",
         backend="redis_or_memory",
         adapter_key="cloud_session",
         adapter=PRIVACY_ADAPTERS["cloud_session"],
         storage_variants=("planner:sess:*", "planner:sess-owner:*",
-                          "planner:sess-owner-fence:*", "planner:focus:*"),
+                          "planner:sess-owner-fence:*", "planner:focus:*",
+                          "planner:opsync:*", "planner:opsync-active"),
         lifecycle="deletable",
         enforced_from="M-D",
         owner_fields=OWNER_FIELDS,

@@ -43,6 +43,8 @@ from __future__ import annotations
 import re
 
 from runtime.clock import local_dt
+from runtime.operation import (SYNC_CHECKING, SYNC_DONE, SYNC_FAILED, SYNC_NOT_EXECUTED,
+                               SYNC_UNKNOWN)
 from runtime.question_shape import DIRECTIVE_MARKERS
 
 # ── ① 执行史：「刚才实际执行了什么」 ──────────────────────────────────────
@@ -177,8 +179,8 @@ def asks_when(raw_text: str) -> bool:
     return bool(_WHEN_ASK_RE.search(str(raw_text or "")))
 
 
-def audit_answer(history, *, with_time: bool = False, pendings=None) -> str:
-    """审计问题的确定性回答。**同一份历史（+ 同一份挂起表）→ 逐字同一个答案。**
+def audit_answer(history, *, with_time: bool = False, pendings=None, operations=None) -> str:
+    """审计问题的确定性回答。**同一份历史（+ 同一份挂起表 + 同一份对账记录）→ 逐字同一个答案。**
 
     `with_time` 由调用方按原话判（`asks_when`）：账本里本来就有 `ts`，
     但不问不报——多说一个维度也是改行为。时刻一律走 `runtime.clock`
@@ -188,27 +190,75 @@ def audit_answer(history, *, with_time: bool = False, pendings=None) -> str:
     修前只念执行史、答「还没有执行过任何操作」，等确认的那件事一字不提——它也是「刚才让你做的事」，只是**还没执行**。
     念出来用与「还有待确认的操作吗」同一份措辞（`_pending_clauses`），并明说还没执行；不传或读不到（None）就只报执行史，
     不替挂起表说「没有」。只读，不碰确认语义：要不要执行仍只认确认 / 取消那条闭环。
+
+    `operations`（CA2-11 v2）：车端没回执的那些操作的对账记录摘要 `[{"what", "outcome"}]`。它们不在执行史里（回包丢了，
+    动作也就没落账），只念车端日志怎么说（`operation_clause`）；有这样的记录时**不说**「还没有执行过任何操作」——
+    车端可能已经做了。不传或读不到（None）逐字同旧。
     """
     waiting = _pending_clauses(pendings)
     pending_tail = "、".join(waiting) + "，还没执行。" if waiting else ""
+    unsure = _operation_clauses(operations)
+    unsure_tail = "；".join(unsure) + "。" if unsure else ""
     done = executed_exchanges(history)
     if not done:
+        if unsure:
+            return unsure_tail + (f"另外{pending_tail}" if waiting else "")
         head = "这次对话里我还没有执行过任何操作"
         return f"{head}；{pending_tail}" if waiting else f"{head}。"
     n = sum(len(acts) for _u, acts, _ts in done)
     said = [(u.strip(), ts) for u, _acts, ts in done if u.strip()]
+    # 执行史之后先念没回执的，再念等确认的；第二段换个连接词，免得连说两个「另外」。
+    tails = (f"另外{unsure_tail}" if unsure else "") + (
+        f"{'还有' if unsure else '另外'}{pending_tail}" if waiting else "")
     if not said:
         # 有动作但取不到原话（存量轮次/异常形状）——**报数仍然是真的**，
         # 别因为凑不齐人话就退回「没有执行过」，那是把事实说反。
         speech = f"这次对话里执行过 {n} 个操作，但我没能取到对应的原话。"
-        return speech + (f"另外{pending_tail}" if waiting else "")
+        return speech + tails
     if with_time:
         parts = [f"{u}（{local_dt(ts).strftime('%H:%M')}）" if ts else u
                  for u, ts in said]
     else:
         parts = [u for u, _ts in said]
     speech = f"这次对话里执行过 {n} 个操作：" + "、".join(parts) + "。"
-    return speech + (f"另外{pending_tail}" if waiting else "")
+    return speech + tails
+
+
+# ── ④ 车端操作结局：「没收到回执的那个操作到底做了没」（CA2-11 v2，2026-10-12） ─────────────
+#
+#: 对账结论的人话（结论词表在 `runtime.operation`）。只说车端日志怎么说，不宣称恰好一次，也不许诺补偿。
+_OPERATION_PHRASE = {
+    SYNC_DONE: "车端记录显示已经完成",
+    SYNC_NOT_EXECUTED: "车端记录显示没有执行",
+    SYNC_FAILED: "车端记录显示执行失败",
+    SYNC_UNKNOWN: "车端记录也确认不了做没做成",
+    SYNC_CHECKING: "还在向车端核实",
+}
+_OPERATION_WHAT_MAX = 20
+
+
+def operation_clause(what: str, outcome: str) -> str:
+    """「「打开后备箱」没收到执行回执，车端记录显示已经完成」——审计与主动告知共用这一句：同一件事只有一个说法。
+
+    `what` 是服务端的能力描述（不是用户原话）；没有就退到「刚才那个车控操作」。不认识的结论 ⇒ 空串（不编）。
+    """
+    phrase = _OPERATION_PHRASE.get(str(outcome or ""))
+    if not phrase:
+        return ""
+    label = str(what or "").strip()[:_OPERATION_WHAT_MAX]
+    subject = f"「{label}」" if label else "刚才那个车控操作"
+    return f"{subject}没收到执行回执，{phrase}"
+
+
+def _operation_clauses(operations) -> list[str]:
+    parts = []
+    for item in operations or []:
+        if not isinstance(item, dict):
+            continue
+        clause = operation_clause(item.get("what"), item.get("outcome"))
+        if clause:
+            parts.append(clause)
+    return parts
 
 
 # ── ② 数据源：「这个数据是哪来的、什么时候的」 ────────────────────────────

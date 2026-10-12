@@ -201,6 +201,58 @@ class Decision:
     rebind: bool = False    # awaiting record whose parameters change before confirmation
 
 
+def awaiting_expired(expires_at_ms, now_ms: int) -> bool:
+    """等确认的记录过了有效期（没写有效期的旧记录同样算过期）：之后的确认一律执行不了。"""
+    return type(expires_at_ms) is not int or expires_at_ms <= now_ms
+
+
+def executing_stale(touched_ms: int, now_ms: int, stale_ms: int) -> bool:
+    """执行中的记录太久没有结算：执行方多半在中途死掉了，结局按未知处理、不再重放。"""
+    return now_ms - touched_ms >= stale_ms
+
+
+def effective_status(status: str, phase: str, *, touched_ms: int, expires_at_ms, now_ms: int,
+                     stale_ms: int) -> str:
+    """这条记录此刻对认领方意味着什么——`decide` 那两处「先标记再回答」的只读视图（CA2-11 v2）。
+
+    恢复查询只读、不落盘，但要与下一次认领看到的结论一致：执行中已陈旧 ⇒ orphaned（认领会标成 orphaned、答未知）；
+    等确认已过期 ⇒ cancelled（认领会标成 cancelled、答过期，晚到的确认执行不了）。其余原样。
+    """
+    if status == ACCEPTED and phase == PHASE_EXECUTING and executing_stale(touched_ms, now_ms, stale_ms):
+        return ORPHANED
+    if status == ACCEPTED and phase == PHASE_AWAITING and awaiting_expired(expires_at_ms, now_ms):
+        return CANCELLED
+    return status
+
+
+# ── CA2-11 v2：车端操作结局的对账结论（云端后台对账与执行审计共用这一份词表）──────────────────
+#
+# 只表达「车端日志怎么说」：已完成 / 没有执行 / 执行失败 / 确认不了，或者还在核实。不宣称恰好一次，也不代表任何补偿。
+SYNC_CHECKING, SYNC_DONE, SYNC_FAILED, SYNC_NOT_EXECUTED, SYNC_UNKNOWN = (
+    "checking", "done", "failed", "not_executed", "unknown")
+SYNC_TERMINAL = frozenset({SYNC_DONE, SYNC_FAILED, SYNC_NOT_EXECUTED, SYNC_UNKNOWN})
+SYNC_STATES = SYNC_TERMINAL | {SYNC_CHECKING}
+#: 恢复查询「车端查无此条」的回答（`EdgeCall.operation_query`，车端日志保留期内 = 从没收到）。
+EDGE_ABSENT = "absent"
+
+
+def sync_outcome(edge_status: str) -> str:
+    """车端恢复查询的一条回答 → 对账结论。
+
+    执行中 / 等确认未过期 / 没问到 ⇒ 还在核实。查无此条与等确认过期都是「没有执行」——前者要在车端日志保留期内、
+    且过了重发可能还在路上的那段时间才成立，由调用方把关（`orchestrator/cloud/operation_sync.py`）。
+    """
+    if edge_status == DONE:
+        return SYNC_DONE
+    if edge_status == FAILED:
+        return SYNC_FAILED
+    if edge_status in (EDGE_ABSENT, CANCELLED):
+        return SYNC_NOT_EXECUTED
+    if edge_status == ORPHANED:
+        return SYNC_UNKNOWN
+    return SYNC_CHECKING
+
+
 def decide(record: Record | None, claim: Claim, *, stale_ms: int) -> Decision:
     """Whether a durable handler may run. Anything unrecognized fails closed (no run)."""
     if record is None:
@@ -213,8 +265,7 @@ def decide(record: Record | None, claim: Claim, *, stale_ms: int) -> Decision:
     same_params = env.get("params_sha256") == claim.params_sha256
     phase = env.get("phase")
     if record.status == ACCEPTED and phase == PHASE_AWAITING:
-        expires = env.get("expires_at_ms")
-        if type(expires) is not int or expires <= record.now_ms:
+        if awaiting_expired(env.get("expires_at_ms"), record.now_ms):
             return Decision(EXPIRED, mark=CANCELLED)
         if same_params:
             return Decision(RUN)
@@ -225,7 +276,7 @@ def decide(record: Record | None, claim: Claim, *, stale_ms: int) -> Decision:
     if not same_params:
         return Decision(MISMATCH)
     if record.status == ACCEPTED and phase == PHASE_EXECUTING:
-        if record.now_ms - record.touched_ms >= stale_ms:
+        if executing_stale(record.touched_ms, record.now_ms, stale_ms):
             return Decision(UNKNOWN, mark=ORPHANED)
         return Decision(IN_PROGRESS)
     if record.status in (DONE, FAILED):

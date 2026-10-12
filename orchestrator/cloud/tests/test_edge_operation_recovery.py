@@ -78,13 +78,13 @@ class _Vehicle:
         return _operation_response(self.query_status)
 
 
-def _run(vehicle, step=None):
+def _run(vehicle, step=None, sync=None):
     async def unused(*args, **kwargs):          # pragma: no cover - cloud agents are not involved
         raise AssertionError("no cloud agent here")
 
     dispatcher = UnifiedDispatcher(cloud_call=unused, edge_call=vehicle.edge_call,
                                    edge_query=vehicle.edge_query)
-    executor = DagExecutor(dispatcher=dispatcher)
+    executor = DagExecutor(dispatcher=dispatcher, operation_sync=sync)
     step = step or _edge_step()
     ctx = PlanContext(vehicle_id="v1", granted_permissions=["vehicle.control"])
 
@@ -178,3 +178,78 @@ def test_the_client_sends_a_read_only_operation_query():
     envelope, timeout = sent[0]
     assert envelope.vehicle_id == "v1" and envelope.call.operation_query == "a" * 32
     assert not envelope.call.intent.name and timeout == 1.5 and response.status == OK
+
+
+# ── CA2-11 v2：同步路径收尾时登记对账记录，并把话说实 ─────────────────────────────────────
+
+class _Sync:
+    """记下执行器登记了什么；`registered` = 后台对账登记上没有。"""
+
+    def __init__(self, registered=True):
+        self.registered = registered
+        self.notes: list[tuple[str, str]] = []
+
+    async def note(self, step, ctx, edge_status):
+        self.notes.append((step.operation_id, edge_status))
+        return self.registered
+
+
+def test_an_unsettled_operation_is_handed_to_the_background_and_the_user_is_told_so():
+    from orchestrator.cloud.operation_sync import SYNC_SPEECH
+    sync = _Sync()
+    vehicle = _Vehicle(["timeout"], query_status=op.ACCEPTED)
+    result, step = _run(vehicle, sync=sync)
+    assert sync.notes == [(step.operation_id, op.ACCEPTED)] and len(vehicle.metas) == 1   # 只登记，不重发
+    assert result.status == StepStatus.FAILED and result.error == "step_timeout" and result.fingerprint
+    assert result.speech == SYNC_SPEECH[op.SYNC_CHECKING] and "稍后再试" not in result.speech
+    assert result.data["_operation"]["sync"] == op.SYNC_CHECKING and result.data["_speech_verbatim"] is True
+
+
+def test_no_promise_to_keep_checking_when_nothing_was_registered():
+    sync = _Sync(registered=False)
+    vehicle = _Vehicle(["timeout"], query_status=None)
+    result, step = _run(vehicle, sync=sync)
+    assert sync.notes == [(step.operation_id, "")]
+    assert result.speech == "" and result.error == "step_timeout"          # v1 原样：不许诺做不到的事
+
+
+@pytest.mark.parametrize("status, outcome", [(op.ORPHANED, op.SYNC_UNKNOWN), (op.CANCELLED, op.SYNC_NOT_EXECUTED)])
+def test_a_verdict_the_vehicle_already_has_is_said_at_once(status, outcome):
+    from orchestrator.cloud.operation_sync import SYNC_SPEECH
+    result, _ = _run(_Vehicle(["timeout"], query_status=status), sync=_Sync(registered=False))
+    assert result.speech == SYNC_SPEECH[outcome] and result.error == "step_timeout"
+
+
+def test_a_recovered_operation_is_recorded_for_the_audit():
+    sync = _Sync()
+    result, step = _run(_Vehicle(["timeout"], query_status=op.DONE), sync=sync)
+    assert result.status == StepStatus.OK and sync.notes == [(step.operation_id, op.DONE)]
+
+
+def test_a_resend_that_also_went_unanswered_is_handed_over_once():
+    from orchestrator.cloud.operation_sync import SYNC_SPEECH
+    sync = _Sync()
+    vehicle = _Vehicle(["timeout", "timeout"], query_status="absent")
+    result, step = _run(vehicle, sync=sync)
+    assert len(vehicle.metas) == 2 and vehicle.metas[0][op.HEADER] == vehicle.metas[1][op.HEADER]
+    assert sync.notes == [(step.operation_id, op.EDGE_ABSENT)]
+    assert result.speech == SYNC_SPEECH[op.SYNC_CHECKING]
+
+
+@pytest.mark.parametrize("executes, status", [(["timeout", "ok"], "absent"), (["timeout"], op.FAILED)])
+def test_settled_outcomes_are_not_registered(executes, status):
+    sync = _Sync()
+    _run(_Vehicle(executes, query_status=status), sync=sync)
+    assert sync.notes == []
+
+
+def test_the_user_hears_the_honest_sentence_not_try_again_later():
+    from orchestrator.cloud.aggregator import Aggregator
+    from orchestrator.cloud.operation_sync import SYNC_SPEECH
+
+    async def no_llm(*args, **kwargs):          # pragma: no cover - single failed step needs no model
+        raise AssertionError("no model call for a single failed step")
+
+    result, _ = _run(_Vehicle(["timeout"], query_status=op.ACCEPTED), sync=_Sync())
+    composed = asyncio.run(Aggregator(llm_fn=no_llm).compose("打开空调", [result]))
+    assert composed["speech"] == SYNC_SPEECH[op.SYNC_CHECKING]
