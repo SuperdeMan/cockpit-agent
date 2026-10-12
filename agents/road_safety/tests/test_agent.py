@@ -610,3 +610,26 @@ def test_resolution_words_without_a_session_alert_keep_the_general_path():
     agent = RoadSafetyAgent()
     res = asyncio.run(run_handle(agent, "safety.driving_advice", raw_text="车没故障，今天适合出行吗"))
     assert "不等于故障已经排除" not in res.speech
+
+
+@pytest.mark.parametrize("slots, accepted", [
+    ({"question": "胎压黄灯亮了，还能继续开吗"}, True),
+    ({"issue": "胎压黄灯"}, False),
+])
+def test_driving_advice_takes_the_planners_question_echo_and_nothing_else(slots, accepted):
+    """核心旅程 V211 / MSE01（200×5，`70b179b7`）：规划器把整句问题写进 `question` 槽，严格契约整步拒掉，
+    用户听到「这项能力的接口或参数暂时不匹配」。走真实的 SDK 接收方：`question` 收下（告警照原话判），别的契约外的键照旧拒。"""
+    from agents._sdk.server import _Servicer
+    from cockpit.agent.v1 import agent_pb2
+    from cockpit.common.v1 import common_pb2
+    from runtime.capability_contract import HEADER, capability_digest
+    agent = RoadSafetyAgent()
+    cap = next(c for c in agent.manifest.capabilities if c.intent == "safety.driving_advice")
+    req = agent_pb2.ExecuteRequest(
+        intent=common_pb2.Intent(name=cap.intent, slots=slots, raw_text="胎压黄灯亮了，还能继续开吗？应该补到多少？"),
+        meta={HEADER: capability_digest(agent.manifest, cap)})
+    res = asyncio.run(_Servicer(agent).Execute(req, None))
+    if accepted:
+        assert res.status == agent_pb2.ExecuteResponse.OK and "降低车速" in res.speech
+    else:
+        assert res.status == agent_pb2.ExecuteResponse.REJECTED and res.error.message == "unexpected_parameter"

@@ -10,12 +10,20 @@ fallback: chitchat
 capabilities:
   - intent: safety.driving_advice
     effect: read
+    # 契约 revision 3（2026-10-13，核心旅程 V211 / MSE01）：规划器常把整句问题照手册问答的习惯写进 `question` 槽，
+    # 严格契约整步拒掉，用户听到「这项能力的接口或参数暂时不匹配」（`70b179b7` 只读车道 8 遍里 3 遍；历史产物里
+    # 这条能力被拒 8 次，6 次是 `question`）。告警判断读的是本轮原话，`question` 只是原话的转述：收下、不用。
+    # 它不进 `slots`（规划器不会被提示去填），其余契约外的键照旧整步拒绝。
     contract:
       version: 2
-      revision: '2'
+      revision: '3'
       effect: read
       parameters:
         destination:
+          type: string
+          unit: ''
+          region: ''
+        question:
           type: string
           unit: ''
           region: ''
