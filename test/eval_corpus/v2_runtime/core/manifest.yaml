@@ -42,7 +42,8 @@ journeys:
   - {id: A3-1, source: journeys/regression_a.yaml, family: F08, lane: read_only}
   - {id: A3-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
   - {id: A5-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
-  - {id: A1-5, source: journeys/regression_a.yaml, family: F08, lane: read_only}
+  - {id: A1-5, source: journeys/regression_a.yaml, family: F08, lane: read_only,
+     known_red: "2026-10-12：「今天的天气适合去哪玩」近四次跑数全红（65ddeb85、08a62bf5、99178302 ×2）——规划器要么反问「想了解哪种信息」、要么只答天气，不按天气推荐去处"}
   - {id: A3-3, source: journeys/target_a.yaml, family: F08, lane: read_only}
   # ── F09 周边 ────────────────────────────────────────────────────
   # 周边 / 停车 Agent 按整个 Agent 要求 payment.invoke（只为预留的下单桩）：只读旅程按条补这一项（只读车道从不确认）
