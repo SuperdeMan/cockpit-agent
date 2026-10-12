@@ -78,7 +78,8 @@ def _run(origin, replan_steps, judge, *, more=None):
     planner = _Planner([ReplanDecision(done=False, steps=replan_steps), *(more or [])])
     results = {"s1": StepResult("s1", StepStatus.OK, speech=WEATHER_SPEECH,
                                 data={"city": "深圳", "condition": "晴"})}
-    results.update({s.id: StepResult(s.id, StepStatus.OK, speech="已为您打开空调") for s in replan_steps})
+    results.update({s.id: StepResult(s.id, StepStatus.OK, speech="已为您打开空调")
+                    for s in [*replan_steps, *(step for d in (more or []) for step in d.steps)]})
     executor = _Executor(results)
     controller = LoopController(planner, executor, _Aggregator(), None, max_iters=2, budget_ms=5000,
                                 condition_judge=judge)
@@ -162,6 +163,17 @@ def test_the_condition_is_judged_once_per_turn():
     assert len(judge.calls) == 1
     assert executor.runs == [["s1"], ["r1"]]               # 座椅加热不是后件点名的，照拦
     assert sum(1 for obs in planner.observations[-1] if obs.get("intent") == cj.CHECK_INTENT) == 1
+
+
+def test_the_consequent_is_released_once_not_again_in_a_later_batch():
+    """200×5 `70b179b7` D01：第一批放行 `hvac.on`，第三批再规划又出 `hvac.set`（设成当前值），同样点名空调——后件只授权一次。"""
+    judge = _Judge(_verdict("holds", "深圳今天不会下雪"))
+    again = _edge("r2", "hvac.set", "设置空调温度")
+    more = [ReplanDecision(done=False, steps=[again])]
+    _, executor, _ = _run(D01, [_edge("r1", "hvac.on", "打开空调")], judge, more=more)
+
+    assert executor.runs == [["s1"], ["r1"]]
+    assert again.condition_released is False
 
 
 def test_a_plain_request_is_not_judged():

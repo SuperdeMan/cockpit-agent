@@ -238,6 +238,9 @@ class LoopController:
         condition_parts = (split_conditional_instruction(safety_origin_text)
                            if self._condition_judge is not None else None)
         condition_verdict = ""
+        # 后件是一句话、只授权一次：放行过一批之后，后续再规划被问句闸拦下的写步照拦（200×5 `70b179b7` D01：
+        # 第一批放行 `hvac.on`，第三批又出 `hvac.set`，同样点名空调又被放行）。
+        consequent_released = False
         replans = 0
         exhausted = False
         batch_local_ids: dict[str, str] = {}   # 本批 {运行时 ID: 模型的局部 ID}（R3-06，只供 t2.iter 观测）
@@ -329,11 +332,12 @@ class LoopController:
                 kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
                     fresh_steps, safety_origin_text,
                 )
-                if blocked and condition_verdict == cj.HOLDS:
+                if blocked and condition_verdict == cj.HOLDS and not consequent_released:
                     # 前件判为成立：被拦的写步里只放行后件点名的那几步（盖服务端标记，确认续接时认它）；再规划多派的照拦
                     released = [step for step in blocked
                                 if step_naming_score(condition_parts[1], step) > 0]
                     if released:
+                        consequent_released = True
                         released_ids = {id(step) for step in released}
                         for step in released:
                             step.condition_released = True
