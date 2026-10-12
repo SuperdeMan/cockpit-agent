@@ -45,7 +45,7 @@ import re
 from runtime.clock import local_dt
 from runtime.operation import (SYNC_CHECKING, SYNC_DONE, SYNC_FAILED, SYNC_NOT_EXECUTED,
                                SYNC_UNKNOWN)
-from runtime.question_shape import DIRECTIVE_MARKERS
+from runtime.question_shape import DIRECTIVE_MARKERS, HOW_TO_ACTIONS, OPERATION_VERBS
 
 # ── ① 执行史：「刚才实际执行了什么」 ──────────────────────────────────────
 #
@@ -110,6 +110,31 @@ def is_execution_audit_question(raw_text: str) -> bool:
     if not text or _NOT_AUDIT_RE.search(text):
         return False
     return bool(_RETROSPECT_RE.search(text) and _EXECUTION_RE.search(text))
+
+
+#: 是非式回问（2026-10-12 核心旅程 P12）：「刚才锁车了吗」「刚才有没有锁车」——问的是**那一件事做没做**，答案在执行史里。
+#: 修前它只有回顾词、没有「执行了什么」，不算审计问题：规划器第一轮如实给零步，被「无动作需确认」重试催出一个选错编号的
+#: 胎压查询（目标写的却是「查询车门锁定状态」），只读车道当场叫停。动作取问句判据的两份动词表（零领域词），动作之后至多
+#: 两个字再接「了 / 过 + 吗 / 没（有）」——「刚才那个调研做完了吗」隔了三个字，不收。
+_DID_IT_VERBS = "|".join(sorted({*HOW_TO_ACTIONS, *OPERATION_VERBS}, key=len, reverse=True))
+_DID_IT_RE = re.compile(
+    rf"(?P<act>(?:{_DID_IT_VERBS})[^，,。！？!?\s了过]{{0,2}})(?:了|过)(?:吗|么|没有?)"
+    rf"|有没有(?P<asked>(?:{_DID_IT_VERBS})[^，,。！？!?\s了过]{{0,2}})")
+
+
+def asks_whether_done(raw_text: str, history) -> bool:
+    """「刚才锁车了吗」：回顾词 + 一截动作的是非问，而且**那截动作本会话前面用户亲口说过**（「锁车」）。
+
+    第二条是数据条件，不是词表：「刚才那家店关门了吗」问的是店，用户此前没说过「关门」，照常进规划器。
+    命中的走与「我刚才让你做了什么」同一个审计出口（执行史 + 挂起表 + 车端对账记录），零 LLM。"""
+    text = str(raw_text or "")
+    if not text or _NOT_AUDIT_RE.search(text) or not _RETROSPECT_RE.search(text):
+        return False
+    acts = [m.group("act") or m.group("asked") for m in _DID_IT_RE.finditer(text)]
+    if not acts:
+        return False
+    said = [turn_text for role, turn_text, _acts, _exch, _ts in map(_clean_turn, history or []) if role == "user"]
+    return any(act in earlier for act in acts for earlier in said)
 
 
 def _clean_turn(turn) -> tuple[str, str, list[str], str, int]:

@@ -255,3 +255,26 @@ def test_this_module_never_asks_an_llm_or_the_network():
                      if not line.lstrip().startswith("#"))
     for forbidden in ("import httpx", "import requests", "llm", "await "):
         assert forbidden not in body, f"读出口里出现了 {forbidden}"
+
+
+# ── 是非式回问（2026-10-12 核心旅程 P12）────────────────────────────────────────────────
+
+def _said(*user_texts):
+    return [{"role": "user", "text": t, "exchange_id": f"x{i}"} for i, t in enumerate(user_texts)]
+
+
+def test_a_yes_no_recall_of_an_action_the_user_asked_for_is_an_audit_question():
+    from runtime.session_facts import asks_whether_done
+    assert asks_whether_done("刚才锁车了吗？", _said("锁车", "取消")) is True
+    assert asks_whether_done("你刚才把车窗关了没", _said("把车窗关上")) is True
+    assert asks_whether_done("刚刚有没有锁车", _said("锁车")) is True
+
+
+def test_a_yes_no_recall_needs_the_user_to_have_asked_for_that_action():
+    from runtime.session_facts import asks_whether_done
+    assert asks_whether_done("刚才那家店关门了吗", _said("附近有什么川菜馆")) is False   # 问的是店，不是车
+    assert asks_whether_done("刚才锁车了吗？", []) is False                          # 读不到历史就不劫持
+    assert asks_whether_done("刚才那个调研做完了吗", _said("帮我调研一下充电桩")) is False  # 动作后隔了三个字
+    assert asks_whether_done("锁车了吗", _said("锁车")) is False                      # 没有回顾词
+    assert asks_whether_done("刚才下雨了吗", _said("下雨了")) is False                 # 不是操作动作
+    assert asks_whether_done("刚才锁车的提醒设了吗", _said("锁车")) is False           # 提醒有自己的卡

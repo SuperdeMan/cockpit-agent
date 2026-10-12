@@ -2103,7 +2103,9 @@ class PlannerEngine:
         if (session_facts.is_provenance_question(text)
                 and session_facts.latest_sources(history)):
             return ("data_provenance", session_facts.provenance_answer(history))
-        if session_facts.is_execution_audit_question(text):
+        # P12（2026-10-12）：「刚才锁车了吗」这类是非式回问，那截动作本会话前面用户说过，同样按执行史作答
+        if (session_facts.is_execution_audit_question(text)
+                or session_facts.asks_whether_done(text, history)):
             if history_unavailable:
                 speech = (memory_read.HISTORY_OFF_SPEECH if working_set.history_state == memory_read.OFF
                           else memory_read.HISTORY_UNAVAILABLE_SPEECH)

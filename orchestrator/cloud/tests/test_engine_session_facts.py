@@ -441,3 +441,29 @@ def test_the_bare_confirm_word_keeps_its_own_older_outlet():
     spy = _Spy()
     final = _finals(_run(_engine(spy), "确认", "sess-bare-confirm"))[-1]
     assert final["speech"] == "当前没有待确认的操作。您可以重新告诉我需求。"
+
+
+# ── P12（核心旅程 2026-10-12）：挂起取消之后问「刚才锁车了吗」——是非式回问走同一个审计出口 ──────
+
+def test_a_yes_no_recall_after_a_cancelled_pending_is_answered_from_the_ledger():
+    """`04fe3bba` 只读车道 P12 第 1 遍（叫停）：修前这句不算审计问题，规划器被重试催出一个选错编号的胎压查询。"""
+    spy = _Spy()
+    asyncio.run(spy.append_turn("s", "user", "锁车", exchange_id="A"))
+    asyncio.run(spy.append_turn("s", "assistant", "要锁上车门吗？这项操作可能影响车辆安全，请确认是否继续。",
+                                exchange_id="A"))
+    asyncio.run(spy.append_turn("s", "user", "取消", exchange_id="B"))
+    asyncio.run(spy.append_turn("s", "assistant", "好的，已为您取消。", exchange_id="B"))
+
+    final = _finals(_run(_engine(spy), "刚才锁车了吗？", "sess-audit-p12"))[-1]
+
+    assert "还没有执行过任何操作" in final["speech"]
+    assert not any(claim in final["speech"] for claim in ("已锁车", "已经锁", "锁好了"))
+    assert spy.unary_calls == [] and spy.llm_calls == 0
+
+
+def test_a_yes_no_recall_of_something_the_user_never_asked_for_still_goes_to_the_planner():
+    spy = _Spy()
+    asyncio.run(spy.append_turn("s", "user", "附近有什么川菜馆", exchange_id="A"))
+    asyncio.run(spy.append_turn("s", "assistant", "为您找到 3 家川菜馆。", exchange_id="A"))
+    _run(_engine(spy), "刚才那家店关门了吗", "sess-audit-p12-neg")
+    assert spy.llm_calls > 0
