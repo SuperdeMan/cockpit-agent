@@ -136,12 +136,15 @@ schema_version: 1
 # 2026-10-05 放到 638：新增 active intent `scene.describe`（固定语料 V207「露营模式是什么意思」此前没有能力可落，
 # 规划器判无需动作、闲聊凭常识编）。覆盖矩阵机械新增正例 2、硬负例 2、relation 对照 2（两对 route_flip：开启 vs 定义问、
 # 场景定义 vs 部件模式），去重后 +4。四条均为 `seen_regression`：能力声明与范例本身就是这次修复。旧尺子一条没删。
+# 2026-10-12 放到 642：新增两个 active intent `frunk.open` / `frunk.close`（前备箱开放语音，核心旅程 K05「打开前备箱」
+# 被规划成 trunk.open、确认后开错对象）。危险动作按 2+2+1 正常覆盖、不进豁免表：两对 route_flip（开 vs 关、前备箱 vs 后备箱）
+# + 各一条换说法的第二正例，「打开后备箱」复用既有输入，端侧入口用例 `ei.dangerous.frunk` 复用「打开前备箱」，去重后 +4。旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 638
+    max_cases: 642
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

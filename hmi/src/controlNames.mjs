@@ -22,6 +22,7 @@ export const OBJECT_NAME = {
     headlight: '大灯',
     warning_light: '双闪',
     trunk: '后备箱',
+    frunk: '前备箱',
     door_lock: '车门锁',
     fuel_tank_cover: '油箱盖',
     charging_port: '充电口盖',

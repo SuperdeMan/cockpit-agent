@@ -205,6 +205,9 @@ generic）。判据：**清单上少一项，比清单上多写一行提醒更�
 
 1. **`frunk`（前备箱）**：`require_confirm=true` 的危险对象，却没有任何端侧 intent——
    是刻意不给语音开，还是漏了？与 `trunk`（后备箱，有 intent）不对称。
+   **2026-10-12 已裁定：开放**（用户「按建议推进」）。起因是核心旅程 K05：「打开前备箱」上云后目录里没有它，
+   规划器拿 `trunk.open` 顶替、确认后开错对象。现与后备箱对等（`frunk.open` / `frunk.close`、需二次确认、确认问句念「前备箱」、
+   状态键 `frunk`），唯一不同是 `drive_restricted: true`——前备箱盖就是前机盖，行驶中掀起会挡住前挡视线。已移出台账。
 2. **`driving_mode` 与 `power_mode`**：语义高度重叠，可能是同一件事的两个对象名。
    若确认重复应合并——别让 planner 面对两个分不开的工具（同 `aircon.inc/dec` 那一课）。
 3. **`battery`**：电量查询目前走云侧 `vehicle_state` 上下文而非端侧 intent，要不要补一个
@@ -215,6 +218,7 @@ generic）。判据：**清单上少一项，比清单上多写一行提醒更�
 `surround_view` / `wifi` / `driving_mode` / `battery` / `frunk`）：它们**是**真车控对象、
 VAL 侧多数已有分支或话术，只是端侧没有 fast_intent 规则与意图名，云端计划仍可经
 `action_to_structured` 走到。新增端侧意图时应从这一组里挑，并把对应条目从台账删掉。
+（`frunk` 已于 2026-10-12 补齐并删掉台账条目，见上面第 1 条。）
 
 ### 6.6 顺带记档的两个发现
 

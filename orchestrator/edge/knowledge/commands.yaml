@@ -1267,6 +1267,10 @@ objects:
     projects: []
   frunk:
     display_name: 前备箱
+    # 2026-10-12 开放语音（用户「按建议推进」，核心旅程 K05）：此前没有任何端侧 intent，云端目录里没有它，
+    # 「打开前备箱」被规划器拿 `trunk.open` 顶替、确认后开错了对象。与后备箱对等：需二次确认、同一组确认 / 执行闸。
+    # 唯一与后备箱不同的是 drive_restricted：前备箱盖就是前机盖，行驶中掀起会挡住前挡风玻璃视线，
+    # 行驶中开 / 关一律拒绝（后备箱维持原值，要不要同样收紧另行裁决）。
     operates:
     - open
     - close
@@ -1275,11 +1279,17 @@ objects:
     positions: false
     units: []
     online: offline_ok
-    drive_restricted: false
+    drive_restricted: true
     require_confirm: true
     effect: write
+    edge_intents:
+    - frunk.close
+    - frunk.open
     voice_forbidden: false
-    projects: []
+    projects:
+    - project-a
+    - project-b
+    - project-c
   interaction:
     display_name: 交互
     operates:

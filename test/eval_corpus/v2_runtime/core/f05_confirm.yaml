@@ -21,12 +21,15 @@ cases:
       - {say: "确认", confirm: true, expect: {actions_required: ["charging_port.open"], actions_allowed: ["charging_port.open"]}}
     cleanup:
       - {say: "关闭充电口", confirm: true}
+  # 2026-10-12 前备箱开放语音（修前前备箱没有端侧能力，规划器拿 trunk.open 顶替、确认后开错对象，曾标 known_red）：
+  # 确认话术念「前备箱」、确认后只执行 frunk.open，车态 frunk 落成 open（模拟车初始车态带着这个键）
   - id: K05
     family: confirm_write_once
     vehicle_keys: [frunk]
     turns:
       - {say: "打开前备箱", expect: {need_confirm: true, speech_any: ["前备箱"]}}
-      - {say: "确认", confirm: true, expect: {actions_required: ["frunk.open"], actions_allowed: ["frunk.open"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["frunk.open"], actions_allowed: ["frunk.open"],
+                                            vehicle_values: {frunk: open}}}
     cleanup:
       - {say: "关闭前备箱", confirm: true}
   # 取消之后再要：取消那一轮不执行，重新要的那一次确认后执行一次

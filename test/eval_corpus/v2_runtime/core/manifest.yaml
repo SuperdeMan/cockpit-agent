@@ -183,8 +183,7 @@ journeys:
   # F05 确认类写扩容（2026-10-12，core/f05_confirm.yaml）
   - {id: K03, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K04, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
-  - {id: K05, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
-     known_red: "2026-10-12 标定（19051942）：前备箱没有端侧能力（能力豁免表登记「待确认」），上云后规划器拿「打开后备箱」顶替——确认话术念「后备箱」，确认后执行 trunk.open，开错对象；前备箱要不要开放语音待产品裁决"}
+  - {id: K05, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K06, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K07, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
      known_red: "2026-10-12 标定（19051942）：挂起时插问天气，那一轮答了天气但不再带确认提示（need_confirm 为假）；之后说「确认」照样只执行一次 trunk.open。插话后要不要重新出确认卡待产品定"}

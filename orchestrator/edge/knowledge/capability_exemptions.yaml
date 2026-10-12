@@ -20,7 +20,8 @@
 # 而不是混在这 39 个里看不出来。
 #
 # ⚠ 本表首批（2026-08-11）由实施者按对象语义分类给出，未逐条人裁。**分类本身是可争议的**，
-# 其中三条已在下面标出待确认点（frunk / driving_mode / battery）。
+# 其中三条曾标出待确认点（frunk / driving_mode / battery）。frunk 已于 2026-10-12 裁定开放语音
+# （与后备箱对等、需二次确认，核心旅程 K05），移出本表；driving_mode / battery 仍待确认。
 
 schema_version: 1
 
@@ -132,9 +133,6 @@ exemptions:
   - object: equalizer
     lanes: [execution]
     reason: 同 air_purifier（均衡器）。
-  - object: frunk
-    lanes: [execution]
-    reason: 同 air_purifier（前备箱）。⚠ **待确认**：它是 require_confirm=true 的危险对象，却没有任何端侧 intent——是刻意不给语音开，还是漏了？与 trunk（后备箱，有 intent）不对称。
   - object: hotspot
     lanes: [execution]
     reason: 同 air_purifier（个人热点）。

@@ -260,6 +260,22 @@ trunk_close_success:
   - 已为您关闭后备箱
   speech_brief:
   - 关了
+frunk_open_success:
+  scene: 前备箱已打开
+  status: 成功
+  speech_full:
+  - 前备箱已打开
+  - 已为您打开前备箱
+  speech_brief:
+  - 开了
+frunk_close_success:
+  scene: 前备箱已关闭
+  status: 成功
+  speech_full:
+  - 前备箱已关闭
+  - 已为您关闭前备箱
+  speech_brief:
+  - 关了
 door_lock_open_success:
   scene: 车门已解锁
   status: 成功
@@ -319,6 +335,16 @@ trunk_close_confirm:
   status: 待确认
   speech_full:
   - 要关闭后备箱吗？这项操作可能影响车辆安全，请确认是否继续。
+frunk_open_confirm:
+  scene: 确认打开前备箱
+  status: 待确认
+  speech_full:
+  - 要打开前备箱吗？这项操作可能影响车辆安全，请确认是否继续。
+frunk_close_confirm:
+  scene: 确认关闭前备箱
+  status: 待确认
+  speech_full:
+  - 要关闭前备箱吗？这项操作可能影响车辆安全，请确认是否继续。
 door_lock_open_confirm:
   scene: 确认解锁车门
   status: 待确认

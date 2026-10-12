@@ -17,6 +17,12 @@ intent_recognition:
   - {text: 播放音乐, object: [media, music]}
   - {text: 把音量调大, object: volume}
   - {text: 打开后备箱, object: trunk}
+  # 2026-10-12（核心旅程 K05）：前备箱开放语音。与后备箱成对入库——两个对象互不串（修前「打开前备箱」上云后被规划成 trunk.open）；
+  # 方向由 test_frunk.py 逐条钉（「合上」是关）
+  - {text: 打开前备箱, object: frunk}
+  - {text: 关闭前备箱, object: frunk}
+  - {text: 把前行李箱打开, object: frunk}
+  - {text: 把后备箱关上, object: trunk}
   # 2026-10-10（核心旅程 P3 K02）：「锁车」族整句短指令；「关闭锁车鸣笛」这类功能设置不在这里认
   - {text: 锁车, object: door_lock}
   - {text: 帮我锁车, object: door_lock}
@@ -79,6 +85,9 @@ val_execution:
   - {object: headlight, operate: close, expect: {headlight: false}}
   - {object: trunk, operate: open, expect: {trunk: open}}
   - {object: trunk, operate: close, expect: {trunk: closed}}
+  # 前备箱开 / 关落自己的状态键，后备箱原样不动（两个对象互不串）
+  - {object: frunk, operate: open, expect: {frunk: open, trunk: closed}}
+  - {object: frunk, operate: close, expect: {frunk: closed, trunk: closed}}
   - {object: door_lock, operate: open, expect: {door_lock: unlocked}}
   - {object: door_lock, operate: close, expect: {door_lock: locked}}
   - {object: fuel_tank_cover, operate: open, expect: {fuel_tank_cover: open}}
