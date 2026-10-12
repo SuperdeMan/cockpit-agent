@@ -37,6 +37,9 @@ def initial_state() -> dict:
         "steering_wheel_heating": False, "child_lock": False,
         "speed_kmh": 0, "gear": "P", "battery": 72, "location": None,
         "cabin_temp": 24,
+        # 需确认的油箱盖 / 充电口：此前首次操作才由 VAL 写进车态，跑前快照里没有这两个键——收尾关好了也被判「没复位」
+        # （核心旅程 K03，2026-10-12），没操作过时问「油箱盖开着吗」也读不到。缺省关闭，与后备箱同口径。
+        "fuel_tank_cover": "closed", "charging_port": "closed",
     }
 
 
