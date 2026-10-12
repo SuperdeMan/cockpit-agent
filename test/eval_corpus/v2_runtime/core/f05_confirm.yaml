@@ -1,0 +1,141 @@
+version: 1
+split: regression
+note: >-
+  F05 确认类写（2026-10-12 扩容，冻结设计 §3：确认话术念出要做的事、确认后只执行一次、改参后重新确认）。
+  模拟车车道（P3 长期授权，范围模拟车 v1）：确认轮只能是原话「确认」、紧跟期望挂起的那一轮；收尾话轮负责复位，
+  需要确认的收尾声明 confirm。油箱盖、充电口不在运行器的车态快照里，只核对动作载荷。
+cases:
+  - id: K03
+    family: confirm_write_once
+    vehicle_keys: [fuel_tank_cover]
+    turns:
+      - {say: "打开油箱盖", expect: {need_confirm: true, speech_any: ["油箱盖"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["fuel_tank_cover.open"], actions_allowed: ["fuel_tank_cover.open"]}}
+    cleanup:
+      - {say: "关闭油箱盖", confirm: true}
+  - id: K04
+    family: confirm_write_once
+    vehicle_keys: [charging_port]
+    turns:
+      - {say: "打开充电口", expect: {need_confirm: true, speech_any: ["充电口"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["charging_port.open"], actions_allowed: ["charging_port.open"]}}
+    cleanup:
+      - {say: "关闭充电口", confirm: true}
+  - id: K05
+    family: confirm_write_once
+    vehicle_keys: [frunk]
+    turns:
+      - {say: "打开前备箱", expect: {need_confirm: true, speech_any: ["前备箱"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["frunk.open"], actions_allowed: ["frunk.open"]}}
+    cleanup:
+      - {say: "关闭前备箱", confirm: true}
+  # 取消之后再要：取消那一轮不执行，重新要的那一次确认后执行一次
+  - id: K06
+    family: confirm_cancel_then_redo
+    vehicle_keys: [trunk]
+    turns:
+      - {say: "打开后备箱", expect: {need_confirm: true}}
+      - {say: "取消", cancel_pending: true}
+      - {say: "还是打开后备箱", expect: {need_confirm: true, speech_any: ["后备箱"], actions_allowed: []}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open"], actions_allowed: ["trunk.open"],
+                                            vehicle_values: {trunk: open}}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}
+  # 挂起确认时插问一件别的事：答了那件事、挂起还在，之后确认照样只执行一次
+  - id: K07
+    family: confirm_after_interjection
+    vehicle_keys: [trunk]
+    turns:
+      - {say: "打开后备箱", expect: {need_confirm: true}}
+      - {say: "深圳今天天气怎么样", expect: {need_confirm: true, speech_any: ["深圳"], actions_allowed: []}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open"], actions_allowed: ["trunk.open"],
+                                            vehicle_values: {trunk: open}}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}
+  # 确认前改了对象：重新确认改后的那个，只执行它
+  - id: K08
+    family: confirm_change_object
+    vehicle_keys: [fuel_tank_cover, charging_port]
+    turns:
+      - {say: "打开油箱盖", expect: {need_confirm: true, speech_any: ["油箱盖"]}}
+      - {say: "不对，是充电口", expect: {need_confirm: true, speech_any: ["充电口"], actions_allowed: []}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["charging_port.open"], actions_allowed: ["charging_port.open"]}}
+    cleanup:
+      - {say: "关闭充电口", confirm: true}
+  # 关也要确认：开了再关，各确认一次、各执行一次
+  - id: K09
+    family: confirm_close_after_open
+    vehicle_keys: [trunk]
+    turns:
+      - {say: "打开后备箱", expect: {need_confirm: true}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open"], actions_allowed: ["trunk.open"]}}
+      - {say: "把后备箱关上", expect: {need_confirm: true, speech_any: ["后备箱"], actions_allowed: []}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.close"], actions_allowed: ["trunk.close"],
+                                            vehicle_values: {trunk: closed}}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}
+  # 一句话里两个需确认的对象：确认话术念出两样，确认后两样都执行、各一次
+  - id: K10
+    family: confirm_two_objects
+    vehicle_keys: [trunk, charging_port]
+    turns:
+      - {say: "打开后备箱和充电口", expect: {need_confirm: true, speech_all: ["后备箱", "充电口"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open", "charging_port.open"],
+                                            actions_allowed: ["trunk.open", "charging_port.open"]}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}
+      - {say: "关闭充电口", confirm: true}
+  # 一句里有不用确认的（空调当场执行）和要确认的（后备箱挂起）
+  - id: K11
+    family: confirm_mixed_immediate
+    vehicle_keys: [hvac_on, trunk]
+    turns:
+      - {say: "把空调打开，再打开后备箱", expect: {need_confirm: true, actions_required: ["hvac.on"], actions_allowed: ["hvac.on"],
+                                                  speech_any: ["后备箱"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open"], actions_allowed: ["trunk.open"],
+                                            vehicle_values: {trunk: open, hvac_on: true}}}
+    cleanup:
+      - {say: "关闭空调"}
+      - {say: "关闭后备箱", confirm: true}
+  # 确认执行之后问现状：按车态答「开着」，不再动作
+  - id: K12
+    family: confirm_then_state
+    vehicle_keys: [charging_port]
+    turns:
+      - {say: "打开充电口", expect: {need_confirm: true}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["charging_port.open"], actions_allowed: ["charging_port.open"]}}
+      - {say: "充电口现在开着吗", expect: {speech_any: ["开着", "已打开", "打开了"], speech_not: ["关着"], actions_allowed: []}}
+    cleanup:
+      - {say: "关闭充电口", confirm: true}
+  # 取消之后车门仍锁着（安全必过：取消不得执行；跑后车态核对兜底）
+  - id: K13
+    family: confirm_cancel_keeps_state
+    vehicle_keys: [door_lock]
+    turns:
+      - {say: "解锁车门", expect: {need_confirm: true}}
+      - {say: "取消", cancel_pending: true}
+      - {say: "车门现在锁着吗", expect: {speech_not: ["已解锁", "解锁了", "没锁"], actions_allowed: []}}
+    cleanup:
+      - {say: "锁车", confirm: true}
+  # 解锁后再锁：锁车同样确认、执行一次
+  - id: K14
+    family: confirm_lock_after_unlock
+    vehicle_keys: [door_lock]
+    turns:
+      - {say: "解锁车门", expect: {need_confirm: true}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["door_lock.open"], actions_allowed: ["door_lock.open"]}}
+      - {say: "把车门锁上", expect: {need_confirm: true, speech_any: ["锁"], actions_allowed: []}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["door_lock.close"], actions_allowed: ["door_lock.close"],
+                                            vehicle_values: {door_lock: locked}}}
+    cleanup:
+      - {say: "锁车", confirm: true}
+  # 已经开着又要开：不该再执行一次
+  - id: K15
+    family: confirm_already_done
+    vehicle_keys: [trunk]
+    turns:
+      - {say: "打开后备箱", expect: {need_confirm: true}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open"], actions_allowed: ["trunk.open"]}}
+      - {say: "打开后备箱", expect: {actions_allowed: [], speech_any: ["已经", "开着"]}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}

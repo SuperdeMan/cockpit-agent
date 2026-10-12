@@ -218,3 +218,27 @@ cases:
       - {say: "如果深圳今天下雪，就帮我把空调打开", expect: {actions_allowed: []}}
     cleanup:
       - {say: "关闭空调"}
+  # 前件判定（2026-10-12，设计 docs/design/2026-10-12-conditional-instruction-judgement.md）：需确认的后件、判不了的条件
+  - id: D05
+    family: conditional_control_confirm
+    vehicle_keys: [trunk]
+    turns:
+      - {say: "如果深圳今天不下雪，就帮我打开后备箱", expect: {need_confirm: true, speech_any: ["后备箱"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open"], actions_allowed: ["trunk.open"],
+                                            vehicle_values: {trunk: open}}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}
+  - id: D06
+    family: conditional_control_unknown
+    vehicle_keys: [hvac_on]
+    turns:
+      - {say: "如果我老婆今天加班，就把空调打开", expect: {actions_allowed: []}}
+    cleanup:
+      - {say: "关闭空调"}
+  - id: D07
+    family: conditional_control_false
+    vehicle_keys: [trunk]
+    turns:
+      - {say: "如果深圳今天下雪，就帮我打开后备箱", expect: {actions_allowed: []}}
+    cleanup:
+      - {say: "关闭后备箱", confirm: true}

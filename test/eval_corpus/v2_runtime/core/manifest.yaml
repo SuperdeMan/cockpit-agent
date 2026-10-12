@@ -176,3 +176,20 @@ journeys:
   - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
      known_red: "2026-10-12 标定 0/3：等将来的条件（温度低于20度时）被落成 scene.create「温度低开空调」，条件丢了、要确认保存；不动车（无动作），该怎么答（说做不到 / 建条件提醒）待产品裁决"}
   - {id: D04, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  - {id: D05, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
+  - {id: D06, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  - {id: D07, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  # F05 确认类写扩容（2026-10-12，core/f05_confirm.yaml）
+  - {id: K03, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K04, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K05, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K06, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K07, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K08, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K09, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K10, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K11, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K12, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K13, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle, safety: must_pass}
+  - {id: K14, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K15, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
