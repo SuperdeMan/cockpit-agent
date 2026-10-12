@@ -924,6 +924,62 @@ def test_unknown_legacy_pending_confirmed_side_effect_fails_closed_before_dispat
     )) is None
 
 
+@pytest.mark.parametrize("origin, released, dispatched", [
+    ("如果附近有川菜馆，就帮我预订餐厅", True, 1),    # 判定成立后放行、挂起等确认的后件：确认后执行一次
+    ("如果附近有川菜馆，就帮我预订餐厅", False, 0),   # 没有放行标记：条件指令的后件照拦
+    ("川菜馆可以预订吗", True, 0),                     # 原话不是条件指令：标记不起作用
+    ("如果附近有川菜馆，就把空调打开", True, 0),       # 不是后件点名的那一步：标记带不过闸
+])
+def test_a_condition_released_step_survives_the_confirmation_restore(origin, released, dispatched):
+    """CA2-10 ② 第二步（2026-10-12）：T2 判定前件成立后放行的后件要确认时会挂起；确认那一轮的安全原点复核认
+    `condition_released`，但只认条件指令里后件点名的那一步。"""
+    from orchestrator.cloud.models import SessionState
+
+    engine, spy, session = _make_engine()
+    step = {"id": "s1", "agent_id": "nearby", "endpoint": "stub:50063", "intent": "nearby.order",
+            "require_confirm": True, "capability_description": "预订餐厅"}
+    if released:
+        step["condition_released"] = True
+    asyncio.run(session.save("sess-cond", SessionState(
+        phase="wait_confirm",
+        owner_user_id="u1",
+        operation_id="op-cond",
+        pending_step_id="s1",
+        pending_plan={"steps": [step], "raw_text": origin, "safety_origin_text": origin, "goal": "订餐厅"},
+    )))
+
+    _run(engine, _req("确认", session_id="sess-cond", is_confirmation=True, operation_id="op-cond"))
+
+    assert spy.count("nearby.order") == dispatched
+
+
+def test_the_release_mark_round_trips_through_the_pending_record():
+    from orchestrator.cloud.models import Step, step_record
+
+    marked = Step(id="s1", agent_id="edge-vehicle", intent="trunk.open", require_confirm=True,
+                  capability_description="打开后备箱", condition_released=True)
+    assert step_record(marked)["condition_released"] is True
+    assert Step(**step_record(marked)).condition_released is True
+    plain = Step(id="s1", agent_id="edge-vehicle", intent="trunk.open")
+    assert "condition_released" not in step_record(plain)
+
+
+def test_the_engine_gives_the_loop_a_temperature_zero_judge():
+    engine, _, _ = _make_engine()
+    assert engine.loop._condition_judge == engine._condition_complete
+    seen = {}
+
+    async def complete(messages, **kwargs):
+        seen.update(kwargs)
+        return "{}"
+
+    engine.clients = SimpleNamespace(llm_complete=complete)
+    assert asyncio.run(engine._condition_complete([{"role": "user", "content": "x"}])) == "{}"
+    assert seen == {"max_tokens": 256, "temperature": 0.0}
+    engine.clients = SimpleNamespace()
+    assert asyncio.run(engine._condition_complete([])) == ""
+
+
 def test_unknown_legacy_pending_read_still_dispatches_with_current_slot_answer():
     """unknown origin 只挡声明式副作用；恢复后的只读补槽仍使用当前回答。"""
     from orchestrator.cloud.models import SessionState

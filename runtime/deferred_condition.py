@@ -46,11 +46,21 @@ _POLITE_CONDITION_RE = re.compile(r"(?:你|您)?(?:可以|方便|能|愿意|有�
 _NO_CONSEQUENT_RE = re.compile(r"(?:就|那就|那|则)?(?:行|好|可以|够了?|OK|ok)?[了啊吧呀呢的。！!？?…~]*")
 
 
-def is_conditional_instruction(text) -> bool:
-    """以假设框架起句、说出了真条件和后件：后件要等条件判过才能做（判不了就不做）。"""
+def split_conditional_instruction(text) -> tuple[str, str] | None:
+    """以假设框架起句、说出了真条件和后件 ⇒ (条件, 后件)；不是条件指令 ⇒ None。
+
+    后件保留原话（含「就 / 帮我」这类连接与客气成分），由用它的地方自己清理：T2 的前件判定拿条件去问、拿后件判哪几步是用户
+    点名要做的（`runtime.condition_judgement`，设计 docs/design/2026-10-12-conditional-instruction-judgement.md）。"""
     t = re.sub(r"\s+", "", str(text or ""))
     m = _LEADING_CONDITION_RE.match(t)
     if not m or _POLITE_CONDITION_RE.fullmatch(m.group("condition")):
-        return False
+        return None
     consequent = t[m.end():].lstrip("，,、：:")
-    return bool(consequent) and not _NO_CONSEQUENT_RE.fullmatch(consequent)
+    if not consequent or _NO_CONSEQUENT_RE.fullmatch(consequent):
+        return None
+    return m.group("condition"), consequent
+
+
+def is_conditional_instruction(text) -> bool:
+    """以假设框架起句、说出了真条件和后件：后件要等条件判过才能做（判不了就不做）。"""
+    return split_conditional_instruction(text) is not None

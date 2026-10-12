@@ -3479,6 +3479,13 @@ class PlanBuilder:
             PlanBuilder._question_side_effect_steps(steps, origin)
             if origin else PlanBuilder._side_effect_steps(steps)
         )
+        # 条件指令（CA2-10 ② 第二步）：T2 判定前件成立后放行的后件步（`Step.condition_released`）挂起等确认，确认那一轮
+        # 走到这里复核时认这个服务端标记——仍要求原话是条件指令、这一步是后件点名的，标记带不过别的步。
+        parts = deferred_condition.split_conditional_instruction(origin) if blocked and origin else None
+        if parts:
+            blocked = [step for step in blocked
+                       if not (getattr(step, "condition_released", False)
+                               and step_naming_score(parts[1], step) > 0)]
         blocked_ids = {id(step) for step in blocked}
         return (
             [step for step in steps if id(step) not in blocked_ids],

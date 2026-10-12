@@ -1,18 +1,22 @@
 """Bounded adaptive planning loop for T2 requests."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
 from typing import AsyncIterator
 
+from runtime import condition_judgement as cj
 from runtime import effect_evidence
+from runtime.deferred_condition import split_conditional_instruction
 
 from .executor import DagExecutor
 from .dispatch import error_attrs
 from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
 from .planning import PlanBuilder, assign_runtime_ids
+from .step_grounding import step_naming_score
 from .step_input import bind_step_inputs
 from .task_identity import bind_task_identity
 from . import result_bundle
@@ -29,6 +33,14 @@ from observability.metrics import metrics
 logger = logging.getLogger("planner.loop")
 
 THINKING_FILLER = "我正在根据当前结果继续处理。"
+
+
+def _join_sentence(speech: str, line: str) -> str:
+    """确定性拼接一句（同聚合器的句读收口）：前一句非空且没有句末标点就补句号。"""
+    head = str(speech or "").strip()
+    if head and head[-1] not in "。！？!?；;":
+        head += "。"
+    return head + str(line or "")
 
 # ── T2 分档预算（M2 P2，母提案 §4.B 档位表 / 子 RFC §4.1）────────────────
 # 原本是单值 env（2 次 / 5s）两档共用：对「查天气→再按结果补建提醒」这种条件依赖链太紧，
@@ -133,7 +145,8 @@ def _cap_strings(value, depth: int = 0):
 class LoopController:
     def __init__(self, planner, executor, aggregator, suspend_fn,
                  max_iters: int | None = None, budget_ms: int | None = None,
-                 observation_limit: int = 6, clock=None, stream_fn=None):
+                 observation_limit: int = 6, clock=None, stream_fn=None,
+                 condition_judge=None):
         self.planner = planner
         self.executor = executor
         self.aggregator = aggregator
@@ -146,6 +159,27 @@ class LoopController:
         self.observation_limit = observation_limit
         self.clock = clock or time.monotonic
         self._stream = stream_fn
+        # 条件指令的前件判定用的模型调用（`messages` → 原始文本，engine 注入）；None ⇒ 不判，条件指令的后件写步照旧一律拦
+        self._condition_judge = condition_judge
+
+    async def _judge_condition(self, ctx, condition: str, observations: list) -> tuple[str, str]:
+        """问一次前件成不成立（`runtime.condition_judgement`），每问受 `condition_judgement_timeout_s()` 约束；
+        判不出 / 超时 / 异常都是 unknown。发一个 `t2.condition` span（结论、证据有没有、耗时）。"""
+        started = time.monotonic()
+
+        async def bounded(messages):
+            return await asyncio.wait_for(self._condition_judge(messages),
+                                          timeout=cj.condition_judgement_timeout_s())
+
+        verdict, evidence = await cj.judge_condition(bounded, condition, observations, cj.now_text())
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                ctx.trace_id, "t2.condition",
+                attrs={"verdict": verdict, "evidence": "1" if evidence else "0",
+                       "judge_ms": str(round((time.monotonic() - started) * 1000))})
+        except Exception:
+            pass
+        return verdict, evidence
 
     def _budget_for(self, complexity: str) -> tuple[int, int]:
         iters, budget = tier_budget(complexity)
@@ -198,6 +232,12 @@ class LoopController:
             or getattr(ctx, "safety_origin_text", "")
             or ""
         )
+        # CA2-10 ② 第二步：条件指令的前件在首轮只读步跑完、第一次再规划之前判一次（设计
+        # docs/design/2026-10-12-conditional-instruction-judgement.md）。判定不替再规划派步，只做两件事：把结论写回观察；
+        # 再规划派出、被问句闸拦下的写步里，后件点名的那几步只在「成立」时放行。条件和后件都取服务端持有的原话。
+        condition_parts = (split_conditional_instruction(safety_origin_text)
+                           if self._condition_judge is not None else None)
+        condition_verdict = ""
         replans = 0
         exhausted = False
         batch_local_ids: dict[str, str] = {}   # 本批 {运行时 ID: 模型的局部 ID}（R3-06，只供 t2.iter 观测）
@@ -219,6 +259,13 @@ class LoopController:
                     exhausted = self.clock() >= deadline
                     break
                 # 评审三轮 R3-06：本轮已知的全部步骤 ID（结果 / 种子 / 初计划 / 跑过的批）——再规划批的运行时 ID 不许与它们撞
+                if condition_parts and not condition_verdict:
+                    condition_verdict, evidence = await self._judge_condition(
+                        ctx, condition_parts[0], observations)
+                    observations.append(
+                        cj.check_observation(condition_parts[0], condition_parts[1], evidence)
+                        if condition_verdict == cj.HOLDS else
+                        cj.unmet_observation(condition_parts[0], condition_parts[1], condition_verdict))
                 taken = ({r.step_id for r in results} | {s.id for s in executed_steps}
                          | set(initial_steps))
                 batch_tag = f"t{replans + 1}"
@@ -282,6 +329,19 @@ class LoopController:
                 kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
                     fresh_steps, safety_origin_text,
                 )
+                if blocked and condition_verdict == cj.HOLDS:
+                    # 前件判为成立：被拦的写步里只放行后件点名的那几步（盖服务端标记，确认续接时认它）；再规划多派的照拦
+                    released = [step for step in blocked
+                                if step_naming_score(condition_parts[1], step) > 0]
+                    if released:
+                        released_ids = {id(step) for step in released}
+                        for step in released:
+                            step.condition_released = True
+                        kept_ids = {id(step) for step in kept} | released_ids
+                        kept = [step for step in fresh_steps if id(step) in kept_ids]
+                        blocked = [step for step in blocked if id(step) not in released_ids]
+                        logger.info("Condition holds; releasing consequent step(s) %s",
+                                    [step.intent for step in released])
                 if blocked:
                     logger.warning(
                         "Question-shaped utterance replanned into side-effecting "
@@ -557,6 +617,12 @@ class LoopController:
                                 summary="合并各步结果生成回复", status="start")
         final = await self.aggregator.compose(
             user_text or goal, results, thinking=thinking)
+        if condition_parts and condition_verdict in (cj.FAILS, cj.UNKNOWN) and not any(
+                step_naming_score(condition_parts[1], step) > 0 for step in executed_steps):
+            # 前件不成立 / 判不了、后件也确实没做：确定性说一句为什么没做（系统持有的事实，不交给模型改写）
+            final["speech"] = _join_sentence(
+                final.get("speech", ""),
+                cj.condition_note(condition_verdict, condition_parts[0], condition_parts[1]))
         if exhausted and not final.get("follow_up"):
             final["follow_up"] = "要我继续吗？"
         # W13 终态账本：T2 的执行类 final 也按结果集算（engine `run()` 出口统一发 span）

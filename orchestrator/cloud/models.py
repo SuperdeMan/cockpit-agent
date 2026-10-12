@@ -116,6 +116,10 @@ class Step:
     # 执行方把它盖在本次命令改动的观测样本上。不进 step_record——确认恢复是新的一次派发，换新键。
     # 只用于把观测归到这一次派发：不是授权，也不是幂等键（后者归 CA2-11）。
     observation_ref: str = ""
+    # 条件指令（CA2-10 ② 第二步，2026-10-12）：这一步是后件点名的写步，T2 的前件判定判为成立、证据复核通过之后放行的。
+    # **服务端盖章**——只有 `loop.py` 在判定成立时盖，模型产出的计划里没有这个字段；随 `step_record` 持久化：后件要确认时，
+    # 确认续接的安全原点复核（`PlanBuilder._filter_safety_origin_side_effect_steps`）认它，仍要求原话是条件指令、这一步是后件点名的。
+    condition_released: bool = False
 
     def __post_init__(self):
         # Meta is transient, so reconstruct this server-owned version marker on restore.
@@ -194,6 +198,8 @@ def step_record(step: "Step") -> dict:
             "capability_abi": step.capability_abi,
             "capability_revision": step.capability_revision} if step.capability_contract else {}),
         **({"operation_id": step.operation_id} if step.operation_id else {}),
+        # 条件指令：判定放行的后件步挂起等确认，确认那一轮还得认得出它是放行过的
+        **({"condition_released": True} if getattr(step, "condition_released", False) else {}),
     }
 
 

@@ -491,7 +491,8 @@ class PlannerEngine:
         self.context.vehicle_reader = getattr(getattr(executor, "_mirror", None), "view", None)
         self.loop = loop or LoopController(
             planner, executor, aggregator, self._suspend,
-            stream_fn=getattr(clients, 'call_agent_stream', None))
+            stream_fn=getattr(clients, 'call_agent_stream', None),
+            condition_judge=self._condition_complete)
 
     async def run(self, request) -> AsyncIterator[dict]:
         ctx = self._build_context(request)
@@ -1960,6 +1961,14 @@ class PlannerEngine:
         except asyncio.TimeoutError:
             logger.warning("admission judgment timed out after %.1fs", _admission_timeout_s())
             return None
+
+    async def _condition_complete(self, messages: list[dict]) -> str:
+        """条件指令前件判定的模型调用（`runtime.condition_judgement`）：主档、温度 0、只要一个小 JSON。
+        没有 LLM 客户端 ⇒ 空串（判定按判不了处理，后件不执行）。"""
+        complete = getattr(self.clients, "llm_complete", None)
+        if complete is None:
+            return ""
+        return await complete(messages, max_tokens=256, temperature=0.0)
 
     async def _admission_complete(self, messages: list[dict]) -> str:
         """轻量判定的模型调用：快档、温度 0、只要一个 JSON 对象。没有 LLM 客户端 ⇒ 空串（判定按不可用处理）。"""

@@ -220,7 +220,8 @@ def test_question_replan_confirmed_cloud_step_never_dispatches():
 
 
 def test_conditional_instruction_consequent_is_still_blocked_after_replan():
-    """条件判定可靠之前，T2 再规划派出的后件写步照样按问句拦（2026-10-12）。
+    """没有前件判定（未注入判定器）时，T2 再规划派出的后件写步照样按问句拦（2026-10-12）；有判定器时的放行见
+    `test_condition_judgement_loop.py`。
 
     当天试过在这里对条件指令放行（`2085fc7a`）：再规划看到「深圳今天不会下雪」仍派出 `hvac.on`——核心旅程 D02
     「如果深圳今天下雪，就把空调打开」3/3 开了空调。「不执行」可以接受，「条件为假却执行」不行，已撤回。"""
