@@ -183,3 +183,25 @@ def test_a_first_attempt_write_is_not_touched():
     assert [s.intent for s in plan.steps] == ["hvac.inc"], plan.steps
     assert calls["llm"] == 1
     assert "_nudged_write_blocked" not in plan.plan_mode
+
+
+def test_a_nudged_reminder_from_a_remind_me_request_is_kept():
+    """核心旅程 N08（2026-10-12，`04fe3bba` 合成写车道）：「明天上午十点提醒我取快递」第一轮被判不受话，第二轮规划出建提醒，
+    修前「提醒我」不算操作线索、整份作废，答「这一轮我没有执行任何操作」。（提醒能力在这里用需确认声明代替真实的状态写契约，
+    走的是同一条副作用判据。）"""
+    agents = _agents() + [MockAgent("reminder", ["reminder.create"], require_confirm=("reminder.create",))]
+    ref = _assemble_capability_catalog(agents).pair_to_ref[("reminder", "reminder.create")]
+    wire = json.dumps({"addressed": True, "complexity": "simple", "goal": "", "steps": [
+        {"id": "s1", "capability_ref": ref, "slots": {}, "depends_on": [], "slot_refs": {}}]})
+    replies = [NOT_ADDRESSED, wire]
+
+    async def mock_llm(messages):
+        return replies.pop(0) if len(replies) > 1 else replies[0]
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve).build(
+        "明天上午十点提醒我取快递", WorkingSet(catalog=agents), PlanContext(session_id="t")))
+    assert [s.intent for s in plan.steps] == ["reminder.create"], plan.steps
+    assert "_nudged_write_blocked" not in plan.plan_mode

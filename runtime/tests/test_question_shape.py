@@ -731,3 +731,11 @@ def test_lock_questions_stay_questions(text):
     """「锁」进操作动作词表之后，问怎么锁 / 锁没锁 / 锁不上照旧是问句（2026-10-10）。"""
     from runtime.question_shape import is_non_directive_question
     assert is_non_directive_question(text) is True, text
+
+
+def test_a_remind_me_request_carries_an_operation_cue():
+    """核心旅程 N08（2026-10-12）：被「不受话」重试催出来的建提醒，原话「提醒我…」就是请求证据。"""
+    from runtime.question_shape import carries_operation_cue
+    assert carries_operation_cue("明天上午十点提醒我取快递") is True
+    assert carries_operation_cue("下午三点叫我开会") is True
+    assert carries_operation_cue("可以，已为您执行") is False      # G-3 的原始反例照旧没有线索

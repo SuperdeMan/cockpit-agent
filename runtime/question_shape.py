@@ -262,6 +262,12 @@ def is_imperative_opening(t: str | None) -> bool:
     return bool(IMPERATIVE_OPENING_RE.match((t or "").strip()))
 
 
+#: 「提醒我 / 叫我 / 通知我 / 别忘了」：要系统到点做一件事的请求，本身就是请求证据（2026-10-12 核心旅程 N08：「明天上午十点提醒我取快递」
+#: 第一轮被判不受话，第二轮规划出的建提醒因「原话没有操作线索」整份作废，答「这一轮我没有执行任何操作」）。
+#: 补槽挂起下的换题判据（`engine._is_topic_change`）消费同一份。
+REMIND_ME_CUES = ("提醒我", "叫我", "通知我", "别忘了")
+
+
 def carries_operation_cue(t: str | None) -> bool:
     """原话自己带着「要系统操作」的句法证据：祈使开头、操作动词，或操作动作词（追加批 G）。
 
@@ -275,7 +281,8 @@ def carries_operation_cue(t: str | None) -> bool:
         return False
     return bool(is_imperative_opening(body)
                 or any(v in body for v in OPERATION_VERBS)
-                or any(a in body for a in HOW_TO_ACTIONS))
+                or any(a in body for a in HOW_TO_ACTIONS)
+                or any(c in body for c in REMIND_ME_CUES))
 
 
 def _polite_tail_body(t: str) -> str | None:

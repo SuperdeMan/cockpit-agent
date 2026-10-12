@@ -55,7 +55,7 @@ from runtime.clause_split import split_clauses
 from runtime.cntime import CN_NUM_CHARS, cn_int
 from runtime.outcome import category_of, outcome_of_results
 from runtime.polarity import is_negated_directive
-from runtime.question_shape import is_imperative_opening, is_non_directive_question
+from runtime.question_shape import REMIND_ME_CUES, is_imperative_opening, is_non_directive_question
 from runtime.slots import STEP_ORIGIN_META
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
 from runtime.session_constraints import (constraint_recall_answer, constraints_in,
@@ -3449,7 +3449,7 @@ class PlannerEngine:
                 return False
             return True
         # 条件式提醒常把触发条件放在句首，动作词位于中后部；仍是完整新意图。
-        if any(k in t for k in ("提醒我", "叫我", "通知我", "别忘了")):
+        if any(k in t for k in REMIND_ME_CUES):
             return True
         # 疑问/回忆式不是槽位答案。「有什么/哪些」是句中问式（demo-3ukshz 探针实证：
         # 麦当劳选店挂起把「附近的瑞幸有什么可以点的」当 store_hint 吃掉——尾字「的」
