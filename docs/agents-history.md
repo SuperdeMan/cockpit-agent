@@ -11200,3 +11200,11 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   - 跑数器的「请求到终答」对端侧本地车控不可用：首个 final 后又来非 final 帧就等满 25 s 尾段预算（模拟车 89 轮恰好 25.0 s）；
   - 跑数器钉 `MiniMax-M3`（`--model` 缺省），线上缺省是用户自己切的 Flash；冻结读数只认清单钉的模型；
   - 变异脚本按 CRLF 处理（工作树是 CRLF，按 `\n` 找不到原文、变异空跑）；PowerShell 里 `git commit -F -` 接 here-string 不是 stdin，提交信息先写文件。
+
+## 2026-10-13：修复批 `fix-1013` 上线（`3f1b53b0`）与定点复测
+
+- 合并提交 `3f1b53b0`（报告文档 `b154204b` + `d0b366b0`，保留修复提交原 SHA）；全量 11970 / 38，门禁与 smoke 通过；dry-run 无阻断，apply 一次过（718 s）；
+  status release = running = `3f1b53b0`、5 / 5，verify `20261012T222001Z-3f1b53b.json`。主机容量到 `warn` 档（可用 38.7 GB），高于构建闸。
+- 定点复测（钉 M3，各 ×5，[§13.8](design/2026-10-09-v2-core-journey-freeze.md)）：NB04 3→5、V211 3→5、P11 4→5、M11 4→5、MSE01 4→4（剩下一遍只排了
+  安全建议、没排手册，与契约无关）；严格契约拒绝 3 遍→0。复测不改 200×5 读数。
+- ⛔ PowerShell 5.1 的 `Set-Content -Encoding utf8` 写 BOM：拿它写提交信息，标题开头会带 U+FEFF（本地合并提交已改写）；提交信息一律用无 BOM 的 UTF-8。
