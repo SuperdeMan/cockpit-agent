@@ -171,7 +171,8 @@ journeys:
   - {id: C19, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   - {id: K02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F05, lane: simulated_vehicle}
   - {id: N02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
-  - {id: E02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}
+  - {id: E02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes,
+     known_red: "2026-10-12 试车（04fe3bba）1/5：「记住我老婆的生日是五月二十号」没有确定性的记忆写入归属——落成建提醒、联网搜索或闲聊（还说「没有记忆功能」），之后问「我老婆生日是哪天」答不出；99178302 上的 4/5 多是巧合（提醒补槽把第二问吞了，复读的标题恰好带「五月二十」）。与 E03 / E05 / E07 同族，待记忆写入设计"}
   - {id: D01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: D02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
