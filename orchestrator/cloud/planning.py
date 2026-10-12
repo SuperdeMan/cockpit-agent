@@ -409,6 +409,11 @@ def _bare_object_plan_invents_action(plan: Plan | None, text: str) -> bool:
     normalized_text = re.sub(r"\s+", "", str(text or "")).strip()
     if not normalized_text:
         return False
+    # 完整的信息问题不是光杆对象：问的对象和要的东西用户都说了，整句原样进 `question` 槽是转述、不是模型补了动作。
+    # 否则它与 `information_question_clarified`（同一判据）互相顶：重试给出同一份计划、再被判要澄清，两次后兜底成
+    # 「没听清要拿它做什么」（200×5 `70b179b7` M11「氛围灯能换哪些颜色」；M06 / M08 同形，被留下的上一版计划救回）。
+    if is_complete_information_question(str(text or "")):
+        return False
     normalized_goal = re.sub(r"\s+", "", str(plan.goal or "")).strip()
     if (normalized_goal == normalized_text
             or normalized_text not in normalized_goal):
