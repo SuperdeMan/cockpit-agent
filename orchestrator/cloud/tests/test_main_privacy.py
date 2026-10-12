@@ -133,3 +133,32 @@ async def test_cloud_production_privacy_responder_propagates_false_as_negative_a
         key=key,
         now=1_800_000_000,
     ) is False
+
+
+class _Sync:
+    publish = None
+
+
+@pytest.mark.asyncio
+async def test_operation_notices_survive_a_privacy_responder_that_cannot_start():
+    """CA2-11 v2：隐私删除响应器装不上（这里是没有共享 Redis）时，告知发布器照样装在同一条连接上。"""
+    nc = FakeNats()
+    sync = _Sync()
+
+    async def connect():
+        return nc
+
+    got = await main._wire_cloud_nats(FakeEngine(FakeSessions(redis_url="")), sync, connect=connect)
+    assert got is nc and sync.publish is not None
+    assert nc.callbacks == {}                     # 响应器没订阅
+
+
+@pytest.mark.asyncio
+async def test_no_nats_means_no_notices_and_no_responder():
+    sync = _Sync()
+
+    async def connect():
+        raise OSError("nats down")
+
+    assert await main._wire_cloud_nats(FakeEngine(FakeSessions()), sync, connect=connect) is None
+    assert sync.publish is None

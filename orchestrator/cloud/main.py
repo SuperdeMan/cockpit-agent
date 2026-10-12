@@ -78,6 +78,29 @@ async def install_privacy_delete_responder(
     )
 
 
+async def _wire_cloud_nats(engine, operation_sync, *, connect):
+    """连 NATS，装 CA2-11 v2 的告知发布器与挂起会话的隐私删除响应器；返回连接（连不上 ⇒ None）。
+
+    两件事各自成败：告知只要连接本身，隐私删除响应器装不上（线上 demo 档缺控制密钥 / 没有共享 Redis 时
+    `PrivacyDeleteProtocolError`）不连带关掉告知——2026-10-12 `19051942` 上线即是 `announce=off`。
+    """
+    try:
+        nc = await connect()
+    except Exception as exc:
+        logger.warning("cloud NATS unavailable: %s", type(exc).__name__)
+        return None
+    operation_sync.publish = functools.partial(publish_proactive, nc)
+    try:
+        await install_privacy_delete_responder(nc, engine)
+        logger.info("cloud pending-session privacy delete responder enabled")
+    except Exception as exc:
+        logger.warning(
+            "cloud pending-session privacy delete responder unavailable: %s",
+            type(exc).__name__,
+        )
+    return nc
+
+
 async def serve():
     port = int(os.getenv("CLOUD_PLANNER_PORT", "50054"))
 
@@ -114,24 +137,14 @@ async def serve():
         aggregator=aggregator, session=session,
     )
 
-    privacy_nc = None
-    try:
+    async def _connect_nats():
         import nats
-        privacy_nc = await nats.connect(
+        return await nats.connect(
             os.getenv("NATS_URL", "nats://nats:4222"),
             max_reconnect_attempts=-1,
         )
-        await install_privacy_delete_responder(privacy_nc, engine)
-        logger.info("cloud pending-session privacy delete responder enabled")
-        operation_sync.publish = functools.partial(publish_proactive, privacy_nc)
-    except Exception as exc:
-        logger.warning(
-            "cloud pending-session privacy delete responder unavailable: %s",
-            type(exc).__name__,
-        )
-        if privacy_nc is not None:
-            await privacy_nc.close()
-            privacy_nc = None
+
+    privacy_nc = await _wire_cloud_nats(engine, operation_sync, connect=_connect_nats)
 
     server = aio_server()
     orchestrator_pb2_grpc.add_CloudPlannerServicer_to_server(
