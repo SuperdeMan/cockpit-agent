@@ -196,6 +196,19 @@ def test_a_named_confirm_that_names_the_pending_step_still_confirms(text):
     assert spoken.kind == "one" and spoken.target is trunk, (text, spoken.kind)
 
 
+def test_frunk_and_trunk_confirms_never_stand_in_for_each_other():
+    """前备箱开放语音（2026-10-12，核心旅程 K05）：两个需确认对象只差一个字、共享「备箱」两字片段——
+    点名确认前备箱不能授权挂着的后备箱，反之亦然；两条同时挂着时各认各的。"""
+    trunk = _state("op-1", "打开后备箱", "trunk.open")
+    frunk = _state("op-2", "打开前备箱", "frunk.open")
+    for text, pending in (("确认打开前备箱", trunk), ("确认前备箱", trunk),
+                          ("确认打开后备箱", frunk), ("确认后备箱", frunk)):
+        spoken = PlannerEngine._resolve_spoken_confirm(text, False, [pending])
+        assert spoken.kind == "mismatch" and spoken.target is None, (text, spoken.kind)
+    assert PlannerEngine._resolve_spoken_confirm("确认打开前备箱", False, [trunk, frunk]).target is frunk
+    assert PlannerEngine._resolve_spoken_confirm("确认打开后备箱", False, [trunk, frunk]).target is trunk
+
+
 def test_position_and_amount_must_match_as_whole_facts():
     rear_right = _state("op-1", "打开车窗（右后）", "window.open", slots={"position": "右后"})
     assert PlannerEngine._resolve_spoken_confirm(

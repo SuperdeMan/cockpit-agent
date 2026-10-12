@@ -40,6 +40,9 @@ LOCAL_INTENTS = {
     "sunroof.open", "sunroof.close", "sunroof.set",
     "sunshade.open", "sunshade.close", "sunshade.set",
     "trunk.open", "trunk.close",
+    # 前备箱（2026-10-12 开放语音，核心旅程 K05）：此前不在这里，「打开前备箱」整句上云、规划器拿 `trunk.open` 顶替。
+    # 与后备箱同一条路：需确认，不在端侧秒回，带着确定性解析的章上云（`_edge_confirm`）。
+    "frunk.open", "frunk.close",
     "door_lock.open", "door_lock.close",
     # 氛围灯/大灯/雨刷/香氛（同上，2026-08-16 删 `.open/.close` 死条目）
     "ambient_light.on", "ambient_light.off", "ambient_light.set",
@@ -1185,7 +1188,7 @@ def _classify_structured(text: str) -> dict | None:
 
     # ── 前备箱 ────────────────────────────────────────────
     if "前备箱" in t or "前行李箱" in t or "前行李舱" in t:
-        if "关" in t:
+        if _lid_close(t):
             return _s("setting", "control", "close", "frunk", conf=0.9)
         return _s("setting", "control", "open", "frunk", conf=0.9)
 
@@ -1515,6 +1518,16 @@ _LOCK_CAR_RE = re.compile(
     r"^(?:请|帮我|麻烦|给我|替我)?(?:把|将)?"
     r"(?:(?:车门|车|门)(?:给)?锁(?:上|好|起来)?|锁(?:一下|上|好)?(?:车门|车|门))"
     r"(?:吧|了|啊|呀|一下)?[。！!]?$")
+
+#: 箱盖类对象的「关」：除了「关」字，口语还说「合上 / 盖上」（2026-10-12 前备箱开放语音时补）。只认「关」时
+#: 「把前备箱合上」解成打开——而需确认的命令带着这份确定性解析的章上云（`_edge_confirm`），云端规划对了也会被改回「打开」。
+#: 不收「放下」：「打开前备箱，我放下行李」里放下的是行李，收了就把开解成关。
+_LID_CLOSE_WORDS = ("关", "合上", "合起", "合好", "盖上", "盖好")
+
+
+def _lid_close(t: str) -> bool:
+    """箱盖类（前备箱）这句话说的是不是「关」。"""
+    return any(word in t for word in _LID_CLOSE_WORDS)
 
 
 def _extract_position(t: str) -> list[str] | None:

@@ -1522,3 +1522,71 @@ cases:
       - input: {utterance: 空调有哪些模式, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [manual.query]}], forbidden_intents: [scene.describe, scene.list], allow_extra_intents: false}
+
+  # ── 前备箱 vs 后备箱、开 vs 关（frunk.open / frunk.close，2026-10-12 核心旅程 K05）─────────────
+  # 前备箱开放语音之前，「打开前备箱」在目录里没有对应能力，规划器拿 trunk.open 顶替、确认后开错了对象。
+  # 两个需确认的危险对象只差一个字，最该防的就是互相顶替与方向反转：每对只换对象或只换方向。
+  # 新增唯一输入 4 条（打开前备箱 / 关闭前备箱 / 把前行李箱打开 / 把前备箱合上）；「打开后备箱」复用既有输入。
+  # K05 原句所在的开 vs 关一族是照着这次修复写的，按 seen_regression 记；换说法的两条与后备箱对照规划侧没有范例，按 unseen_transfer。
+  - id: tu.frunk.open-vs-close
+    title: 打开前备箱（K05 原句）
+    family_id: tu.frunk-direction
+    cohort: seen_regression
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, object_flip, dangerous_action], domains: [frunk, trunk], layers: [l1]}
+    provenance: {kind: real_badcase, source_ref: docs/design/2026-10-09-v2-core-journey-freeze.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-12}
+    turns:
+      - input: {utterance: 打开前备箱, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [frunk.open]}], forbidden_intents: [frunk.close, trunk.open], allow_extra_intents: false}
+  - id: tu.frunk.close-vs-open
+    title: 关闭前备箱
+    family_id: tu.frunk-direction
+    cohort: seen_regression
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [frunk], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-12}
+    relation: {base_case: tu.frunk.open-vs-close, type: route_flip, expectation: {forbidden_after: [frunk.open], required_change: true}}
+    turns:
+      - input: {utterance: 关闭前备箱, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [frunk.close]}], forbidden_intents: [frunk.open, trunk.close], allow_extra_intents: false}
+  - id: tu.frunk.open-second
+    title: 前行李箱是前备箱的另一种说法
+    family_id: tu.frunk-object
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [colloquial, object_flip, dangerous_action], domains: [frunk], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-12}
+    turns:
+      - input: {utterance: 把前行李箱打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [frunk.open]}], forbidden_intents: [frunk.close, trunk.open], allow_extra_intents: false}
+  - id: tu.trunk.open-vs-frunk
+    title: 打开后备箱不能落到前备箱
+    family_id: tu.frunk-object
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, dangerous_action], domains: [trunk, frunk], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-12}
+    relation: {base_case: tu.frunk.open-second, type: route_flip, expectation: {forbidden_after: [frunk.open], required_change: true}}
+    turns:
+      - input: {utterance: 打开后备箱, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trunk.open]}], forbidden_intents: [frunk.open], allow_extra_intents: false}
+  - id: tu.frunk.close-second
+    title: 「合上」是关前备箱
+    family_id: tu.frunk-close-2
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [colloquial, direction_flip, dangerous_action], domains: [frunk], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-12}
+    turns:
+      - input: {utterance: 把前备箱合上, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [frunk.close]}], forbidden_intents: [frunk.open, trunk.close], allow_extra_intents: false}

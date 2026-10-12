@@ -663,6 +663,15 @@ class VAL:
                 self.state["trunk"] = "closed"
                 return "trunk", "closed"
 
+        elif obj == "frunk":
+            # 前备箱（2026-10-12 开放语音）：与后备箱同一种取值，状态键 `frunk` 可对账、可复位
+            if operate == "open":
+                self.state["frunk"] = "open"
+                return "frunk", "open"
+            if operate == "close":
+                self.state["frunk"] = "closed"
+                return "frunk", "closed"
+
         elif obj == "door_lock":
             if operate == "open":
                 self.state["door_lock"] = "unlocked"
@@ -929,6 +938,9 @@ class VAL:
 
         if obj == "trunk":
             return "trunk_open_success" if operate == "open" else "trunk_close_success"
+
+        if obj == "frunk":
+            return "frunk_open_success" if operate == "open" else "frunk_close_success"
 
         if obj == "door_lock":
             return "door_lock_open_success" if operate == "open" else "door_lock_close_success"

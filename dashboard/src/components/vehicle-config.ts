@@ -52,6 +52,7 @@ export const META: Record<string, KeyMeta> = {
   sunshade: { label: '遮阳帘', icon: 'car-window', group: 'body', kind: 'percent' },
   door_lock: { label: '车门锁', icon: 'lock', group: 'body', kind: 'openclose' },
   trunk: { label: '后备箱', icon: 'trunk', group: 'body', kind: 'openclose' },
+  frunk: { label: '前备箱', icon: 'trunk', group: 'body', kind: 'openclose' },
   fuel_tank_cover: { label: '油箱盖', icon: 'vehicle', group: 'body', kind: 'openclose' },
   charging_port: { label: '充电口', icon: 'charging-station', group: 'body', kind: 'openclose' },
   rear_view_mirror: { label: '后视镜', icon: 'mirror', group: 'body', kind: 'openclose' },
