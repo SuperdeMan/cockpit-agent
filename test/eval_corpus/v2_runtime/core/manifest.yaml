@@ -170,8 +170,7 @@ journeys:
   - {id: K02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F05, lane: simulated_vehicle}
   - {id: N02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
   - {id: E02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}
-  - {id: D01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
-     known_red: "2026-10-12 标定 0/3：T2 再规划派出的后件 hvac.on 被问句闸按「假设框架 = 提问」拦下。试过 T2 放行（2085fc7a）：再规划在前件为假时照样派后件（D02 3/3 开了空调），当天撤回；要先有可靠的条件判定再放行"}
+  - {id: D01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: D02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
      known_red: "2026-10-12 标定 0/3：等将来的条件（温度低于20度时）被落成 scene.create「温度低开空调」，条件丢了、要确认保存；不动车（无动作），该怎么答（说做不到 / 建条件提醒）待产品裁决"}
@@ -182,39 +181,48 @@ journeys:
   # F05 确认类写扩容（2026-10-12，core/f05_confirm.yaml）
   - {id: K03, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K04, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
-  - {id: K05, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K05, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
+     known_red: "2026-10-12 标定（19051942）：前备箱没有端侧能力（能力豁免表登记「待确认」），上云后规划器拿「打开后备箱」顶替——确认话术念「后备箱」，确认后执行 trunk.open，开错对象；前备箱要不要开放语音待产品裁决"}
   - {id: K06, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
-  - {id: K07, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K07, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
+     known_red: "2026-10-12 标定（19051942）：挂起时插问天气，那一轮答了天气但不再带确认提示（need_confirm 为假）；之后说「确认」照样只执行一次 trunk.open。插话后要不要重新出确认卡待产品定"}
   - {id: K08, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K09, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K10, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K11, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
-  - {id: K12, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K12, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
+     known_red: "2026-10-12 标定（19051942）：充电口没有状态查询能力，规划器拿「查询香氛」顶替，答成「香氛关着（模拟车读数）」——问东答西（同日加香氛查询能力后引入；加查询能力前这句诚实答「看不了当前状态」）"}
   - {id: K13, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle, safety: must_pass}
   - {id: K14, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
-  - {id: K15, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
+  - {id: K15, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
+     known_red: "2026-10-12 标定（19051942）：后备箱已经开着又说「打开后备箱」，不看车态、照样挂确认（确认后会再发一次 trunk.open）"}
   # ── 扩容（2026-10-12）：F10 / F11 ──
   - {id: N03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N04, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
-  - {id: N05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes,
+     known_red: "2026-10-12 标定（19051942）：「记一下要买牛奶」被路由到生态服务桥（MCP 桥），合成用户没有这项授权，答「没有这项能力的授权」，待办没建上"}
   - {id: N06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
-  - {id: N07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes,
+     known_red: "2026-10-12 标定（19051942）：赛程转提醒没带上开赛时间——「第一场开始前提醒我观看」反问「什么时候提醒你」；当天没有比赛或已开赛也会让这条红"}
   - {id: N08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N09, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N10, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
-  - {id: E03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
+  - {id: E03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
+     known_red: "2026-10-12 标定（19051942）：「我平时喜欢喝什么咖啡」落到「没听清要拿它做什么」，没去读记忆"}
   - {id: E04, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
-  - {id: E05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
+  - {id: E05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
+     known_red: "2026-10-12 标定（19051942）：路程估算只认本句说的路线偏好、不读记忆——记住「不走高速」后问去机场要多久，答句不提避开高速"}
   - {id: E06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes, safety: must_pass}
-  - {id: E07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
-  - {id: E08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
-     known_red: "读代码判定（未上真栈核实）：电话、证件号会被记忆抽取按 sensitive_fact 丢弃（memory/extract.py），但没有任何路径告诉用户没存；「记住…」由规划器与闲聊自由作答，多半照常说「记住了」，与实际不符"}
+  - {id: E07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
+     known_red: "2026-10-12 标定（19051942）：「记住，我老婆的生日是五月二十号」被当成建提醒（反问「什么时候提醒你」），没记进记忆；之后「生日那天早上八点提醒我订花」建了提醒但话术里没有 5 月 20 日"}
+  - {id: E08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
   # ── 扩容（2026-10-12）：地图类 F02 / F06 / F07 / F09 ──
   # F07 能源：找站、换站（含两站反问与续接）、续航提醒、长任务约束——全部多轮；发导航的走模拟车并以「取消导航」收尾
   - {id: EN04, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN05, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
-  - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
+     known_red: "2026-10-12 标定（19051942）：「途经再加一个充电站」话术说已加入，路线里却只剩一个充电站（替换而非追加）；第四轮「换第二个」答「这项能力的接口或参数暂时不匹配」"}
   - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
@@ -227,7 +235,8 @@ journeys:
   - {id: NB06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
   - {id: NB07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
   - {id: NB08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NB09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke],
+     known_red: "2026-10-12 标定（19051942）：「第一家附近有停车场吗」把「第一家」当地名去搜（「没找到『第一家』」），没有以候选集第一项为中心"}
   - {id: NB10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
   - {id: NB11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: simulated_vehicle,
      known_red: "2026-10-12 读代码：周边 / 停车 Agent 按整个 Agent 要求 payment.invoke，运行器只许只读车道补这一项（scopes_extra 校验钉着），模拟车车道的合成用户第一轮搜索就会被拒（「当前账号没有『周边发现』这项能力的授权」）；没有支付权限的主体用不了周边是冻结设计 §11.7 登记的产品问题，拆到能力级权限之前红"}

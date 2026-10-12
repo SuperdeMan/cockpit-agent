@@ -78,10 +78,12 @@ cases:
   - id: K10
     family: confirm_two_objects
     vehicle_keys: [trunk, charging_port]
+    # 标定（2026-10-12，19051942）：两样需确认的对象逐个确认——先后备箱，确认执行后再问充电口
     turns:
-      - {say: "打开后备箱和充电口", expect: {need_confirm: true, speech_all: ["后备箱", "充电口"]}}
-      - {say: "确认", confirm: true, expect: {actions_required: ["trunk.open", "charging_port.open"],
-                                            actions_allowed: ["trunk.open", "charging_port.open"]}}
+      - {say: "打开后备箱和充电口", expect: {need_confirm: true, speech_any: ["后备箱"]}}
+      - {say: "确认", confirm: true, expect: {need_confirm: true, speech_any: ["充电口"],
+                                            actions_required: ["trunk.open"], actions_allowed: ["trunk.open"]}}
+      - {say: "确认", confirm: true, expect: {actions_required: ["charging_port.open"], actions_allowed: ["charging_port.open"]}}
     cleanup:
       - {say: "关闭后备箱", confirm: true}
       - {say: "关闭充电口", confirm: true}

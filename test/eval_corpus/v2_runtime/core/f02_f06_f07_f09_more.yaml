@@ -99,7 +99,8 @@ cases:
     data_cleanup: [memory]
     turns:
       # 方案先写进画像（trip_active）再挂起确认；只读车道不许确认，收尾由运行器取消挂起、清理记忆
-      - {say: "帮我规划一个周末杭州两日游", expect: {need_confirm: true, cards_any: [trip_itinerary], actions_allowed: [],
+      # 标定（2026-10-12，19051942）：行程规划随方案带一个描述性动作 trip.plan（目的地 + 天数，不碰车）
+      - {say: "帮我规划一个周末杭州两日游", expect: {need_confirm: true, cards_any: [trip_itinerary], actions_allowed: [trip.plan],
                                                    any_of: [{card_contains: ["充电"]}, {speech_any: ["充电", "补电"]}]}}
       - {say: "这个行程全程要补几次电", expect: {speech_any: ["补电"], actions_allowed: [],
                                                  speech_not: ["您还没有规划行程", "没听清"]}}
