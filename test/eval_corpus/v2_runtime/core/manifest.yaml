@@ -133,15 +133,13 @@ journeys:
   - {id: I07, source: eval_corpus/v2_runtime/core/f01_f08.yaml, family: F08, lane: read_only}
   # F12 受话与拒识（语音来源）
   - {id: R01, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
-  - {id: R02, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
-     known_red: "乘客转述与用户向助手转述在文本上分不出，归声学（QA 交接 §5、2026-09-11 逐条核实）"}
-  - {id: R03, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
-     known_red: "电话开场「喂，听得到吗」与对助手试麦在文本上分不清，归声学（同 R02）"}
+  # R02 / R03 / R05 / R06 曾标 known_red（文本上分不出的乘客转述 / 电话开场 / 公交报站 / 回声风格），首份正式 200×5（`70b179b7`）
+  # 各 5 / 5，2026-10-13 摘牌（冻结设计 §13.7、2026-10-13 后续批 §4）；再红就按回退报
+  - {id: R02, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  - {id: R03, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
   - {id: R04, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
-  - {id: R05, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
-     known_red: "公交报站没有确定性语域证据（不加报站词：用户也说「下一站去哪」），规划器判受话派了 trip.navigate；拒识语料写明负例拦截率只入基线、拿不准算受话"}
-  - {id: R06, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only,
-     known_red: "回声风格命中播报语域，但规划器首轮给了闲聊；云侧确定性拒识只在两轮空手时生效（防误拒「主持人 / 为大家 / 据了解」开头的闲聊问句；90 天真实流量语域命中为零，量不出扩规则的收益与误伤）"}
+  - {id: R05, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
+  - {id: R06, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
   - {id: R07, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
   - {id: R08, source: eval_corpus/v2_runtime/core/f12_addressing.yaml, family: F12, lane: read_only}
   # P3 写车道首批（§12，用户 2026-10-09 长期授权）：先跑通机制，再补 F04 / F05 / F10 / F11 配额
@@ -204,8 +202,9 @@ journeys:
   - {id: N05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes,
      known_red: "2026-10-12 标定（19051942）：「记一下要买牛奶」被路由到生态服务桥（MCP 桥），合成用户没有这项授权，答「没有这项能力的授权」，待办没建上"}
   - {id: N06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
-  - {id: N07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes,
-     known_red: "2026-10-12 标定（19051942）：赛程转提醒没带上开赛时间——「第一场开始前提醒我观看」反问「什么时候提醒你」；当天没有比赛或已开赛也会让这条红"}
+  # 曾标 known_red（赛程转提醒没带开赛时间），`70b179b7` 上 5 / 5，2026-10-13 摘牌；当天没有英超比赛或已开赛照样会红，那天用
+  # --skip-providers API_FOOTBALL_KEY 记未测（语料注释）
+  - {id: N07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N09, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N10, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
@@ -228,7 +227,8 @@ journeys:
   - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
-  - {id: EN11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: synthetic_writes}
+  - {id: EN11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: synthetic_writes,
+     known_red: "2026-10-13（首份 200×5 `70b179b7` 0/5）：行程规划不看能源——杭州两日游的方案不含补电，「这个行程全程要补几次电」答成站数。能力缺口，不是方差"}
   - {id: EN12, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN13, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN14, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}

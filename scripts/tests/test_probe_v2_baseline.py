@@ -171,7 +171,7 @@ def test_the_p1_corpora_cover_their_families_and_stay_read_only():
     assert pending_starts and all(c["turns"][0]["expect"].get("need_confirm") for c in pending_starts)
     voice = [c for c in by_family["F12"]]
     assert voice and all((c.get("meta") or {}).get("input_source") == "voice_followup" for c in voice)
-    assert cases["R02"]["known_red"]                          # 文本上分不出的乘客转述，照跑照报
+    assert cases["A1-5"]["known_red"]                         # known_red 随清单带到用例上，照跑照报
 
 
 def test_journey_keys_are_judged_by_the_shared_module_once():
