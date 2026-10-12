@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -81,6 +82,24 @@ def test_one_turn_merges_the_local_and_cloud_finals(monkeypatch):
     assert observed["is_question"] is True
     assert observed["need_confirm"] is True
     assert observed["operation_id"] == "local-op"
+
+
+def test_one_turn_records_when_the_first_final_arrived_not_the_tail_wait(monkeypatch):
+    """端侧本地车控先回 final，随后来一帧车态推送：整轮要等满尾段预算，但用户在首个 final 就听到了答复
+    （200×5 `70b179b7` 模拟车 89 轮的「请求到终答」恰好 25.0 s）。"""
+    monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)
+    monkeypatch.setattr(probe, "_TAIL_BUDGET_S", 0.3)
+    monkeypatch.setattr(probe, "TIMEOUT", 1.0)
+    socket = _Socket([{"type": "final", "speech": "已打开氛围灯", "actions": [_action("ambient_light.on")]},
+                      {"type": "vehicle_state", "state": {"ambient_light": "on"}}])
+
+    t0 = time.monotonic()
+    observed = asyncio.run(probe._one_turn(socket, "session-ff", "打开氛围灯"))
+    whole_ms = (time.monotonic() - t0) * 1000
+
+    assert observed["actions"] == ["ambient_light.on"]
+    assert whole_ms >= 250                                   # 尾段确实等满了
+    assert 0 <= observed["first_final_ms"] < 100             # 用户听到答复的时刻在最前面
 
 
 def test_one_turn_returns_a_single_final_after_the_idle_window(monkeypatch):

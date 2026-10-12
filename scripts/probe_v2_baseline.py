@@ -248,7 +248,7 @@ def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS, 
         "scopes": list(SCOPES), "vehicle": "v1", "cases": len(loader(corpus)),
         "metrics": ["no_actions", "vehicle_unchanged", "manual_dispatched",
                     "manual_presented", "pending_addressed", "answer_terms",
-                    "request_to_final_ms", "actual_model", "provider_usage"],
+                    "request_to_final_ms", "first_final_ms", "actual_model", "provider_usage"],
     }
 
 
@@ -594,7 +594,9 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
             obs["card_text"] = json.dumps(_redact(json.loads(obs.get("card_text") or "{}")), ensure_ascii=False)
             rows.append({"turn": n, "say": turn["say"], "trace_id": trace,
                          "cleanup": bool(turn.get("cleanup")), "observation": obs,
-                         "request_to_final_ms": round(elapsed, 2), "verdict": verdict,
+                         "request_to_final_ms": round(elapsed, 2),
+                         # 首个 final 到达的时刻（用户听到答复）；整轮的 request_to_final_ms 含尾段等待，端侧本地车控会被拉到 25 s
+                         "first_final_ms": obs.get("first_final_ms"), "verdict": verdict,
                          "evidence_errors": evidence_errors, "vehicle_diff_keys": sorted(changed),
                          "vehicle_before": baseline.value, "vehicle_after": after.value,
                          "trace": _redact(detail)})

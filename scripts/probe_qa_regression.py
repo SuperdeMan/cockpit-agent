@@ -2888,6 +2888,7 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
     if is_confirmation:
         frame["is_confirmation"] = True
     await ws.send(json.dumps(frame))
+    sent_at = time.monotonic()
     merged: dict | None = None
     timeout = TIMEOUT
     deadline = 0.0
@@ -2907,7 +2908,13 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
         if kind == "speech_delta":
             streamed.append(str(msg.get("delta") or ""))
         if kind == "final":
-            merged = _observe(msg) if merged is None else _merge_finals(merged, _observe(msg))
+            if merged is None:
+                merged = _observe(msg)
+                # 用户听到答复的时刻 = 首个 final 到达。整轮返回要等尾段（混合路径的第二个 final），端侧本地车控之后
+                # 若又来一帧非 final（车态推送），会等满 `_TAIL_BUDGET_S`——那段不是用户在等（200×5 `70b179b7` 模拟车 89 轮恰好 25.0 s）
+                merged["first_final_ms"] = round((time.monotonic() - sent_at) * 1000, 2)
+            else:
+                merged = _merge_finals(merged, _observe(msg))
             merged["streamed"] = "".join(streamed)
             # 说完了？先只等一个**短 idle 窗**——单 final 的用例就此返回，只多花 0.6s。
             timeout = _TAIL_IDLE_S
