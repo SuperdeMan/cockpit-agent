@@ -296,6 +296,32 @@ def detect_cancel(text: str) -> CancelDecision:
     )
 
 
+# ── 等确认时的否定式改口（2026-10-12 核心旅程 K08）──
+#
+# 挂起「要打开油箱盖吗？」时说「不对，是充电口」：句首先否掉系统刚提议、正等确认的那件事。它不含取消词，也不是确认，
+# 修前按插话处理、挂起原样保留；当轮规划又没出步（「没听清」），用户下一句「确认」就把被否掉的油箱盖打开了
+# （`99178302` 模拟车车道 K08 第 1 遍，叫停）。否掉的提议不能再被一句裸「确认」执行：清掉挂起，整句按新请求规划。
+# ⚠ 只给 wait_confirm 用：补槽时「不对，是明天九点」是在改答案，清挂起会把正在建的提醒丢掉。
+#: 「不对 / 错了 / 说错了…」打头即否定；「不是」只在单独成句（「不是，我要…」「不是这个」）或「不是 X，是 Y」时算——
+#: 「不是说明天下雨吗」这类插话不清挂起（R2）。
+_REJECTION_OPENER_RE = re.compile(
+    r"^(?:(?:不对|错了|说错了|搞错了|弄错了|讲错了|我说错了)(?:[，,、\s]*不对)*"
+    r"|不是(?:这个|那个)?(?=[，,。！!\s]|$)"
+    r"|不是[^，,。！!？?\s]{1,12}[，,]\s*(?=是|要|我要|换成|改成))")
+_REJECTION_FILLER_RE = re.compile(r"[，,。！!？?、；;\s]|[吧啊呀哦噢嘛]$")
+
+
+def detect_confirm_rejection(text: str) -> CancelDecision:
+    """**等确认**的语境：这句话是不是先否掉了挂起的提议？是 ⇒ 取消挂起；后面还说了别的 ⇒ 复合（整句按新请求继续）。"""
+    t = str(text or "").strip()
+    match = _REJECTION_OPENER_RE.match(t)
+    if not match:
+        return _NOT_CANCEL
+    remainder = t[match.end():].strip("，,。！!、 ")
+    return CancelDecision(cancelled=True, remainder=remainder, act="cancel",
+                          compound=bool(_REJECTION_FILLER_RE.sub("", remainder)))
+
+
 # ── 没有挂起时的第三个问法：这句话是不是「取消 X」？（QA 余项，2026-08-29）──
 #
 # 前两个问法各有语境（`detect_cancel` 有挂起 / `is_standalone_cancel` 裸取消词），

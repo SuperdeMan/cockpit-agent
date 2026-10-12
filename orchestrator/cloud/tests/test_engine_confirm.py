@@ -734,6 +734,14 @@ def test_slot_pending_midsentence_question_and_quantified_order_are_topic_change
     assert PlannerEngine._is_topic_change("要两杯") is False
 
 
+def test_slot_pending_interjection_after_a_leading_adverb_is_topic_change():
+    """核心旅程 N04（2026-10-12）：提醒在等时间，「先帮我查一下明天深圳的天气」被当成时间吞掉（5 / 5）。"""
+    for text in ("先帮我查一下明天深圳的天气", "先查一下明天的天气", "对了，帮我导航去公司", "顺便播放一首歌", "再说吧"):
+        assert PlannerEngine._is_topic_change(text) is True, text
+    for text in ("再晚一点", "那今天吧", "那就明天早上八点", "先明天上午十点吧", "然后晚上九点"):
+        assert PlannerEngine._is_topic_change(text) is False, text
+
+
 def test_slot_pending_enroute_search_command_is_topic_change():
     """B5-1：句首带场景状语的完整搜索请求不能被旧 route 槽吞掉。"""
     assert PlannerEngine._is_topic_change("路上帮我找家咖啡店，顺路买一杯") is True
@@ -1429,3 +1437,41 @@ def test_a_yes_word_with_a_tail_and_no_pending_is_not_hijacked_as_no_pending():
     final = _run(engine, _req("行程"))[-1]
     assert "没有待确认" not in final["speech"]
     assert spy.llm_plan_calls == 1
+
+
+# ── 等确认时的否定式改口（2026-10-12 核心旅程 K08）────────────────────────────────────────────
+
+def test_a_pending_confirm_rejected_by_a_correction_is_never_executed():
+    """`99178302` 模拟车车道 K08 第 1 遍（叫停）：挂起「要打开油箱盖吗」时说「不对，是充电口」，当轮规划没出步，修前挂起原样保留，
+    下一句「确认」打开了被否掉的油箱盖。否定式改口清掉挂起，整句按新请求继续。"""
+    engine, spy, session = _make_engine_interject()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+
+    events = _run(engine, _req("不对，帮我看看附近有什么景点"))
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None     # 被否掉的挂起清掉了
+    assert spy.count("nearby.search") == 2                                      # 余句按新请求执行
+    assert "已为您取消" not in (events[-1].get("speech") or "")
+
+    _run(engine, _req("确认", is_confirmation=True))
+    assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))   # 回头「确认」不执行被否掉的
+
+
+def test_a_bare_rejection_cancels_the_pending_confirm():
+    engine, spy, session = _make_engine_interject()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+    events = _run(engine, _req("不对"))
+    assert "取消" in events[-1]["speech"]
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
+
+
+def test_a_slot_answer_correction_does_not_cancel_the_pending_slot():
+    """补槽时「不对，是明天九点」是在改答案：否定式改口只管等确认，不许把正在建的提醒清掉。"""
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine_interject()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1",
+        pending_step_id="s1", missing_slots=["time_text"],
+        completed_results={}, pending_plan={"goal": "创建交周报提醒"})))
+    events = _run(engine, _req("不对，是明天九点"))
+    assert "已为您取消" not in (events[-1].get("speech") or "")
+    assert spy.llm_plan_calls == 0          # 交给补槽分支，没有被当成「取消挂起 + 新请求」重新规划

@@ -35,7 +35,7 @@ from .loop import LoopController
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
-from .pending_cancel import detect_cancel, is_standalone_cancel
+from .pending_cancel import detect_cancel, detect_confirm_rejection, is_standalone_cancel
 from .clients import set_llm_pin
 from .decision_support import ShadowRunner
 from . import candidate_query
@@ -826,6 +826,9 @@ class PlannerEngine:
         just_cancelled = False
         if pending and not self._is_cancel_index_answer(text, pending):
             cancelled = detect_cancel(text)
+            # K08（2026-10-12）：等确认时「不对，是充电口」先否掉了提议——清挂起，整句按新请求继续（判据见 pending_cancel）
+            if not cancelled.cancelled and not cancelled.act and pending.phase == "wait_confirm":
+                cancelled = detect_confirm_rejection(text)
             # 评审二轮 R2（2026-09-22）：极性与问句都在改状态**之前**判。
             #   · 「不要取消 / 别取消」是在保留挂起——此前剥掉「取消」再剥掉「不要」余量为空 ⇒ 纯取消；
             #   · 「怎么取消 / 取消了吗」是在问——此前按复合取消先清挂起，询问本身改变了状态；
@@ -3489,15 +3492,20 @@ class PlannerEngine:
         if re.search(r"(?:路上|途中|沿途|顺路).{0,8}(?:帮我)?(?:找|搜)", t):
             return True
         # 以动作动词开头 → 大概率是新意图（不是在回答补槽追问）
-        _verbs = (
+        _actions = (
             "讲", "说", "播放", "暂停", "打开", "关闭", "关掉",
             "调高", "调低", "搜", "查", "订", "预订", "帮我",
             "导航", "带我去", "回家", "回公司", "回学校",
-            "今天", "现在", "最近", "有没有", "怎么样", "多少",
             # 2026-09-19 真栈：dest_choice 挂起把重复的「规划去广州路上的补能…」整句当地址。
             "规划",
         )
-        return any(t.startswith(v) for v in _verbs)
+        if any(t.startswith(v) for v in (*_actions, "今天", "现在", "最近", "有没有", "怎么样", "多少")):
+            return True
+        # 2026-10-12 核心旅程 N04：提醒追问「什么时候提醒你」时插一句「先帮我查一下明天深圳的天气」，句首多了个「先」，
+        # 上面那条认不出，整句被当成时间吞掉（`99178302` 上 5 / 5，标定那遍也是）。句首的承接副词剥掉一个再看——
+        # 只看动作类：「那今天吧」「再晚一点」仍是时间答案。
+        lead = re.sub(r"^(?:先|再|那就|那|然后|顺便|另外|还有|对了)[，,、\s]*", "", t, count=1)
+        return lead != t and any(lead.startswith(v) for v in _actions)
 
     @staticmethod
     def _slot_answer(slot_name: str, text: str) -> str:

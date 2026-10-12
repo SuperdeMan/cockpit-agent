@@ -209,3 +209,30 @@ def test_a_positive_clause_after_the_negated_echo_is_still_a_new_request():
     # 否定的不是车控动作（「不买了」）：行为逐字同旧
     d = detect_cancel("算了咖啡不买了，先去加点油")
     assert d.compound and d.remainder == "咖啡先去加点油"
+
+
+# ─── 等确认时的否定式改口（2026-10-12 核心旅程 K08）───
+
+@pytest.mark.parametrize("text, compound", [
+    ("不对，是充电口", True),
+    ("不对不对，是充电口", True),
+    ("不是，我要开充电口", True),
+    ("不是油箱盖，是充电口", True),
+    ("说错了，打开车窗", True),
+    ("不对", False),
+    ("不对吧", False),
+    ("不是这个", False),
+])
+def test_a_correction_rejects_the_pending_proposal(text, compound):
+    from orchestrator.cloud.pending_cancel import detect_confirm_rejection
+    d = detect_confirm_rejection(text)
+    assert d.cancelled is True and d.act == "cancel", text
+    assert d.compound is compound, text
+
+
+@pytest.mark.parametrize("text", [
+    "确认", "好的", "对", "打开充电口", "不是说明天下雨吗", "不是很冷吗", "对不对", "这不对劲吧",
+])
+def test_other_replies_are_not_a_rejection(text):
+    from orchestrator.cloud.pending_cancel import detect_confirm_rejection
+    assert detect_confirm_rejection(text).cancelled is False, text
