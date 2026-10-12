@@ -52,6 +52,13 @@ def test_frunk_and_trunk_never_stand_in_for_each_other(text, intent):
     assert classify(text)["name"] == intent, text
 
 
+@pytest.mark.parametrize("text, intent", [("把后备箱合上", "trunk.close"), ("后备箱盖上", "trunk.close"),
+                                          ("尾门合上", "trunk.close"), ("打开后备箱，我放下行李", "trunk.open")])
+def test_the_trunk_reads_the_same_lid_words(text, intent):
+    """后备箱同一份箱盖关词：修前「把后备箱合上」解成 trunk.open——这份解析盖章上云后会把云端规划对的 trunk.close 改回打开。"""
+    assert classify(text)["name"] == intent, text
+
+
 def test_frunk_intents_are_local_so_the_edge_parse_travels_with_the_request():
     """进了 LOCAL_INTENTS 才会走「需确认 ⇒ 带章上云」那条路；不在表里时整句上云、没有章，规划器就近挑了 trunk.open。"""
     assert {"frunk.open", "frunk.close"} <= LOCAL_INTENTS
@@ -92,12 +99,13 @@ def _handle(text: str):
     return service, cloud_requests
 
 
-@pytest.mark.parametrize("text, intent", [("打开前备箱", "frunk.open"), ("把前备箱合上", "frunk.close")])
-def test_a_frunk_command_goes_to_the_cloud_with_the_edge_parse_and_nothing_runs_locally(text, intent):
+@pytest.mark.parametrize("text, intent", [("打开前备箱", "frunk.open"), ("把前备箱合上", "frunk.close"),
+                                          ("把后备箱合上", "trunk.close")])
+def test_a_lid_command_goes_to_the_cloud_with_the_edge_parse_and_nothing_runs_locally(text, intent):
     service, cloud_requests = _handle(text)
     assert len(cloud_requests) == 1, text
     assert dict(cloud_requests[0].meta)["_edge_confirm"] == intent, text
-    assert service.val.state["frunk"] == "closed", text
+    assert (service.val.state["frunk"], service.val.state["trunk"]) == ("closed", "closed"), text
 
 
 # ── 云端派发：先确认，确认后落自己的状态键；行驶中拒绝 ─────────────────────

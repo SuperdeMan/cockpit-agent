@@ -639,7 +639,8 @@ def _classify_structured(text: str) -> dict | None:
 
     # ── 后备箱 ────────────────────────────────────────────
     if "后备箱" in t or "尾箱" in t or "尾门" in t:
-        if "关" in t:
+        # 「合上 / 盖上」也是关（2026-10-12，同前备箱）：修前只认「关」，「把后备箱合上」解成 trunk.open 并盖章上云
+        if _lid_close(t):
             return _s("setting", "control", "close", "trunk", conf=0.9)
         return _s("setting", "control", "open", "trunk", conf=0.9)
 
@@ -1526,7 +1527,7 @@ _LID_CLOSE_WORDS = ("关", "合上", "合起", "合好", "盖上", "盖好")
 
 
 def _lid_close(t: str) -> bool:
-    """箱盖类（前备箱）这句话说的是不是「关」。"""
+    """箱盖类（前备箱 / 后备箱）这句话说的是不是「关」。"""
     return any(word in t for word in _LID_CLOSE_WORDS)
 
 
