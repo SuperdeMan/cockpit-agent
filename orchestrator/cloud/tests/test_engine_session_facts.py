@@ -382,6 +382,47 @@ def test_audit_without_a_readable_pending_table_only_reports_the_ledger():
     assert final["speech"] == "这次对话里我还没有执行过任何操作。"
 
 
+# ── CA2-11 v2：车端没回执的操作，审计念车端日志怎么说（对账记录）───────────────────────
+
+def _sync_record(what, outcome):
+    from runtime import operation as op
+    return {"operation_id": op.new_operation_id(), "what": what, "status": outcome, "created_ms": 1}
+
+
+def test_audit_reads_what_the_vehicle_log_says_about_an_unacknowledged_operation():
+    """回包丢了，执行史里没有这一条；修前审计答「还没有执行过任何操作」——车端其实做了。"""
+    session = SessionStore(redis_url="")
+    spy = _Spy()
+    engine = _engine(spy, session=session)
+    asyncio.run(session.note_operation("sess-audit-sync-1", _sync_record("打开后备箱", "done"),
+                                       owner_user_id="u1", ttl_s=60, active=False))
+
+    final = _finals(_run(engine, "我刚才让你做了什么？", "sess-audit-sync-1"))[-1]
+
+    assert final["speech"] == "「打开后备箱」没收到执行回执，车端记录显示已经完成。"
+    assert spy.unary_calls == [] and spy.llm_calls == 0
+
+
+def test_audit_without_readable_operation_records_is_word_for_word_unchanged():
+    class _Unreadable(SessionStore):
+        async def load_operations(self, session_id, *, owner_user_id):
+            return None
+
+    spy = _Spy()
+    final = _finals(_run(_engine(spy, session=_Unreadable(redis_url="")), "刚才执行了什么",
+                         "sess-audit-sync-2"))[-1]
+    assert final["speech"] == "这次对话里我还没有执行过任何操作。"
+
+
+def test_audit_never_reads_another_owners_operation_records():
+    session = SessionStore(redis_url="")
+    spy = _Spy()
+    asyncio.run(session.note_operation("sess-audit-sync-3", _sync_record("打开后备箱", "done"),
+                                       owner_user_id="someone-else", ttl_s=60, active=False))
+    final = _finals(_run(_engine(spy, session=session), "刚才执行了什么", "sess-audit-sync-3"))[-1]
+    assert final["speech"] == "这次对话里我还没有执行过任何操作。"
+
+
 # ── 误伤对照：短路挂在全部流量上，宽一格就是吞掉正常请求 ───────────────────
 
 def test_ordinary_requests_still_reach_the_planner():

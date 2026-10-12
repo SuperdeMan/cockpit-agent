@@ -97,7 +97,12 @@ def test_settled_records_survive_a_restart(tmp_path):
     log.close()
     again = EdgeOperationLog(str(path))
     assert again.orphaned_at_start == 0
-    assert again.lookup(oid) == {"status": op.DONE, "phase": op.PHASE_EXECUTING, "result_ref": ref}
+    found = again.lookup(oid)
+    assert {k: found[k] for k in ("status", "phase", "result_ref")} == {
+        "status": op.DONE, "phase": op.PHASE_EXECUTING, "result_ref": ref}
+    # CA2-11 v2：另交出触碰时刻、有效期与读取时刻，供查询方算此刻的有效状态
+    assert type(found["touched_ms"]) is int and type(found["now_ms"]) is int
+    assert found["touched_ms"] <= found["now_ms"] and found["expires_at_ms"] is None
     assert again.lookup(op.new_operation_id()) is None
     again.close()
 

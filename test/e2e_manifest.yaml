@@ -277,7 +277,7 @@ privacy:
       backend: redis_or_memory
       adapter_key: cloud_session
       adapter: orchestrator.cloud.session:SessionStore
-      storage_variants: ["planner:sess:*", "planner:sess-owner:*", "planner:sess-owner-fence:*", "planner:focus:*"]
+      storage_variants: ["planner:sess:*", "planner:sess-owner:*", "planner:sess-owner-fence:*", "planner:focus:*", "planner:opsync:*", "planner:opsync-active"]
       lifecycle: deletable
       enforced_from: M-D
       owner_fields: [user_id, occupant_id]

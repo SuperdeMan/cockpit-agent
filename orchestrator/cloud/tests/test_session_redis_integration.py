@@ -108,3 +108,53 @@ async def test_real_redis7_owner_isolation_and_persistent_delete_tombstone():
     finally:
         await redis.delete(*keys)
         await redis.aclose()
+
+
+@pytest.mark.asyncio
+async def test_real_redis7_operation_sync_records_lua_and_owner_delete():
+    """CA2-11 v2 对账记录在真 Redis 7 上：两条 Lua（登记 / 写回）、按值归属的隐私删除、写栅栏、删后不复活。"""
+    from orchestrator.cloud.session import _OPSYNC_ACTIVE, OPSYNC_EXISTS, SAVE_FENCED, SAVE_OK
+    from runtime import operation as op
+
+    redis = await _redis7_or_skip()
+    nonce = secrets.token_hex(12)
+    owner, control = f"opsync-owner-{nonce}", f"opsync-control-{nonce}"
+    session = f"opsync-session-{nonce}"
+    store = SessionStore(redis_url=_REDIS_URL)
+    store._r = redis
+    mine, theirs = op.new_operation_id(), op.new_operation_id()
+    key, control_key = store._opsync_key(owner, session), store._opsync_key(control, session)
+    members = [store._opsync_member(key, mine), store._opsync_member(control_key, theirs)]
+    keys = [key, control_key, store._owner_key(owner), store._owner_fence_key(owner),
+            store._owner_key(control), store._owner_fence_key(control)]
+    entry = {"status": op.SYNC_CHECKING, "created_ms": 1, "what": "打开后备箱"}
+    try:
+        assert await store.note_operation(session, {**entry, "operation_id": mine}, owner_user_id=owner,
+                                          ttl_s=600, active=True) == SAVE_OK
+        assert await store.note_operation(session, {**entry, "operation_id": mine}, owner_user_id=owner,
+                                          ttl_s=600, active=True) == OPSYNC_EXISTS
+        assert await store.note_operation(session, {**entry, "operation_id": theirs}, owner_user_id=control,
+                                          ttl_s=600, active=True) == SAVE_OK
+        assert 0 < await redis.ttl(key) <= 600
+        assert [r["operation_id"] for r in await store.load_operations(session, owner_user_id=owner)] == [mine]
+        active = dict(await store.active_operations())
+        assert set(members) <= set(active)
+        assert await store.resolve_operation(members[0], {**active[members[0]], "status": op.SYNC_DONE},
+                                             active=False) is True
+        assert not await redis.sismember(_OPSYNC_ACTIVE, members[0])
+        assert 0 < await redis.ttl(key) <= 600                      # 写回不改寿命
+
+        assert await store.delete_owner(owner) is True
+        assert await redis.exists(key) == 0
+        assert not await redis.sismember(_OPSYNC_ACTIVE, members[0])
+        assert await store.resolve_operation(members[0], active[members[0]], active=True) is False
+        assert await redis.exists(key) == 0                         # 删掉的不复活
+        assert await store.note_operation(session, {**entry, "operation_id": op.new_operation_id()},
+                                          owner_user_id=owner, ttl_s=600, active=True) == SAVE_FENCED
+        assert await store.load_operations(session, owner_user_id=owner) == []
+        assert [r["operation_id"] for r in await store.load_operations(session, owner_user_id=control)] == [theirs]
+        assert await redis.sismember(_OPSYNC_ACTIVE, members[1])
+    finally:
+        await redis.srem(_OPSYNC_ACTIVE, *members)
+        await redis.delete(*keys)
+        await redis.aclose()

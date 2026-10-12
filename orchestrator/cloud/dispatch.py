@@ -7,8 +7,6 @@ import os
 import re
 import time
 
-from google.protobuf import json_format
-
 from cockpit.agent.v1 import agent_pb2
 from cockpit.common.v1 import common_pb2
 
@@ -20,6 +18,7 @@ from runtime.capability_contract import argument_error, rejected
 
 from .circuit import CircuitBreakerManager
 from .models import PlanContext, Step, step_call_context
+from .operation_sync import edge_operation_status
 
 logger = logging.getLogger("planner.dispatch")
 
@@ -164,11 +163,7 @@ class UnifiedDispatcher:
         except Exception as exc:
             logger.warning("Edge operation query for step %s failed: %s", step.id, type(exc).__name__)
             return ""
-        if resp.status != agent_pb2.ExecuteResponse.OK:
-            return ""
-        record = json_format.MessageToDict(resp.data).get("_operation") if resp.HasField("data") else None
-        status = record.get("status") if isinstance(record, dict) else ""
-        return status if isinstance(status, str) else ""
+        return edge_operation_status(resp)      # 回包怎么读只有一份（后台对账同一个函数）
 
     async def dispatch(self, step: Step, ctx: PlanContext):
         reason = argument_error(step.capability_contract, step.slots)

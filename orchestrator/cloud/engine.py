@@ -39,6 +39,7 @@ from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from .decision_support import ShadowRunner
 from . import candidate_query
+from . import operation_sync
 from .reply_position import reply_position
 from .admission import (assistant_name, continuation_timeout_s, format_votes, is_continuation_source,
                         judge_addressed, judge_continuation)
@@ -2108,9 +2109,24 @@ class PlannerEngine:
             # 修前只念执行史，答「还没有执行过任何操作」。挂起表与「还有待确认的操作吗」同一份取数（`_pending_digest`）；
             # 读不到（None）只报执行史，不替它说「没有」。只读：确认 / 取消闭环不变。
             pendings = await self._pending_digest(ctx)
+            # CA2-11 v2：车端没回执的那些操作不在执行史里，念车端日志怎么说（对账记录）；读不到（None）逐字同旧。
+            operations = await self._operation_digest(ctx)
             return ("execution_audit", session_facts.audit_answer(
-                history, with_time=session_facts.asks_when(text), pendings=pendings))
+                history, with_time=session_facts.asks_when(text), pendings=pendings,
+                operations=operations))
         return None
+
+    async def _operation_digest(self, ctx) -> list[dict] | None:
+        """本会话车端操作的对账记录 → 审计要的 `[{"what","outcome"}]`；后端读不到 ⇒ None（不替它说「没有」）。"""
+        loader = getattr(self.session, "load_operations", None)
+        if loader is None:
+            return None
+        try:
+            records = await loader(ctx.session_id, owner_user_id=ctx.user_id)
+        except Exception as exc:
+            logger.debug("operation sync digest unavailable: %s", type(exc).__name__)
+            return None
+        return None if records is None else operation_sync.audit_items(records)
 
     @staticmethod
     def _parse_escalate(result: StepResult) -> dict | None:
