@@ -1,8 +1,10 @@
 # CA2-11 v2：车端操作结局的后台对账、结果补记与告知
 
 > 状态：2026-10-12 已上线（`0535d55a`，随 `19051942` 发布；告知发布器解耦 `dcb58a42` 随 `99178302`），真栈核对见 §7。
-> 用户 2026-10-12：「1和2继续做」（1 含「车端日志后台同步与补偿」）。云端 PostgreSQL 与车端 SQLite 的表结构都不变；
-> 新增的只有 Redis 键（`planner:opsync:*`、`planner:opsync-active`，挂在已登记的 `planner_pending_session` 隐私目标下）。
+> §2.8 T0 本地快路径发件箱：同日用户批准车端新表（「需要授权的我都同意」），分支 `t0-outbox` 实现、离线通过，待部署。
+> 用户 2026-10-12：「1和2继续做」（1 含「车端日志后台同步与补偿」）。对账部分云端 PostgreSQL 与车端 SQLite 的表结构都不变，
+> 新增的只有 Redis 键（`planner:opsync:*`、`planner:opsync-active`，挂在已登记的 `planner_pending_session` 隐私目标下）；
+> 发件箱新增车端表 `edge_turn_outbox`（独立 SQLite 文件）与 `AppendTurnRequest.occurred_at_ms`（§2.8）。
 > 依赖：[CA2-11 v1 车端日志](2026-10-02-v2-vehicle-operation-log.md)（§2.4「v1 不做后台全量同步」、§5 已知边界）、
 > [CA2-08 持久准入](2026-10-01-v2-durable-operation-admission.md)、[主动消息治理](../conventions.md) §9.8、
 > [实施方案](2026-09-26-cockpit-agent-v2-implementation-plan.md) CA2-11 行（DoD：网络中断不丢 operation、不宣称 exactly-once）。
@@ -15,7 +17,7 @@
 | 结局未知时用户听到「处理超时了，请稍后再试」 | 招来一次**新的** operation：车端幂等只认同一个 operation_id，「调高温度」这类相对调节会执行两次 |
 | 恢复成功（车端记录显示已完成）的步没有动作载荷，执行史（`AppendTurn.actions`）里没有它 | 问「我刚才让你做了什么」，审计答「还没有执行过任何操作」——车端其实做了 |
 | 车端恢复查询报的是落盘状态：执行中但执行方已死掉的记录一直是 accepted，过期的等确认记录也一直是 accepted | 云端无从收敛，只能等车端日志过期 |
-| T0 本地快路径不经云端、不写车端日志；本地轮的会话记录是尽力而为的异步写，离线时丢 | 离线执行的那几轮审计念不出来（§2.8 只做评估） |
+| T0 本地快路径不经云端、不写车端日志；本地轮的会话记录是尽力而为的异步写，离线时丢 | 离线执行的那几轮审计念不出来（§2.8 发件箱补上） |
 
 ## 2. 设计
 
@@ -90,33 +92,73 @@
 不做。查到已执行也不发反向命令：补偿是新的受控动作（目标架构 §5），要用户重新下达，照常经权限、VAL 与确认。
 告知与审计只陈述车端记录，不建议、不预约任何动作。
 
-### 2.8 T0 本地快路径：评估，停在设计
+### 2.8 T0 本地快路径：车端发件箱（2026-10-12 用户批准车端新表，分支 `t0-outbox` 实现）
 
 本地快路径不经云端准入，也就没有 operation_id 与车端日志记录；它的执行事实靠端侧 `_record_local_turn` 把本轮（含动作）异步写进
-会话记录——尽力而为，离线时写失败即丢，于是离线那几轮审计念不出来。补上它需要车端的**发件箱**：持久化待补写的会话轮，
-重连后按原 `turn_id` 重放（`AppendTurn` 按 turn_id 幂等）。现有 `edge_operation` 表不能借用：它按设计不存说话人、原话与位置
-（CA2-11 隐私决定），而会话轮的价值正是原话。所以需要一张新表——**属于用户逐项批准的车端表结构变更，本批不做**。供裁决的草案：
+会话记录——尽力而为，离线时写失败即丢，于是离线那几轮审计念不出来。补法是车端**发件箱**（`orchestrator/edge/turn_outbox.py`）：
+没送到的会话轮落车端 SQLite，重连后按原 `turn_id` / `exchange_id` 重放。现有 `edge_operation` 表不能借用：它按设计不存说话人、
+原话与位置（CA2-11 隐私决定），而会话轮的价值正是原话——所以是一张新表，而且放在**另一个文件**里（`EDGE_TURN_OUTBOX`；没配时
+放在 `EDGE_OPERATION_LOG` 同目录、同一个持久卷：`/data/edge-turn-outbox.sqlite3`，部署编排不用改），操作日志那个库仍不含个人数据。
 
 ```sql
 CREATE TABLE IF NOT EXISTS edge_turn_outbox (
-    turn_id     TEXT PRIMARY KEY,         -- "<exchange_id>:user" / "<exchange_id>:assistant:0"
-    session_id  TEXT NOT NULL,
-    user_id     TEXT NOT NULL,
-    occupant_id TEXT NOT NULL DEFAULT 'primary',
-    vehicle_id  TEXT NOT NULL,
-    role        TEXT NOT NULL,            -- user / assistant
-    text        TEXT NOT NULL,            -- 原话 / 本地话术（个人数据）
-    actions     TEXT NOT NULL DEFAULT '[]',
-    memory_epoch TEXT NOT NULL DEFAULT '',
-    created_ms  INTEGER NOT NULL,
-    attempts    INTEGER NOT NULL DEFAULT 0,
-    next_ms     INTEGER NOT NULL
+    turn_id            TEXT PRIMARY KEY,          -- "<exchange_id>:user" / "<exchange_id>:assistant:0"
+    exchange_id        TEXT NOT NULL,             -- 一轮的两行一起送、一起删
+    seq                INTEGER NOT NULL,          -- 0 = user，1 = assistant
+    session_id         TEXT NOT NULL,
+    user_id            TEXT NOT NULL CHECK (user_id <> ''),
+    occupant_id        TEXT NOT NULL DEFAULT 'primary',
+    vehicle_id         TEXT NOT NULL DEFAULT '',
+    role               TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    text               TEXT NOT NULL,             -- 原话 / 本地话术（个人数据）
+    actions            TEXT NOT NULL DEFAULT '[]',
+    memory_epoch       TEXT NOT NULL CHECK (memory_epoch <> ''),
+    speaker_unverified INTEGER NOT NULL DEFAULT 0,
+    created_ms         INTEGER NOT NULL,          -- 这一轮实际发生的时刻
+    attempts           INTEGER NOT NULL DEFAULT 0,
+    next_ms            INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS edge_turn_outbox_order ON edge_turn_outbox (created_ms, exchange_id, seq);
 ```
 
-代价与前提：车端新增一份个人数据存储（要进隐私登记、`privacy_user_all` 要能删到车端、保留期要定，建议 24 h 与操作日志一致）；
-`memory_enabled=false` 时不入箱；重放仍走记忆服务的 owner / epoch 校验（旧代际被拒即丢弃）。替代方案：不做发件箱，审计在离线
-重连后如实说「离线期间的本地操作没有记录」——零存储，但答不出具体做了什么。
+与草案的差别：补 `exchange_id` / `seq`（按轮成组、按序送）与 `speaker_unverified`（CA2-15 S2 的标记重放时不能丢，否则没认出的人
+说的话会进长期记忆抽取）；`memory_epoch` 由「缺省空串」改为**不许为空**。
+
+**入箱**（`_record_local_turn` 的后台写）：
+
+| 情形 | 处置 |
+|---|---|
+| 直写两行里有没送到的（离线、超时、记忆服务不可用），且没有一行被拒收 | 整轮入箱（已送到的那行重放时按 turn_id 幂等） |
+| 记忆服务明确拒收（`stale_memory_epoch` / `turn_conflict`） | 不入箱：重试也不会成 |
+| 送到了 | 不入箱；顺手叫醒重放（别的会话可能还有待补写的） |
+| 同一会话还有待补写的轮 | 新轮直接排进箱里、不直写，再叫醒重放——否则重连后的第一句先落库，离线那几轮排到它后面 |
+| 没有观测到代际（这一次取不到、到达那一刻缓存里也没有），或没有 owner | 不入箱，与修前一样丢掉 |
+| `memory_enabled=false` | 入口即返回，什么也不写 |
+
+**代际（隐私硬约束：删除之前发生的一轮，绝不在删除之后写进去）**：入箱只认观测到的代际——本轮请求到达时现取的；取不到（离线）
+就用**到达那一刻**进程缓存里的最近一次成功值（`_MemoryClient` 每次成功取代际都记下）。缓存值只会比真实当前值旧：之后删过记忆，
+重放带回它必被栅栏判旧拒收，这一轮就地丢弃（失败方向是少写）。到达之后别的请求才取到的新值不拿来用——那可能是删除之后的代际，
+会把删除之前的话放进去。空代际在记忆服务那边等于旧调用方、不过栅栏，所以表上就不许为空。
+
+**重放**（端侧进程内循环，`main.py` 起）：按发生时刻逐个 exchange 送，同一 exchange 先 user 后 assistant；收下或拒收都删掉这一轮，
+没送到就给这一轮记退避（5 s、15 s、30 s、1 min，之后每 2 min）并结束本次（记忆服务多半整个不可用）。同一会话里前一轮还在退避，
+后面的轮这次不送。记忆服务又够得着（请求到达时取到代际、直写成功）就作废退避、立即重放。一次至多 50 轮；一次重放出错只记异常
+类型，循环不停，也不因叫醒原地空转。
+
+**时刻**：重放带 `AppendTurnRequest.occurred_at_ms = created_ms`（proto 新字段 14，`int64`，0 = 未提供）。Memory 只接受落在
+[服务端时刻 − 会话保留期, 服务端时刻 + 120 s] 之内的值，越界按服务端时刻；它不进幂等比对。在线直写与其他调用方不传，逐字同旧。
+
+**保留与容量**：24 h（与车端操作日志一致），按发生时刻整轮删除（入箱时与重放时各清一次，空箱每 5 min 醒一次）；上限 2 000 行，
+满了不收新轮（少写，不挤掉旧的）。日志只记条数与异常类型，原话只进库。
+
+**隐私登记：不进 `runtime/privacy_registry.py`。** 登记表与 `test/e2e_manifest.yaml` 管的是**服务端**存储：每个目标要有服务端删除适配器
+与云端 e2e 四件探针（seed / count / read / verify），由删除编排同步调用；车机不在任何同步删除通道上（`privacy_delete_bus` 只有
+mcp / cloud 两个目标，量产车端也不可能被云端同步删除），登记进去等于宣称一个兑现不了的删除合同。这份缓冲的删除由三条保证：
+重放必过代际栅栏（删过记忆 ⇒ 拒收即丢）、重连后的第一次重放就把它清空（收下或拒收都删）、最长 24 h 到期删除。代价：用户删除记忆后
+车一直离线，车上那几轮最长留 24 h 才删（只在车上，不会再进云端）。同一取舍也适用于现有 `edge_operation`（含 user_id，同样不在登记表里）。
+要把车端存储纳入隐私编排，需要先有到车端的删除通道——另立卡（§5）。
+
+替代方案（未采用）：不做发件箱，审计在离线重连后如实说「离线期间的本地操作没有记录」——零存储，但答不出具体做了什么。
 
 ## 3. 决策与代价
 
@@ -127,7 +169,7 @@ CREATE TABLE IF NOT EXISTS edge_turn_outbox (
 | 车端查询 | 报有效状态（只读视图） | 旧车端仍报落盘状态：后台照样能对账，只是执行中 / 等确认的那类要等到期限才收口 |
 | 话术 | 结局未知不再说「请稍后再试」 | 单步失败的话术变了（只在车端步超时且 operation 在场时） |
 | 告知 | B：advisory 档 + 窗口 + ttl | 可能被治理丢弃；审计兜底 |
-| T0 | 只评估 | 离线本地操作的审计缺口仍在，待用户裁决表结构 |
+| T0 | 车端发件箱（新表 `edge_turn_outbox`，独立 SQLite 文件，用户 2026-10-12 批准）+ `AppendTurnRequest.occurred_at_ms` | 车端多一份个人数据缓冲（≤ 24 h、代际门控、不进隐私登记，理由见 §2.8）；发布需 `--approve-database-schema-sha256`；记忆服务与端侧要同一次发布（新字段旧服务会忽略，只是时刻按到达盖章） |
 
 ## 4. 验证（本地，分支 `ca2-11-sync`）
 
@@ -140,10 +182,21 @@ CREATE TABLE IF NOT EXISTS edge_turn_outbox (
 | 审计短路 | `test_engine_session_facts.py` +3：念车端记录、读不到逐字同旧、不念别人的 |
 | Redis 7 | `test_session_redis_integration.py` +1（两条 Lua、按值删除、栅栏、不复活）——本机无 Redis 7 跳过，**需在有 Redis 7 的环境跑**（`PLANNER_REDIS_INTEGRATION_URL`） |
 | 反向验证 | 12 处注入缺陷全部判红：同步路径又重发、去掉期限、查无此条当已完成、审计不读对账、去掉宽限期、窗口外也告知、没登记也许诺、隐私删除漏删、栅栏不拦登记、车端报原始状态、写回复活、告知不带主体。首轮「写回复活」漏网（测试被写栅栏先挡住），补「过期 / 不存在」用例后转红 |
+| §2.8 发件箱存储与重放（分支 `t0-outbox`） | `orchestrator/edge/tests/test_turn_outbox.py` 18 条：按轮成组、先 user 后 assistant、跨轮按发生时刻；没代际 / 没 owner 不收、表上空代际插不进；同一轮入箱两次只留一份；过期整轮删；满了不收；进程重启后还在；同目录兜底路径；重放收下 / 拒收都删、拒收不再送回复行、没送到记退避且本次停手、退避升档、同会话后面的轮不越过退避中的轮、叫醒作废退避、空箱叫醒无动作、客户端抛异常当没送到、循环挨过出错的一轮、出错后被叫醒不原地空转、原话不进日志 |
+| §2.8 入箱时机（端侧服务） | `orchestrator/edge/tests/test_local_turn_outbox.py` 11 条：没送到才入箱且带到达时现取的代际；离线用**到达那一刻**缓存的代际（之后别的请求取到的新值不算）；没有代际不入箱；记忆关闭什么也不写；被拒收不入箱；送到不入箱；半送到整轮入箱；同会话有积压时新轮排队不直写、重放按先后补齐；重放带回原 turn_id / exchange_id / 代际 / 乘员 / 未认出标记 / 动作 / 发生时刻；取到代际只在有积压时叫醒；客户端如实报收下 / 拒收 / 没送到并缓存代际 |
+| §2.8 × 真记忆服务 | `orchestrator/edge/tests/test_turn_outbox_memory_chain.py` 3 条（真 `MemoryServicer`、真代际栅栏与幂等键，只把 gRPC 换成进程内直调）：离线那一轮重连后补进会话历史、时刻是当时的（重放晚 10 min 也一样）、审计念出「执行过 2 个操作」；用户删了记忆之后补写被拒、历史为空、箱子清空；同一轮补写两次只落一次 |
+| §2.8 原始时刻 | `memory/tests/test_turn_occurred_at.py` 4 条：窗口内用声明时刻、越界 / 0 / 非整数按服务端时刻；重放时刻不同仍是幂等重放；新字段过线往返、旧调用方读作未声明；RPC 透传到 `ts` |
+| §2.8 反向验证 | 12 处注入缺陷全部判红：重放不带代际（删除后被写回）、没送到不入箱、被拒收也入箱、到达后才缓存的代际也拿来用、同会话不排队、重放不带发生时刻、送到后不删行、过期不清、顺序反、退避中被同会话越过、出错被叫醒原地空转、记忆服务不按声明时刻盖章 |
+| §2.8 全量与门禁 | 全量 11868 通过 / 38 跳过（基线 `bf103d15` 11832 / 38，+36 条）；smoke edge 13/13、skills、exemplars、L0 strict 2/2、capability integrity 全过 |
 
 ## 5. 已知边界
 
-- 后台对账只覆盖云端派发、带 operation_id 的车端步；T0 本地快路径见 §2.8。
+- 后台对账只覆盖云端派发、带 operation_id 的车端步；T0 本地快路径走 §2.8 的发件箱（补的是会话记录，不是车端日志）。
+- 发件箱只补「没送到」的轮：进程重启后、第一次成功取到代际之前的离线轮没有可用代际，照旧丢掉（代际缓存不落盘）。
+- 重连瞬间的先后：发件箱保住同一会话本地轮之间的先后，但重连后第一轮若上云，云端在回合末写自己的轮次，可能早于离线那几轮
+  的补写落库；补写的时刻（`ts`）仍是当时的时刻。链路抖动（直写时好时坏）时同一会话两轮也可能一前一后错开。
+- 用户删除记忆后车一直离线：车上那几轮最长留 24 h 才删（不会再进云端）；车端存储要纳入隐私删除编排，需先有到车端的删除通道（另立卡）。
+- 容量 2 000 行，满了新轮不入箱（丢掉，不挤掉旧的）。
 - 只读结论不等于车况：「已完成」是车端日志说执行成功，车况是否保持由车况镜像与 CA2-10 证据另说；不宣称恰好一次。
 - 单副本：cloud-planner 多副本时同一条可能被并发问两次（只读无害，告知靠治理器去重）。
 - 告知可能被治理器延后后过期丢弃；审计仍可答。chitchat 兜底位不读对账记录。
@@ -162,6 +215,9 @@ CREATE TABLE IF NOT EXISTS edge_turn_outbox (
    operation_id；为它登记一条 `created_ms` 取 10 s 前、`notify` 为 true 的待对账记录。应在一轮内定论为「已完成」，治理器出
    `obs.proactive.decision`、网关日志出「刚才「…」没收到执行回执，车端记录显示已经完成。」，记录 `notified=true`。
 4. 同步路径的新话术需要「执行了但回执丢了」，生产没有故障注入端点（`vehicle_driver.set_faults` 只在本地 harness），线上不造；以离线用例为准。
+5. 发件箱（§2.8，随含 `t0-outbox` 的发布）：只读核对 edge-orchestrator 容器里 `/data/edge-turn-outbox.sqlite3` 已建、`edge_turn_outbox`
+   表与索引在、行数为 0（线上记忆服务一直在线，本不该有积压），日志没有 `local turn outbox replay pass failed`；memory 与 edge 同一发布。
+   离线补写本身要断开端侧到记忆服务的链路，线上不造（会打断真实用户的写入）；以离线用例与真记忆服务链路用例为准。
 
 ## 7. 上线记录（2026-10-12）
 

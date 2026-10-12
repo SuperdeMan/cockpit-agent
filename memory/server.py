@@ -109,7 +109,9 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                     # C4-A 数据源事实：与 actions 同一格、同一条判据。
                     sources=[{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
                              for s in request.sources],
-                    memory_epoch=epoch, speaker_unverified=request.speaker_unverified)
+                    memory_epoch=epoch, speaker_unverified=request.speaker_unverified,
+                    # CA2-11 v2 §2.8：离线补写的原始发生时刻；0 = 未提供，按服务端时刻
+                    occurred_at_ms=request.occurred_at_ms)
         except StaleEpoch:
             # 这一轮是在一次删除之前观测到的：写回来就是复活被删的内容。
             logger.info("append_turn refused: memory deleted since this turn was observed")

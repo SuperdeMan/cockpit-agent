@@ -75,6 +75,21 @@ PERSONAL_DATA_TARGETS = (
 # 会话轮次原文 TTL（默认 7 天）：对话原文是个人数据，不设 TTL 等于永久留存。
 # 近 N 轮上下文与巩固抽取都只用最近轮次，7 天远超任何消费方需要。
 _SESSION_TTL_S = int(os.getenv("MEMORY_SESSION_TTL_S", "604800") or "604800")
+# 写入方声明的发生时刻（`occurred_at_ms`，端侧发件箱重放离线轮次时才带）最多比服务端时刻超前多少秒：
+# 车机时钟有偏差时宁可按服务端时刻盖章，不让一轮「发生在未来」。
+_OCCURRED_SKEW_S = 120
+
+
+def _turn_ts(occurred_at_ms: int, now: float) -> int:
+    """轮次时刻：写入方声明了实际发生时刻、且落在 [now − 会话保留期, now + 容许偏差] 之内就用它，否则用服务端时刻。
+
+    只给离线补写用：重放在重连之后才到，按到达时刻盖章会把「几点做的」答成重连那一刻。越界（钟走错、
+    超出保留期）不报错也不拒写——这一维只影响时刻的念法，轮次本身照常落库。"""
+    if isinstance(occurred_at_ms, int) and not isinstance(occurred_at_ms, bool) and occurred_at_ms > 0:
+        occurred = occurred_at_ms / 1000
+        if now - _SESSION_TTL_S <= occurred <= now + _OCCURRED_SKEW_S:
+            return int(occurred)
+    return int(now)
 
 # ── 轮次归属（M-B）────────────────────────────────────────────────────────
 # OwnerKey=(user_id, occupant_id)。**空 occupant 一律规范化为 primary，绝不表示共享**
@@ -207,7 +222,8 @@ class MemoryStore:
                           vehicle_id: str = "", turn_id: str = "",
                           exchange_id: str = "", actions=None,
                           sources=None, memory_epoch: str = "",
-                          speaker_unverified: bool = False) -> bool:
+                          speaker_unverified: bool = False,
+                          occurred_at_ms: int = 0) -> bool:
         """会话轮次原文。**有 TTL、有 user 索引、有 OwnerKey**。
 
         TTL 与 user 索引是 GDPR 侧的硬要求（无 TTL＝永久留存；无索引则 ForgetUser
@@ -233,9 +249,12 @@ class MemoryStore:
         降没降级。落点与 `actions` 同一格，理由也同一条——「这一轮做了什么」与
         「这一轮的数据从哪来」都是系统持有的事实，而 `_prov` 此前只活在卡上，
         落库即丢，于是「刚才那个行情的来源是什么」只能让 LLM 编一个出来。
+
+        **`occurred_at_ms`（CA2-11 v2 §2.8，2026-10-12）**：端侧发件箱重放离线那几轮时带上原始发生时刻，
+        `ts` 按它盖章（`_turn_ts` 限幅）；不带（0）照旧用服务端时刻。它不进幂等比对——同一轮重放两次时刻相同。
         """
         uid, occ = owner_of(user_id, occupant_id)
-        turn = {"role": role, "text": text, "ts": int(time.time()),
+        turn = {"role": role, "text": text, "ts": _turn_ts(occurred_at_ms, time.time()),
                 "user_id": uid, "occupant_id": occ, "vehicle_id": vehicle_id or "",
                 "turn_id": turn_id or "", "exchange_id": exchange_id or turn_id or "",
                 "actions": _clean_actions(actions),

@@ -10,6 +10,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
+from typing import NamedTuple
 
 import grpc
 from google.protobuf import struct_pb2
@@ -41,6 +42,8 @@ from observability.events import EventEmitter, change_source
 from runtime.vehicle_state import StateSigner
 from orchestrator.edge.vehicle_driver import SimulatedVehicleDriver
 from orchestrator.edge.operation_log import EdgeOperationLog
+from orchestrator.edge.turn_outbox import (APPENDED, REFUSED, UNAVAILABLE, EdgeTurnOutbox, OutboxTurn,
+                                           TurnOutboxReplayer)
 from observability.tracing import (get_trace_id, new_trace_id, set_session_id,
                                    set_trace_id)
 
@@ -55,6 +58,8 @@ _SLOT_OFFER_MAX = 256
 _offer_clock = time.monotonic   # 候选到期用的时钟（测试可替换）
 _LOCAL_ID_MAX_CHARS = 256
 _LOCAL_EXCHANGE_ID_MAX_CHARS = 128
+#: 进程内缓存「最近一次成功取到的 owner 代际」的用户数上限（只给发件箱在离线时盖章用）。
+_EPOCH_CACHE_MAX = 256
 #: 能力摘要有效期（秒）。过期后客户端标未知/待刷新，不得用缓存授权执行。
 _SESSION_INFO_TTL_S = 60
 
@@ -193,6 +198,22 @@ def _reports_action(intent_name: str) -> bool:
     return is_write_intent(intent_name)
 
 
+class ArrivalEpoch(NamedTuple):
+    """请求到达时观测到的 owner 代际：`fresh` 这一次现取的（取不到为空），`cached` 到达那一刻缓存里的。"""
+
+    fresh: str
+    cached: str
+
+
+def _observed_epochs(observed) -> tuple[str, str]:
+    """`_observe_memory_epoch` 任务的结果 →（现取的, 缓存的）。旧形状（直接是代际串）只有现取的那一个。"""
+    if isinstance(observed, ArrivalEpoch):
+        return observed.fresh, observed.cached
+    if isinstance(observed, str):
+        return observed, ""
+    return "", ""
+
+
 class _MemoryClient:
     """端侧对话记忆写入（best-effort）：让纯本地快意图也进共享记忆，
     云端跟进指代消解（"再高一点"）才有上下文。失败静默，不阻塞快路径、不破坏离线。"""
@@ -200,11 +221,18 @@ class _MemoryClient:
     def __init__(self):
         self.addr = os.getenv("MEMORY_ADDR", "memory:50053")
         self._ch: grpc.aio.Channel | None = None
+        # 用户 → 最近一次成功取到的 owner 代际（CA2-11 v2 §2.8）。只给发件箱用：离线时这一轮取不到代际，
+        # 就用**请求到达那一刻**缓存里的值入箱——它只会比当前旧，之后删过记忆重放必被栅栏拒收（少写，不复活）。
+        self._epochs: OrderedDict[str, str] = OrderedDict()
 
     def _stub(self):
         if self._ch is None:
             self._ch = aio_channel(self.addr)
         return memory_pb2_grpc.MemoryStub(self._ch)
+
+    def cached_epoch(self, user_id: str) -> str:
+        """最近一次成功取到的该用户代际；没有回空串。"""
+        return self._epochs.get(user_id, "") if user_id else ""
 
     async def epoch(self, user_id: str) -> str:
         """CA2-15 S1b：请求到达时的 owner 代际。取不到回空串（写入按旧调用方处理），从不抛。"""
@@ -213,16 +241,27 @@ class _MemoryClient:
         try:
             resp = await self._stub().GetMemoryEpoch(
                 memory_pb2.GetMemoryEpochRequest(user_id=user_id), timeout=2)
-            return resp.memory_epoch
         except Exception as e:  # 离线/记忆不可用 → 不带代际
             logger.debug("edge memory epoch unavailable: %s", e)
             return ""
+        epoch = resp.memory_epoch
+        if epoch:
+            self._epochs.pop(user_id, None)
+            self._epochs[user_id] = epoch
+            while len(self._epochs) > _EPOCH_CACHE_MAX:
+                self._epochs.popitem(last=False)
+        return epoch
 
     async def append(self, session_id: str, role: str, text: str, *,
                      user_id: str = "", occupant_id: str = "", vehicle_id: str = "",
                      turn_id: str = "", exchange_id: str = "", actions=None,
-                     memory_epoch: str = "", speaker_unverified: bool = False):
+                     memory_epoch: str = "", speaker_unverified: bool = False,
+                     occurred_at_ms: int = 0) -> str:
         """M-B：端侧轮次也带 OwnerKey。
+
+        返回这次写入的结局（CA2-11 v2 §2.8，发件箱据此决定要不要留着重放）：`APPENDED` 收下了；
+        `REFUSED` 记忆服务拒收（删过记忆 / 同 id 异内容），重试也不会成；`UNAVAILABLE` 没送到（离线、超时）。
+        仍然从不抛。`occurred_at_ms` 只在重放离线轮次时传（原始发生时刻），在线直写不传。
 
         此前这里只传 session/role/text——于是端侧处理的每一轮都是**无主**的，
         云端切到 OWNER_ONLY 后它们会全部落进 primary 桶。车控/媒体本身没有偏好可抽，
@@ -234,16 +273,18 @@ class _MemoryClient:
         识别得出「做了什么」而数据面存不下来，等于没记录。
         """
         try:
-            await self._stub().AppendTurn(
+            resp = await self._stub().AppendTurn(
                 memory_pb2.AppendTurnRequest(
                     session_id=session_id, role=role, text=text,
                     user_id=user_id, occupant_id=occupant_id or "primary",
                     vehicle_id=vehicle_id, turn_id=turn_id, exchange_id=exchange_id,
                     actions=list(actions or []), memory_epoch=memory_epoch,
-                    speaker_unverified=speaker_unverified),
+                    speaker_unverified=speaker_unverified, occurred_at_ms=int(occurred_at_ms or 0)),
                 timeout=5)
-        except Exception as e:  # 离线/记忆不可用 → 静默跳过
+        except Exception as e:  # 离线/记忆不可用 → 静默跳过（发件箱接手）
             logger.debug("edge memory append failed: %s", e)
+            return UNAVAILABLE
+        return APPENDED if getattr(resp, "ok", False) else REFUSED
 
 
 class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
@@ -277,6 +318,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             self.val, operation_log=EdgeOperationLog.from_env()))
         self.cloud_connected = False  # 连接状态追踪
         self.memory = _MemoryClient()
+        # CA2-11 v2 §2.8：本地轮写不进记忆服务时落车端发件箱，重连后补写（重放循环由 main.py 起）
+        self.turn_outbox = EdgeTurnOutbox.from_env()
+        self.turn_outbox_replayer = TurnOutboxReplayer(self.turn_outbox, self._replay_turn)
         self._last_local_exchange: OrderedDict[
             tuple[str, str, str], tuple[str, float, tuple[str, ...]]
         ] = OrderedDict()
@@ -591,15 +635,32 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
     def _observe_memory_epoch(self, request):
         """CA2-15 S1b：请求一到就取代际（不阻塞处理）；本地轮次写入时等它的结果。
 
-        端侧本地路径不读记忆，「观测」就是这句话到达的那一刻：之后记忆被删过，这一轮就不写回。"""
+        端侧本地路径不读记忆，「观测」就是这句话到达的那一刻：之后记忆被删过，这一轮就不写回。
+
+        CA2-11 v2 §2.8：同时记下**到达那一刻**缓存里的代际（`ArrivalEpoch.cached`）——这一次取不到（离线）时，
+        发件箱只能用它入箱；取到了说明记忆服务够得着，顺手叫醒发件箱的重放。"""
         meta = dict(request.meta) if request.meta else {}
         uid = getattr(getattr(request, "context", None), "user_id", "") or ""
         if meta.get("memory_enabled", "true") == "false" or not uid:
             return None
-        task = asyncio.ensure_future(self.memory.epoch(uid))
+        task = asyncio.ensure_future(self._arrival_epoch(uid, self.memory.cached_epoch(uid)))
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
         return task
+
+    async def _arrival_epoch(self, uid: str, cached: str) -> "ArrivalEpoch":
+        fresh = await self.memory.epoch(uid)
+        if fresh:
+            self.turn_outbox_replayer.kick()
+        return ArrivalEpoch(fresh=fresh or "", cached=cached or "")
+
+    async def _replay_turn(self, turn: OutboxTurn) -> str:
+        """发件箱重放一行：原 turn_id / exchange_id / 代际原样带回，再带上原始发生时刻。"""
+        return await self.memory.append(
+            turn.session_id, turn.role, turn.text, user_id=turn.user_id, occupant_id=turn.occupant_id,
+            vehicle_id=turn.vehicle_id, turn_id=turn.turn_id, exchange_id=turn.exchange_id,
+            actions=list(turn.actions), memory_epoch=turn.memory_epoch,
+            speaker_unverified=turn.speaker_unverified, occurred_at_ms=turn.created_ms)
 
     def _record_local_turn(self, request, user_text: str, assistant_speech: str,
                            actions=None, memory_epoch=None):
@@ -608,6 +669,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         **Q6（2026-08-16）：动作一并写。** 端侧快路径那 313 个动作**根本不上云**，
         云侧无从知道车窗到底开没开——「刚才实际执行了什么」于是只能由 LLM 从
         对话历史里猜。这一处是唯一能把 local 那 40% 补进事实源的位置。
+
+        **CA2-11 v2 §2.8（2026-10-12）：没送到的轮进车端发件箱。** 离线时写失败此前即丢，离线那几轮审计念不出来；
+        现在整轮落 `turn_outbox`、重连后按原 turn_id 补写（代际门控、24 h、原话不进日志，见该模块）。
+        记忆服务明确拒收（删过记忆 / 同 id 异内容）的不入箱；没有观测到代际的不入箱。
         """
         meta = dict(request.meta) if request.meta else {}
         if meta.get("memory_enabled", "true") == "false":
@@ -636,18 +701,48 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             while len(self._last_local_exchange) > _LOCAL_EXCHANGE_MAX:
                 self._last_local_exchange.popitem(last=False)
 
-        async def _write():
-            epoch = (await memory_epoch) if memory_epoch is not None else ""
-            await self.memory.append(request.session_id, "user", user_text,
-                                     user_id=uid, occupant_id=occ, vehicle_id=vid,
-                                     turn_id=f"{exch}:user", exchange_id=exch,
-                                     memory_epoch=epoch, speaker_unverified=unverified)
+        created_ms = int(time.time() * 1000)
+
+        def _outbox_turns(epoch: str) -> list[OutboxTurn]:
+            turns = [OutboxTurn(turn_id=f"{exch}:user", exchange_id=exch, seq=0, session_id=request.session_id,
+                                user_id=uid, occupant_id=occ, vehicle_id=vid, role="user", text=user_text,
+                                actions=(), memory_epoch=epoch, speaker_unverified=unverified,
+                                created_ms=created_ms)]
             if assistant_speech:
-                await self.memory.append(request.session_id, "assistant", assistant_speech,
-                                         user_id=uid, occupant_id=occ, vehicle_id=vid,
-                                         turn_id=f"{exch}:assistant:0", exchange_id=exch,
-                                         actions=executed_names, memory_epoch=epoch,
-                                         speaker_unverified=unverified)
+                turns.append(OutboxTurn(turn_id=f"{exch}:assistant:0", exchange_id=exch, seq=1,
+                                        session_id=request.session_id, user_id=uid, occupant_id=occ,
+                                        vehicle_id=vid, role="assistant", text=assistant_speech,
+                                        actions=tuple(executed_names), memory_epoch=epoch,
+                                        speaker_unverified=unverified, created_ms=created_ms))
+            return turns
+
+        async def _write():
+            observed = (await memory_epoch) if memory_epoch is not None else None
+            epoch, cached = _observed_epochs(observed)
+            # CA2-11 v2 §2.8：入箱只认观测到的代际（现取的，取不到用到达那一刻缓存的）；都没有就不入箱
+            fence_epoch = epoch or cached
+            if fence_epoch and uid and self.turn_outbox.has_session(request.session_id):
+                # 同一会话还有待补写的轮：这一轮排在它们后面（直写会先于离线那几轮落库，会话历史就乱了）
+                if self.turn_outbox.put(_outbox_turns(fence_epoch)):
+                    self.turn_outbox_replayer.kick()
+                    return
+            outcomes = [await self.memory.append(request.session_id, "user", user_text,
+                                                 user_id=uid, occupant_id=occ, vehicle_id=vid,
+                                                 turn_id=f"{exch}:user", exchange_id=exch,
+                                                 memory_epoch=epoch, speaker_unverified=unverified)]
+            if assistant_speech:
+                outcomes.append(await self.memory.append(request.session_id, "assistant", assistant_speech,
+                                                         user_id=uid, occupant_id=occ, vehicle_id=vid,
+                                                         turn_id=f"{exch}:assistant:0", exchange_id=exch,
+                                                         actions=executed_names, memory_epoch=epoch,
+                                                         speaker_unverified=unverified))
+            if UNAVAILABLE in outcomes and REFUSED not in outcomes:
+                # 没送到（离线 / 记忆服务不可用）：整轮入箱，重连后按原 turn_id 补写（已送到的那行重放即幂等）
+                if fence_epoch and uid and self.turn_outbox.put(_outbox_turns(fence_epoch)):
+                    logger.info("local turn kept in the outbox for a later write (%d row(s) pending)",
+                                self.turn_outbox.pending())
+            elif outcomes and all(outcome == APPENDED for outcome in outcomes):
+                self.turn_outbox_replayer.kick()
 
         task = asyncio.create_task(_write())
         self._bg.add(task)

@@ -66,3 +66,7 @@ VAL 执行前先写 executing；启动时把遗留的 executing 转为 orphaned�
 `EdgeCall.operation_query` 只读日志、不碰 VAL。日志只存摘要与状态，主体是车辆，保留 24 h。
 CA2-10：本次命令改动的观测样本带云端下发的 `cockpit_observation_ref`，响应 `_receipt` 说明改了哪些键。
 [设计与证据](../../docs/design/2026-10-02-v2-vehicle-operation-log.md)。
+
+本地快路径的会话轮写不进记忆服务（离线）时落车端发件箱 `turn_outbox.py`（SQLite，`EDGE_TURN_OUTBOX`；没配时放在
+`EDGE_OPERATION_LOG` 同目录的 `edge-turn-outbox.sqlite3`，与操作日志分库）：只带观测到的 owner 代际入箱、重放过记忆服务的代际栅栏，
+重连后按原 turn_id 补写并带原始发生时刻，保留 24 h，原话不进日志。[设计](../../docs/design/2026-10-12-v2-edge-operation-sync.md) §2.8。
