@@ -169,6 +169,41 @@ def test_adjust_with_direction_or_target_stays_a_directive(text):
 
 
 @pytest.mark.parametrize("text", [
+    "怎么调",                          # 核心旅程 M09：接在「能量回收有几档」之后，修前被执行成空槽的设置
+    "怎么调？",
+    "咋调呢",
+    "如何调整",
+    "怎么调节",
+    "怎么开",
+    "怎么打开",
+    "怎样关闭",
+    "怎么才能打开",
+    "怎么设置",
+])
+def test_how_to_with_the_object_left_to_context_is_a_question(text):
+    """对象留在上文、整句只剩方式疑问词 + 光杆动作（2026-10-12）。"""
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "怎么调空调温度",                  # 动作在前带对象：既有合同不动
+    "怎么调高",                        # 带方向
+    "怎么调低一点",
+    "调一下",
+])
+def test_bare_how_to_does_not_reach_actions_with_an_object_or_direction(text):
+    assert is_non_directive_question(text) is False, text
+
+
+def test_bare_how_to_is_not_a_complete_information_question():
+    """对象要从上文来：没有上文时模型反问「调什么」是对的，不许被「完整信息问题却澄清」的重试改掉。"""
+    from runtime.question_shape import is_complete_information_question, is_information_request
+    assert is_information_request("怎么调") is True
+    assert is_complete_information_question("怎么调") is False
+    assert is_complete_information_question("空调温度怎么调") is True
+
+
+@pytest.mark.parametrize("text", [
     "防滑链应该装在哪个轮子上",
     "冬天轮胎有什么要求",
     "开长途前要注意些什么",      # 追加批 L：「注意些什么」修前不算提问

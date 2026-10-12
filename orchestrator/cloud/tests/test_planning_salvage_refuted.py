@@ -192,3 +192,40 @@ def test_a_retry_that_says_not_addressed_is_not_overridden_by_the_salvage():
     assert [s.intent for s in plan.steps] != ["info.weather", "manual.query"]
     assert "salvage_kept" not in plan.plan_mode
 
+
+
+# ── 省略对象的方法问（2026-10-12，核心旅程 M09）────────────────────────────────────────────
+def _build_vehicle(text):
+    """真栈 `99178302` M09 第 2 遍（trace `db4fd67f`）的复现：第一轮掉档、文本里编出空槽的车端设置，第二轮工具通道交「受话、零步」。"""
+    edge = MockAgent("edge-vehicle", ["energy_recovery.set"], kind="edge_fast", deployment="edge")
+    agents = _agents() + [edge]
+    catalog = _assemble_capability_catalog(agents)
+    salvage = json.dumps({"addressed": True, "steps": [
+        {"id": "s1", "capability_ref": catalog.pair_to_ref[("edge-vehicle", "energy_recovery.set")], "slots": {},
+         "depends_on": [], "slot_refs": {}}]}, ensure_ascii=False)
+    replies = [(salvage, None), _NO_ACTION_CALL]
+
+    async def llm_tools(messages, tools):
+        return replies.pop(0)
+
+    async def llm(messages):
+        return "这不是 JSON"
+
+    async def resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=resolve, llm_tool_fn=llm_tools)
+    return asyncio.run(builder.build(text, WorkingSet(catalog=agents), PlanContext(session_id="t")))
+
+
+def test_a_bare_how_to_question_does_not_execute_the_salvaged_vehicle_write():
+    """接在「能量回收有几档」之后的「怎么调」：修前回落到抢救计划，端侧执行、话术「调好了」，车态被改。"""
+    plan = _build_vehicle("怎么调")
+    assert "energy_recovery.set" not in [s.intent for s in plan.steps], plan.steps
+    assert plan.technical_failure is False
+
+
+def test_a_directive_still_falls_back_to_its_salvaged_vehicle_write():
+    """带对象与方向的指令不是求信息的请求：重试的零步照旧不推翻抢救计划（回落规则不变）。"""
+    plan = _build_vehicle("能量回收调到最强")
+    assert [s.intent for s in plan.steps] == ["energy_recovery.set"], plan.steps

@@ -310,6 +310,17 @@ def test_set_without_value_asks_instead_of_silently_turning_on():
     assert resp.speech and "多少" in resp.speech
 
 
+def test_energy_recovery_set_without_a_level_asks_for_it():
+    """核心旅程 M09（2026-10-12）：空槽的 `energy_recovery.set` 修前按缺省档「执行成功」，档位没变、话术「调好了」。"""
+    executor = EdgeCallExecutor(VAL())
+    resp = executor.execute(_call("energy_recovery.set"))
+    assert resp.status == agent_pb2.ExecuteResponse.NEED_SLOT
+    assert list(resp.missing_slots) == ["level"]
+    assert "能量回收档位" in resp.speech
+    assert "energy_recovery" not in executor.val.state
+    assert executor.execute(_call("energy_recovery.inc")).status == agent_pb2.ExecuteResponse.OK
+
+
 def test_set_with_value_is_untouched():
     """有值就照常执行——这条追问闸只吃「缺值」，不改任何既有成功路径。"""
     executor = EdgeCallExecutor(VAL())

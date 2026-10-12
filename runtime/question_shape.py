@@ -155,6 +155,17 @@ _OBJECT_FIRST_ADJUST_RE = re.compile(
     + "|".join(sorted(map(re.escape, ADJUST_ACTIONS), key=len, reverse=True))
     + r")(?:一下|呢|啊|呀|吧|才行)?$"
 )
+#: 省略对象的方法问（2026-10-12，核心旅程 M09）：上一句问「能量回收有几档」，接着只说「怎么调」「怎么开」——对象在上文，
+#: 这一句只剩方式疑问词 + 光杆动作。上面两条「对象在前」的形态要求疑问词前至少一个字，这种整句就是「怎么 + 动作」的接不住：
+#: 真栈 `99178302` 上「怎么调」被规划成空槽的 `energy_recovery.set` 执行（话术「调好了」），问句闸和「零步推翻抢救计划」都没拦。
+#: 它不可能是指令：既没有对象也没有目标值。只收整句（可带「才能 / 应该」与语气尾）：「怎么调空调温度」「怎么调高」这类
+#: 动作在前、带对象或方向的既有合同不动。它不算「完整的信息问题」（`is_complete_information_question`）——对象要从上文来，
+#: 没有上文时模型反问「调什么」是对的。
+_BARE_HOW_TO_RE = re.compile(
+    r"^(?:怎么|怎样|咋|如何)(?:才|才能|可以|应该|要|去)?(?:"
+    + "|".join(sorted(map(re.escape, (*HOW_TO_ACTIONS, *ADJUST_ACTIONS)), key=len, reverse=True))
+    + r")(?:一下|呢|啊|呀|吧|才行)?$"
+)
 #: 评审二轮 R9（2026-09-22）：「怎么把车窗打开」「如何把空调关闭」——方式疑问词 + 「把 / 将」处置式
 #: + 操作动作，是方法询问。manual-rag v2 曾把「怎么把」显式排除（「显式执行框架」），于是端侧直接
 #: 执行成 window.open：**「把」是句法结构，不是授权证据**。礼貌执行句（「帮我把车窗关上好吗」）
@@ -404,7 +415,7 @@ def is_non_directive_question(t: str) -> bool:
     # 真实 ASR 常不带问号。“雨刮器怎么打开”若继续落入下方“疑问词+操作动词”旧档，
     # 会被端侧直接执行成 wiper.on。对象/动作的词序已经给出方法询问信号，先于礼貌
     # marker 判定；“帮我把”仍由祈使标记挡住。
-    if _is_how_to_question(t):
+    if _is_how_to_question(t) or _BARE_HOW_TO_RE.fullmatch(t.strip().rstrip("。！!？?~ ")):
         return True
     # 元请求「请告诉我怎么…」带着「请」，却是在要一段解释——排在祈使标记之前。
     if is_explanation_request(t):

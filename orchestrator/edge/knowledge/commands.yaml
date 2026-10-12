@@ -649,6 +649,9 @@ objects:
     - project-c
   energy_recovery:
     display_name: 能量回收
+    # 「设为 N 档」缺了 N 同样不许猜（2026-10-12 核心旅程 M09：空槽的 `energy_recovery.set` 被 VAL 按缺省档执行，
+    # 档位原地不动、话术却是「调好了」）。inc / dec 是相对调，缺值是它的正常形态，不在此列。
+    value_required_operates: [set]
     operates:
     - set
     - inc
