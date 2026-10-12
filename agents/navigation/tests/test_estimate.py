@@ -270,3 +270,49 @@ def test_estimate_from_another_origin_ignores_the_current_battery():
                      raw_text="从深圳北站到厦门火车站多远")
     assert "电量" not in res.speech
 
+
+# ─── 核心旅程 NB04（200×5，`70b179b7`）：估算过的目的地是下一句「那附近」的中心 ───
+
+_MIXC = POI(id="m1", name="深圳万象天地", address="深南大道9668号", lat=22.5405, lng=113.9412)
+#: NB04 的会话位置在福田（冻结设计 §11.7：缺省位置在南山时判不出焦点迁移）
+_FUTIAN = {"current_lat": "22.5410", "current_lng": "114.0579"}
+
+
+def test_estimate_hands_over_the_destination_coordinates():
+    """与导航结果同一组键：焦点只从 navigation 域的 data.lat / lng 登记目的地坐标。"""
+    agent, _ = _agent({"深圳万象天地": [_MIXC]})
+    res = _estimate(agent, {"destination": "深圳万象天地"}, "去深圳万象天地要开多久", meta=_FUTIAN)
+    assert not res.actions
+    assert (res.data["destination"], res.data["lat"], res.data["lng"]) == ("深圳万象天地", 22.5405, 113.9412)
+
+
+def test_the_estimated_destination_is_the_center_of_the_next_deictic_nearby_search():
+    """「去万象天地要开多久」→「那附近有停车场吗」，规划器没填 location（`70b179b7` 只读车道 4 遍里 2 遍）。
+    周边 Agent 的指代用例一直是直接往 meta 里塞焦点坐标——而估算这个生产方从没交过坐标，那两遍按会话位置搜到了福田。
+    这里走真实的生产方 → 焦点抽取 → 按 location 范围下发 → 周边 Agent 定中心。"""
+    from agents.nearby.src.agent import NearbyAgent
+    from orchestrator.cloud.context import extract_focus
+    from orchestrator.cloud.engine import PlannerEngine
+    from orchestrator.cloud.models import Plan, Step, StepResult, StepStatus
+
+    agent, _ = _agent({"深圳万象天地": [_MIXC]})
+    res = _estimate(agent, {"destination": "深圳万象天地"}, "去深圳万象天地要开多久", meta=_FUTIAN)
+    estimate = Plan(steps=[Step(id="s1", agent_id="navigation", intent="navigation.estimate",
+                                slots={"destination": "深圳万象天地"})])
+    focus = extract_focus(estimate, [StepResult(step_id="s1", status=StepStatus.OK, data=res.data)])
+    assert (focus.destination_lat, focus.destination_lng) == (22.5405, 113.9412)
+
+    follow = Plan(steps=[Step(id="s1", agent_id="nearby", intent="nearby.search",
+                              slots={"category": "停车场"}, context_scopes=["location"])])
+    PlannerEngine._apply_focus_meta(follow, focus)
+    nearby, seen = NearbyAgent(), {}
+
+    async def search(keyword, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    nearby.place.search = search
+    asyncio.run(run_handle(nearby, "nearby.search", slots={"category": "停车场"},
+                           raw_text="那附近有停车场吗", meta={**_FUTIAN, **follow.steps[0].meta}))
+    assert (seen["near"].lat, seen["near"].lng) == (22.5405, 113.9412), "中心应是估算过的目的地，不是福田的会话位置"
+

@@ -647,8 +647,11 @@ class NavigationAgent(BaseAgent):
                        "duration_min": duration_min, "eta_ts": eta,
                        **card_geometry(origin=origin_pt, destination=dest_pt,
                                        path=route.get("path"))}, self.poi)
+        # 目的地坐标随结果交出（与导航结果同一组键 lat / lng）：焦点据此登记刚算过的那个地方，下一句「那附近 / 那边」
+        # 才有确定性的中心。核心旅程 NB04（200×5，`70b179b7`）：此前只交名字，规划器漏填 location 的两遍按会话位置搜到了福田。
         return AgentResult(speech=speech, ui_card=card,
                            data={"origin": origin_name, "destination": dest_name,
+                                 "lat": dest_pt.lat, "lng": dest_pt.lng,
                                  "distance_km": distance_km,
                                  "duration_min": duration_min, "eta_ts": eta})
 

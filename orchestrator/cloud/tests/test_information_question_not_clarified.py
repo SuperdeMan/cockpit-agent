@@ -57,10 +57,10 @@ def _build(text, replies, prefs=None):
     return asyncio.run(builder.build(text, WorkingSet(catalog=_agents()), ctx)), seen
 
 
-def _manual_plan(builder_text="空调有哪些模式？"):
+def _manual_plan(builder_text="空调有哪些模式？", goal=None):
     from orchestrator.cloud.planning import _assemble_capability_catalog
     ref = _assemble_capability_catalog(_agents()).pair_to_ref[("manual-rag", "manual.query")]
-    return json.dumps({"complexity": "simple", "goal": builder_text, "addressed": True, "steps": [
+    return json.dumps({"complexity": "simple", "goal": goal or builder_text, "addressed": True, "steps": [
         {"id": "s1", "capability_ref": ref, "slots": {"question": builder_text}, "depends_on": [], "slot_refs": {}}]},
         ensure_ascii=False)
 
@@ -92,6 +92,28 @@ def test_a_model_that_keeps_clarifying_ends_in_talk_not_an_action_card(text):
     """模型两次都要澄清（旧用例里的例句）：不出动作选项卡，落到兜底 Agent 答一句。"""
     plan, _ = _build(text, [_CLARIFY, _CLARIFY])
     assert [s.intent for s in plan.steps] == ["chitchat.talk"] and plan.clarify is None
+
+
+@pytest.mark.parametrize("text,goal", [
+    ("氛围灯能换哪些颜色", "用户询问氛围灯能换哪些颜色（车型部件功能问题）"),
+    ("氛围灯能换哪些颜色", "回答氛围灯能换哪些颜色"),
+    ("哨兵模式怎么开启", "回答哨兵模式怎么开启"),
+])
+def test_a_question_passed_through_whole_is_not_a_bare_object(text, goal):
+    """整句原样进 `question` 槽、目标包着整句（200×5 `70b179b7` 线上原样）：要问的用户说全了，动作不是模型补的。
+    修前被判成「光杆对象被包成动作」，与完整信息问题的校正互相顶，两次后兜底成「没听清要拿它做什么」（M11）。"""
+    plan, _ = _build(text, [_manual_plan(text, goal=goal)])
+    assert [s.intent for s in plan.steps] == ["manual.query"] and plan.clarify is None
+    assert not {"information_question_clarified", "clarify_goal_with_steps"} & set(plan.retry_policies or [])
+
+
+def test_a_bare_object_in_a_question_slot_still_counts_as_an_invented_action():
+    """边界：光杆对象（带问号也一样）原样进 `question` 槽仍算模型补的动作——放过的只是完整的信息问题。"""
+    from types import SimpleNamespace
+
+    from orchestrator.cloud.planning import _bare_object_plan_invents_action
+    plan = SimpleNamespace(goal="回答露营模式？", steps=[SimpleNamespace(slots={"question": "露营模式？"})])
+    assert _bare_object_plan_invents_action(plan, "露营模式？")
 
 
 @pytest.mark.parametrize("text", ["云岚国际中心", "处理一下停车的事"])

@@ -101,3 +101,30 @@ def test_route_km_falls_back_to_the_first_spoken_distance():
     advisory = _turn("全程约584.6公里，开车约7小时。提醒一下：估算续航约360公里，建议途中补能。")
     assert check_expect({"route_km_min": 0.1, "route_km_max": 6}, rewritten, True, ()) == []
     assert check_expect({"route_km_min": 300}, advisory, True, ()) == []
+
+
+# ── 200×5 P11（2026-10-13）：禁词要分得清「声称开着」与复述问句 ─────────────────────────────
+
+def _p11_state_expect() -> dict:
+    """P11 第三轮（取消打开充电口之后问现状）的期望，从语料里读：判的是声明源本身。"""
+    from pathlib import Path
+
+    import yaml
+    path = Path(__file__).resolve().parents[2] / "test/eval_corpus/v2_runtime/core/f02_f03.yaml"
+    case = next(c for c in yaml.safe_load(path.read_text(encoding="utf-8"))["cases"] if c["id"] == "P11")
+    return case["turns"][2]["expect"]
+
+
+def test_speech_not_regex_tells_a_claim_from_an_echo_of_the_question():
+    """`70b179b7` 第 1 遍的诚实回答因复述问句里的「是开着」判红（必过集读数因此红了一条）。
+    复述与否定放行；声称开着的说法照样判红——反向验证：把目标缺陷（取消后谎称开着）注入话术。"""
+    expect = _p11_state_expect()
+    assert "speech_not_regex" in EXPECT_KEYS
+    honest = ["手册里没有实时状态信息，没法判断当前充电口是开着还是关着，建议看中控屏上的提示或者直接联系客服问问。",
+              "我这边看不到充电口是开着的还是关着的。", "看不到充电口有没有开着。", "充电口没开着。",
+              "我这边看不到充电口的实时状态。请直接问车辆助手：“充电口现在开着还是关着？”"]
+    claims = ["充电口是开着的。", "充电口现在开着呢。", "充电口现在是开着，需要关吗？", "好的，充电口已打开。"]
+    for speech in honest:
+        assert check_expect(expect, _turn(speech), True, ()) == [], speech
+    for speech in claims:
+        assert check_expect(expect, _turn(speech), True, ()), speech

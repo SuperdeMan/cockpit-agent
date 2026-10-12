@@ -16,7 +16,10 @@ EXPECT_KEYS = {"speech_any", "speech_all", "speech_not", "cards_any",
                "action_absent", "no_duplicate_action", "process_min",
                "latency_s", "vehicle", "any_of",
                # 冻结 P2 地图家族（2026-10-10）：话术报的全程公里数上下限、候选卡第一项（本地目的地探针的判据搬进来，案例只留一份）
-               "route_km_max", "route_km_min", "first_item_any"}
+               "route_km_max", "route_km_min", "first_item_any",
+               # 2026-10-13（200×5 P11）：禁词要分得清「声称开着」与复述问句里的「是开着还是关着」，子串做不到。
+               # 键名与 QA 回归探针的同义判据一致
+               "speech_not_regex"}
 
 #: 话术里报的全程距离（「全程约 12.5 公里」）。上限：话术不报距离时不判；下限：必须报了且不小于它。
 _ROUTE_KM_RE = re.compile(r"全程约\s*([\d.]+)\s*公里")
@@ -66,6 +69,9 @@ def check_expect(expect: dict, out, enforce_latency: bool, default_not: Iterable
         for k in exp.get("speech_not", []):
             if str(k) in speech:
                 f.append(f"speech_not 命中禁词 {k!r} | speech={speech[:60]}")
+        for pattern in exp.get("speech_not_regex", []):
+            if re.search(str(pattern), speech):
+                f.append(f"speech_not_regex 命中 {pattern!r} | speech={speech[:60]}")
         if "cards_any" in exp and not any(t in exp["cards_any"] for t in ctypes):
             f.append(f"cards_any 未命中 {exp['cards_any']} | 实际={ctypes}")
         if "card_contains" in exp:
