@@ -176,3 +176,30 @@ journeys:
   - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
      known_red: "2026-10-12 标定 0/3：等将来的条件（温度低于20度时）被落成 scene.create「温度低开空调」，条件丢了、要确认保存；不动车（无动作），该怎么答（说做不到 / 建条件提醒）待产品裁决"}
   - {id: D04, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  # ── 扩容（2026-10-12）：地图类 F02 / F06 / F07 / F09 ──
+  # F07 能源：找站、换站（含两站反问与续接）、续航提醒、长任务约束——全部多轮；发导航的走模拟车并以「取消导航」收尾
+  - {id: EN04, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
+  - {id: EN05, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  - {id: EN06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
+  - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  - {id: EN10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
+  - {id: EN11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: synthetic_writes}
+  - {id: EN12, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
+  - {id: EN13, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  - {id: EN14, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
+  - {id: EN15, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  # F09 周边：只读条目按条补 payment.invoke（只读车道从不确认）；NB11 要发导航只能走模拟车，而运行器只给只读车道补这一项
+  - {id: NB06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NB07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NB08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NB09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NB10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NB11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: simulated_vehicle,
+     known_red: "2026-10-12 读代码：周边 / 停车 Agent 按整个 Agent 要求 payment.invoke，运行器只许只读车道补这一项（scopes_extra 校验钉着），模拟车车道的合成用户第一轮搜索就会被拒（「当前账号没有『周边发现』这项能力的授权」）；没有支付权限的主体用不了周边是冻结设计 §11.7 登记的产品问题，拆到能力级权限之前红"}
+  # F06 导航：导航动作走模拟车（B1-2 目的地焦点迁移、改目的地）
+  - {id: NV28, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F06, lane: simulated_vehicle}
+  - {id: NV29, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F06, lane: simulated_vehicle}
+  # F02 挂起不丢答案：目的地选择卡挂起 + 插话（7 月 B2-3 的 v2 改写）
+  - {id: CB01, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F02, lane: read_only}
