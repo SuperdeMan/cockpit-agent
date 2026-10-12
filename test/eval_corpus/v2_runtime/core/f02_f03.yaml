@@ -82,7 +82,9 @@ cases:
     turns:
       - {say: "打开充电口", expect: {need_confirm: true}}
       - {say: "取消", cancel_pending: true}
-      - {say: "充电口现在是开着还是关着？", expect: {speech_not: ["已打开", "开着的", "是开着"]}}
+      # 子串「是开着」「开着的」撞上诚实的复述：「没法判断当前充电口是开着还是关着」（200×5 `70b179b7` 第 1 遍因此判红）。
+      # 声称开着的说法用正则认；复述问句（开着还是 / 开着的还是 / 开着或）与否定（没开着、是否开着、有没有开着）放行
+      - {say: "充电口现在是开着还是关着？", expect: {speech_not: ["已打开"], speech_not_regex: ["(?<!是否)(?<!有没有)(?<!没)开着(?!的?(?:还是|或))"]}}
   - id: P12
     family: pending_cancel_then_audit
     turns:
