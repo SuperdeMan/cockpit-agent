@@ -1,0 +1,228 @@
+version: 1
+split: regression
+note: >-
+  冻结扩容（2026-10-12，docs/design/2026-10-09-v2-core-journey-freeze.md §3）：地图类 F02 +1、F06 +2、F07 +12、F09 +6，全部多轮。
+  都依赖高德（providers: AMAP_KEY，额度不够时 --skip-providers 记未测）。会话位置缺省用运行器的深圳南山；模拟车电量是缺省的 72%
+  （估算续航约 360 公里）：去厦门火车站（约 580 公里）会建议途中补电一次，去惠州直达。v2 运行器不支持车态前置，7 月旅程里靠
+  setup.vehicle 压低电量的那几条（B2-3 电量 40、B3-2 电量 15、A2-3 电量 30）按 72% 改写了期望。
+  7 月旅程能经适配器原样引用的已在清单里（B5-2 等）；B1-1 / B1-2 / B2-3 / A2-3 / A1-2 / B3-2 适配器带不进来（setup.vehicle、
+  confirm、cleanup 都记「未支持」；R2 车道又要旅程自带 vehicle_keys 与收尾），所以按 v2 schema 重写在这里，注释里写明来源。
+  车道（清单为准）：只读零执行；导航动作放模拟车车道（simulated_vehicle），一律以「取消导航」收尾——导航不改模拟车的任何车态键，
+  而校验要求 vehicle_keys 非空，这批统一声明 speed_kmh（只有调试口能写它，没有命令能改，声明它不放宽任何检查）；行程规划会把方案写进
+  合成用户的画像（profile KV trip_active），放合成数据写车道并清理记忆。
+  判据只用 v2 运行器认的键：写车道的动作用 actions_required / actions_allowed（动作名：导航 navigate、取消 navigate_cancel）；
+  7 月风格的 action / action_absent / no_duplicate_action 在 v2 运行器里会因为动作是字符串而出错，这里一律不用。
+cases:
+  # ── F07 能源：找站与候选问答（只读）────────────────────────────────────────
+  - id: EN04
+    family: charger_find_candidate_distance
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "附近有快充站吗", expect: {cards_any: [charging_list], speech_any: ["充电站"], speech_not: ["没听清"]}}
+      # 候选集问答（距离维度，`orchestrator/cloud/candidate_query.py`）：念出「X 公里」，不重列、不说没有列表
+      - {say: "第一个离我多远", expect: {speech_any: ["公里", "米", "km"], speech_not: ["没听清", "没有可以引用的列表", "请先查询"]}}
+  # ── F07 能源：找站后按序号导航（模拟车）─────────────────────────────────────
+  - id: EN05
+    family: charger_find_then_navigate
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "附近有充电站吗", expect: {cards_any: [charging_list], actions_allowed: []}}
+      # 找站的追问提示就是「说『导航去第一个』」：按候选集第一项发导航
+      - {say: "导航去第一个", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                       speech_not: ["哪一个", "想去哪", "没听清"]}}
+    cleanup:
+      - {say: "取消导航"}
+  # ── F07 能源：带充电站的导航里换站（模拟车；probe_swap_charger --suite swap 的话术，载荷级判据仍归探针）──
+  - id: EN06
+    family: charger_swap_routed
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "导航去深圳北站，在附近找个充电桩", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                                         speech_any: ["充电"]}}
+      # CA2-19 S5：由导航原位换站、重发导航（目的地不变）；不能落到「当前没有正在进行的导航」或反问怎么调整
+      - {say: "换一个充电站", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"], speech_any: ["充电"],
+                                       speech_not: ["当前没有正在进行的导航", "您想怎么调整"]}}
+    cleanup:
+      - {say: "取消导航"}
+  # ── F07 能源：路线上两个充电站——换站先反问换哪一个，「换第二个」续接（模拟车；--suite swap2 的话术）──
+  - id: EN07
+    family: charger_swap_which_one
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "导航去深圳北站，在附近找个充电桩", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"]}}
+      # 2026-10-10 修过：路线上已有的站不再加一遍（runtime/route_stops.same_stop）
+      - {say: "途经再加一个充电站", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                             speech_not: ["当前暂无正在进行的导航", "当前没有正在进行的导航"]}}
+      # 几个充电站又没点名：反问、挂起，不猜、不动路线
+      - {say: "换一个充电站", expect: {actions_allowed: [], speech_any: ["换哪一个"]}}
+      - {say: "换第二个", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                   speech_not: ["当前没有正在进行的导航", "途经点里没找到"]}}
+    cleanup:
+      - {say: "取消导航"}
+  # ── F07 能源：估算带续航提醒，追问沿途补能（只读）────────────────────────────
+  - id: EN08
+    family: range_advisory_then_plan
+    providers: [AMAP_KEY]
+    turns:
+      # 72% 电量估算续航约 360 公里，本程约 580 公里：提醒带电量读数（CA2-19 S4，EN03 的单轮版）
+      - {say: "去厦门火车站要开多久", expect: {speech_any: ["电量"], route_km_min: 400}}
+      # 目的地沿用上一轮：充电规划只出建议、不发导航；不能反问去哪
+      - {say: "那路上在哪充电", expect: {any_of: [{cards_any: [charging_route]}, {speech_any: ["补电"]}],
+                                         speech_not: ["您要去哪里", "没听清"]}}
+  # ── F07 能源：导航时的续航提醒，按提醒顺路加充电站（模拟车；--suite range 与 7 月 B3-2 的话术）──
+  - id: EN09
+    family: range_advisory_then_add_charger
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "导航去厦门火车站", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"], speech_any: ["电量"]}}
+      - {say: "那顺路加个充电站", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"], speech_any: ["充电"],
+                                           speech_not: ["当前没有正在进行的导航", "您想怎么调整"]}}
+    cleanup:
+      - {say: "取消导航"}
+  # ── F07 能源：长途充电方案——裸城市名先澄清目的地，选第几个再出方案（只读）──────
+  - id: EN10
+    family: charging_plan_dest_choice
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "规划一下去厦门的充电方案", expect: {cards_any: [poi_list], card_contains: ["dest_choice"], speech_not: ["没听清"]}}
+      # 72% 去厦门要途中补电：方案报全程、补电点与到达估算电量（CA2-19 S3）
+      - {say: "第一个", expect: {cards_any: [charging_route], speech_any: ["建议途中补电", "长途需中途补电"], route_km_min: 400,
+                                 speech_not: ["没明白", "请再说一遍"]}}
+  # ── F07 能源：长任务约束——行程规划按电量编排补电，挂起确认时问补几次电（合成数据写；7 月 A2-3 的话术）──
+  - id: EN11
+    family: trip_plan_weaves_charging
+    providers: [AMAP_KEY]
+    data_cleanup: [memory]
+    turns:
+      # 方案先写进画像（trip_active）再挂起确认；只读车道不许确认，收尾由运行器取消挂起、清理记忆
+      - {say: "帮我规划一个周末杭州两日游", expect: {need_confirm: true, cards_any: [trip_itinerary], actions_allowed: [],
+                                                   any_of: [{card_contains: ["充电"]}, {speech_any: ["充电", "补电"]}]}}
+      - {say: "这个行程全程要补几次电", expect: {speech_any: ["补电"], actions_allowed: [],
+                                                 speech_not: ["您还没有规划行程", "没听清"]}}
+  # ── F07 能源：问电量再找站（只读）──────────────────────────────────────────
+  - id: EN12
+    family: battery_then_find
+    providers: [AMAP_KEY]
+    turns:
+      # CA2-19 S1：读数带来源，不编电量
+      - {say: "我还剩多少电", expect: {speech_any: ["%"], speech_not: ["没听清"]}}
+      - {say: "那附近有充电站吗", expect: {cards_any: [charging_list], speech_not: ["没听清"]}}
+  # ── F07 能源：路线上没有充电站时说「换一个充电站」——不动路线、不声称改了路线（模拟车）──
+  - id: EN13
+    family: charger_swap_without_route_charger
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "导航去深圳北站", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"]}}
+      # 路线没有途经点：充电按无路线找站，只推荐、不发导航；说「已加入 / 已换成」就是假话
+      - {say: "换一个充电站", expect: {actions_allowed: [], speech_not: ["加入导航途经点", "已换成", "已为您更换"]}}
+    cleanup:
+      - {say: "取消导航"}
+  # ── F07 能源：续航够不够——两个目的地各问一次（只读）────────────────────────────
+  - id: EN14
+    family: range_enough_or_not
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "我的电够开到厦门火车站吗", expect: {speech_any: ["补能", "补电", "不够"], speech_not: ["足够直达", "没听清"]}}
+      # 深圳北站约 20 公里：不能说不够、不能建议途中补电
+      - {say: "那够开到深圳北站吗", expect: {speech_not: ["不够", "建议途中补", "没听清"], route_km_max: 60}}
+  # ── F07 能源：带充电站的导航里「那个充电站不去了」（模拟车）────────────────────
+  - id: EN15
+    family: charger_remove_from_route
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "导航去深圳北站，在附近找个充电桩", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"]}}
+      # 只有一个途经点时泛指说法删最近加入的那个（导航 `_reroute`），重算路线
+      - {say: "那个充电站不去了", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                           speech_any: ["已去掉途经点"], speech_not: ["途经点里没找到"]}}
+    cleanup:
+      - {say: "取消导航"}
+
+  # ── F09 周边（只读，清单按条补 payment.invoke）────────────────────────────────
+  - id: NB06
+    family: nearby_refine_filter
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "附近有什么川菜馆", expect: {cards_any: [place_list], speech_not: ["没听清"]}}
+      - {say: "只要评分四点五以上的", expect: {any_of: [{cards_any: [place_list]}, {speech_any: ["评分"]}],
+                                               speech_not: ["没听清", "请先查询"]}}
+  - id: NB07
+    family: nearby_superlative_pick
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "附近有什么好吃的火锅店", expect: {cards_any: [place_list]}}
+      # 候选集聚合问答（评分维度）：按卡片上的评分挑，念出评分
+      - {say: "评分最高的是哪家", expect: {speech_any: ["评分"], speech_not: ["没听清", "请先查询", "没有可以引用的列表"]}}
+  - id: NB08
+    family: nearby_parking_nearest
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "附近有停车场吗", expect: {cards_any: [place_list], speech_not: ["没听清"]}}
+      - {say: "最近的那个离我多远", expect: {speech_any: ["公里", "米"], speech_not: ["没听清", "请先查询"]}}
+  - id: NB09
+    family: nearby_pivot_on_candidate
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "附近有咖啡店吗", expect: {cards_any: [place_list]}}
+      # 以候选为中心再搜：中心换成第一家，不是当前位置的又一份咖啡店
+      - {say: "第一家附近有停车场吗", expect: {cards_any: [place_list], speech_not: ["没听清", "请先查询"]}}
+  - id: NB10
+    family: nearby_reference_out_of_range
+    providers: [AMAP_KEY]
+    turns:
+      - {say: "附近有咖啡店吗", expect: {cards_any: [place_list]}}
+      # 序号越界如实说「只跟到第 N 项」，不编第二十家的营业时间
+      - {say: "第二十家几点关门", expect: {speech_any: ["够不着", "只跟到"], speech_not: ["营业到"]}}
+  # ── F09 周边：列表里「就去第二家」发导航（模拟车；7 月 B1-1）──────────────────────
+  - id: NB11
+    family: nearby_pick_then_navigate
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "附近有什么好吃的火锅店", expect: {cards_any: [place_list], actions_allowed: []}}
+      - {say: "就去第二家", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                     speech_not: ["哪一家", "没明白", "请再说", "想去哪"]}}
+    cleanup:
+      - {say: "取消导航"}
+
+  # ── F06 导航（模拟车）──────────────────────────────────────────────────────
+  # 导航目的地 → 「那边」天气焦点迁移（7 月 B1-2）：当前在福田，那边是盐田大梅沙
+  - id: NV28
+    family: navigate_then_destination_weather
+    providers: [AMAP_KEY]
+    location: {lat: "22.5410", lng: "114.0579"}
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "导航去大梅沙海滨公园", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"], speech_any: ["大梅沙"]}}
+      - {say: "那边现在天气怎么样", expect: {actions_allowed: [], speech_not: ["福田", "哪个城市", "哪里的天气"],
+                                             any_of: [{speech_any: ["盐田", "大梅沙"]}, {card_contains: ["盐田"]}, {card_contains: ["大梅沙"]}]}}
+    cleanup:
+      - {say: "取消导航"}
+  # 导航中改目的地：新目的地重发导航（可以先发取消再发新导航）
+  - id: NV29
+    family: navigate_then_change_destination
+    providers: [AMAP_KEY]
+    vehicle_keys: [speed_kmh]
+    turns:
+      - {say: "导航去深圳湾公园", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"], speech_any: ["深圳湾公园"]}}
+      - {say: "不去那了，改去海岸城", expect: {actions_required: ["navigate"], actions_allowed: ["navigate", "navigate_cancel"],
+                                               speech_any: ["海岸城"], speech_not: ["当前没有正在进行的导航"]}}
+    cleanup:
+      - {say: "取消导航"}
+
+  # ── F02 挂起不丢答案：目的地选择卡挂起 + 插话，「第一个」仍回填（只读；7 月 B2-3）──────
+  - id: CB01
+    family: dest_choice_survives_interjection
+    providers: [AMAP_KEY]
+    turns:
+      # 裸城市名「惠州」先出目的地选择卡（NEED_SLOT），不当成 0.3 公里外的「惠州出口」
+      - {say: "去惠州怎么充电", expect: {cards_any: [poi_list], card_contains: ["dest_choice"]}}
+      - {say: "现在几点了", expect: {speech_any: ["点"], speech_not: ["第几个", "没明白"]}}
+      # 插话之后「第一个」仍回填目的地；72% 去惠州直达，方案说无需途中补电
+      - {say: "第一个", expect: {any_of: [{cards_any: [charging_route]}, {speech_any: ["补电", "充电"]}],
+                                 speech_not: ["没明白", "请再说一遍", "想问什么"]}}
