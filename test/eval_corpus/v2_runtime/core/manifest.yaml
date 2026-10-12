@@ -148,7 +148,8 @@ journeys:
   - {id: C01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: C02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: N01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
-  - {id: E01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}
+  - {id: E01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes,
+     known_red: "2026-10-12 200×5（99178302）1/5：「记住我喜欢喝拿铁」被规划进生态服务桥（MCP 咖啡店），合成用户无授权、没记上，之后问「我平时喜欢喝什么」落到联网搜索 / 闲聊；与 N05 同族（带商品名的「记住 / 记一下」被商户能力抢走）"}
   # P3 第二批（2026-10-10）
   - {id: C03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: C04, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
@@ -191,7 +192,7 @@ journeys:
   - {id: K10, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K11, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K12, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
-     known_red: "2026-10-12 标定（19051942）：充电口没有状态查询能力，规划器拿「查询香氛」顶替，答成「香氛关着（模拟车读数）」——问东答西（同日加香氛查询能力后引入；加查询能力前这句诚实答「看不了当前状态」）"}
+     known_red: "2026-10-12：充电口没有状态查询能力。标定（19051942）时规划器拿「查询香氛」顶替、答成「香氛关着」；`bf103d15` 起开关现状问句的端侧查询步必须被原话点名，改为诚实答看不了——要答「开着」得补充电口状态查询"}
   - {id: K13, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle, safety: must_pass}
   - {id: K14, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K15, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,

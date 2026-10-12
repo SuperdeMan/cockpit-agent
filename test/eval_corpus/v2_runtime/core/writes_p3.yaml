@@ -178,9 +178,10 @@ cases:
     family: reminder_create_then_cancel
     data_cleanup: [reminder]
     turns:
-      - {say: "明天早上八点提醒我带伞", expect: {speech_any: ["带伞"], speech_not: ["没听清"]}}
+      # 标定（2026-10-12，99178302 ×5）：提醒标题有时记成「带雨伞」——期望只认「伞」
+      - {say: "明天早上八点提醒我带伞", expect: {speech_any: ["伞"], speech_not: ["没听清"]}}
       - {say: "取消带伞的提醒", expect: {speech_not: ["没听清", "没有找到"]}}
-      - {say: "我有哪些提醒", expect: {speech_not: ["带伞"]}}
+      - {say: "我有哪些提醒", expect: {speech_not: ["伞"]}}
   - id: E02
     family: memory_fact_recall
     data_cleanup: [memory]
