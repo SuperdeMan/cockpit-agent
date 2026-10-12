@@ -112,7 +112,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 [QA/发布交接 §2](docs/reviews/2026-08-30-qa-closeout-handoff.md)。`origin/main` 可因纯文档提交领先生产；
 引用现场状态前重新核对。`5/5 endpoint healthy` 只说明健康度，不能替代业务验收。
 
-- 本仓仍是 Phase 1 工程化 PoC。v2 首版已部署 CA2-02–12、15、17、19，CA2-21 核心旅程冻结在建；
+- 本仓仍是 Phase 1 工程化 PoC。v2 首版已部署 CA2-02–12、15、17、19，CA2-21 核心旅程冻结已出首份 200 × 5（未达 95% 目标）；
   Jev 在线决策、T1e、真实车辆驱动与量产账号未实现。逐包状态只看 [路线图](docs/roadmap.md)，本节不再逐包登记。
 - CA2-06/12 的车态观测已验签，来源仍为 simulated，不代表实车或动作因果证明；不把连接身份认证当观测来源认证，
   证据与接续看 [本包记录](docs/design/2026-09-27-v2-vehicle-state-and-simulation.md)。
@@ -139,7 +139,7 @@ v2 的可重复旅程以 [核心旅程冻结](docs/design/2026-10-09-v2-core-jou
 | 记忆与身份治理（CA2-15） | S1 / S2 / S3a 与记忆质量遗留已部署，S3b 暂不做（用户决定）：[CA2-15](docs/design/2026-10-02-v2-memory-identity-governance.md)；collector 调试面要运维令牌：[调试面访问](docs/design/2026-10-03-v2-collector-access.md) |
 | MCP 委托与外源隔离（CA2-17） | S1–S3 已部署，麦当劳点餐按用户批准重钉指纹后恢复：[MCP 桥委托](docs/design/2026-10-03-v2-mcp-bridge-delegation.md) |
 | 能源与健康闭环（CA2-19） | S1–S5 与「换第二个」续接、无路线换站已部署：[能源与健康闭环](docs/design/2026-10-04-v2-energy-health-journeys.md) |
-| 核心旅程冻结（CA2-21） | 清单 200 条已建满并标定（新增 48 条在 `19051942` 上各 ×1，真缺陷标 known_red）；首份 200 × 5 第一遍在 `99178302` 上两次叫停（M09 / K08，已修），修复版 `04fe3bba` 又叫停一次（P12，已修），正式读数在 `70b179b7` 上整轮重跑中：[冻结设计](docs/design/2026-10-09-v2-core-journey-freeze.md) |
+| 核心旅程冻结（CA2-21） | 清单 200 条；首份正式 200 × 5 在 `70b179b7` 上跑完：达标 157 / 198（79%），**未达 ≥ 95% 目标**，必过集 23 条按安全性质零违例；最大的缺口是 F11 记忆（「记住…」无确定性写入，1 / 8）、F01 手册追问落闲聊、条件句首轮规划方差。查出的 4 处确定性缺陷修在 `fix-1013`，发布与复测另记。逐条归因与下一步：[冻结设计 §13.7](docs/design/2026-10-09-v2-core-journey-freeze.md) |
 | 导航 / 手册 / 规划的 R0 残余 | 修复按条目登记在 QA 交接；目的地解析见 [本地目的地排序](docs/design/2026-10-04-local-destination-ranking.md) 与 [借名歧义](docs/design/2026-10-04-destination-borrowed-name.md)，规划重试见 [抢救计划](docs/design/2026-10-04-planner-salvage-retry-floor.md) |
 | Jev 判别层 | JV01 网关契约已部署、缺省关闭；受话 shadow 曾上线，2026-10-10 用户决定暂停云端外呼（`DECISION_ENABLED=false`，国内出口被地区拦截），重开要先有境外出口并经两步批准：[执行计划](docs/design/2026-10-04-jev-decide-integration.md) |
 | 客户端视觉 | HMI：[验证发布](docs/design/2026-10-09-hmi-visual-v2-validation-release.md)、[真实地图接入](docs/design/2026-10-10-hmi-map-sdk.md)；可观测台：[实施计划](docs/design/2026-10-09-dashboard-visual-v2-implementation-plan.md)；Android：[v3 执行记录](docs/design/2026-10-03-android-visual-v3-execution.md) |
