@@ -135,11 +135,11 @@ v2 的可重复旅程以 [核心旅程冻结](docs/design/2026-10-09-v2-core-jou
 | 主题 | 现状 / 唯一接续入口 |
 |---|---|
 | v2 主线排序 | [路线图](docs/roadmap.md) → [实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)；R0、正式身份与设备验收仍分项签收 |
-| 持久执行与证据（CA2-08–11） | 首版已部署：[持久准入](docs/design/2026-10-01-v2-durable-operation-admission.md) / [确认绑定](docs/design/2026-10-02-v2-confirmation-binding.md) / [结果证据](docs/design/2026-10-02-v2-effect-evidence.md) / [车端日志](docs/design/2026-10-02-v2-vehicle-operation-log.md)；结局未知的车端操作后台对账、结果补记与告知已上线（[v2](docs/design/2026-10-12-v2-edge-operation-sync.md)，`99178302`），不做补偿动作；T0 本地快路径的离线发件箱（车端新表，用户 10-12 批准）已实现、待上线 |
+| 持久执行与证据（CA2-08–11） | 首版已部署：[持久准入](docs/design/2026-10-01-v2-durable-operation-admission.md) / [确认绑定](docs/design/2026-10-02-v2-confirmation-binding.md) / [结果证据](docs/design/2026-10-02-v2-effect-evidence.md) / [车端日志](docs/design/2026-10-02-v2-vehicle-operation-log.md)；结局未知的车端操作后台对账、结果补记与告知已上线（[v2](docs/design/2026-10-12-v2-edge-operation-sync.md)，`99178302`），不做补偿动作；T0 本地快路径的离线发件箱（车端新表，用户 10-12 批准）已上线（`04fe3bba`），隐私删除控制面改用专用密钥 |
 | 记忆与身份治理（CA2-15） | S1 / S2 / S3a 与记忆质量遗留已部署，S3b 暂不做（用户决定）：[CA2-15](docs/design/2026-10-02-v2-memory-identity-governance.md)；collector 调试面要运维令牌：[调试面访问](docs/design/2026-10-03-v2-collector-access.md) |
 | MCP 委托与外源隔离（CA2-17） | S1–S3 已部署，麦当劳点餐按用户批准重钉指纹后恢复：[MCP 桥委托](docs/design/2026-10-03-v2-mcp-bridge-delegation.md) |
 | 能源与健康闭环（CA2-19） | S1–S5 与「换第二个」续接、无路线换站已部署：[能源与健康闭环](docs/design/2026-10-04-v2-energy-health-journeys.md) |
-| 核心旅程冻结（CA2-21） | 清单 200 条已建满并标定（新增 48 条在 `19051942` 上各 ×1，真缺陷标 known_red）；首份 200 × 5 第一遍在 `99178302` 上两次叫停（M09 / K08，已修），修复版整轮重跑：[冻结设计](docs/design/2026-10-09-v2-core-journey-freeze.md) |
+| 核心旅程冻结（CA2-21） | 清单 200 条已建满并标定（新增 48 条在 `19051942` 上各 ×1，真缺陷标 known_red）；首份 200 × 5 第一遍在 `99178302` 上两次叫停（M09 / K08，已修），修复版 `04fe3bba` 整轮重跑中：[冻结设计](docs/design/2026-10-09-v2-core-journey-freeze.md) |
 | 导航 / 手册 / 规划的 R0 残余 | 修复按条目登记在 QA 交接；目的地解析见 [本地目的地排序](docs/design/2026-10-04-local-destination-ranking.md) 与 [借名歧义](docs/design/2026-10-04-destination-borrowed-name.md)，规划重试见 [抢救计划](docs/design/2026-10-04-planner-salvage-retry-floor.md) |
 | Jev 判别层 | JV01 网关契约已部署、缺省关闭；受话 shadow 曾上线，2026-10-10 用户决定暂停云端外呼（`DECISION_ENABLED=false`，国内出口被地区拦截），重开要先有境外出口并经两步批准：[执行计划](docs/design/2026-10-04-jev-decide-integration.md) |
 | 客户端视觉 | HMI：[验证发布](docs/design/2026-10-09-hmi-visual-v2-validation-release.md)、[真实地图接入](docs/design/2026-10-10-hmi-map-sdk.md)；可观测台：[实施计划](docs/design/2026-10-09-dashboard-visual-v2-implementation-plan.md)；Android：[v3 执行记录](docs/design/2026-10-03-android-visual-v3-execution.md) |
