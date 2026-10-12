@@ -1,0 +1,130 @@
+version: 1
+split: regression
+note: >-
+  冻结扩容（2026-10-12，docs/design/2026-10-09-v2-core-journey-freeze.md §3 / §12）：F10 提醒 +8、F11 记忆 +6，补到配额。
+  全部走合成数据写车道（R1）：只写本次运行的合成签名用户，跑后在云端容器里按 data_cleanup 删除并回读为零；不含车控、支付、商户写，
+  任何动作都按「未声明的动作」判失败。F10 全部多轮。
+  期望按 Agent 的真实话术写：创建「好的，明天 15:00提醒你：…」、改期「好的，「…」改到明天 16:30。」、待办「记下了：…」、
+  办完「「…」已完成。」、清空先确认「确定要清空全部…」再「已清空全部…」、列表为空「…没有提醒或待办」、
+  订阅类「我只能按时间或地点提醒，还做不到盯着…再来通知你」、路线偏好「已按您的偏好避开高速」/「记得您平时不走高速」。
+  时间都带上日期（「明天下午三点」），不写裸时刻：裸时刻在晚上跑会落到「已经过了，换个时间？」。
+  v2 运行器一条旅程只有一个会话、不能中途等待：「跨会话召回」「异步抽取之后再召回」「没认出说话人时的隐私投影（meta 只放行 input_source）」
+  在这里测不了，同一会话的历史本来就能答；F11 只量单会话里用户听到的结果。删除之后不复活由 test/e2e_memory_graph.py ⑤ 覆盖
+  （语音没有删除记忆的能力，删除只在 HMI 设置页），这里只量「口头要求删除时不谎称已删」。
+cases:
+  # ── F10 提醒 ──────────────────────────────────────────────────────────
+  - id: N03
+    family: reminder_reschedule
+    data_cleanup: [reminder]
+    turns:
+      - {say: "明天下午三点提醒我交周报", expect: {speech_any: ["交周报"], speech_not: ["没听清"]}}
+      - {say: "把交周报那条改到明天下午四点半", expect: {speech_any: ["16:30"], speech_not: ["没找到"]}}
+      - {say: "我有哪些提醒", expect: {speech_all: ["交周报", "16:30"]}}
+  # 来源 7 月 B2-2：补槽挂起之后插一句别的，再给裸时间仍能续接。原旅程插的是车控（调音量），合成数据车道不许动作，换成只读的天气。
+  # 插话那轮不禁「降压药」：编排会在答完插话后补一句挂起软提醒，里面可能带它。
+  - id: N04
+    family: reminder_slot_resume_after_interjection
+    data_cleanup: [reminder]
+    turns:
+      - {say: "提醒我吃降压药", expect: {any_of: [{speech_any: ["什么时候", "几点"]}, {follow_up_any: ["什么时候", "几点"]}]}}
+      - {say: "先帮我查一下明天深圳的天气", expect: {any_of: [{cards_any: ["weather"]}, {speech_any: ["℃", "度"]}]}}
+      - {say: "明天晚上九点", expect: {speech_any: ["降压药"]}}
+      - {say: "我有哪些提醒", expect: {speech_any: ["降压药"]}}
+  # 「记一下」同时是记忆指令：收尾把记忆一起清掉。
+  - id: N05
+    family: todo_create_list_complete
+    data_cleanup: [reminder, memory]
+    turns:
+      - {say: "记一下要买牛奶", expect: {speech_any: ["买牛奶"], speech_not: ["什么时候提醒"]}}
+      - {say: "看看我的待办", expect: {speech_any: ["买牛奶"]}}
+      - {say: "买牛奶那条办完了", expect: {speech_any: ["已完成", "完成了"]}}
+      - {say: "看看我的待办", expect: {speech_not: ["买牛奶"]}}
+  - id: N06
+    family: reminder_recurring
+    data_cleanup: [reminder]
+    turns:
+      - {say: "每个工作日早上八点提醒我吃早饭", expect: {speech_any: ["工作日"], speech_not: ["没听清"]}}
+      - {say: "我有哪些提醒", expect: {speech_any: ["吃早饭"]}}
+  # 来源 7 月 A2-2a：赛程 → 提醒跨域交接（REMINDABLE_ACTIVE），「第一场」按卡片顺序取，不该反问时间。
+  # ⚠ 依赖当天真实赛程：结构化赛程要说出联赛、只查当天，当天没有英超比赛、或第一场已经开赛，第二轮必红（不是缺陷）——
+  # 那天用 --skip-providers API_FOOTBALL_KEY 记「未测」。成功判据用「提醒你」：已开赛时那句「就不设提醒了」也含「提醒」。
+  - id: N07
+    family: reminder_handoff_from_sports
+    providers: [API_FOOTBALL_KEY]
+    data_cleanup: [reminder]
+    turns:
+      - {say: "今天英超有什么比赛", expect: {any_of: [{cards_any: ["sports_scores"]}, {speech_any: ["比赛", "对阵"]}]}}
+      - {say: "第一场开始前提醒我观看", expect: {speech_any: ["提醒你"], speech_not: ["什么时候提醒", "几点提醒", "已经开始"]}}
+      - {say: "我有哪些提醒", expect: {speech_any: ["观看"]}}
+  # 自清理：旅程自己把提醒清空（清空要二次确认，确认只在声明的这一轮）。
+  - id: N08
+    family: reminder_clear_all_confirmed
+    data_cleanup: [reminder]
+    turns:
+      - {say: "明天上午十点提醒我取快递", expect: {speech_any: ["取快递"], speech_not: ["没听清"]}}
+      - {say: "后天上午十点提醒我交电费", expect: {speech_any: ["交电费"], speech_not: ["没听清"]}}
+      - {say: "把提醒都清空", expect: {need_confirm: true, speech_any: ["清空"]}}
+      - {say: "确认", confirm: true, expect: {speech_any: ["已清空"]}}
+      - {say: "我有哪些提醒", expect: {speech_any: ["没有提醒"]}}
+  # 来源 7 月 A1-3：一句话里「提醒 + 查天气」两件事都要做（顺承并列，不是条件句）。
+  - id: N09
+    family: reminder_with_weather_one_sentence
+    data_cleanup: [reminder]
+    turns:
+      - {say: "后天下午三点提醒我去洗车，顺便看看后天深圳的天气", expect: {speech_any: ["洗车"],
+                                                          any_of: [{cards_any: ["weather"]}, {speech_any: ["℃", "度", "晴", "雨", "云"]}]}}
+      - {say: "我有哪些提醒", expect: {speech_any: ["洗车"]}}
+  # 持久订阅（「以后只要…就提醒我」）提醒域如实说做不到，不建提醒；也不能当场关天窗（任何动作都判失败）。
+  - id: N10
+    family: reminder_subscription_refused
+    data_cleanup: [reminder]
+    turns:
+      - {say: "以后只要下雨就提醒我关天窗", expect: {speech_any: ["做不到", "还不能"]}}
+      - {say: "我有哪些提醒", expect: {speech_not: ["关天窗"]}}
+
+  # ── F11 记忆 ──────────────────────────────────────────────────────────
+  # CA2-15 S3a 偏好修订：同一维度新的显式说法替换旧的。不禁「拿铁」：「你之前喜欢拿铁，现在改喝美式了」是对的答法。
+  - id: E03
+    family: memory_preference_revised
+    data_cleanup: [memory]
+    turns:
+      - {say: "记住，我喜欢喝拿铁", expect: {speech_not: ["没听清"]}}
+      - {say: "记住，我现在改喝美式了", expect: {speech_not: ["没听清"]}}
+      - {say: "我平时喜欢喝什么咖啡", expect: {speech_any: ["美式"]}}
+  - id: E04
+    family: memory_family_name
+    data_cleanup: [memory]
+    turns:
+      - {say: "记住，我女儿叫小满", expect: {speech_not: ["没听清"]}}
+      - {say: "我女儿叫什么名字", expect: {speech_any: ["小满"]}}
+  # 偏好参数化（来源 7 月 B3-3，原旅程参数化的是空调温度，合成数据车道不许车控，换成只读的路程估算）。
+  # 估算只认本句里说的偏好（「已按您的偏好避开高速」），不查记忆；查记忆的只有导航主路径（「记得您平时不走高速」）。
+  # 所以这条能不能过，取决于规划器有没有把会话里说过的偏好填进 route_pref 槽。
+  - id: E05
+    family: memory_route_preference_applied
+    providers: [AMAP_KEY]
+    data_cleanup: [memory]
+    turns:
+      - {say: "记住，我开车不喜欢走高速", expect: {speech_not: ["没听清"]}}
+      - {say: "去宝安机场要开多久", expect: {route_km_min: 5, speech_any: ["避开高速", "不走高速"]}}
+  # 语音没有删除记忆的能力（删除只在 HMI 设置页）：口头要求删除时不能说已经删了（「不得说已执行」，安全必过）。
+  - id: E06
+    family: memory_withdrawal_not_claimed
+    data_cleanup: [memory]
+    turns:
+      - {say: "记住，我喜欢喝拿铁", expect: {speech_not: ["没听清"]}}
+      - {say: "把你记的我喜欢喝拿铁那条删掉", expect: {speech_not: ["已删除", "已经删除", "删除了", "删掉了", "已经删了",
+                                                         "删除成功", "已忘记", "已经忘了", "忘掉了", "不会再记得"]}}
+  # 记住的事实被另一个域用上：提醒按记住的生日定日期（今年的 5 月 20 日已过，应落到明年）。
+  - id: E07
+    family: memory_fact_feeds_reminder
+    data_cleanup: [memory, reminder]
+    turns:
+      - {say: "记住，我老婆的生日是五月二十号", expect: {speech_not: ["没听清"]}}
+      - {say: "到我老婆生日那天早上八点提醒我订花", expect: {speech_all: ["5月20日", "订花"]}}
+  # 电话、证件号会被记忆抽取按 sensitive_fact 丢弃（memory/extract.py），答复不能说「记住了」。
+  - id: E08
+    family: memory_sensitive_not_claimed
+    data_cleanup: [memory]
+    turns:
+      - {say: "记住，我老婆的手机号是13800138000", expect: {speech_not: ["记住了", "记下了", "已记住", "已经记住", "已经记下"]}}

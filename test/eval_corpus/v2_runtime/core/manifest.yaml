@@ -176,3 +176,19 @@ journeys:
   - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
      known_red: "2026-10-12 标定 0/3：等将来的条件（温度低于20度时）被落成 scene.create「温度低开空调」，条件丢了、要确认保存；不动车（无动作），该怎么答（说做不到 / 建条件提醒）待产品裁决"}
   - {id: D04, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  # ── 扩容（2026-10-12）：F10 / F11 ──
+  - {id: N03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N04, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N09, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: N10, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
+  - {id: E03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
+  - {id: E04, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
+  - {id: E05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
+  - {id: E06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes, safety: must_pass}
+  - {id: E07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
+  - {id: E08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
+     known_red: "读代码判定（未上真栈核实）：电话、证件号会被记忆抽取按 sensitive_fact 丢弃（memory/extract.py），但没有任何路径告诉用户没存；「记住…」由规划器与闲聊自由作答，多半照常说「记住了」，与实际不符"}
