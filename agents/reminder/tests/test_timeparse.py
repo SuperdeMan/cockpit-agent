@@ -239,3 +239,18 @@ def test_shared_segment_table_covers_the_words_timewindow_used_to_miss():
     """「早晨」「夜里」这两个词此前只有本模块认得——现在两边同表。"""
     assert P("明天早晨八点提醒我").fire_at == ts(L(2026, 7, 12, 8, 0))
     assert P("今天夜里八点提醒我").fire_at == ts(L(2026, 7, 11, 20, 0))
+
+
+@pytest.mark.parametrize("text", [
+    "我老婆生日那天早上八点", "老婆生日当天早上八点", "到我老婆生日那天早上八点提醒我订花",
+    "结婚纪念日早上九点提醒我订餐厅", "那一天晚上七点提醒我",
+])
+def test_a_day_the_rules_cannot_place_is_a_miss_not_the_next_clock_time(text):
+    """说了是哪一天、规则认不出是哪天：此前日期整个落空、只剩「早上八点」，排成了明天 08:00（核心旅程 E07，`284b52ce`）。"""
+    assert P(text).status == FAIL
+
+
+def test_the_same_day_words_with_an_explicit_date_still_parse():
+    assert P("5月20号当天早上八点提醒我订花").fire_at == ts(L(2027, 5, 20, 8, 0))
+    assert P("明天是我生日，早上八点提醒我订蛋糕").fire_at == ts(L(2026, 7, 12, 8, 0))
+    assert P("那天气预报说要下雨，晚上八点提醒我收衣服").fire_at == ts(L(2026, 7, 11, 20, 0))

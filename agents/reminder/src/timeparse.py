@@ -58,6 +58,10 @@ _SEGS = SEGMENTS
 _SEG_DEFAULT_HOUR = SEG_DEFAULT_HOUR
 _HHMM_RE = re.compile(r"([01]?\d|2[0-3])[:：]([0-5]\d)")
 _CLOCK_RE = re.compile(_NUM + r"\s*点\s*(半|一刻|三刻|" + _NUM + r"\s*分?)?")
+#: 说了是**哪一天**、规则却认不出是哪天：「我老婆生日那天」「纪念日当天」。此前日期整个落空、只剩「早上八点」，
+#: 悄悄排成了明天 08:00（核心旅程 E07，`284b52ce`）。日子没解析出来时命中它就是规则未命中——不能拿认得的那半截凑一个时间。
+#: 「那天气」「当天气」不是日子。
+UNRESOLVED_DAY_RE = re.compile(r"(?:那一|那|当)天(?!气)|生日|纪念日")
 
 
 def _display(lt: datetime, ln: datetime) -> str:
@@ -157,6 +161,8 @@ def parse_time_text(text: str, *, now: datetime | None = None,
                     day_date = ln.date().replace(year=y, month=mo, day=d)
                 except ValueError:
                     return ParsedTime(FAIL)  # "31号"于小月：诚实失败不猜下月
+    if day_date is None and UNRESOLVED_DAY_RE.search(t):
+        return ParsedTime(FAIL)
 
     # 3) 段位（独立段位词覆盖/补充日词内嵌段位）
     for w, k in _SEGS:
@@ -220,6 +226,25 @@ def parse_time_text(text: str, *, now: datetime | None = None,
         elif target <= ln:
             target += timedelta(days=1)   # 段位/24h 时刻今天已过 → 明天（凌晨两点 case）
     return _ok(target.astimezone(timezone.utc), ln, tz)
+
+
+def ends_with_time(text: str) -> bool:
+    """这截话以时间表达收尾（时刻、时段、日子、日期）——它说的是「什么时候」，不是「在哪儿」。
+
+    给位置提醒判「到 X 提醒我」的 X 用：「到八点提醒我吃药」「到我老婆生日那天早上八点提醒我订花」里的 X 是时间，
+    此前被建成到达提醒（地点「八点」），永远不会触发，话术却答应了（核心旅程 E07，`284b52ce`）。只看收尾：门牌、楼号、
+    地铁线（「3号门」「三号楼」「8号线」）带数字但以地名收尾，照旧是地点；「N号」只在整截就是日期时算（「中山路88号」是门牌）。
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    tl = t.lower()
+    if any(tl.endswith(w) for w, _, _ in _DAY_WORDS) or any(t.endswith(w) for w, _ in _SEGS):
+        return True
+    for rx in (_CLOCK_RE, _HHMM_RE, _WEEK_RE, _MD_RE, UNRESOLVED_DAY_RE):
+        if any(m.end() == len(t) for m in rx.finditer(t)):
+            return True
+    return bool(_DOM_RE.fullmatch(t))
 
 
 def strip_time_expressions(text: str) -> str:

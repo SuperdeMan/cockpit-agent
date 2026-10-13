@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .timeparse import ends_with_time
+
 ARRIVE, LEAVE = "arrive", "leave"
 
 # ETA 族词形：命中即让路（不是本模块的活）
@@ -57,7 +59,8 @@ def parse_place_text(raw: str) -> ParsedPlace:
         if not m:
             continue
         place = _clean_place(m.group("place"))
-        if not place or place in _NOT_PLACE or place.isdigit():
+        # 「到八点 / 到明天早上 / 到我老婆生日那天早上八点提醒我」：到的是一个时间，不是一个地方（判据在 timeparse，同一份时间词）
+        if not place or place in _NOT_PLACE or place.isdigit() or ends_with_time(place):
             continue
         # 事项 = 触发从句之后的部分（「提醒我」之后）
         title = text[m.end():].strip(" ，。,、的了")

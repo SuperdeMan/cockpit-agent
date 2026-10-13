@@ -617,6 +617,10 @@ class NavigationAgent(BaseAgent):
 
         strategy, strategy_note = _route_strategy(
             f"{intent.slots.get('route_pref') or ''} {raw_text}")
+        if not strategy:
+            # 与导航同一个消费环（G6）：本句没说偏好，就按记忆里的路线偏好算——问「要开多久」算的应是那条真要开的路。
+            # 核心旅程 E05（`284b52ce`）：此前只在规划器把记住的偏好抄进 route_pref 时才生效，5 遍里 3 遍算成了走高速。
+            strategy, strategy_note = await self._route_pref_from_memory(ctx)
         try:
             # with_polyline：卡上带折线，Android 地图页画「查看路线」（2026-09-11）
             route = await self.poi.get_route(origin_pt, dest_pt, meta=meta,

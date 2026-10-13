@@ -21,8 +21,8 @@ from .placeparse import ARRIVE, parse_place_text
 from .task_admission import admit_task_title
 from .store import (Reminder, ReminderStore, DONE, CANCELLED, FIRED,
                     LOCATION, PENDING)
-from .timeparse import (OK as T_OK, FAIL as T_FAIL, ParsedTime, align_workday,
-                        business_tz, format_display, parse_lead, parse_recur,
+from .timeparse import (OK as T_OK, FAIL as T_FAIL, UNRESOLVED_DAY_RE, ParsedTime, align_workday,
+                        business_tz, ends_with_time, format_display, parse_lead, parse_recur,
                         parse_time_text, recur_label, strip_time_expressions)
 
 logger = logging.getLogger("agent.reminder")
@@ -38,6 +38,10 @@ _CREATE_WRAPPER_RE = re.compile(
     r"^(?:(?:麻烦|请|帮我|给我)\s*)*(?:创建|新建|设置|添加)"
     r"(?:一条|一个|条|个)?(?:定时)?提醒[，,：:\s]+")
 _TITLE_FIELD_RE = re.compile(r"^(?:提醒)?(?:内容|标题)(?:是|为|[:：])\s*")
+#: 句首「到 + 时间 + 提醒我」的「到…」是时间状语，不是事项（「到八点提醒我吃药」的事项是「吃药」）。这类句子此前被位置提醒截走、
+#: 标题由那边取；判成时间（`placeparse`，同一个 `ends_with_time`）改走定时提醒之后，标题要在这里剥掉它，否则存成「到提醒我吃药」。
+_TIME_ARRIVAL_LEAD_RE = re.compile(
+    r"^(?:等?到了?)(?P<when>[^，。,、\s]{1,16}?)(?:的?时候|时)?(?:就|再)?(?=(?:提醒|叫)我)")
 _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项场]?")   # 场：跨域「第N场」
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 from runtime.polarity import NEG_WORDS   # 极性词表唯一来源（Q7/Q11 共用）
@@ -858,6 +862,9 @@ class ReminderAgent(BaseAgent):
 
     @staticmethod
     def _extract_title(raw: str) -> str:
+        lead = _TIME_ARRIVAL_LEAD_RE.match(raw or "")
+        if lead and ends_with_time(lead.group("when")):
+            raw = raw[lead.end():]
         t = strip_time_expressions(raw or "")
         wrapper = _CREATE_WRAPPER_RE.match(t)
         if wrapper:
@@ -902,6 +909,9 @@ class ReminderAgent(BaseAgent):
 
     async def _llm_time_fallback(self, text: str) -> ParsedTime:
         """规则未命中（"下下周三饭点"）→ LLM @fast 抽 ISO；失败 FAIL（外层追问）。"""
+        if UNRESOLVED_DAY_RE.search(text or ""):
+            # 「我老婆生日那天」是哪天，模型和规则一样不知道：让它猜只会凑出一个日期（核心旅程 E07），直接交外层追问
+            return ParsedTime(T_FAIL)
         ln = self._now_utc().astimezone(self._tz)
         prompt = (f"现在是 {ln.strftime('%Y-%m-%d %H:%M')}"
                   f"（周{'一二三四五六日'[ln.weekday()]}，UTC+8）。\n"

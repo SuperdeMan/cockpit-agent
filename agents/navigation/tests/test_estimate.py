@@ -316,3 +316,38 @@ def test_the_estimated_destination_is_the_center_of_the_next_deictic_nearby_sear
                            raw_text="那附近有停车场吗", meta={**_FUTIAN, **follow.steps[0].meta}))
     assert (seen["near"].lat, seen["near"].lng) == (22.5405, 113.9412), "中心应是估算过的目的地，不是福田的会话位置"
 
+
+def _estimate_with_memory(slots, raw_text, remembered):
+    """估算一次，返回（结果, 每次算路用的 strategy）；记忆里放 `remembered` 这几条路线偏好。"""
+    agent, _ = _agent({"深圳北站": [_NORTH]})
+    strategies = []
+
+    async def get_route(a, b, **kwargs):
+        strategies.append(kwargs.get("strategy"))
+        return {"distance_km": 24.0, "duration_min": 37}
+
+    agent.poi.get_route = get_route
+    ctx = make_context()
+    ctx._memory.recall.return_value = remembered
+    res = asyncio.run(run_handle(agent, "navigation.estimate", slots=slots, raw_text=raw_text,
+                                 ctx=ctx, meta=dict(_HERE)))
+    return res, strategies
+
+
+def test_an_estimate_follows_the_remembered_route_preference_like_navigation_does():
+    """「记住，我开车不喜欢走高速」之后问「去机场要开多久」：算的应是那条真要开的路，并说明按的是记住的偏好。
+    核心旅程 E05（`284b52ce`）：此前估算只认本句的 route_pref，规划器没把偏好抄进槽的 3 / 5 遍算成了走高速。"""
+    remembered = [{"text": "开车不喜欢走高速", "predicate": "route.avoid_highway", "polarity": "dislike"}]
+    res, strategies = _estimate_with_memory({"destination": "深圳北站"}, "去深圳北站要开多久", remembered)
+    assert strategies == ["6"]
+    assert "不走高速" in res.speech and not res.actions
+
+    # 本句说了别的偏好，照本句（与导航的 `test_route_pref_slot_beats_memory` 同一条规则）
+    _res, strategies = _estimate_with_memory({"destination": "深圳北站", "route_pref": "避堵"},
+                                             "避开拥堵去深圳北站要开多久", remembered)
+    assert strategies == ["4"]
+
+    # 没有记住的偏好：照旧按缺省策略算
+    _res, strategies = _estimate_with_memory({"destination": "深圳北站"}, "去深圳北站要开多久", [])
+    assert strategies == [""]
+

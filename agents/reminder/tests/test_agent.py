@@ -81,6 +81,30 @@ def test_title_wrapper_keeps_task_content(raw, expected):
     assert ReminderAgent._extract_title(raw) == expected
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("到八点提醒我吃药", "吃药"),
+    ("到我老婆生日那天早上八点提醒我订花", "订花"),
+    ("等到周五就提醒我交周报", "交周报"),
+    ("到5号提醒我交房租", "交房租"),
+    ("到公司提醒我拿文件", "到公司提醒我拿文件"),   # 到的是地点：位置提醒那条路自己取标题，这里一个字不动
+])
+def test_a_leading_arrive_at_a_time_clause_is_not_part_of_the_title(raw, expected):
+    """「到 + 时间 + 提醒我」改走定时提醒之后（此前被位置提醒截走），「到…」从句是时间状语、不是事项——否则存成「到提醒我吃药」。"""
+    assert ReminderAgent._extract_title(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_arriving_at_eight_is_a_timed_reminder_not_an_arrival():
+    """「到八点提醒我吃药」此前建成地点「八点」的到达提醒，永远不会触发。现在是定时提醒：10:00 说的八点 → 今天 20:00。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="到八点提醒我吃药")
+    assert res.status == "ok" and "20:00" in res.speech and "吃药" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1 and times[0].title == "吃药"
+    assert times[0].fire_at == int(datetime(2026, 7, 11, 20, 0, tzinfo=_TZ).timestamp())
+    assert await a.store.list_location_pending() == []
+
+
 @pytest.mark.asyncio
 async def test_create_without_time_asks_and_saves_pending():
     a = await _agent()

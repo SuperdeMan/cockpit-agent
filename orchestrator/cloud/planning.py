@@ -3861,19 +3861,27 @@ class PlanBuilder:
 
         分不清就返回 None：**宁可退回今天的行为，也不冤枉一次「你没权限」**。
         没有被挡下的能力时（绝大多数身份）一次调用都不发生。
+
+        「分不清」也包括**打平**：前几名里有一条没被挡下的能力同样过了这道门槛，路由就说不清用户要的是哪条，
+        交给规划器在已授权的目录里判。200×5 后续批 N05（`284b52ce`）：「买牛奶那条办完了」线上生态服务桥 0.538、
+        提醒 0.532，早退把一句完成待办答成了「没有授权」（5 / 5）；「帮我点一杯麦当劳的可乐」生态服务桥 0.63、
+        已授权里最高 0.452，照旧说清没权限。
         """
         if not blocked:
             return None
         blocked_by_id = {a.manifest.agent_id: a for a in blocked}
         try:
-            resolved = await self._resolve(text, top_k=1)
+            resolved = await self._resolve(text, top_k=3)      # 前 3 名：看有没有已授权的能力打平
         except Exception as e:                                  # 路由不可用 = 不知道，不猜
             logger.debug("scope-blocked routing failed: %s", e)
             return None
         if not resolved:
             return None
+        floor = float(os.getenv("CLARIFY_FALLBACK_MIN", "0.5"))
         top = resolved[0]
-        if (float(getattr(top, "score", 0.0) or 0.0)
-                < float(os.getenv("CLARIFY_FALLBACK_MIN", "0.5"))):
+        if float(getattr(top, "score", 0.0) or 0.0) < floor:
+            return None
+        if any(r.manifest.agent_id not in blocked_by_id
+               and float(getattr(r, "score", 0.0) or 0.0) >= floor for r in resolved[1:]):
             return None
         return blocked_by_id.get(top.manifest.agent_id)

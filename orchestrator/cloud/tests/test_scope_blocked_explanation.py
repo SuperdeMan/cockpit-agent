@@ -170,6 +170,40 @@ def test_a_blocked_agents_own_hint_does_not_lift_the_scope_explanation():
     assert spy.calls == []
 
 
+def _todo_and_shop(shop_score, todo_score):
+    todo = _agent("reminder", [_cap("reminder.complete", ["title"])], display_name="提醒", score=todo_score)
+    shop = _agent("mcp-bridge", [_cap("shop.order", ["item"])], requires=["merchant.order"],
+                  display_name="生态服务桥", score=shop_score)
+    return todo, shop
+
+
+def test_a_permitted_capability_tied_with_the_blocked_one_goes_to_the_planner():
+    """200×5 后续批 N05（`284b52ce`）：「买牛奶那条办完了」线上路由生态服务桥 0.538、提醒 0.532——打平，路由分不清，
+    早退却答了「没有授权」（5 / 5）。已授权的能力也过了同一道门槛 ⇒ 不下结论，交给规划器。"""
+    todo, shop = _todo_and_shop(0.538, 0.532)
+    ref = _build_ref_maps([todo, _CHITCHAT])[1][("reminder", "reminder.complete")]
+    spy = _SpyWith([todo, shop, _CHITCHAT], resolve_top=[shop, todo],
+                   plan_texts=[json.dumps({"steps": [{"id": "s1", "capability_ref": ref, "slots": {"title": "买牛奶"},
+                                                      "depends_on": [], "slot_refs": {}}]})])
+
+    final = _final(_run(_engine(spy), _req("买牛奶那条办完了")))
+
+    assert not [i for i in final.get("issues") or []
+                if i["code"] == contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.calls == ["reminder.complete"]
+
+
+def test_a_clearly_blocked_request_still_names_the_missing_permission():
+    """线上「帮我点一杯麦当劳的可乐」：生态服务桥 0.63，已授权里最高 0.452（没过门槛）——照旧说清没权限，一次模型都不调。"""
+    todo, shop = _todo_and_shop(0.63, 0.452)
+    spy = _SpyWith([todo, shop, _CHITCHAT], resolve_top=[shop, todo])
+
+    final = _final(_run(_engine(spy), _req("帮我点一杯麦当劳的可乐")))
+
+    assert [i["code"] for i in final.get("issues") or []] == [contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.plan_calls == 0 and spy.calls == []
+
+
 # ─── 命中：说出真实原因 ─────────────────────────────────────────────────────
 
 def test_scope_blocked_capability_is_named_as_the_real_reason():

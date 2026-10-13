@@ -52,6 +52,34 @@ def test_non_location_sentences_untouched(text):
     assert parse_place_text(text).ok is False
 
 
+@pytest.mark.parametrize("text", [
+    "到我老婆生日那天早上八点提醒我订花",   # 核心旅程 E07（`284b52ce`）：建成了地点「我老婆生日那天早上八点」的到达提醒
+    "到我老婆生日那天提醒我订花",
+    "到八点提醒我吃药",
+    "到明天早上提醒我交周报",
+    "到下午三点提醒我开会",
+    "到周一提醒我交周报",
+    "到5号提醒我交房租",
+    "到五月二十号提醒我订花",
+])
+def test_arriving_at_a_time_is_not_an_arrival_reminder(text):
+    """「到 + 时间 + 提醒我」到的是一个时间：此前全被建成到达提醒，永远不会触发，话术却答应了。"""
+    assert parse_place_text(text).ok is False
+
+
+@pytest.mark.parametrize("text,place", [
+    ("到3号门提醒我拿快递", "3号门"),
+    ("到三号楼提醒我拿文件", "三号楼"),
+    ("到中山路88号提醒我取件", "中山路88号"),   # 门牌：「N号」不是整截日期
+    ("到明天广场提醒我买票", "明天广场"),
+    ("到8号线提醒我换乘", "8号线"),
+])
+def test_places_with_numbers_or_day_words_inside_are_still_places(text, place):
+    """只看收尾：带数字、带日词但以地名收尾的照旧是地点。"""
+    p = parse_place_text(text)
+    assert p.ok and p.place == place and p.trigger_on == ARRIVE
+
+
 # ── 距离与匹配 ──────────────────────────────────────────────────────────
 
 def test_haversine_known_distance():
@@ -203,6 +231,50 @@ async def test_agent_refuses_honestly_when_place_unresolvable():
     res = await run_handle(a, "reminder.create", raw_text="到某个不存在的地方提醒我拿文件")
     assert res.status == "need_slot" and "place_address" in res.missing_slots
     assert await a.store.list_location_pending() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("time_text", ["", "我老婆生日那天早上八点", "老婆生日当天早上八点"])
+async def test_a_day_only_the_user_knows_is_asked_not_an_arrival_or_tomorrow(time_text):
+    """核心旅程 E07（`284b52ce`）：「到我老婆生日那天早上八点提醒我订花」被建成到达提醒——地点那截经周边搜索落到了随便一个
+    POI 上（这里用能解析出坐标的桩模拟），卡片写「到我老婆生日那天早上八点时」，话术答应了「到那天早上八点提醒你」。
+    地点那层放过之后，时间解析又会丢掉认不出的那一天、排成明天 08:00。两层都不许：什么都不建，诚实问什么时候。"""
+    from agents._sdk.testing import run_handle
+    a = await _agent(resolve={"lat": 22.54, "lon": 113.94, "radius_m": 300})
+    res = await run_handle(a, "reminder.create", raw_text="到我老婆生日那天早上八点提醒我订花",
+                           slots={"title": "订花", "time_text": time_text})
+    assert res.status == "need_slot" and "什么时候" in res.speech
+    assert await a.store.list_location_pending() == []
+    times, _ = await a.store.list_split("u1")
+    assert times == []
+
+
+@pytest.mark.asyncio
+async def test_the_same_sentence_with_the_date_resolved_is_a_timed_reminder():
+    """规划器从记忆里把那一天解析成了日期（`284b52ce` 第 1 遍的「五月二十号早上八点」）：照日期建定时提醒，不再被到达句式截走。"""
+    from agents._sdk.testing import run_handle
+    a = await _agent(resolve={"lat": 22.54, "lon": 113.94, "radius_m": 300})
+    res = await run_handle(a, "reminder.create", raw_text="到我老婆生日那天早上八点提醒我订花",
+                           slots={"title": "订花", "time_text": "五月二十号早上八点"})
+    assert res.status == "ok" and "5月20日" in res.speech and "08:00" in res.speech
+    assert await a.store.list_location_pending() == []
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1 and times[0].kind == "time" and times[0].title == "订花"
+
+
+@pytest.mark.asyncio
+async def test_the_time_fallback_does_not_ask_the_model_to_guess_a_day_only_the_user_knows():
+    """「我老婆生日那天」是哪天，模型和规则一样不知道：时间兜底不调模型，直接失败交外层追问；别的规则未命中照旧问模型。"""
+    from unittest.mock import AsyncMock
+
+    from agents.reminder.src.agent import ReminderAgent
+    from agents.reminder.src.timeparse import FAIL, OK
+    a = ReminderAgent()
+    a.llm.complete = AsyncMock(return_value='{"iso": "2027-01-06T12:00"}')
+    assert (await a._llm_time_fallback("老婆生日当天早上八点")).status == FAIL
+    a.llm.complete.assert_not_called()
+    assert (await a._llm_time_fallback("下下周三饭点")).status == OK
+    a.llm.complete.assert_awaited_once()
 
 
 @pytest.mark.asyncio
