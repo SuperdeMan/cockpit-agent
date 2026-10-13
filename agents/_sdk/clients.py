@@ -17,8 +17,9 @@ from ._ctx import get_current_meta
 
 # 默认超时（秒）
 DEFAULT_TIMEOUT = 10
-# 「记住…」当场写入：Memory 要调一次抽取模型。唯一调用方提醒 Agent 的步预算是 8 s，留出规划与聚合的余量
-_REMEMBER_UTTERANCE_TIMEOUT = 6.0
+# 「记住…」当场写入：Memory 要调一次抽取模型（走线上缺省模型）。唯一调用方提醒 Agent 的步预算是 12 s，留出调度余量；
+# 2026-10-13 复测 6 s 超时两次（成功的多在 3–8 s）
+_REMEMBER_UTTERANCE_TIMEOUT = 10.0
 # 开思考时给足预算：reasoning 占 token、且更慢，故抬高 token 下限与超时。
 _THINK_MAX_TOKENS = 2048
 _THINK_TIMEOUT = 30

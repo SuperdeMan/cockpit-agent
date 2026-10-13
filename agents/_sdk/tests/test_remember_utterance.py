@@ -39,7 +39,7 @@ def test_the_request_and_the_outcome_cross_the_wire_as_is():
     req, timeout = stub.requests[0]
     assert (req.user_id, req.occupant_id, req.vehicle_id, req.session_id, req.text, req.memory_epoch) == (
         "u1", "occ-2", "v1", "s1", "记住，我女儿叫小满", "3.ab")
-    assert timeout and timeout < 8             # 唯一调用方提醒 Agent 的步预算是 8 s
+    assert timeout and timeout < 12            # 唯一调用方提醒 Agent 的步预算是 12 s
 
 
 def test_a_timeout_is_not_reported_as_not_written():

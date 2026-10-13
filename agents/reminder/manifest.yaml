@@ -4,7 +4,8 @@ display_name: 智能提醒
 category: core
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 8000     # 常规确定性解析毫秒级；LLM 兜底解析一跳 @fast 留余量
+latency_budget_ms: 12000    # 常规确定性解析毫秒级；LLM 兜底解析一跳 @fast 留余量；memory.remember 当场抽取要等 Memory 调一次
+                            # 模型（走线上缺省模型，2026-10-13 复测 6 s 超时两次），8 s → 12 s
 fallback: chitchat
 
 capabilities:
@@ -215,9 +216,16 @@ capabilities:
   - intent: memory.remember
     contract:
       version: 2
-      revision: '1'
+      revision: '2'
       effect: state_change
-      parameters: {}
+      # revision 2（2026-10-13 复测 `4fc69b40`）：规划器常把要记的内容复述进 `content`（5 / 9 次编槽都是它），严格契约整步拒绝、
+      # 用户听到「接口或参数暂时不匹配」。接收方声明收下这个复述——处理以原话为准、不读它（同 V211 安全建议收 `question`）；
+      # 其余编出来的键照旧拒，hint 命中的句子由 route_hint 整步换成干净的那一步。
+      parameters:
+        content:
+          type: string
+          unit: ''
+          region: ''
       additional_parameters: reject
       applicability:
         status: not_vehicle_specific

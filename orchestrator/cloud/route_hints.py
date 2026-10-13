@@ -44,6 +44,7 @@ import logging
 import re
 from typing import Callable
 
+from runtime.capability_contract import argument_error
 from runtime.clause_split import split_clauses
 
 logger = logging.getLogger(__name__)
@@ -85,9 +86,14 @@ class RouteHintEngine:
                 continue
             # replace（默认，互斥）
             hit = True
-            if self._has_intent(plan, hint.intent):
+            if self._has_intent(plan, hint.intent) and not self._receiver_rejects(plan, hint.intent):
                 # LLM 已正确路由到该 intent，保留原计划；replace 互斥 → 停
                 return True
+            if self._has_intent(plan, hint.intent):
+                # 意图对了、槽是编的：接收方的严格契约会整步拒绝（`argument_error`，派发前同一个判断），用户只会听到
+                # 「接口或参数暂时不匹配」。换成本 hint 解析出的那一步——整步替换，不是从模型那一步里删键
+                # （200×5 后续批复测 `4fc69b40`：`memory.remember` 被模型填上 content / item / key-value，17 轮被拒）。
+                logger.info("route_hint replaces a same-intent step the receiver would reject: %s", hint.intent)
             self._apply_step(plan, agent_id, hint,
                              self._resolve_slots(hint, m, span), agent_map,
                              replace=True)
@@ -175,6 +181,13 @@ class RouteHintEngine:
     @staticmethod
     def _has_intent(plan, intent: str) -> bool:
         return any(s.intent == intent for s in plan.steps)
+
+    @staticmethod
+    def _receiver_rejects(plan, intent: str) -> bool:
+        """计划里该意图的某一步，带着接收方严格契约不收的槽（派发前会被 `argument_error` 拒绝）。"""
+        return any(s.intent == intent
+                   and argument_error(getattr(s, "capability_contract", None) or {}, dict(s.slots or {}))
+                   for s in plan.steps)
 
     @classmethod
     def _already_covered(cls, plan, hint, slots: dict) -> bool:

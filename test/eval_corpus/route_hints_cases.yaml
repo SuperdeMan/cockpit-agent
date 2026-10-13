@@ -865,3 +865,29 @@
   expect_final_intents: [shop.order]
   source: "复合句交给规划器排两步，整句 replace 会吞掉第二个诉求"
   tags: [memory, guardrail, compound]
+
+# ── 问自己记过的偏好 / 家人称呼与生日 → 闲聊按记忆作答（2026-10-13，复测 `4fc69b40`）──────────
+# 不带问号、不带「吗」，共享问句判据认不出；复测里被派成 reminder.list、memory.remember 写入、或判要澄清。
+- text: 我平时喜欢喝什么
+  initial_intents: [reminder.list]
+  expect_final_intents: [chitchat.talk]
+  source: "复测 4fc69b40 E01：上一轮刚由提醒 Agent 记过，规划器顺手派成 reminder.list，答「接下来没有提醒或待办」"
+  tags: [memory, recall, replace]
+
+- text: 我女儿叫什么名字
+  initial_intents: [memory.remember]
+  expect_final_intents: [chitchat.talk]
+  source: "复测 4fc69b40 E04：规划器把回忆问句派成写入（还编了 key/value 槽）"
+  tags: [memory, recall, replace]
+
+- text: 我老婆生日是哪天
+  initial_intents: []
+  expect_final_intents: [chitchat.talk]
+  source: "200×5 70b179b7 E02：被挂起的建提醒吞掉 / 判要澄清"
+  tags: [memory, recall, replace]
+
+- text: 我女儿在哪个学校
+  initial_intents: [info.search]
+  expect_final_intents: [info.search]
+  source: "句形之外的问句照旧交规划器"
+  tags: [memory, guardrail, recall]

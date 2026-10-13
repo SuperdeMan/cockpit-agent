@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-10-12T23:50:42.063622+00:00",
-    "commit": "9fc1bde6"
+    "generated_at": "2026-10-13T02:24:12.677942+00:00",
+    "commit": "4fc69b40"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 128
+      "count": 132
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 54,
-      "passed": 54,
+      "total": 57,
+      "passed": 57,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 74,
-      "passed": 74,
+      "total": 75,
+      "passed": 75,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 128,
-    "passed": 128,
+    "total": 132,
+    "passed": 132,
     "pass_rate": 1.0
   },
   "cases": {
@@ -2324,6 +2324,82 @@
         "compound"
       ],
       "source": "复合句交给规划器排两步，整句 replace 会吞掉第二个诉求"
+    },
+    "route::我平时喜欢喝什么": {
+      "id": "route::我平时喜欢喝什么",
+      "bucket": "route_recall",
+      "text": "我平时喜欢喝什么",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "memory",
+        "recall",
+        "replace"
+      ],
+      "source": "复测 4fc69b40 E01：上一轮刚由提醒 Agent 记过，规划器顺手派成 reminder.list，答「接下来没有提醒或待办」"
+    },
+    "route::我女儿叫什么名字": {
+      "id": "route::我女儿叫什么名字",
+      "bucket": "route_recall",
+      "text": "我女儿叫什么名字",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "memory",
+        "recall",
+        "replace"
+      ],
+      "source": "复测 4fc69b40 E04：规划器把回忆问句派成写入（还编了 key/value 槽）"
+    },
+    "route::我老婆生日是哪天": {
+      "id": "route::我老婆生日是哪天",
+      "bucket": "route_recall",
+      "text": "我老婆生日是哪天",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "memory",
+        "recall",
+        "replace"
+      ],
+      "source": "200×5 70b179b7 E02：被挂起的建提醒吞掉 / 判要澄清"
+    },
+    "route::我女儿在哪个学校": {
+      "id": "route::我女儿在哪个学校",
+      "bucket": "route_guardrail",
+      "text": "我女儿在哪个学校",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "memory",
+        "guardrail",
+        "recall"
+      ],
+      "source": "句形之外的问句照旧交规划器"
     }
   }
 }

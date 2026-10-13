@@ -58,6 +58,40 @@ def test_replace_keeps_when_intent_already_present():
     assert plan.steps is orig  # 未被替换
 
 
+def _remember_step(slots) -> Step:
+    """真实提醒清单里 `memory.remember` 的严格契约（无参数、reject）。"""
+    from pathlib import Path
+
+    from agents._sdk.manifest import load_manifest
+    from runtime.capability_contract import step_fields
+    manifest = load_manifest(str(Path(__file__).resolve().parents[3] / "agents" / "reminder" / "manifest.yaml"))
+    cap = next(c for c in manifest.capabilities if c.intent == "memory.remember")
+    return Step(id="s1", agent_id="reminder", intent="memory.remember", slots=dict(slots),
+                **step_fields(manifest, cap))
+
+
+def test_replace_swaps_a_same_intent_step_the_receiver_would_reject():
+    """意图对了、槽是编的（严格契约不收）：整步换成 hint 那一步，不留给派发前的契约校验拒绝
+    （200×5 后续批复测 `4fc69b40`：`memory.remember` 被填上 content / item / key-value，用户听到「接口或参数暂时不匹配」）。"""
+    planned = _remember_step({"key": "女儿", "value": "小满"})
+    plan = Plan(steps=[planned])
+    amap = _agent_map(("reminder", [_hint("^记住我", "memory.remember", "replace", 132)]))
+
+    assert _engine().apply(plan, "记住我女儿叫小满", amap) is True
+    assert [s.intent for s in plan.steps] == ["memory.remember"]
+    assert plan.steps[0] is not planned and plan.steps[0].slots == {}
+
+
+def test_replace_keeps_a_same_intent_step_the_receiver_accepts():
+    """接收方声明收下的复述（revision 2 的 `content`）不算编：保留模型那一步。"""
+    planned = _remember_step({"content": "我喜欢喝拿铁"})
+    plan = Plan(steps=[planned])
+    amap = _agent_map(("reminder", [_hint("^记住我", "memory.remember", "replace", 132)]))
+
+    _engine().apply(plan, "记住我喜欢喝拿铁", amap)
+    assert plan.steps == [planned]
+
+
 def test_append_adds_parallel_step_keeping_existing():
     plan = _plan("info.weather")  # LLM 规划了天气
     amap = _agent_map(("trip-planner",

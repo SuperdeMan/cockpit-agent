@@ -31,6 +31,17 @@ async def test_stored_says_so_in_the_users_own_words():
 
 
 @pytest.mark.asyncio
+async def test_the_planners_content_echo_is_accepted_but_the_raw_sentence_is_written():
+    """revision 2：规划器复述进 `content` 的内容不读——Memory 收到的是原话（复测里复述成「喜欢喝拿铁」「老婆的生日是…」）。"""
+    ctx = _ctx("stored")
+    res = await run_handle(ReminderAgent(), "memory.remember", raw_text="记住我喜欢喝拿铁",
+                           slots={"content": "喜欢喝拿铁"}, ctx=ctx)
+    assert res.speech == "好的，记住了：你喜欢喝拿铁。"
+    args, _kwargs = ctx._memory.remember_utterance.await_args
+    assert args[:2] == ("u1", "记住我喜欢喝拿铁")
+
+
+@pytest.mark.asyncio
 async def test_a_planned_statement_without_the_directive_is_echoed_too():
     res = await run_handle(ReminderAgent(), "memory.remember", raw_text="我喜欢喝拿铁", ctx=_ctx("stored"))
     assert res.speech == "好的，记住了：你喜欢喝拿铁。"
