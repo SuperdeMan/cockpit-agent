@@ -21,9 +21,11 @@ from .placeparse import ARRIVE, parse_place_text
 from .task_admission import admit_task_title
 from .store import (Reminder, ReminderStore, DONE, CANCELLED, FIRED,
                     LOCATION, PENDING)
-from .timeparse import (OK as T_OK, FAIL as T_FAIL, UNRESOLVED_DAY_RE, ParsedTime, align_workday,
-                        business_tz, ends_with_time, format_display, parse_lead, parse_recur,
-                        parse_time_text, recur_label, strip_time_expressions)
+from .timeparse import (OK as T_OK, FAIL as T_FAIL, NEED_TIME as T_NEED_TIME, UNRESOLVED_DAY_RE, ParsedTime,
+                        align_workday, business_tz, ends_with_time, format_display, names_day, parse_lead,
+                        parse_recur, parse_time_text, recur_label, strip_time_expressions)
+from runtime.cntime import CLOCK_SRC, SEG_ALT, month_day_of
+from runtime.slots import STEP_ORIGIN_META
 
 logger = logging.getLogger("agent.reminder")
 
@@ -234,6 +236,47 @@ def _event_refusal(event: str) -> AgentResult:
 def _has_time_signal(text: str) -> bool:
     """Whether the user's own wording contains a temporal anchor."""
     return bool(_TIME_SIGNAL_RE.search(text or ""))
+
+
+# ── 「我老婆生日那天」：那天是哪天在记忆里（2026-10-13，用户明说「记住…」时存下的生日 / 纪念日，设计
+#    docs/design/2026-10-13-v2-200x5-followups.md §12）。「生日 / 纪念日」前面那个人原样交给 Memory 查——称谓归一在
+#    Memory 那边，这里不另抄一张亲属词表。查不到、或记着不止一个日子，照旧追问，不猜。
+_REMEMBERED_DAY_RE = re.compile(r"(?P<what>结婚纪念日|纪念日|生日)(?P<tail>那一天|那天|当天)?")
+#: 说的是那一天本身：后面跟「那天」，或直接跟时段 / 时刻 /「提醒」。「生日蛋糕送到的时候」不是一个日子，
+#: 「提醒我给老婆过生日」里的生日是要办的事——标题照剥这一段（`_extract_title`），所以句末的「生日」不算。
+_DAY_FOLLOW_RE = re.compile(rf"\s*(?:提醒|叫我|{SEG_ALT}|{CLOCK_SRC})")
+#: 「生日前一天」「纪念日之前」说的是另一天，不按那天排（相对那天的换算另做）。
+_DAY_OFFSET_RE = re.compile(r"\s*(?:前|后|之前|之后|以前|以后|左右)")
+#: 人前面的时间介词：「到 / 在 / 等到」我老婆生日那天——算进这一段（换成日期、剥出标题都一起）。
+_DAY_LEAD_RE = re.compile(r"等到|到了|到|在|等|是")
+#: 本人的生日（记忆里的 text 写法，`memory/extract.py`）：「用户的生日是3月8日」；「用户老婆的生日」不是。
+_OWN_BIRTHDAY_RE = re.compile(r"(?:用户|我)的?(?:农历|阴历|阳历|公历)?生日")
+
+
+def _remembered_day_ref(text: str) -> tuple[int, int, str, str, str] | None:
+    """「到我老婆生日那天早上八点」→ (这一段的起止, 谁, 生日 | 纪念日, 答句里的叫法)：(0, 8, "老婆", "生日", "你老婆生日")。
+
+    「谁」是用户的原话：「我」→ 空（本人）；「我们」→「们」、「我和老婆」→「和老婆」（都是用户自己的纪念日）。"""
+    t = text or ""
+    m = _REMEMBERED_DAY_RE.search(t)
+    if not m or _DAY_OFFSET_RE.match(t, m.end()):
+        return None
+    if not m.group("tail") and not _DAY_FOLLOW_RE.match(t, m.end()):
+        return None
+    run_start = m.start() - len(re.search(r"[一-鿿]*$", t[:m.start()]).group(0))
+    run = t[run_start:m.start()]
+    # 人从最后一个「我」算起；没有「我」时从最后一个时间介词后面算起（「到老婆生日那天」）
+    i = run.rfind("我")
+    leads = list(_DAY_LEAD_RE.finditer(run))
+    who_start = run_start + (i if i >= 0 else leads[-1].end() if leads else 0)
+    who = t[who_start:m.start()]
+    who = who[1:] if who.startswith("我") else who
+    who = who[:-1] if who.endswith("的") else who
+    who = who[:-1] if who.endswith("过") else who          # 「我老婆过生日那天」
+    label = t[who_start:m.end("what")].replace("我们", "你们").replace("我", "你")
+    lead = next((x for x in leads if run_start + x.end() == who_start), None)
+    start = run_start + lead.start() if lead else who_start
+    return start, m.end(), who, ("生日" if m.group("what") == "生日" else "纪念日"), label
 
 
 class ReminderAgent(BaseAgent):
@@ -462,10 +505,11 @@ class ReminderAgent(BaseAgent):
             title = self._fuller_title(title, scope)
         if title and not _REMINDABLE_REF_RE.sub("", title).strip(" ，。,、的时候了吧呀"):
             title = ""    # P1c：纯事件指代（「开赛的时候」）不是标题 → 走 pending/跨域推导
-        pend_update_id = ""
+        pend_update_id = pend_origin = ""
         if not title:                            # 上一轮 NEED_SLOT 只差时间（create 或 update）
             pend = await self._load_pending(ctx)
             title = (pend.get("title") or "").strip()
+            pend_origin = str(pend.get("origin") or "")
             if pend.get("action") == "update":
                 pend_update_id = pend.get("id") or ""
         snooze_target = None
@@ -522,13 +566,18 @@ class ReminderAgent(BaseAgent):
                 return _event_refusal(own_hit[0])
         now = self._now_utc()
         user_time_signal = _has_time_signal(raw or time_text)
-        pt = (
-            parse_time_text(time_text, now=now, tz=self._tz)
+        pt, day = (
+            await self._parse_with_memory(ctx, time_text, now)
             if time_text and user_time_signal
-            else ParsedTime(T_FAIL)
+            else (ParsedTime(T_FAIL), None)
         )
         if pt.status == T_FAIL:
-            pt = parse_time_text(raw, now=now, tz=self._tz)
+            pt, day = await self._parse_with_memory(ctx, raw, now)
+        # 续接轮：被追问的那句原话随恢复的那一步下发（`STEP_ORIGIN_META`），重新规划成新的一步时在挂起记录里
+        composed = await self._compose_with_origin(
+            ctx, str((meta or {}).get(STEP_ORIGIN_META) or "") or pend_origin, time_text or raw, now)
+        if composed:
+            pt, day = composed
         if pt.status != T_OK:
             # P1c 跨域：规则解析不出时间 → 先查「可提醒上下文」（确定性数据优先于 LLM 猜；
             # 「第一场提醒我观看」→ 开赛时刻-提前量）。不命中走原三层不变（零回归）。
@@ -556,11 +605,15 @@ class ReminderAgent(BaseAgent):
                 logger.info("reminder.create 拒建（事件触发不支持）：%s", raw[:40])
                 await self._clear_pending(ctx)
                 return _event_refusal(event)
-            await self._save_pending(ctx, title, update_id=pend_update_id)
-            return AgentResult(status=NEED_SLOT,
-                               speech=f"好的，{title}。什么时候提醒你？",
-                               follow_up="比如：明天早上八点 / 半小时后",
-                               missing_slots=["time_text"])
+            await self._save_pending(ctx, title, update_id=pend_update_id, origin=raw)
+            if day and day["md"]:
+                ask, hint = f"{day['label']}是{day['md'][0]}月{day['md'][1]}日，那天几点提醒你？", "比如：早上八点"
+            elif day:                            # 说的是「我老婆生日那天」，记忆里没有（或不止一个）：说清楚为什么问
+                ask, hint = f"我还不知道{day['label']}是哪天，什么时候提醒你？", "比如：5月20日早上八点"
+            else:
+                ask, hint = "什么时候提醒你？", "比如：明天早上八点 / 半小时后"
+            return AgentResult(status=NEED_SLOT, speech=f"好的，{title}。{ask}",
+                               follow_up=hint, missing_slots=["time_text"])
         if pt.fire_at <= int(now.timestamp()):
             await self._save_pending(ctx, title, update_id=pend_update_id)
             return AgentResult(status=NEED_SLOT,
@@ -607,9 +660,10 @@ class ReminderAgent(BaseAgent):
             extra={"turn": turn} if turn else {}))
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
-        speech = (f"好的，{recur_label(recur)} {display.split(' ')[-1]} 提醒你：{title}，"
+        basis = f"按记住的{day['label']}，" if day and day["md"] else ""     # 记忆定的日子说出出处
+        speech = (f"好的，{basis}{recur_label(recur)} {display.split(' ')[-1]} 提醒你：{title}，"
                   f"首次{display}。" if recur
-                  else f"好的，{display}提醒你：{title}。")
+                  else f"好的，{basis}{display}提醒你：{title}。")
         return AgentResult(speech=speech, ui_card=self._card_single(r, "created"))
 
     async def _from_remindable(self, ctx, raw: str, cur_title: str):
@@ -842,17 +896,17 @@ class ReminderAgent(BaseAgent):
         now = self._now_utc()
         tt = (intent.slots.get("time_text") or "").strip()
         user_time_signal = _has_time_signal(raw or tt)
-        pt = (
-            parse_time_text(tt, now=now, tz=self._tz)
+        pt, _day = (
+            await self._parse_with_memory(ctx, tt, now)
             if tt and user_time_signal
-            else ParsedTime(T_FAIL)
+            else (ParsedTime(T_FAIL), None)
         )
         if pt.status == T_FAIL:
-            pt = parse_time_text(raw, now=now, tz=self._tz)
+            pt, _day = await self._parse_with_memory(ctx, raw, now)
         if pt.status == T_FAIL and user_time_signal:
             pt = await self._llm_time_fallback(tt or raw)
         if pt.status != T_OK or pt.fire_at <= int(now.timestamp()):
-            await self._save_pending(ctx, r.title, update_id=r.id)
+            await self._save_pending(ctx, r.title, update_id=r.id, origin=raw)
             speech = (f"{pt.display}已经过了，换个时间？" if pt.status == T_OK
                       else f"「{r.title}」改到什么时候？")
             return AgentResult(status=NEED_SLOT, speech=speech,
@@ -865,6 +919,9 @@ class ReminderAgent(BaseAgent):
         lead = _TIME_ARRIVAL_LEAD_RE.match(raw or "")
         if lead and ends_with_time(lead.group("when")):
             raw = raw[lead.end():]
+        ref = _remembered_day_ref(raw or "")
+        if ref:                                  # 「我们结婚纪念日那天」说的是时间，同下面的时间表达一样剥掉
+            raw = raw[:ref[0]] + raw[ref[1]:]
         t = strip_time_expressions(raw or "")
         wrapper = _CREATE_WRAPPER_RE.match(t)
         if wrapper:
@@ -909,6 +966,61 @@ class ReminderAgent(BaseAgent):
         if slot_title and slot_title in fuller:
             return fuller
         return slot_title
+
+    async def _parse_with_memory(self, ctx, text: str, now) -> tuple[ParsedTime, dict | None]:
+        """时间解析；规则认不出、说的又是「我老婆生日那天」这种日子时，按记住的那天再解析一次。
+
+        返回 (解析结果, 那个日子)：日子 = {"label": 答句里的叫法, "md": (月, 日)，没记着 / 记着不止一个为 None}；
+        没说这种日子为 None。"""
+        pt = parse_time_text(text, now=now, tz=self._tz)
+        if pt.status == T_OK:
+            return pt, None
+        ref = _remembered_day_ref(text)
+        if not ref:
+            return pt, None
+        start, end, who, what, label = ref
+        md = await self._remembered_day(ctx, who, what)
+        if not md:
+            return pt, {"label": label, "md": None}
+        return (parse_time_text(f"{text[:start]}{md[0]}月{md[1]}日{text[end:]}", now=now, tz=self._tz),
+                {"label": label, "md": md})
+
+    async def _remembered_day(self, ctx, who: str, what: str) -> tuple[int, int] | None:
+        """记住的生日 / 纪念日 → (月, 日)；没记着、读不到、是农历或记着不止一个日子 → None（不猜）。"""
+        own = who in ("", "们") or who.startswith(("和", "跟"))       # 「我 / 我们 / 我和老婆」的：用户自己的
+        try:
+            items = await ctx.recall(f"{who}{what}", predicate_prefix="person.",
+                                     subject="" if own else who, top_k=10)
+        except Exception as e:
+            logger.debug("remembered day recall failed: %s", e)
+            return None
+        days = set()
+        for it in items or []:
+            text = str(it.get("text") or "")
+            if what not in text:
+                continue
+            if own and (str(it.get("subject") or "").strip()
+                        or (what == "生日" and not _OWN_BIRTHDAY_RE.search(text))):
+                continue
+            md = month_day_of(text)
+            if md:
+                days.add(md)
+        return next(iter(days)) if len(days) == 1 else None
+
+    async def _compose_with_origin(self, ctx, origin: str, answer: str, now):
+        """续接轮：被追问「什么时候提醒你」之后这句只给了时刻（「十点」「早上八点」），日子是被追问的那句里说的那天——
+        「明天提醒我开会」→「十点」是明天十点，「老婆生日那天提醒我订花」→「早上八点」是那天早上八点。此前回答单独解析，
+        日子丢了，排成今天或明天。
+
+        只在那句原话本身是「说了日子 / 时段、没说时刻」（NEED_TIME）时拼；回答自己说了哪天以回答为准。"""
+        origin, answer = (origin or "").strip(), (answer or "").strip()
+        if not origin or not answer or origin == answer or names_day(answer):
+            return None
+        opt, _ = await self._parse_with_memory(ctx, origin, now)
+        if opt.status != T_NEED_TIME:
+            return None
+        cpt, day = await self._parse_with_memory(ctx, f"{origin}，{answer}", now)
+        return (cpt, day) if cpt.status == T_OK else None
 
     async def _llm_time_fallback(self, text: str) -> ParsedTime:
         """规则未命中（"下下周三饭点"）→ LLM @fast 抽 ISO；失败 FAIL（外层追问）。"""
@@ -1239,11 +1351,14 @@ class ReminderAgent(BaseAgent):
         await ctx.save_shared_state(self._state_key(ctx, REMINDERS_ACTIVE), {
             "items": [{"id": r.id, "title": r.title} for r in items[:10]]})
 
-    async def _save_pending(self, ctx, title: str, update_id: str = "") -> None:
-        """追问上下文：update_id 非空表示这是「改期缺时间」的续接（P1a）。"""
+    async def _save_pending(self, ctx, title: str, update_id: str = "", origin: str = "") -> None:
+        """追问上下文：update_id 非空表示这是「改期缺时间」的续接（P1a）；origin 是被追问的那句原话
+        （续接轮只答了时刻时，日子从它里面取，见 `_compose_with_origin`）。"""
         pend = {"title": title}
         if update_id:
             pend.update(action="update", id=update_id)
+        if origin:
+            pend["origin"] = origin
         await ctx.save_shared_state(self._state_key(ctx, REMINDER_PENDING), pend)
 
     async def _clear_pending(self, ctx) -> None:

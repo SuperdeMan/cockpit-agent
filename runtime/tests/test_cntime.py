@@ -15,9 +15,9 @@ import re
 import tokenize
 from pathlib import Path
 
-from runtime.cntime import (CLOCK_SRC, CN_NUM_SRC, DAY_WORDS, SEG_ALT,
-                            SEG_DEFAULT_HOUR, SEGMENTS, cn_int, segment_of,
-                            to_24h)
+from runtime.cntime import (CLOCK_SRC, CN_NUM_SRC, DAY_WORDS, MONTH_DAY_RE, SEG_ALT,
+                            SEG_DEFAULT_HOUR, SEGMENTS, cn_int, month_day_of,
+                            segment_of, to_24h)
 
 _ROOT = Path(__file__).resolve().parents[2]
 
@@ -185,3 +185,22 @@ def test_numeral_lexicon_is_shared():
     """中文数字字符集只有一份——两个模块的正则都从 `CN_NUM_SRC` 派生。"""
     from agents.reminder.src import timeparse as tp
     assert CN_NUM_SRC in tp._NUM
+
+
+def test_month_day_is_one_lexicon_for_reminders_and_remembered_days():
+    """「几月几号」只有一份：提醒的时间解析拿的就是它，记忆里的生日 / 纪念日（2026-10-13）按同一份收、提醒按同一份读。"""
+    from agents.reminder.src import timeparse as tp
+    assert tp._MD_RE is MONTH_DAY_RE
+
+
+def test_month_day_of_reads_a_solar_date_and_never_guesses():
+    yes = {"五月二十号": (5, 20), "5月20日": (5, 20), "用户老婆的生日是5月20日": (5, 20),
+           "生日是五月二十": (5, 20), "十二月三十一号": (12, 31), "2月29日": (2, 29),
+           "用户的结婚纪念日是10月1日。": (10, 1)}
+    for text, md in yes.items():
+        assert month_day_of(text) == md, text
+    # 没说号的「五月二十」只认收尾；农历换算要历表；不是合法日期、说的不是一个日子都不猜
+    for text in ("五月二十多号", "五月二十左右", "五月二十几号的时候", "农历八月十五", "农历八月十五日",
+                 "阴历正月初八", "2月30号", "十三月一号", "下个月三号", "快到了", "", None):
+        assert month_day_of(text) is None, text
+

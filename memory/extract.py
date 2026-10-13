@@ -16,6 +16,8 @@ import time
 
 import relation
 from runtime.clock import BUSINESS_TZ
+from runtime.cntime import month_day_of
+from runtime.memory_directive import POLITE_PREFIX_RE, directive_content
 
 logger = logging.getLogger("memory.extract")
 
@@ -82,6 +84,9 @@ _PRED_CANON: dict[str, tuple[str, ...]] = {
     "taste.no_queue": ("restaurant.no_queue",),
     # 自取/到店习惯：不进口味消费面（语义不是口味），归一只为治「同一件事两个谓词」。
     "order.pickup": ("order.pickup_method", "purchase.pickup", "food.coffee_pickup"),
+    # 生日（2026-10-13）：别名来自线上模型 A/B 实测（旧口径下同一句的三种写法）。「记住…」当场写入是 person.birthday，
+    # 后台抽取稍后再看同一句时模型自造谓词——不归一，同一个生日就并存两条。
+    "person.birthday": ("person.spouse_birthday", "person.wife_birthday", "person.mother_birthday"),
 }
 _PRED_ALIAS = {a: canon for canon, aliases in _PRED_CANON.items() for a in aliases}
 
@@ -297,6 +302,12 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
     subj = relation.normalize_subject(c.get("subject") or "")
     if subj and len(subj) <= 20:
         item["subject"] = subj
+    if category == "personal_fact" and not item.get("subject"):
+        # 模型把家人的生日记在了本人名下（漏填 subject）：「用户老婆的生日是…」挂回老婆——
+        # 否则「到我生日那天提醒我」会读到老婆的生日。
+        kin = _KIN_BIRTHDAY_RE.search(text)
+        if kin:
+            item["subject"] = relation.normalize_subject(kin.group(1))
     pol = str(c.get("polarity") or "").strip().lower()
     if pol in ("like", "dislike"):
         item["polarity"] = pol
@@ -394,10 +405,67 @@ def deterministic_relations(window: list[dict]) -> list[dict]:
     return out
 
 
+# ── 「记住…」里的生日、纪念日（用户 2026-10-13 裁决，docs/design/2026-10-13-v2-200x5-followups.md §12）──────────
+# 用户明说「记住」时，本人和家人的生日、纪念日存成个人事实（personal_fact：敏感、记忆页可删、没认出说话人时读不到）。
+# 抽取模型对「我老婆的生日是五月二十号」时而当家人实体收下、时而当第三方隐私丢掉（当场写入 10 次只收 1–5 次），
+# 所以最常见的说法确定性地收，其余说法靠显式模式下多给模型的那一句。只在当场写入（`explicit=True`）里认——后台抽取的口径不变。
+# 只认分句以「我 / 我们 / 亲属称谓」打头：「他老婆的生日…」「小满的生日…」交给模型（名字是谁要靠关系边）。
+_PERSONAL_DATE_RE = re.compile(
+    rf"^(?:(?P<me>我们|我)(?P<link>的|和|跟)?)?(?P<kin>{_KIN_WORDS_ALT})?的?"
+    r"(?P<what>结婚纪念日|纪念日|生日)(?:是在|是|在)?\s*(?P<date>[^，。,；;！!？?\s]{2,12})")
+#: 分句开头的连接词：「…，还有我妈生日是八月一号」。
+_CLAUSE_LEAD_RE = re.compile(r"^(?:还有|另外|以及|和|跟)")
+#: 「用户老婆的生日」——`_govern` 给漏填 subject 的家人生日挂回那个人。
+_KIN_BIRTHDAY_RE = re.compile(rf"({_KIN_WORDS_ALT})的?(?:农历|阴历|阳历|公历)?生日")
+#: 显式模式（用户明说「记住…」的那一句）多给模型的口径；后台抽取的提示词一个字不变。
+#: 谓词收敛成两个：提醒按它读「我老婆生日那天」是哪天（`predicate_prefix="person."` + text 里的几月几号）。
+_EXPLICIT_NOTE = (
+    "【这一句是用户明确要你记住的】用户本人或家人的生日、纪念日属于用户主动告知的个人事实，"
+    "按 personal_fact 抽取（不算第三方隐私）：predicate 用 person.birthday（生日）/ person.anniversary（纪念日），"
+    "subject 填是谁的（亲属称谓；本人的、或用户与配偶共同的纪念日留空），text 写清几月几号（农历要写明农历）。"
+    "电话、证件号、精确住址、健康等特殊敏感信息仍按 sensitive_fact 处理。")
+
+
+def deterministic_personal_dates(text: str) -> list[dict]:
+    """「记住我老婆的生日是五月二十号」→ person.birthday 候选（与 LLM 候选同形状，`_govern` 统一治理）。
+
+    日子要是公历的几月几号（`runtime.cntime.month_day_of`：农历、「下个月三号」、「快到了」都不收，交给模型）；
+    text 里的日期写成「5月20日」，提醒按同一份判据读回来。"""
+    raw = POLITE_PREFIX_RE.sub("", (text or "").strip())
+    content = directive_content(raw) or raw
+    out: list[dict] = []
+    for clause in re.split(r"[，,。；;！!？?\n]+", content):
+        m = _PERSONAL_DATE_RE.match(_CLAUSE_LEAD_RE.sub("", clause.strip()))
+        if not m or not (m.group("me") or m.group("kin")):
+            continue
+        md = month_day_of(m.group("date"))
+        if not md:
+            continue
+        me, link, kin, what = m.group("me") or "", m.group("link") or "", m.group("kin") or "", m.group("what")
+        day = f"{md[0]}月{md[1]}日"
+        who = relation.normalize_kinship(kin) if len(kin) == 1 else kin     # 「我妈」→ 用户妈妈的…
+        if what == "生日":
+            if me == "我们" and not kin:
+                continue
+            subject, text_out = kin, f"用户{who}的生日是{day}"
+        elif kin and link in ("和", "跟"):     # 「我和老婆的结婚纪念日」：用户自己的
+            subject, text_out = "", f"用户和{who}的{what}是{day}"
+        else:                                  # 「我们的纪念日」是用户自己的；「我妈的结婚纪念日」是妈妈的
+            subject, text_out = kin, f"用户{who}的{what}是{day}"
+        out.append({"category": "personal_fact", "kind": "semantic",
+                    "predicate": "person.birthday" if what == "生日" else "person.anniversary",
+                    "text": text_out, "scope": "profile.person", "subject": subject,
+                    "confidence": 0.95, "_date_word": "生日" if what == "生日" else "纪念日"})
+    return out
+
+
 async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primary",
-                  vehicle_id: str = "", session_id: str = "", complete_fn=None
-                  ) -> list[dict]:
-    """从最近对话抽取治理后的候选记忆。LLM 不可用/解析失败 → 确定性候选仍返回。"""
+                  vehicle_id: str = "", session_id: str = "", complete_fn=None,
+                  explicit: bool = False) -> list[dict]:
+    """从最近对话抽取治理后的候选记忆。LLM 不可用/解析失败 → 确定性候选仍返回。
+
+    ``explicit``：窗口是用户明说「记住…」的那一句（`MemoryStore.remember_utterance`）——生日、纪念日按个人事实收
+    （确定性的那几种说法 + 给模型的口径），其余治理不变。"""
     if not user_id or not turns:
         return []
     window = [t for t in turns[-_CONSOLIDATE_LOOKBACK:] if t.get("text")]
@@ -408,7 +476,12 @@ async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primar
     if not convo.strip():
         return []
     det_candidates = deterministic_relations(window)
-    messages = [{"role": "system", "content": _SYSTEM},
+    date_candidates = ([c for t in window if (t.get("role") or "user") == "user"
+                        for c in deterministic_personal_dates(t.get("text") or "")]
+                       if explicit else [])
+    # 确定性地收下了的那类日期，模型同一句里的同类条目不再写（否则同一个生日两条、谓词还不一样）
+    date_words = {c.pop("_date_word") for c in date_candidates}
+    messages = [{"role": "system", "content": _SYSTEM + (_EXPLICIT_NOTE if explicit else "")},
                 {"role": "user",
                  "content": f"{_date_line()}\n对话：\n{convo}\n\n抽取 JSON："}]
     try:
@@ -425,9 +498,12 @@ async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primar
                      relation.normalize_rel(c.get("rel") or c.get("relation") or ""),
                      str(c.get("object") or "").strip()) in det_keys):
             continue
+        if (isinstance(c, dict) and c.get("category") != "relation"
+                and any(w in str(c.get("text") or "") for w in date_words)):
+            continue
         llm_candidates.append(c)
     out = []
-    for c in det_candidates + llm_candidates:
+    for c in det_candidates + date_candidates + llm_candidates:
         if not isinstance(c, dict):
             continue
         # M1 黑名单（确定性，不信 prompt）：场景配置参数不是个人偏好

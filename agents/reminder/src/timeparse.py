@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 
-from runtime.cntime import (CN_NUM_SRC, DAY_WORDS, SEG_DEFAULT_HOUR, SEGMENTS,
+from runtime.cntime import (CN_NUM_SRC, DAY_WORDS, MONTH_DAY_RE, SEG_DEFAULT_HOUR, SEGMENTS,
                             cn_int, to_24h)
 
 OK = "ok"
@@ -48,7 +48,7 @@ _REL_GUO_HALF_RE = re.compile(r"过\s*半\s*个?\s*(小时|钟头)")
 # 这两张表此前 timewindow 各有一份，少了「早晨」「夜里」，同一句话两份实现给两个答案。
 _DAY_WORDS = DAY_WORDS
 _WEEK_RE = re.compile(r"(下*)(?:个)?(?:周|星期|礼拜)([一二三四五六日天])")
-_MD_RE = re.compile(_NUM + r"\s*月\s*" + _NUM + r"\s*[日号]")
+_MD_RE = MONTH_DAY_RE        # 「几月几号」与记忆里的生日 / 纪念日同一份（`runtime.cntime`）
 _DOM_RE = re.compile(_NUM + r"\s*号")
 _SEGS = SEGMENTS
 # 段位默认时刻（旅程 A1-4 ②收口）：「明早/明晚/明天下午」已给出日+段位粒度，再追问
@@ -226,6 +226,16 @@ def parse_time_text(text: str, *, now: datetime | None = None,
         elif target <= ln:
             target += timedelta(days=1)   # 段位/24h 时刻今天已过 → 明天（凌晨两点 case）
     return _ok(target.astimezone(timezone.utc), ln, tz)
+
+
+def names_day(text: str) -> bool:
+    """说了是哪一天：日词、星期、几月几号、几号，或「那天 / 生日 / 纪念日」这类说了却得另查的日子。
+
+    给续接轮用：被追问「什么时候提醒你」之后只答「十点」，日子还是被追问的那句里说的那天（`ReminderAgent._compose_with_origin`）。"""
+    t = text or ""
+    tl = t.lower()
+    return (any(w in tl for w, _, _ in _DAY_WORDS)
+            or any(rx.search(t) for rx in (_WEEK_RE, _MD_RE, _DOM_RE, UNRESOLVED_DAY_RE)))
 
 
 def ends_with_time(text: str) -> bool:

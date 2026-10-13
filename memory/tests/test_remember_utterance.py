@@ -169,3 +169,84 @@ def test_without_a_user_nothing_is_attempted(llm):
     svc = _servicer()
     resp = asyncio.run(svc.RememberUtterance(memory_pb2.RememberUtteranceRequest(text="记住我喜欢喝拿铁"), None))
     assert resp.outcome == "off" and llm.calls == 0
+
+
+# ── 2026-10-13 用户裁决：「记住…」里的生日、纪念日存成个人事实（设计 §12）────────────────────────────────
+
+def _items(svc):
+    return [d for d, _ in asyncio.run(svc.store.recall(UID, occupant_id="primary", query=""))]
+
+
+def test_a_family_birthday_is_kept_even_when_the_model_files_it_as_third_party_privacy(llm):
+    """核心旅程 E02 / E07：「记住我老婆的生日是五月二十号」当场抽取 10 次只收 1–5 次——模型时而当第三方隐私丢掉。
+    用户明说「记住」时确定性收下：本人 / 家人的生日是个人事实（敏感，记忆页可删，没认出说话人时读不到）。"""
+    llm.by_text = {"我老婆的生日": [{"category": "sensitive_fact", "text": "用户老婆的生日是五月二十号"}]}
+    svc = _servicer()
+    resp = asyncio.run(_say(svc, "记住，我老婆的生日是五月二十号"))
+    assert (resp.outcome, list(resp.stored_texts)) == ("stored", ["用户老婆的生日是5月20日"])
+    [item] = _items(svc)
+    assert (item["predicate"], item["subject"], item["privacy_level"]) == ("person.birthday", "老婆", "sensitive")
+
+
+def test_the_model_saying_the_same_birthday_again_does_not_make_a_second_entry(llm):
+    """确定性收下的那类日期，模型同一句里的同类条目不再写（谓词不同就会并存两条）；同一句里别的内容照收。"""
+    llm.by_text = {"我老婆的生日": [
+        {"category": "personal_fact", "predicate": "person.spouse_birthday", "subject": "老婆",
+         "text": "用户老婆的生日是五月二十号", "scope": "profile.person"},
+        {"category": "explicit_preference", "kind": "semantic", "predicate": "taste.flower", "subject": "老婆",
+         "text": "用户老婆喜欢百合", "scope": "profile.taste"}]}
+    svc = _servicer()
+    resp = asyncio.run(_say(svc, "记住我老婆的生日是五月二十号，她喜欢百合"))
+    assert resp.outcome == "stored"
+    texts = sorted(d["text"] for d in _items(svc))
+    assert texts == ["用户老婆喜欢百合", "用户老婆的生日是5月20日"]
+
+
+def test_birthdays_and_anniversaries_survive_the_model_being_down(monkeypatch):
+    monkeypatch.setattr(extract, "_default_complete", _LLM(fail=True))
+    svc = _servicer()
+    for text in ("记住我的生日是三月八号", "别忘了我和老婆的结婚纪念日是十月一号"):
+        assert asyncio.run(_say(svc, text)).outcome == "stored"
+    got = sorted((d["predicate"], d["subject"], d["text"]) for d in _items(svc))
+    assert got == [("person.anniversary", "", "用户和老婆的结婚纪念日是10月1日"),
+                   ("person.birthday", "", "用户的生日是3月8日")]
+
+
+def test_only_the_explicit_remember_path_tells_the_model_dates_are_storable(llm):
+    """口径只在用户明说「记住」的那一句上放宽：后台抽取看不到那句话，生日也不确定性地收（第三方隐私的口径不变）。"""
+    seen = []
+
+    async def spy(messages):
+        seen.append(messages[0]["content"])
+        return "[]"
+
+    asyncio.run(extract.extract([{"role": "user", "text": "我老婆的生日是五月二十号"}], user_id=UID, complete_fn=spy))
+    background = asyncio.run(extract.extract([{"role": "user", "text": "记住我老婆的生日是五月二十号"}],
+                                             user_id=UID, complete_fn=spy))
+    explicit = asyncio.run(extract.extract([{"role": "user", "text": "记住我老婆的生日是五月二十号"}],
+                                           user_id=UID, complete_fn=spy, explicit=True))
+    assert background == [] and [c["text"] for c in explicit] == ["用户老婆的生日是5月20日"]
+    assert [extract._EXPLICIT_NOTE in s for s in seen] == [False, False, True]
+
+
+def test_a_lunar_or_vague_date_is_left_to_the_model(llm):
+    """农历换算要历表、「快到了」不是日子：确定性那条不收，模型也没收就如实说没记下。"""
+    svc = _servicer()
+    for text in ("记住我妈生日是农历八月十五", "记住我老婆生日快到了"):
+        assert asyncio.run(_say(svc, text)).outcome == "not_stored"
+    assert _items(svc) == []
+
+
+def test_the_background_pass_over_the_same_sentence_does_not_add_a_second_birthday(llm):
+    """后台抽取稍后用旧口径再看这一句，模型自造谓词（A/B 实测 person.spouse_birthday / person.wife_birthday）：
+    归一到 person.birthday、同一个人，按事实取代，不并存两条。"""
+    svc = _servicer()
+    asyncio.run(_say(svc, "记住我老婆的生日是五月二十号"))
+    background = [{"category": "personal_fact", "predicate": "person.wife_birthday", "subject": "老婆",
+                   "text": "用户主动告知：老婆的生日是五月二十号。", "scope": "profile.person"}]
+    items = asyncio.run(extract.extract([{"role": "user", "text": "记住我老婆的生日是五月二十号"}], user_id=UID,
+                                        complete_fn=_LLM({"我老婆的生日": background})))
+    from extract import predicate_class
+    asyncio.run(svc.store._write_candidates(UID, "primary", items, predicate_class))
+    assert [(d["predicate"], d["text"]) for d in _items(svc)] == [("person.birthday", "用户主动告知：老婆的生日是五月二十号。")]
+

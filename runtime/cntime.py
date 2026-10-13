@@ -28,6 +28,9 @@ B3 那次「代码里 import 得到 ≠ 镜像里拷进去了」在 40 小时里
 """
 from __future__ import annotations
 
+import re
+from datetime import date
+
 # ── 中文数字 ──────────────────────────────────────────────────────────
 CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "两": 2, "二": 2, "三": 3, "四": 4,
              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
@@ -99,6 +102,36 @@ def day_offset_of(text: str | None) -> int | None:
 #: 两者必须接受同一批字符串，`runtime/tests/test_cntime.py` 拿样本逐条比对。
 CLOCK_SRC = (r"(?:(?:[01]?\d|2[0-3])[:：][0-5]\d"
              rf"|{CN_NUM_SRC}\s*点(?:\s*(?:半|一刻|三刻|{CN_NUM_SRC}\s*分?))?)")
+
+# ── 公历月日 ──────────────────────────────────────────────────────────
+#: 「五月二十号」「5月20日」（捕获月、日）。号 / 日要说出来：「五月二十多号」「五月二十几」都不是一个日子。
+#: **只此一份**：提醒的时间解析（timeparse 的 `_MD_RE` 就是它）与记忆里的生日 / 纪念日（2026-10-13，
+#: `memory/extract.py` 收、提醒读）认的是同一批说法。
+MONTH_DAY_RE = re.compile(rf"({CN_NUM_SRC})\s*月\s*({CN_NUM_SRC})\s*[日号]")
+#: 一句话收在「五月二十」上（没说号）也是那一天——只认收尾，句中的「五月二十多」不算。
+_MONTH_DAY_AT_END_RE = re.compile(rf"({CN_NUM_SRC})\s*月\s*({CN_NUM_SRC})$")
+#: 农历的「八月十五」不是公历 8 月 15 日；换算要历表，不猜。
+LUNAR_RE = re.compile(r"农历|阴历|旧历")
+
+
+def month_day_of(text: str | None) -> tuple[int, int] | None:
+    """文本里的公历月日 → (月, 日)。没有、不是合法日期（「2月30号」）或说的是农历都返回 None（**不猜**）。
+
+    给「每年那一天」用（生日、纪念日）：2 月 29 日算合法。"""
+    t = (text or "").strip().rstrip("。.！!～~ ")
+    if not t or LUNAR_RE.search(t):
+        return None
+    m = MONTH_DAY_RE.search(t) or _MONTH_DAY_AT_END_RE.search(t)
+    if not m:
+        return None
+    mo, d = cn_int(m.group(1)), cn_int(m.group(2))
+    if not mo or not d:
+        return None
+    try:
+        date(2024, mo, d)
+    except ValueError:
+        return None
+    return mo, d
 
 
 def segment_of(text: str | None) -> str:

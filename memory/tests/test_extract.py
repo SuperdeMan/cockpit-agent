@@ -494,3 +494,38 @@ def test_alias_written_by_llm_is_normalized_before_storage():
     out = asyncio.run(extract([{"role": "user", "text": "这家咖啡太酸了"}],
                               user_id="u1", complete_fn=_mock(cands)))
     assert [o["predicate"] for o in out if o.get("predicate")] == ["taste.dislike_place"]
+
+
+def test_a_family_birthday_the_model_left_on_the_user_is_hung_on_that_person():
+    """模型把家人的生日记在了本人名下（漏填 subject）：挂回那个人——否则「到我生日那天提醒我」会读到老婆的生日。"""
+    cands = json.dumps([
+        {"category": "personal_fact", "predicate": "person.birthday", "text": "用户老婆的生日是5月20日"},
+        {"category": "personal_fact", "predicate": "person.birthday", "text": "用户的生日是3月8日"},
+        {"category": "personal_fact", "predicate": "person.anniversary", "text": "用户和老婆的结婚纪念日是10月1日"},
+    ])
+    out = asyncio.run(extract([{"role": "user", "text": "x"}], user_id="u1", complete_fn=_mock(cands)))
+    assert [o.get("subject", "") for o in out] == ["老婆", "", ""]
+
+
+def test_deterministic_personal_dates_only_take_a_solar_date_said_by_the_user_about_their_own():
+    from extract import deterministic_personal_dates as dates
+    got = {t: [(c["predicate"], c["subject"], c["text"]) for c in dates(t)] for t in (
+        "记住我老婆的生日是五月二十号", "记住老婆生日五月二十号", "帮我记住我妈生日是八月一号",
+        "记住我们的结婚纪念日是10月1号", "记住我妈的结婚纪念日是六月六号",
+        "记住我老婆的生日是五月二十号，还有我妈生日是八月一号", "我老婆生日是五月二十号，记一下")}
+    assert got == {
+        "记住我老婆的生日是五月二十号": [("person.birthday", "老婆", "用户老婆的生日是5月20日")],
+        "记住老婆生日五月二十号": [("person.birthday", "老婆", "用户老婆的生日是5月20日")],
+        "帮我记住我妈生日是八月一号": [("person.birthday", "妈", "用户妈妈的生日是8月1日")],
+        "记住我们的结婚纪念日是10月1号": [("person.anniversary", "", "用户的结婚纪念日是10月1日")],
+        "记住我妈的结婚纪念日是六月六号": [("person.anniversary", "妈", "用户妈妈的结婚纪念日是6月6日")],
+        "记住我老婆的生日是五月二十号，还有我妈生日是八月一号": [
+            ("person.birthday", "老婆", "用户老婆的生日是5月20日"), ("person.birthday", "妈", "用户妈妈的生日是8月1日")],
+        "我老婆生日是五月二十号，记一下": [("person.birthday", "老婆", "用户老婆的生日是5月20日")],
+    }
+    # 别人的、名字（要靠关系边才知道是谁）、农历、相对日子、不是日子、不合法的日期：交给模型
+    for text in ("记住他老婆的生日是五月二十号", "记住小满的生日是六月一号", "记住我妈生日是农历八月十五",
+                 "记住我爸生日是下个月三号", "记住我老婆生日快到了", "记住我老婆的生日是2月30号",
+                 "记住我爸妈的结婚纪念日是五月一号", "记住我们的生日是一月一号", "记住我女儿叫小满"):
+        assert dates(text) == [], text
+

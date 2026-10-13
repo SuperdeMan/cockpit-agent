@@ -446,7 +446,9 @@ async def test_update_two_turn_via_pending_action():
                            raw_text="把带充电线的提醒改个时间", ctx=ctx)
     assert res.status == "need_slot" and "改到什么时候" in res.speech
     pend_json = ctx._memory.upsert_profile.call_args.args[2]
-    assert json.loads(pend_json) == {"title": "带充电线", "action": "update", "id": rid}
+    # origin：被追问的那句原话（2026-10-13）——下一句只答时刻时，日子从它里面取（`_compose_with_origin`）
+    assert json.loads(pend_json) == {"title": "带充电线", "action": "update", "id": rid,
+                                     "origin": "把带充电线的提醒改个时间"}
     ctx2 = make_context(context_values={_PENDING_SCOPE: pend_json})
     res2 = await run_handle(a, "reminder.create", raw_text="晚上八点", ctx=ctx2)
     assert res2.status == "ok" and "改到" in res2.speech
