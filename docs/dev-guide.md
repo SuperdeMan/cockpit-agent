@@ -142,8 +142,8 @@ python scripts/dev_stack.py retention  # 按已批准保留策略的计划（缺
 - **任何真删了记录的 prune 都会让两个项目的下一次构建大面积冷启动**：BuildKit 删除后会解绑缓存键，记录还在盘上，却再也命中不了。
   发布构建突然从约 1 分钟变成十几分钟时，先看 GC journal 里两次构建之间有没有非零回收；非必要不手动 prune。
 - 主机级 `host-capacity-gc` 每小时检查一次，并删除 7 天以上的 core dump：
-  - 可用低于策略的 `capacity.target_free_gib` 才回收构建缓存，一次清到 `build_cache.prune_to_free_gib`，保底 `build_cache.reserved_space_gib`；
-  - 达不到目标就退避，并写 warning，提示清理缓存以外的数据；
+  - 可用低于策略的 `capacity.target_free_gib` 才回收构建缓存，一次清空全部可回收缓存（2026-10-13 起不留保底：删了任何记录，留下的也命中不了）；
+  - 回收后仍低于 `build_cache.prune_to_free_gib` 就退避，并写 warning，提示清理缓存以外的数据；`dev_stack capacity` 的 `host_gc` 字段带出最近一轮状态；
   - 要回收时 car 或 drone 任一方持锁就跳过当轮。
 
   在主机上用 `systemctl list-timers host-capacity-gc.timer` 与

@@ -99,10 +99,12 @@ def validate_policy(payload: object) -> dict:
         raise RetentionError("retention policy capacity section is invalid")
     if _int(capacity["target_free_gib"], 1) < _int(capacity["warn_free_gib"], 1):
         raise RetentionError("retention policy capacity target is below the warning line")
-    # 构建缓存只在可用低于 capacity.target_free_gib 时回收：一次清到 prune_to_free_gib，至少留 reserved_space_gib。
-    if not isinstance(cache, dict) or set(cache) != {"prune_to_free_gib", "reserved_space_gib"}:
+    # 构建缓存只在可用低于 capacity.target_free_gib 时回收，一次清空全部可回收缓存；回收后仍低于
+    # prune_to_free_gib 就退避。10-09 版的保底 reserved_space_gib 于 2026-10-13 撤销：删除型回收会解绑缓存键，
+    # 保底留下的记录再也命中不了。还带着这个键的策略按形状不符拒绝；旧版主机脚本要读这个键，
+    # 在新策略下读不到，整轮报错、不回收（与 10-09 的新旧错配规则一致）。
+    if not isinstance(cache, dict) or set(cache) != {"prune_to_free_gib"}:
         raise RetentionError("retention policy build cache section is invalid")
-    _int(cache["reserved_space_gib"], 0)
     if _int(cache["prune_to_free_gib"], 1) < capacity["target_free_gib"] + PRUNE_HEADROOM_MIN_GIB:
         raise RetentionError("retention policy build cache target leaves too little headroom")
     return payload

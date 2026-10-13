@@ -1,8 +1,9 @@
 """Read-only capacity view of the shared cloud host.
 
 Design: docs/design/2026-09-28-cloud-host-capacity-governance.md §4.6. The remote probe
-only collects facts (containerd metadata, directory sizes, names); attribution happens
-here as pure functions so it can be tested without a host.
+only collects facts (containerd metadata, directory sizes, names, and the host GC's last
+journald record with its backoff state); attribution happens here as pure functions so it
+can be tested without a host.
 
 `docker system df` is deliberately not used: under the containerd image store its
 unique/reclaimable figures are wrong (2026-09-28: images "reclaimable" -113%, one
@@ -82,6 +83,41 @@ def rows(text):
     return [line.split() for line in text.splitlines()[1:] if line.strip()]
 
 
+def host_gc():
+    # 主机 GC 最近一轮的记录与退避状态（只读）；没装、读不到或没有记录时为 None，不让容量探针失败
+    try:
+        journal = subprocess.run(["journalctl", "-u", "host-capacity-gc", "-o", "cat", "-n", "50", "--no-pager"],
+                                 capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    record = None
+    for line in reversed(journal.splitlines()):
+        try:
+            candidate = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(candidate, dict) and isinstance(candidate.get("build_cache"), dict):
+            record = candidate
+            break
+    if record is None:
+        return None
+    try:
+        state = json.loads(Path("/var/lib/host-capacity-gc/state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = None
+    cache = record["build_cache"]
+    return {
+        "started_utc": record.get("started_utc"),
+        "status": cache.get("status"),
+        "available_before": cache.get("available_before"),
+        "available_after": cache.get("available_after"),
+        "retry_below": cache.get("retry_below"),
+        "warnings": record.get("warnings", []),
+        "errors": record.get("errors", []),
+        "backoff_available_after": state.get("available_after") if isinstance(state, dict) else None,
+    }
+
+
 content = []
 for line in run(["ctr", "-n", "moby", "content", "ls"]).splitlines()[1:]:
     fields = [field for field in line.split("\t") if field]
@@ -140,6 +176,7 @@ payload = {
          if line.startswith("Total:")),
         None,
     ),
+    "host_gc": host_gc(),
 }
 print(json.dumps(payload, separators=(",", ":")))
 '''.replace("__DIRECTORIES__", repr(DIRECTORIES))
@@ -153,8 +190,14 @@ REMOTE_CAPACITY_COMMAND = (
 _TOP_KEYS = frozenset({
     "schema_version", "disk", "current", "dirs", "layout", "release_dirs",
     "build_dirs", "upload_dirs", "backup_manifests", "images", "content",
-    "snapshots", "snapshot_usage", "containers", "buildkit_total",
+    "snapshots", "snapshot_usage", "containers", "buildkit_total", "host_gc",
 })
+#: 主机 GC 摘要的字段（deploy/host/host_capacity_gc.py 每轮写进 journald 的记录里挑出来的部分）。
+_HOST_GC_TEXT = ("started_utc", "status")
+_HOST_GC_BYTES = ("available_before", "available_after", "backoff_available_after")
+#: 重试线 = 上次回收后可用 − 5 GiB，可用极低时可以是负数
+_HOST_GC_SIGNED = ("retry_below",)
+_HOST_GC_LISTS = ("warnings", "errors")
 _CAR_RELEASE = re.compile(
     r"^(?:docker\.io/)?car-agent-release/[a-z0-9][a-z0-9-]*:([0-9a-f]{7,40})$"
 )
@@ -269,7 +312,28 @@ def parse_capacity_payload(stdout: str) -> dict[str, Any]:
         _non_negative_int(value)
     if raw["buildkit_total"] is not None and not isinstance(raw["buildkit_total"], str):
         raise CapacityError("remote capacity probe returned an invalid build cache total")
+    _validate_host_gc(raw["host_gc"])
     return raw
+
+
+def _validate_host_gc(summary: object) -> None:
+    """None = 主机上没有可读的 GC 记录；否则每个字段都要类型正确，才把它当事实转述。"""
+    if summary is None:
+        return
+    fields = {*_HOST_GC_TEXT, *_HOST_GC_BYTES, *_HOST_GC_SIGNED, *_HOST_GC_LISTS}
+    if not isinstance(summary, dict) or set(summary) != fields:
+        raise CapacityError("remote capacity probe returned an invalid host GC summary")
+    for key in _HOST_GC_TEXT:
+        if summary[key] is not None and not isinstance(summary[key], str):
+            raise CapacityError("remote capacity probe returned an invalid host GC summary")
+    for key in _HOST_GC_BYTES:
+        if summary[key] is not None:
+            _non_negative_int(summary[key])
+    for key in _HOST_GC_SIGNED:
+        if summary[key] is not None and type(summary[key]) is not int:
+            raise CapacityError("remote capacity probe returned an invalid host GC summary")
+    for key in _HOST_GC_LISTS:
+        _strings(summary[key])
 
 
 def _repository(ref: str) -> str:
@@ -403,6 +467,7 @@ def attribute_capacity(raw: Mapping[str, Any]) -> dict[str, object]:
         },
         "container_writable_bytes": layer_bytes(containers),
         "unknown_entries": unknown,
+        "host_gc": raw["host_gc"],
         "summary_gib": {
             "available": round(disk["available_bytes"] / GIB, 2),
             "car_agent_images": round((car_image_layers + car_image_content) / GIB, 2),
