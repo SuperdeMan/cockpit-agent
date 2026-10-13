@@ -147,8 +147,9 @@ journeys:
   - {id: C01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: C02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: N01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
-  - {id: E01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes,
-     known_red: "2026-10-12 200×5（99178302）1/5：「记住我喜欢喝拿铁」被规划进生态服务桥（MCP 咖啡店），合成用户无授权、没记上，之后问「我平时喜欢喝什么」落到联网搜索 / 闲聊；与 N05 同族（带商品名的「记住 / 记一下」被商户能力抢走）"}
+  # 曾标 known_red（「记住我喜欢喝拿铁」被商户能力抢走、没记上）；「记住…」当场写入与越权早退让位之后 `284b52ce` / `a5b5ea4a` 各 5 / 5，
+  # 2026-10-13 摘牌（后续批 §9 / §10）；再红就按回退报
+  - {id: E01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}
   # P3 第二批（2026-10-10）
   - {id: C03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: C04, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
@@ -199,8 +200,9 @@ journeys:
   # ── 扩容（2026-10-12）：F10 / F11 ──
   - {id: N03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N04, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
-  - {id: N05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes,
-     known_red: "2026-10-12 标定（19051942）：「记一下要买牛奶」被路由到生态服务桥（MCP 桥），合成用户没有这项授权，答「没有这项能力的授权」，待办没建上"}
+  # 曾标 known_red（「记一下要买牛奶」「买牛奶那条办完了」被越权早退判给生态服务桥）；早退让位与打平修完 `a5b5ea4a` 5 / 5，
+  # 2026-10-13 摘牌（后续批 §10）；再红就按回退报
+  - {id: N05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   # 曾标 known_red（赛程转提醒没带开赛时间），`70b179b7` 上 5 / 5，2026-10-13 摘牌；当天没有英超比赛或已开赛照样会红，那天用
   # --skip-providers API_FOOTBALL_KEY 记未测（语料注释）
@@ -208,11 +210,12 @@ journeys:
   - {id: N08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N09, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
   - {id: N10, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F10, lane: synthetic_writes}
-  - {id: E03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
-     known_red: "2026-10-12 标定（19051942）：「我平时喜欢喝什么咖啡」落到「没听清要拿它做什么」，没去读记忆"}
+  # 曾标 known_red（「我平时喜欢喝什么咖啡」没去读记忆）；闲聊回忆 hint 之后 `284b52ce` 4 / 5（那一遍是当场写入超时）、`a5b5ea4a` 5 / 5，
+  # 2026-10-13 摘牌（后续批 §9 / §10）；再红就按回退报
+  - {id: E03, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
   - {id: E04, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
-  - {id: E05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
-     known_red: "2026-10-12 标定（19051942）：路程估算只认本句说的路线偏好、不读记忆——记住「不走高速」后问去机场要多久，答句不提避开高速"}
+  # 曾标 known_red（路程估算只认本句的路线偏好、不读记忆）；估算回读记忆后 `a5b5ea4a` 5 / 5，2026-10-13 摘牌（后续批 §10）；再红就按回退报
+  - {id: E05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
   - {id: E06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes, safety: must_pass}
   - {id: E07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
      known_red: "2026-10-12 标定（19051942）：「记住，我老婆的生日是五月二十号」被当成建提醒（反问「什么时候提醒你」），没记进记忆；之后「生日那天早上八点提醒我订花」建了提醒但话术里没有 5 月 20 日"}
