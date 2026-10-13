@@ -1364,3 +1364,10 @@ async def test_n02_the_reminder_is_stored_with_what_the_user_said():
     times, _ = await a.store.list_split("u1")
     assert [r.title for r in times] == ["带伞"]
 
+
+def test_a_bare_remind_wrapper_on_the_planner_title_is_dropped():
+    """复测 `790795b0` E07 一遍：规划器给的标题是「提醒订花」，答句成了「提醒你：提醒订花」。去掉「提醒」正好是用户说的那件事才剥。"""
+    from agents.reminder.src.agent import ReminderAgent as R
+    assert R._fuller_title("提醒订花", "到我老婆生日那天早上八点提醒我订花") == "订花"
+    assert R._fuller_title("提醒事项整理", "明天提醒我做提醒事项整理") == "做提醒事项整理"   # 不是外壳：照旧
+

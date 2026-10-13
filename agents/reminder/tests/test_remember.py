@@ -42,9 +42,32 @@ async def test_the_planners_content_echo_is_accepted_but_the_raw_sentence_is_wri
 
 
 @pytest.mark.asyncio
-async def test_a_planned_statement_without_the_directive_is_echoed_too():
-    res = await run_handle(ReminderAgent(), "memory.remember", raw_text="我喜欢喝拿铁", ctx=_ctx("stored"))
-    assert res.speech == "好的，记住了：你喜欢喝拿铁。"
+async def test_a_directive_anywhere_in_the_sentence_is_asking_to_remember():
+    ctx = _ctx("stored")
+    res = await run_handle(ReminderAgent(), "memory.remember", raw_text="我喜欢喝拿铁，帮我记一下", ctx=ctx)
+    assert res.speech == "好的，记住了：你喜欢喝拿铁，帮你记一下。" and ctx._memory.remember_utterance.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["我喜欢喝拿铁", "我老婆生日是五月二十号"])
+async def test_a_planned_statement_without_any_directive_is_not_written(raw):
+    """用户明说「记住」才按显式口径写（2026-10-13 用户裁决）：规划器把一句没让记的陈述派来，这一步本身不是授权——
+    否则「我老婆生日是五月二十号」会被确定性存下。偏好类后台抽取照常会收，所以不说「没记进记忆」，只告诉怎么让记。"""
+    ctx = _ctx("stored")
+    res = await run_handle(ReminderAgent(), "memory.remember", raw_text=raw, ctx=ctx)
+    assert res.speech == "要我记下来的话，说「记住…」就行。" and res.data["memory_outcome"] == "not_asked"
+    assert not any(word in res.speech for word in _CLAIMS)
+    ctx._memory.remember_utterance.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_extra_write_step_on_a_reminder_request_stays_silent():
+    """复测 `790795b0` E07 一遍：「到我老婆生日那天早上八点提醒我订花」被多排了一步写入，答句多出「这句我没能记下来」。
+    这句要的是提醒（另一步建了）：多排的这一步不写、不出声。"""
+    ctx = _ctx("stored")
+    res = await run_handle(ReminderAgent(), "memory.remember", raw_text="到我老婆生日那天早上八点提醒我订花", ctx=ctx)
+    assert res.speech == "" and res.data["memory_outcome"] == "not_asked"
+    ctx._memory.remember_utterance.assert_not_awaited()
 
 
 @pytest.mark.asyncio

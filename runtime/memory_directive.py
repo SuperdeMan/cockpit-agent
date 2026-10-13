@@ -23,9 +23,11 @@ import re
 
 #: 礼貌 / 口头前缀，判定前剥掉。
 POLITE_PREFIX_RE = re.compile(r"^[\s，,。.、]*(那|哎|诶|嘿|嗯|请|麻烦|你好|喂)*[\s，,、]*")
+#: 记忆类祈使词（只此一份：句首判据与「这句话里有没有让记」都从它派生）。
+_MEMORY_VERBS = r"记住|记一下|记下来|记下|记着|记得|别忘了|别忘记|别忘"
 #: 记忆类祈使前缀。只覆盖无歧义的那几种（误判代价最大的一类），其余仍由模型判。
-MEMORY_DIRECTIVE_RE = re.compile(
-    r"^(帮我|给我|你|请)?(记住|记一下|记下来|记下|记着|记得|别忘了|别忘记|别忘)")
+MEMORY_DIRECTIVE_RE = re.compile(rf"^(帮我|给我|你|请)?({_MEMORY_VERBS})")
+_MEMORY_VERB_RE = re.compile(_MEMORY_VERBS)
 
 
 def is_memory_directive(text: str | None) -> bool:
@@ -47,3 +49,13 @@ def directive_content(text: str | None) -> str:
     if not m:
         return ""
     return _SEPARATOR_RE.sub("", raw[m.end():]).rstrip("。.！!～~ ").strip()
+
+
+def asks_to_remember(text: str | None) -> bool:
+    """这句话里有没有让助手记（「记住…」「…，帮我记一下」「别忘了…」，在哪儿都算）。
+
+    给当场写入（提醒 Agent `memory.remember`）的执行点复核用：用户明说「记住」才按显式口径写（2026-10-13 用户裁决），
+    规划器派来这一步本身不是授权——`70b179b7` 后的复测里「到我老婆生日那天早上八点提醒我订花」被多排了一步写入。
+    宽一点无妨（「我不记得了」也算），只挡一个让记的字都没有的。"""
+    return bool(_MEMORY_VERB_RE.search(text or ""))
+

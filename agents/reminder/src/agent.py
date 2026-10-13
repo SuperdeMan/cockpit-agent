@@ -48,7 +48,7 @@ _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个�
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 from runtime.polarity import NEG_WORDS   # 极性词表唯一来源（Q7/Q11 共用）
 from runtime.clause_split import split_clauses   # 分句分隔符唯一来源（拆步后「这一步自己那半句」）
-from runtime.memory_directive import directive_content   # 「记住…」祈使词唯一来源
+from runtime.memory_directive import asks_to_remember, directive_content   # 「记住…」祈使词唯一来源
 
 #: `memory.remember` 没写进去时的答复，按 Memory 交回的结果类别（`MemoryClient.remember_utterance`）。
 #: 一句也不说「记住了」：没存就说没存，存没存不确定就说不确定。
@@ -59,7 +59,11 @@ _REMEMBER_SPEECH = {
     "off": "现在没开记忆，这句我记不下来。",
     "timeout": "记忆这边没及时回话，我不确定记下来没有，过一会儿可以问我确认一下。",
     "unavailable": "记忆服务暂时连不上，这次没记下来，稍后再说一次就行。",
+    # 没说让记：不说「没记进记忆」——后台抽取照常会按原口径收偏好，那句话说出去以后可能并不准确
+    "not_asked": "要我记下来的话，说「记住…」就行。",
 }
+#: 这句话是在要提醒 / 通知（另一步由规划器排给了建提醒）：多排的那一步写入不出声。
+_REMIND_ASK_RE = re.compile(r"提醒我|叫我|通知我")
 
 _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
 #: 标题尾巴上的**域词**（「…的提醒」「…那条待办」）。查空之后再削一次尾，见
@@ -391,6 +395,13 @@ class ReminderAgent(BaseAgent):
         Memory 不调模型直接不记；超时只说不确定（客户端放弃之后 Memory 可能照样写完了）。话术原样呈现，不交聚合改写——
         200×5 `70b179b7` E08 里闲聊对手机号答「好的，我记下了」，什么也没写。"""
         raw = str(intent.raw_text or "").strip()
+        if not asks_to_remember(raw):
+            # 用户一个让记的字都没说：不按「明说记住」的口径写（用户 2026-10-13 裁决），规划器派来这一步不是授权。
+            # 这句是在要提醒时不出声——规划器另排了建提醒那一步（复测 `790795b0` E07 一遍多出「这句我没能记下来」）。
+            data = {"memory_outcome": "not_asked", "_speech_verbatim": True}
+            if _REMIND_ASK_RE.search(raw):
+                return AgentResult(speech="", data=data)
+            return AgentResult(speech=_REMEMBER_SPEECH["not_asked"], data=data)
         result = await ctx.remember_utterance(raw)
         outcome = str(result.get("outcome") or "unavailable")
         data = {"memory_outcome": outcome, "_speech_verbatim": True}
@@ -969,6 +980,9 @@ class ReminderAgent(BaseAgent):
                 or _TIME_ARRIVAL_LEAD_RE.match(slot_title)):
             slot_title = cls._extract_title(slot_title)
         fuller = cls._extract_title(raw)
+        if fuller and slot_title == f"提醒{fuller}":
+            # 光秃秃的「提醒」外壳（复测 `790795b0` E07：「提醒你：提醒订花」）：去掉它正好是用户说的那件事
+            return fuller
         if not fuller or fuller == slot_title:
             return slot_title
         if slot_title and slot_title in fuller:
