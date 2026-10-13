@@ -170,8 +170,9 @@ journeys:
   - {id: C19, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   - {id: K02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F05, lane: simulated_vehicle}
   - {id: N02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F10, lane: synthetic_writes}
-  - {id: E02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes,
-     known_red: "2026-10-12 试车（04fe3bba）1/5：「记住我老婆的生日是五月二十号」没有确定性的记忆写入归属——落成建提醒、联网搜索或闲聊（还说「没有记忆功能」），之后问「我老婆生日是哪天」答不出；99178302 上的 4/5 多是巧合（提醒补槽把第二问吞了，复读的标题恰好带「五月二十」）。与 E03 / E05 / E07 同族，待记忆写入设计"}
+  # 曾标 known_red（配偶生日没有确定性的写入归属，之后时存时丢）；「记住…」当场写入 + 用户裁决家人生日存成个人事实（显式模式确定性收）后
+  # `790795b0` 5 / 5，2026-10-13 摘牌（后续批 §12）；再红就按回退报
+  - {id: E02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F11, lane: synthetic_writes}
   - {id: D01, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: D02, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   - {id: D03, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle,
@@ -217,8 +218,9 @@ journeys:
   # 曾标 known_red（路程估算只认本句的路线偏好、不读记忆）；估算回读记忆后 `a5b5ea4a` 5 / 5，2026-10-13 摘牌（后续批 §10）；再红就按回退报
   - {id: E05, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
   - {id: E06, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes, safety: must_pass}
-  - {id: E07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes,
-     known_red: "2026-10-12 标定（19051942）：「记住，我老婆的生日是五月二十号」被当成建提醒（反问「什么时候提醒你」），没记进记忆；之后「生日那天早上八点提醒我订花」建了提醒但话术里没有 5 月 20 日"}
+  # 曾标 known_red（生日没记进记忆、提醒定不出那一天）；生日按用户裁决存下、提醒按记住的那天定日子后 `790795b0` 5 / 5，
+  # 2026-10-13 摘牌（后续批 §12）；再红就按回退报
+  - {id: E07, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
   - {id: E08, source: eval_corpus/v2_runtime/core/f10_f11_writes.yaml, family: F11, lane: synthetic_writes}
   # ── 扩容（2026-10-12）：地图类 F02 / F06 / F07 / F09 ──
   # F07 能源：找站、换站（含两站反问与续接）、续航提醒、长任务约束——全部多轮；发导航的走模拟车并以「取消导航」收尾
