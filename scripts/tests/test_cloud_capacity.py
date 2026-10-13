@@ -16,6 +16,13 @@ from scripts.cloud_release_lib import REMOTE_PREFLIGHT_SOURCE, CommandResult, Re
 ROOT = Path(__file__).resolve().parents[2]
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+#: 2026-10-13 21:04 CST 那一轮：回收后没到 60 GiB，退避中
+HOST_GC = {
+    "started_utc": "2026-10-13T13:04:43Z", "status": "deferred",
+    "available_before": 39_532_093_440, "available_after": None, "retry_below": 33_558_204_416,
+    "warnings": ["build cache prune deferred: free space is taken by data outside the build cache"],
+    "errors": [], "backoff_available_after": 38_926_913_536,
+}
 
 
 def test_build_gate_mirrors_the_remote_build_declaration():
@@ -133,6 +140,7 @@ def _payload(**overrides: object) -> dict[str, object]:
         },
         "containers": ["c" * 64, "d" * 64],
         "buildkit_total": "15.76GB",
+        "host_gc": dict(HOST_GC),
     }
     payload.update(overrides)
     return payload
@@ -172,6 +180,13 @@ def test_attribution_separates_release_layers_other_images_and_build_cache():
         "/opt/car-agent/incoming/old-bootstrap.tar",
         "/opt/car-agent/shared/.env.bak-20260101",
     ]
+    # 退避与 warning 原样带出，不再只躺在 journald 里
+    assert report["host_gc"] == HOST_GC
+
+
+def test_a_host_without_gc_records_reports_null():
+    report = cap.attribute_capacity(cap.parse_capacity_payload(json.dumps(_payload(host_gc=None))))
+    assert report["host_gc"] is None
 
 
 def test_a_release_image_used_by_a_container_is_not_build_cache():
@@ -190,6 +205,13 @@ def test_a_release_image_used_by_a_container_is_not_build_cache():
         lambda p: p.update(images=[["only-one-field"]]),
         lambda p: p.update(snapshot_usage={"k": "12"}),
         lambda p: p.update(extra=True),
+        lambda p: p.pop("host_gc"),
+        lambda p: p["host_gc"].update(extra=True),
+        lambda p: p["host_gc"].update(status=3),
+        lambda p: p["host_gc"].update(warnings="deferred"),
+        lambda p: p["host_gc"].update(available_before=-1),
+        lambda p: p["host_gc"].update(retry_below="33558204416"),
+        lambda p: p.update(host_gc=["deferred"]),
     ],
 )
 def test_malformed_probe_output_is_rejected(mutation):
@@ -216,12 +238,70 @@ def test_remote_probe_is_read_only():
     commands = re.findall(r'run\(\[\s*"([^"]+)"(?:,\s*"([^"]+)")?(?:,\s*"([^"]+)")?', source)
     assert commands
     for first, second, third in commands:
-        assert first in {"du", "ctr", "docker"}
+        assert first in {"du", "ctr", "docker", "journalctl"}
         if first == "docker":
             assert (second, third) in {("ps", "-aq"), ("buildx", "du")}
+        if first == "journalctl":
+            assert (second, third) == ("-u", "host-capacity-gc")
     assert "*snapshot_cmd" in source and '"usage", "-b"' in source
     for forbidden in ("history", "prune", "rmi", " rm", "unlink", "rmtree", "kill", "restart", ".env\""):
         assert forbidden not in source
+
+
+def _remote_host_gc(tmp_path: Path, journal: str, state: str | None = None):
+    """在本地执行远端探针里的 host_gc()：journalctl 与状态文件换成桩。"""
+    source = cap.REMOTE_CAPACITY_SOURCE
+    body = source[source.index("def host_gc():"):source.index("\n\n\ncontent = []")]
+    state_path = tmp_path / "state.json"
+    if state is not None:
+        state_path.write_text(state, encoding="utf-8")
+    calls: list[list[str]] = []
+
+    class _Subprocess:
+        TimeoutExpired = TimeoutError
+
+        @staticmethod
+        def run(argv, **kwargs):
+            calls.append(list(argv))
+            return type("Completed", (), {"stdout": journal})()
+
+    def _path(raw: str) -> Path:
+        assert raw == "/var/lib/host-capacity-gc/state.json"
+        return state_path
+
+    namespace = {"json": json, "subprocess": _Subprocess, "Path": _path}
+    exec(body, namespace)
+    return namespace["host_gc"](), calls
+
+
+def test_remote_host_gc_takes_the_last_round_and_the_backoff_state(tmp_path: Path):
+    older = {"build_cache": {"status": "pruned", "available_before": 36_216_000_000,
+                             "available_after": 38_926_913_536}, "started_utc": "2026-10-13T00:00:41Z",
+             "warnings": ["build cache prune fell short"], "errors": []}
+    latest = {"build_cache": {"status": "deferred", "available_before": 39_532_093_440,
+                              "retry_below": 33_558_204_416}, "started_utc": "2026-10-13T13:04:43Z",
+              "warnings": ["build cache prune deferred"], "errors": [], "schema_version": 2}
+    journal = "\n".join([
+        json.dumps(older), "Starting host-capacity-gc.service - Host capacity GC...",
+        json.dumps(latest), "host-capacity-gc.service: Deactivated successfully.",
+    ])
+
+    summary, calls = _remote_host_gc(tmp_path, journal, json.dumps({"available_after": 38_926_913_536}))
+
+    assert calls == [["journalctl", "-u", "host-capacity-gc", "-o", "cat", "-n", "50", "--no-pager"]]
+    assert summary == {
+        "started_utc": "2026-10-13T13:04:43Z", "status": "deferred", "available_before": 39_532_093_440,
+        "available_after": None, "retry_below": 33_558_204_416, "warnings": ["build cache prune deferred"],
+        "errors": [], "backoff_available_after": 38_926_913_536,
+    }
+    cap._validate_host_gc(summary)  # 远端摘要能过本地的严格校验
+
+
+def test_remote_host_gc_without_records_or_state(tmp_path: Path):
+    assert _remote_host_gc(tmp_path, "-- No entries --")[0] is None
+    summary, _ = _remote_host_gc(tmp_path, json.dumps({"build_cache": {"status": "not_needed"}}), state="{")
+    assert summary["status"] == "not_needed" and summary["backoff_available_after"] is None
+    assert summary["warnings"] == [] and summary["errors"] == []
 
 
 class _Runner:

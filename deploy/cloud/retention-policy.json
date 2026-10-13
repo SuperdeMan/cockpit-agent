@@ -12,8 +12,7 @@
     "min_complete_sets": 3
   },
   "build_cache": {
-    "prune_to_free_gib": 60,
-    "reserved_space_gib": 10
+    "prune_to_free_gib": 60
   },
   "capacity": {
     "warn_free_gib": 40,

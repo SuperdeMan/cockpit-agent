@@ -1,4 +1,4 @@
-"""Host capacity GC: build cache reclaim and old core dumps (design 2026-09-28 §4.4–4.5, P2; §4.4 revised 2026-10-09)."""
+"""Host capacity GC: build cache reclaim and old core dumps (design 2026-09-28 §4.4–4.5, P2; §4.4 revised 2026-10-09 and 2026-10-13)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ RETENTION = ROOT / "deploy" / "cloud" / "retention.py"
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 DU = ["docker", "buildx", "du", "--builder", "default"]
 GIB = 1024**3
-RESERVED_BLOCKS = 5 * GIB  # root 保留块（f_bfree - f_bavail），本机实测约 4.9 GiB
+#: 一次清空：不带 --min-free-space / --reserved-space（2026-10-13 撤销保底）
+PRUNE = ["docker", "buildx", "prune", "--builder", "default", "--force", "--all"]
 
 
 def _load(name: str, path: Path):
@@ -52,7 +53,7 @@ class _Runner:
 
 
 class _Disk:
-    """依次返回各次测量的可用 GiB；保留块固定为 RESERVED_BLOCKS。"""
+    """依次返回各次测量的可用 GiB。"""
 
     def __init__(self, *available_gib: float) -> None:
         self.readings = [int(value * GIB) for value in available_gib]
@@ -60,14 +61,7 @@ class _Disk:
 
     def __call__(self, path: Path):
         self.paths.append(path)
-        return self.readings.pop(0), RESERVED_BLOCKS
-
-
-def _prune(min_free_gib: int = 60, reserved_gib: int = 10) -> list[str]:
-    return [
-        "docker", "buildx", "prune", "--builder", "default", "--force", "--all",
-        "--min-free-space", str(min_free_gib * GIB + RESERVED_BLOCKS), "--reserved-space", str(reserved_gib * GIB),
-    ]
+        return self.readings.pop(0)
 
 
 def _run(tmp_path: Path, capsys, *args: str, locks=None, runner=None, disk=None, policy: Path = POLICY):
@@ -98,7 +92,6 @@ def test_thresholds_are_read_from_the_approved_policy_through_retention():
     assert gc.read_thresholds(POLICY, RETENTION) == (
         policy["capacity"]["target_free_gib"],
         policy["build_cache"]["prune_to_free_gib"],
-        policy["build_cache"]["reserved_space_gib"],
     )
 
 
@@ -112,20 +105,21 @@ def test_no_prune_while_available_is_at_or_above_the_trigger(tmp_path: Path, cap
     assert disk.paths == [gc.BUILDKIT_ROOT]
     assert record["build_cache"] == {
         "status": "not_needed", "available_before": 45 * GIB, "total_before": "34.9GB",
-        "trigger_free_gib": 45, "prune_to_free_gib": 60, "reserved_space_gib": 10,
+        "trigger_free_gib": 45, "prune_to_free_gib": 60,
     }
 
 
-def test_below_the_trigger_prunes_to_the_target_in_bfree_terms(tmp_path: Path, capsys):
+def test_below_the_trigger_prunes_everything_reclaimable(tmp_path: Path, capsys):
     code, record, runner = _run(tmp_path, capsys, disk=_Disk(36.5, 61))
 
     assert code == 0 and record["errors"] == [] and record["warnings"] == []
-    # BuildKit 的 --min-free-space 比的是 Bfree：目标线 60 GiB（Bavail）要加上保留块；两个参数都按字节传
-    assert runner.calls == [DU, _prune(), DU]
+    assert record["schema_version"] == 3  # 10-13 起记录里不再有 min_free_space / reserved_space_gib
+    # 删了任何记录，留下的也会被解绑、再也命中不了：一次清空，不按 --min-free-space 部分回收，也不留保底
+    assert runner.calls == [DU, PRUNE, DU]
     assert record["build_cache"] == {
         "status": "pruned", "available_before": int(36.5 * GIB), "available_after": 61 * GIB,
-        "min_free_space": 60 * GIB + RESERVED_BLOCKS, "total_before": "34.9GB", "reclaimed": "28.4GB",
-        "total_after": "6.5GB", "trigger_free_gib": 45, "prune_to_free_gib": 60, "reserved_space_gib": 10,
+        "total_before": "34.9GB", "reclaimed": "28.4GB", "total_after": "6.5GB",
+        "trigger_free_gib": 45, "prune_to_free_gib": 60,
     }
     assert not _state(tmp_path).exists()
 
@@ -148,8 +142,18 @@ def test_a_prune_that_falls_short_backs_off_until_available_drops_another_step(t
 
     # 再降一档才重试
     code, record, runner = _run(tmp_path, capsys, disk=_Disk(36.9, 41))
-    assert code == 0 and runner.calls == [DU, _prune(), DU]
+    assert code == 0 and runner.calls == [DU, PRUNE, DU]
     assert record["build_cache"]["status"] == "pruned"
+
+
+def test_a_prune_that_lands_between_the_trigger_and_the_target_still_backs_off(tmp_path: Path, capsys):
+    # 10-12 06:07 CST 实况：回收后 50.53 GiB，已回到触发线 45 之上，但没到 60，仍要记下退避
+    code, record, _ = _run(tmp_path, capsys, disk=_Disk(44.2, 50.5))
+
+    assert code == 0 and record["build_cache"]["status"] == "pruned"
+    assert record["build_cache"]["backoff"] == "set"
+    assert json.loads(_state(tmp_path).read_text(encoding="utf-8"))["available_after"] == int(50.5 * GIB)
+    assert len(record["warnings"]) == 1 and "fell short" in record["warnings"][0]
 
 
 def test_back_above_the_trigger_clears_the_backoff(tmp_path: Path, capsys):
@@ -201,6 +205,19 @@ def test_an_invalid_policy_prunes_nothing(tmp_path: Path, capsys):
 
     assert code == 1 and runner.calls == []
     assert record["errors"] == ["build_cache: retention policy build cache target leaves too little headroom"]
+
+
+def test_a_policy_that_still_carries_the_revoked_floor_prunes_nothing(tmp_path: Path, capsys):
+    # 10-09 版策略带保底；新 retention.py 按形状不符拒绝，本轮不回收
+    policy = json.loads(POLICY.read_text(encoding="utf-8"))
+    policy["build_cache"]["reserved_space_gib"] = 10
+    stale = tmp_path / "retention-policy.json"
+    stale.write_text(json.dumps(policy), encoding="utf-8")
+
+    code, record, runner = _run(tmp_path, capsys, policy=stale, disk=_Disk(40))
+
+    assert code == 1 and runner.calls == []
+    assert record["errors"] == ["build_cache: retention policy build cache section is invalid"]
 
 
 def test_a_missing_retention_module_prunes_nothing(tmp_path: Path):
@@ -260,7 +277,6 @@ def test_dry_run_prunes_deletes_and_records_nothing(tmp_path: Path, capsys):
     assert runner.calls == [DU]
     assert record["mode"] == "dry-run"
     assert record["build_cache"]["status"] == "dry-run"
-    assert record["build_cache"]["min_free_space"] == 60 * GIB + RESERVED_BLOCKS
     assert not _state(tmp_path).exists()
     assert [item["name"] for item in record["coredumps"]["deleted"]] == ["core.old"]
 
@@ -284,6 +300,9 @@ def test_source_only_reads_and_prunes_the_build_cache():
     assert sorted(set(commands)) == ["du", "prune"]
     for forbidden in ('"history"', '"rm"', '"rmi"', '"image"', '"system"', '"volume"', '"--filter"', "rmtree"):
         assert forbidden not in source
+    # 部分回收会留下已被解绑的记录（2026-10-13 撤销保底）：任何保留量参数都不该回来
+    for partial in ('"--min-free-space"', '"--reserved-space"', '"--max-used-space"', '"--keep-storage"'):
+        assert partial not in source
 
 
 def test_units_and_readme_describe_the_same_installation():
