@@ -108,6 +108,20 @@ class RouteHintEngine:
                 return True
         return False
 
+    def matches_replace(self, text: str, agent_map: dict) -> bool:
+        """本轮原话是否命中了任一 **replace 档** hint（只读）。
+
+        用途：越权早退（`PlanBuilder._scope_blocked_target`）之前看一眼——已授权能力的确定性路由把整句认走了，
+        语义路由 top-1 猜它要一条没授权的能力就不作数（200×5 `70b179b7` E01「记住我喜欢喝拿铁」5 / 5 被判成要生态服务桥，
+        一次模型都没调就答了「没有授权」）。`agent_map` 本来就是权限过滤后的，没授权的 Agent 的 hint 不在里面。
+        """
+        for _agent_id, hint in self._ordered_hints(agent_map):
+            if (hint.policy or "replace").lower() != "replace":
+                continue
+            if self._match(hint, text or "")[0] is not None:
+                return True
+        return False
+
     # ── 内部 ──
 
     @staticmethod

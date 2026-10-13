@@ -124,6 +124,52 @@ def _final(events):
     return finals[-1]
 
 
+class _SpyWith(_Spy):
+    """注册表换成给定的一组 Agent（`_Spy` 固定用 `_ALL`）。"""
+
+    def __init__(self, agents, **kwargs):
+        super().__init__(**kwargs)
+        self._agents = list(agents)
+
+    async def list_agents(self):
+        return list(self._agents)
+
+
+# ─── 不冤枉：已授权能力的确定性路由认走了整句 ────────────────────────────────
+
+def test_a_permitted_route_hint_outranks_the_router_guessing_a_blocked_capability():
+    """200×5 `70b179b7` E01：「记住我喜欢喝拿铁」语义路由 top-1 是没授权的生态服务桥，规划前就答了「没有授权」（5 / 5）。
+    已授权能力的 replace 档 route_hint 认得整句时，这条早退不作数，照 hint 派步。"""
+    hint = SimpleNamespace(pattern="^记住我", guard="", policy="replace", priority=132,
+                           intent="memory.remember", slots={}, scope="")
+    memo = _agent("reminder", [_cap("memory.remember")], display_name="提醒")
+    memo.manifest.route_hints = [hint]
+    shop = _agent("mcp-bridge", [_cap("shop.order", ["item"])], requires=["merchant.order"],
+                  display_name="生态服务桥")
+    spy = _SpyWith([memo, shop, _CHITCHAT], resolve_top=[shop])
+
+    final = _final(_run(_engine(spy), _req("记住我喜欢喝拿铁")))
+
+    assert not [i for i in final.get("issues") or []
+                if i["code"] == contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.calls == ["memory.remember"]
+
+
+def test_a_blocked_agents_own_hint_does_not_lift_the_scope_explanation():
+    """没授权的 Agent 自己的 hint 不在扫描面里（权限过滤后的注册表），越权解释照旧。"""
+    hint = SimpleNamespace(pattern="^导航去", guard="", policy="replace", priority=128,
+                           intent="navigation.navigate_to", slots={"destination": "$text"}, scope="")
+    nav = _agent("navigation", [_cap("navigation.navigate_to", ["destination"])],
+                 requires=["navigation"], display_name="导航")
+    nav.manifest.route_hints = [hint]
+    spy = _SpyWith([nav, _CHITCHAT], resolve_top=[nav])
+
+    final = _final(_run(_engine(spy), _req("导航去广州塔")))
+
+    assert [i["code"] for i in final.get("issues") or []] == [contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.calls == []
+
+
 # ─── 命中：说出真实原因 ─────────────────────────────────────────────────────
 
 def test_scope_blocked_capability_is_named_as_the_real_reason():

@@ -1898,7 +1898,9 @@ class PlanBuilder:
         # 是同一条事实，只是此前只有摘要面说得出来。
         # ⚠ 挂在 catalog 装配**之后**：装配是纯计算不花钱，而 `catalog_stats` 是观测面读的东西
         # ——早退时不赋值，这一轮在观测里就长得像「catalog 是空的」，那是另一件事的症状。
-        blocked = await self._scope_blocked_target(text, scope_blocked_agents)
+        # 已授权能力的 replace 档 route_hint 认走了整句 ⇒ 不再按语义路由猜它要一条被挡下的能力（`matches_replace`）。
+        blocked = (None if self._route_hints.matches_replace(text, hint_map)
+                   else await self._scope_blocked_target(text, scope_blocked_agents))
         if blocked is not None:
             agent_id = str(blocked.manifest.agent_id or "")
             logger.info("Scope-blocked capability requested: %s", agent_id)
