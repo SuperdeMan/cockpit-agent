@@ -24,7 +24,7 @@ from .store import (Reminder, ReminderStore, DONE, CANCELLED, FIRED,
 from .timeparse import (OK as T_OK, FAIL as T_FAIL, NEED_TIME as T_NEED_TIME, UNRESOLVED_DAY_RE, ParsedTime,
                         align_workday, business_tz, ends_with_time, format_display, names_day, parse_lead,
                         parse_recur, parse_time_text, recur_label, strip_time_expressions)
-from runtime.cntime import CLOCK_SRC, SEG_ALT, month_day_of
+from runtime.cntime import CLOCK_SRC, LUNAR_RE, SEG_ALT, month_day_of
 from runtime.slots import STEP_ORIGIN_META
 
 logger = logging.getLogger("agent.reminder")
@@ -612,8 +612,12 @@ class ReminderAgent(BaseAgent):
             await self._save_pending(ctx, title, update_id=pend_update_id, origin=raw)
             if day and day["md"]:
                 ask, hint = f"{day['label']}是{day['md'][0]}月{day['md'][1]}日，那天几点提醒你？", "比如：早上八点"
+            elif day and day.get("lunar"):       # 记着的是农历日子：换算要历表，说清楚为什么问
+                ask, hint = f"{day['label']}记的是农历日子，我还换算不了，今年是公历几月几号？", "比如：9月15日早上八点"
             elif day:                            # 说的是「我老婆生日那天」，记忆里没有（或不止一个）：说清楚为什么问
                 ask, hint = f"我还不知道{day['label']}是哪天，什么时候提醒你？", "比如：5月20日早上八点"
+            elif LUNAR_RE.search(f"{time_text} {raw}"):
+                ask, hint = "农历的日子我还换算不了，是公历几月几号？", "比如：9月15日早上八点"
             else:
                 ask, hint = "什么时候提醒你？", "比如：明天早上八点 / 半小时后"
             return AgentResult(status=NEED_SLOT, speech=f"好的，{title}。{ask}",
@@ -991,13 +995,14 @@ class ReminderAgent(BaseAgent):
             return pt, None
         start, end, who, what, label = ref
         md = await self._remembered_day(ctx, who, what)
-        if not md:
-            return pt, {"label": label, "md": None}
+        if not isinstance(md, tuple):
+            return pt, {"label": label, "md": None, "lunar": md == "lunar"}
         return (parse_time_text(f"{text[:start]}{md[0]}月{md[1]}日{text[end:]}", now=now, tz=self._tz),
                 {"label": label, "md": md})
 
-    async def _remembered_day(self, ctx, who: str, what: str) -> tuple[int, int] | None:
-        """记住的生日 / 纪念日 → (月, 日)；没记着、读不到、是农历或记着不止一个日子 → None（不猜）。"""
+    async def _remembered_day(self, ctx, who: str, what: str) -> tuple[int, int] | str | None:
+        """记住的生日 / 纪念日 → (月, 日)；记着的只有农历日子 → "lunar"（换算要历表，不猜）；没记着、读不到或记着不止一个
+        日子 → None。"""
         own = who in ("", "们") or who.startswith(("和", "跟"))       # 「我 / 我们 / 我和老婆」的：用户自己的
         try:
             items = await ctx.recall(f"{who}{what}", predicate_prefix="person.",
@@ -1005,7 +1010,7 @@ class ReminderAgent(BaseAgent):
         except Exception as e:
             logger.debug("remembered day recall failed: %s", e)
             return None
-        days = set()
+        days, lunar = set(), False
         for it in items or []:
             text = str(it.get("text") or "")
             if what not in text:
@@ -1016,7 +1021,10 @@ class ReminderAgent(BaseAgent):
             md = month_day_of(text)
             if md:
                 days.add(md)
-        return next(iter(days)) if len(days) == 1 else None
+            lunar = lunar or bool(LUNAR_RE.search(text))
+        if len(days) == 1 and not lunar:
+            return next(iter(days))
+        return "lunar" if lunar and not days else None
 
     async def _compose_with_origin(self, ctx, origin: str, answer: str, now):
         """续接轮：被追问「什么时候提醒你」之后这句只给了时刻（「十点」「早上八点」），日子是被追问的那句里说的那天——
@@ -1035,8 +1043,9 @@ class ReminderAgent(BaseAgent):
 
     async def _llm_time_fallback(self, text: str) -> ParsedTime:
         """规则未命中（"下下周三饭点"）→ LLM @fast 抽 ISO；失败 FAIL（外层追问）。"""
-        if UNRESOLVED_DAY_RE.search(text or ""):
-            # 「我老婆生日那天」是哪天，模型和规则一样不知道：让它猜只会凑出一个日期（核心旅程 E07），直接交外层追问
+        if UNRESOLVED_DAY_RE.search(text or "") or LUNAR_RE.search(text or ""):
+            # 「我老婆生日那天」是哪天，模型和规则一样不知道：让它猜只会凑出一个日期（核心旅程 E07），直接交外层追问；
+            # 农历换公历要历表，模型给的换算没法核，同样不猜
             return ParsedTime(T_FAIL)
         ln = self._now_utc().astimezone(self._tz)
         prompt = (f"现在是 {ln.strftime('%Y-%m-%d %H:%M')}"

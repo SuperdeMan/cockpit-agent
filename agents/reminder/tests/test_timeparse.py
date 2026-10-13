@@ -254,3 +254,11 @@ def test_the_same_day_words_with_an_explicit_date_still_parse():
     assert P("5月20号当天早上八点提醒我订花").fire_at == ts(L(2027, 5, 20, 8, 0))
     assert P("明天是我生日，早上八点提醒我订蛋糕").fire_at == ts(L(2026, 7, 12, 8, 0))
     assert P("那天气预报说要下雨，晚上八点提醒我收衣服").fire_at == ts(L(2026, 7, 11, 20, 0))
+
+
+def test_a_lunar_date_is_not_read_as_a_solar_one():
+    """「农历八月十五日」不是公历 8 月 15 日：规则未命中（外层追问），同一句去掉「农历」照常解析。"""
+    for t in ("农历八月十五日早上八点", "阴历正月初八号早上八点", "旧历十月初一"):
+        assert P(t).status == FAIL, t
+    assert P("八月十五日早上八点").status == OK
+

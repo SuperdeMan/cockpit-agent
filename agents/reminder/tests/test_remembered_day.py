@@ -171,3 +171,25 @@ async def test_a_lunar_birthday_is_not_read_as_a_solar_date():
     res = await run_handle(a, "reminder.create", raw_text="我妈妈生日那天早上八点提醒我买蛋糕",
                            slots={"title": "买蛋糕"}, ctx=ctx)
     assert res.status == "need_slot" and await _times(a) == []
+    assert "记的是农历日子" in res.speech and "公历" in res.speech      # 说清为什么问，不说成「不知道」
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["农历八月十五日早上八点提醒我买月饼", "阴历正月初八早上八点提醒我拜年",
+                                 "到农历八月十五提醒我买月饼"])
+async def test_a_lunar_date_is_asked_not_scheduled_as_solar(raw):
+    """「农历八月十五日」此前按公历 8 月 15 日排（日子悄悄错开一个多月）；「到农历八月十五」还会被当成地点。换算要历表：问公历。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=raw, ctx=_ctx())
+    assert res.status == "need_slot" and "农历的日子我还换算不了" in res.speech
+    assert await _times(a) == []
+
+
+@pytest.mark.asyncio
+async def test_the_time_fallback_does_not_ask_the_model_to_convert_a_lunar_date():
+    from agents.reminder.src.timeparse import OK
+    a = ReminderAgent()
+    a.llm.complete = AsyncMock(return_value='{"iso": "2027-09-15T08:00"}')
+    assert (await a._llm_time_fallback("农历八月十五早上八点")).status == FAIL
+    a.llm.complete.assert_not_called()
+    assert (await a._llm_time_fallback("下下周三饭点")).status == OK

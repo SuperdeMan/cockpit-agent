@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 
-from runtime.cntime import (CN_NUM_SRC, DAY_WORDS, MONTH_DAY_RE, SEG_DEFAULT_HOUR, SEGMENTS,
+from runtime.cntime import (CN_NUM_SRC, DAY_WORDS, LUNAR_RE, MONTH_DAY_RE, SEG_DEFAULT_HOUR, SEGMENTS,
                             cn_int, to_24h)
 
 OK = "ok"
@@ -117,6 +117,9 @@ def parse_time_text(text: str, *, now: datetime | None = None,
         return _ok(now_utc + timedelta(minutes=30), ln, tz)
 
     # 2) 日（优先级：日词 > 周X > N月N日 > N号）
+    # 农历的「八月十五日」不是公历 8 月 15 日：换算要历表，规则未命中，交外层追问（此前按公历排，日子悄悄错开一个多月）
+    if LUNAR_RE.search(t):
+        return ParsedTime(FAIL)
     day_date = None
     week_based = False
     seg_kind = ""
@@ -250,6 +253,8 @@ def ends_with_time(text: str) -> bool:
         return False
     tl = t.lower()
     if any(tl.endswith(w) for w, _, _ in _DAY_WORDS) or any(t.endswith(w) for w, _ in _SEGS):
+        return True
+    if LUNAR_RE.search(t):                    # 「到农历八月十五提醒我」：农历日子不是地名
         return True
     for rx in (_CLOCK_RE, _HHMM_RE, _WEEK_RE, _MD_RE, UNRESOLVED_DAY_RE):
         if any(m.end() == len(t) for m in rx.finditer(t)):
