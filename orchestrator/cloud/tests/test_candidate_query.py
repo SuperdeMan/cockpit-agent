@@ -192,6 +192,21 @@ def test_the_selected_one_answers_the_dimension_asked_not_the_one_it_was_picked_
     assert "乙咖啡" in got and "1.2 公里" in got
 
 
+def test_tied_nearest_ones_still_answer_how_far():
+    """`ea71e46a` NB08：8 家都在 0.1 公里（距离取整到 0.1 km），只念名字让人再挑一次，问「离我多远」等于没答——
+    并列照实说（不静默挑一个），被问的距离答出来。"""
+    lots = [{"name": f"停车场{i}", "distance_km": 0.1} for i in range(8)]
+    got = cq.answer("最近的那个离我多远", _entry(lots))
+    assert "0.1 公里" in got and "「停车场0」" in got and "等 8 个" in got
+
+
+def test_the_nearest_one_a_few_dozen_metres_away_is_the_one():
+    """提供方的距离留到 10 米后，几十米外那家就是最近的那个（取整到 0.1 km 时它是 0、被当成「没有距离」排除）。"""
+    lots = [{"name": "西侧停车场", "distance_km": 0.02}, {"name": "高新园区停车场", "distance_km": 0.04},
+            {"name": "海王银河科技大厦地下停车场", "distance_km": 0.1}]
+    assert cq.answer("最近的那个离我多远", _entry(lots)) == "最近的是「西侧停车场」，0.02 公里。"
+
+
 def test_a_selected_one_followed_by_something_other_than_a_dimension_is_left_alone():
     """选中词后面不是维度问句的照常进 Planner：「怎么走」要导航，「加油站」是一次新的找法；认不出是哪一维的最值也不劫持。"""
     for text in ("最近的那个怎么走", "最近的那个加油站在哪", "最好的那家离我多远",

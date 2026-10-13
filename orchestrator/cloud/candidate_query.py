@@ -354,8 +354,14 @@ def _selected_pick_answer(text: str, items: list[dict]) -> str | None:
             best = max(v for v, _ in ranked) if want_max else min(v for v, _ in ranked)
             winners = [it for v, it in ranked if v == best]
             if len(winners) > 1:
-                names = "、".join(f"「{it.get('name')}」" for it in winners)
-                return f"{selector}的有 {len(winners)} 个：{names}，你说一下要哪个。"
+                # 并列照实说（不静默挑一个）；被问的那一维各家相同时把它答出来——问的就是它（`ea71e46a` NB08：8 家都在 0.1 公里，
+                # 只念名字让人再挑一次，问「离我多远」等于没答）
+                names = "、".join(f"「{it.get('name')}」" for it in winners[:3])
+                more = f"等 {len(winners)} 个" if len(winners) > 3 else f"这 {len(winners)} 个"
+                asked = {dimension_value(it, dim) for it in winners}
+                if len(asked) == 1 and None not in asked:
+                    return f"{selector}的有好几个：{names}{more}，都是{_render(dim, asked.pop())}。"
+                return f"{selector}的有好几个：{names}{more}，你说一下要哪个。"
             name = str(winners[0].get("name") or "")
             value = dimension_value(winners[0], dim)
             if value is None:

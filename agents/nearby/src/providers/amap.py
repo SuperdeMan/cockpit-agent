@@ -107,7 +107,9 @@ class AmapPlaceProvider(PlaceProvider):
         dist = p.get("distance")
         if dist not in (None, "", []):
             try:
-                dist_km = round(float(dist) / 1000, 1)
+                # 留到 10 米：取整到 0.1 km 时 50 米内的点全成了 0，而 0 在下游一律当「没有距离」——最近的两家停车场被排除在
+                # 「哪家最近 / 最近的那个离我多远」之外，卡片也不显示它们的距离（核心旅程 NB08，`ea71e46a`）
+                dist_km = round(float(dist) / 1000, 2)
             except (ValueError, TypeError):
                 dist_km = 0.0
         photos = []

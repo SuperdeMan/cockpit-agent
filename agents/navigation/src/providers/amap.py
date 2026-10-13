@@ -146,7 +146,8 @@ class AmapPOIProvider(POIProvider):
         dist = p.get("distance")
         if dist not in (None, "", []):
             try:
-                dist_km = round(float(dist) / 1000, 1)
+                # 留到 10 米（同周边提供方）：取整到 0.1 km 时 50 米内的点成了 0，下游把 0 当「没有距离」（核心旅程 NB08）
+                dist_km = round(float(dist) / 1000, 2)
             except (ValueError, TypeError):
                 dist_km = 0.0
         return POI(

@@ -65,6 +65,15 @@ def test_search_parses_rich_fields():
     assert res[1].address == ""                        # [] 归一成空串
 
 
+def test_a_place_a_few_dozen_metres_away_keeps_its_distance():
+    """核心旅程 NB08（`ea71e46a`）：取整到 0.1 km 时 50 米内的点都成了 0，下游把 0 当「没有距离」，最近的两家停车场被排除在
+    「最近的那个离我多远」之外。留到 10 米。"""
+    near = {**_AROUND_OK, "pois": [{**_AROUND_OK["pois"][0], "distance": "30"},
+                                   {**_AROUND_OK["pois"][1], "distance": "1234"}]}
+    res = asyncio.run(_provider({"/v5/place/around": near}).search("停车场", near=GeoPoint(lng=121.5, lat=31.23)))
+    assert [p.distance_km for p in res] == [0.03, 1.23]
+
+
 def test_search_text_when_no_location():
     p = _provider({"/v5/place/text": _AROUND_OK})      # 无 near → 关键字检索
     res = asyncio.run(p.search("川菜"))
