@@ -17,6 +17,8 @@ from ._ctx import get_current_meta
 
 # 默认超时（秒）
 DEFAULT_TIMEOUT = 10
+# 「记住…」当场写入：Memory 要调一次抽取模型。唯一调用方提醒 Agent 的步预算是 8 s，留出规划与聚合的余量
+_REMEMBER_UTTERANCE_TIMEOUT = 6.0
 # 开思考时给足预算：reasoning 占 token、且更慢，故抬高 token 下限与超时。
 _THINK_MAX_TOKENS = 2048
 _THINK_TIMEOUT = 30
@@ -222,6 +224,28 @@ class MemoryClient:
             return list(resp.ids)
         except grpc.aio.AioRpcError as e:
             raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
+
+    async def remember_utterance(self, user_id: str, text: str, *, occupant_id: str = "",
+                                 vehicle_id: str = "", session_id: str = "",
+                                 memory_epoch: str = "") -> dict:
+        """用户明说「记住…」的这一句交给 Memory 当场抽取并写入（2026-10-13）→ `{"outcome", "stored_count", "stored_texts"}`。
+
+        `outcome` ∈ stored / pii / not_stored / stale / off（见 proto）；RPC 失败（含旧版 Memory 没有这个接口）
+        是 `unavailable`、不抛——调用方据此如实答「没记下来」。抽取要调一次模型，超时比普通读写长。"""
+        try:
+            resp = await self._stub().RememberUtterance(
+                memory_pb2.RememberUtteranceRequest(
+                    user_id=user_id, occupant_id=occupant_id or "primary", vehicle_id=vehicle_id,
+                    session_id=session_id, text=text, memory_epoch=memory_epoch),
+                timeout=_REMEMBER_UTTERANCE_TIMEOUT)
+        except grpc.aio.AioRpcError as e:
+            import logging
+            logging.getLogger("agent.sdk").warning("remember_utterance failed: %s", e.code().name)
+            # 超时不等于没写：客户端放弃之后 Memory 可能照样写完了，答复只能说「不确定」，与「没记下来」分开
+            outcome = "timeout" if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED else "unavailable"
+            return {"outcome": outcome, "stored_count": 0, "stored_texts": []}
+        return {"outcome": resp.outcome or "unavailable", "stored_count": int(resp.stored_count),
+                "stored_texts": list(resp.stored_texts)}
 
     async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",
                      scopes: list[str] | None = None, kinds: list[str] | None = None,

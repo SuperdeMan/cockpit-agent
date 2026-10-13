@@ -820,6 +820,32 @@ class MemoryStore:
         async with (guard() if guard else nullcontext()):
             return await self._write_candidates(user_id, occupant_id, cands, predicate_class)
 
+    async def remember_utterance(self, user_id: str, occupant_id: str, vehicle_id: str,
+                                 session_id: str, text: str, *, guard=None,
+                                 complete_fn=None) -> tuple[str, list[dict]]:
+        """用户明说「记住…」的这一句当场写入（2026-10-13，docs/design/2026-10-13-v2-200x5-followups.md §2）。
+
+        与 `consolidate` 同一份抽取与治理（`extract.extract`）、同一个写入函数（`_write_candidates`：偏好修订、
+        事实取代、关系边分流），只是窗口就是这一句。返回 `(结果类别, 治理后写入的候选)`：
+        - `pii`：原话含电话 / 证件号 / 精确坐标（治理黑名单的确定性那半）——不调模型、不写；
+        - `not_stored`：抽取后没有可存的（敏感画像、闲话或模型不可用）；
+        - `stored`：候选非空且写入完成。按候选算而不按新增 id 算：同一句再说一遍时修订只加强旧条目、不出新 id，
+          那也是「记着了」。
+        `guard` 同 `consolidate`：持锁复核代际，记忆在抽取期间被删除就抛 `StaleEpoch`，整批不写。
+        这一轮稍后还会被后台抽取再看一次：偏好同文加强、异文按维度取代，事实按主体取代——不留并存的两条。"""
+        from contextlib import nullcontext
+        from extract import carries_identifying_data, extract, predicate_class
+        if carries_identifying_data(text):
+            return "pii", []
+        cands = await extract([{"role": "user", "text": text}], user_id=user_id,
+                              occupant_id=occupant_id, vehicle_id=vehicle_id,
+                              session_id=session_id, complete_fn=complete_fn)
+        if not cands:
+            return "not_stored", []
+        async with (guard() if guard else nullcontext()):
+            await self._write_candidates(user_id, occupant_id, cands, predicate_class)
+        return "stored", cands
+
     async def _write_candidates(self, user_id: str, occupant_id: str, cands: list[dict],
                                 predicate_class) -> list[str]:
         vs = await self._vec()

@@ -214,6 +214,16 @@ class Context:
         ids = await self._memory.remember([item], memory_epoch=self.memory_epoch)
         return bool(ids)
 
+    async def remember_utterance(self, text: str) -> dict:
+        """用户明说「记住…」的这一句交给 Memory 当场抽取并写入 → `{"outcome", "stored_count", "stored_texts"}`
+        （结果类别见 `MemoryClient.remember_utterance`）。无 user_id 或空文本 → `off`，不调；带上本轮观测到的代际，
+        期间记忆被删过 Memory 回 `stale`、什么也不写。与 `remember` 同一口径：写的是本轮说话人自己的记忆。"""
+        if not self.user_id or not (text or "").strip():
+            return {"outcome": "off", "stored_count": 0, "stored_texts": []}
+        return await self._memory.remember_utterance(
+            self.user_id, text, occupant_id=self.occupant_id, vehicle_id=self.vehicle_id,
+            session_id=self.session_id, memory_epoch=self.memory_epoch)
+
 
 class BaseAgent(ABC):
     def __init__(self, manifest_path: str):

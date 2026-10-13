@@ -401,6 +401,23 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             return memory_pb2.RememberResponse(ok=False, error=STALE)
         return memory_pb2.RememberResponse(ids=ids, ok=True)
 
+    async def RememberUtterance(self, request, context):
+        """用户明说「记住…」的这一句当场抽取并写入（2026-10-13）。抽取在锁外，写入持锁复核 Agent 观测到的代际
+        （同后台抽取：删除落在「抽取 → 写入」之间就整批不写）。结果类别见 proto 与 `MemoryStore.remember_utterance`。"""
+        if not request.user_id:
+            return memory_pb2.RememberUtteranceResponse(outcome="off")
+        try:
+            outcome, cands = await self.store.remember_utterance(
+                request.user_id, request.occupant_id or "primary", request.vehicle_id,
+                request.session_id, request.text,
+                guard=lambda: self.fence.writing(request.user_id, request.memory_epoch))
+        except StaleEpoch:
+            logger.info("remember_utterance refused: memory deleted since it was observed")
+            return memory_pb2.RememberUtteranceResponse(outcome="stale")
+        texts = [str(c.get("text") or "") for c in cands if not c.get("_relation") and c.get("text")]
+        return memory_pb2.RememberUtteranceResponse(
+            outcome=outcome, stored_count=len(cands), stored_texts=texts)
+
     async def Recall(self, request, context):
         """语义召回（向量 + scope/occupant + 时序融合）。"""
         if not request.user_id:

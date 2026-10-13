@@ -217,6 +217,13 @@ def _has_coords(text: str) -> bool:
     return any(w in low for w in _COORD_WORDS)
 
 
+def carries_identifying_data(text: str) -> bool:
+    """精确坐标或电话 / 证件号这类可识别隐私——治理黑名单里确定性的那一半（不调模型）。
+
+    `_govern` 逐条候选用它丢弃；当场写入（`MemoryStore.remember_utterance`）先拿原话过一遍，命中就不抽取、如实说不记。"""
+    return _has_coords(text) or bool(_PII_RE.search(text or ""))
+
+
 def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
             session_id: str, source_turn_ids: str = "") -> dict | None:
     """把一条 LLM 候选治理成可入库的 MemoryItem dict；不合规返回 None（丢弃）。"""
@@ -226,7 +233,7 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
     # 黑名单同样生效：拿 subject+object 过一遍坐标/PII 检查（家庭住址不该进关系图）。
     if category == "relation":
         probe = f'{c.get("subject") or ""} {c.get("object") or ""}'
-        if _has_coords(probe) or _PII_RE.search(probe):
+        if carries_identifying_data(probe):
             logger.debug("extract drop (relation coords/pii): %s", probe[:40])
             return None
         edge = relation.normalize_candidate(
@@ -240,7 +247,7 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
     if not text:
         return None
     # 黑名单：精确坐标 / 电话证件号等可识别隐私 → 丢弃（任何类别）
-    if _has_coords(text) or _PII_RE.search(text):
+    if carries_identifying_data(text):
         logger.debug("extract drop (coords/pii): %s", text[:40])
         return None
     # 真正敏感画像（健康/种族/宗教/电话证件/Agent 推断的隐私）→ 丢弃。

@@ -12,6 +12,9 @@ service Memory {
   // 分层记忆重构（2026-06-25，向后兼容追加）：语义画像 + 情景记忆。
   // 设计见 docs/design/2026-06-25-memory-system-redesign.md
   rpc Remember (RememberRequest) returns (RememberResponse);   // 写语义/情景记忆（抽取管线或 Agent 显式）
+  // 2026-10-13：用户明说「记住…」时当场写入——对这一句跑后台同一份抽取与治理、同一个写入函数，返回实际结果，
+  // 让说「记住了」的那一方只在真写进去时才说（docs/design/2026-10-13-v2-200x5-followups.md §2）。
+  rpc RememberUtterance (RememberUtteranceRequest) returns (RememberUtteranceResponse);
   rpc Recall (RecallRequest) returns (RecallResponse);         // 语义召回（向量 + scope/occupant + 时序融合）
   rpc ForgetUser (ForgetUserRequest) returns (ForgetUserResponse); // 合规：删除用户全量记忆
   // M-B L1：按 OwnerKey + item id **精确**删一条。存在的理由是 HMI 记忆面板此前用
@@ -232,6 +235,22 @@ message RememberResponse {
   repeated string ids = 1;
   bool ok = 2;
   string error = 3;         // "stale_memory_epoch"；ok=true 时为空
+}
+
+message RememberUtteranceRequest {
+  string user_id = 1;
+  string occupant_id = 2;   // 空=默认 "primary"
+  string vehicle_id = 3;
+  string session_id = 4;
+  string text = 5;          // 用户原话（整句，含「记住」）；服务端不改写
+  string memory_epoch = 6;  // 同 RememberRequest.memory_epoch：之后记忆被删过 ⇒ 不写，outcome=stale
+}
+message RememberUtteranceResponse {
+  // stored = 写进去了（stored_count ≥ 1）；pii = 原话含电话 / 证件号 / 精确坐标，没调模型、没写；
+  // not_stored = 抽取后没有可存的（敏感画像、闲话或抽取失败）；stale = 记忆在抽取期间被删除；off = 没有用户身份
+  string outcome = 1;
+  uint32 stored_count = 2;
+  repeated string stored_texts = 3;   // 写入条目的文本（关系边不在其中）；只作观测，答复不念它
 }
 
 message RecallRequest {
