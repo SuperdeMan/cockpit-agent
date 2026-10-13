@@ -123,6 +123,8 @@ _REMINDABLE_REF_RE = re.compile(
 _TITLE_REFERENCE_RE = re.compile(r"那个|这个|那件|这件|那条|这条|那家|这家|刚才|刚刚|上面|前面说|之前说|它")
 #: 原话标题没剥干净：还带着提醒外壳（「第一场开始前提醒我观看」「remind me to…」）——那份不比槽值可靠。
 _TITLE_LEFTOVER_RE = re.compile(r"提醒|叫我|通知我|remind", re.IGNORECASE)
+#: 槽值是半句话：以「提醒」打头，或夹着对用户下的命令（「提醒我 / 叫我 / 通知我」）。「老婆生日提醒订花」这种便签式写法不算。
+_SLOT_SENTENCE_RE = re.compile(r"^提醒|提醒我|叫我|通知我")
 _CN_IDX = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 # 批 5（评审 2026-09-19 留下的观察，真栈 CT2 T2）：**事件触发**——「之后一旦下雨就通知我」
@@ -980,8 +982,10 @@ class ReminderAgent(BaseAgent):
                 or _TIME_ARRIVAL_LEAD_RE.match(slot_title)):
             slot_title = cls._extract_title(slot_title)
         fuller = cls._extract_title(raw)
-        if fuller and slot_title == f"提醒{fuller}":
-            # 光秃秃的「提醒」外壳（复测 `790795b0` E07：「提醒你：提醒订花」）：去掉它正好是用户说的那件事
+        if (fuller and fuller in slot_title and _SLOT_SENTENCE_RE.search(slot_title)
+                and not _TITLE_LEFTOVER_RE.search(fuller)):
+            # 槽值是半句话：里面有用户说的那件事，还夹着提醒外壳（复测 E07：`790795b0`「提醒订花」、`925cd44c`
+            # 「老婆生日早上八点提醒我订花」）——存用户说的那件事；不夹外壳的长标题照旧「宁长勿短」
             return fuller
         if not fuller or fuller == slot_title:
             return slot_title

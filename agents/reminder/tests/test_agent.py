@@ -1369,5 +1369,10 @@ def test_a_bare_remind_wrapper_on_the_planner_title_is_dropped():
     """复测 `790795b0` E07 一遍：规划器给的标题是「提醒订花」，答句成了「提醒你：提醒订花」。去掉「提醒」正好是用户说的那件事才剥。"""
     from agents.reminder.src.agent import ReminderAgent as R
     assert R._fuller_title("提醒订花", "到我老婆生日那天早上八点提醒我订花") == "订花"
+    # 复测 `925cd44c` E07 一遍：规划器把半句话填进了标题槽——里面有用户说的那件事，还夹着「提醒我」
+    assert R._fuller_title("老婆生日早上八点提醒我订花", "到我老婆生日那天早上八点提醒我订花") == "订花"
+    assert R._fuller_title("给老婆订花", "到我老婆生日那天早上八点提醒我订花") == "给老婆订花"   # 不夹外壳的长标题照旧
+    # 原话那份自己就没剥干净（跨域：赛程转提醒）：不拿它顶替
+    assert R._fuller_title("第一场开始前提醒我观看曼城", "第一场开始前提醒我观看") == "第一场开始前提醒我观看曼城"
     assert R._fuller_title("提醒事项整理", "明天提醒我做提醒事项整理") == "做提醒事项整理"   # 不是外壳：照旧
 
