@@ -11278,3 +11278,28 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - ⛔ 教训：
   - 「GC 在跑、零错误」不等于策略有效，要看回收后可用是否到线、回收间隔是否以天计。
   - 只要回收删了记录，缓存键就会大面积解绑（apt、pip、npm 这些贵的步骤都在内），所以「保底」保住的只是占盘的失效记录。
+
+## 2026-10-13：容量治理 P2 二次修订上线——GC 去保底、`capacity` 带 `host_gc`（`fb21ce00`）
+
+- 用户批准起草与上线；drone 用户批准去保底，drone 审阅主机 GC 部分无阻塞意见。
+- 改法：
+  - GC 触发（可用 < 45 GiB）后执行 `docker buildx prune --all`，一次清空，不再带 `--min-free-space` / `--reserved-space`。
+  - 回收后仍低于 60 GiB 就退避（不变）；记录 schema 3。
+  - 策略删 `reserved_space_gib`，`retention.py` 拒收仍带它的策略。
+  - `dev_stack capacity` 新增只读 `host_gc` 字段：GC 最近一轮的状态与 warning、退避状态。
+- 验证：
+  - 相关 249 passed；scripts 全量 1756 passed / 14 skipped。新工作树先 `buf generate proto`，否则 5 例缺 `cockpit`。
+  - 8 处变异全部判红。补了「回收后落在 45 与 60 之间仍退避」的用例：旧用例 42 GiB 同时低于两条线，抓不住把达标判断错接到触发线。
+- 上线：
+  - `66a172d2` cherry-pick 到 `790795b0` 上，得到 `fb21ce00`。
+  - 隔离克隆里 `infra-approval`：锚 `72610c4a` → `db829279`，只装 `retention.py` 与策略。
+  - 15:07Z 更新主机 GC（旧版备份 `/var/backups/host-capacity-gc/20261013T150729Z/`），首轮 `not_needed`。
+  - 推送 `790795b0..fb21ce00`。
+  - 核对：status 5/5、零 warning（release 仍 `790795b0`）；部署 dry-run 零阻断。
+  - 已通知 car-agent-64：下次发布先同步 main。
+  - 详见 [容量治理 §5「P2 二次修订」](design/2026-09-28-cloud-host-capacity-governance.md)。
+- drone 同日按 A 案清理：可用 46.99 → 70.88 GiB；镜像保留口径改为「当前 + 上一版 + M0」。
+- ⛔ 教训：
+  - 改了锚内文件的提交，换锚前不能推 main，否则所有会话的部署都会被判基础设施不匹配。顺序是：换锚 → 更新主机 → 立刻推送。
+  - `infra-approval` 连 prepare 都要求提交能从本地 `refs/heads/main` 到达：共享仓库的 main 被别人检出时，用隔离克隆。
+  - 克隆里跑 `status` 会因缺根 `.env` 报 `configuration_rejected`，`status` / `verify` 回主仓库跑。
