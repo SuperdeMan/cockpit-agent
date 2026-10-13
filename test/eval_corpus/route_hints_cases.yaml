@@ -754,8 +754,9 @@
 
 - text: 取消导航
   initial_intents: []
-  expect_final_intents: []
-  source: "反向护栏：guard「导航」拦下"
+  expect_final_intents: [navigation.cancel]
+  source: "反向护栏：调研账本的取消 hint 被 guard「导航」拦下；后来导航自己的 navigation.cancel hint（priority 126）接走这句
+    ——落导航取消、不落 research.cancel 才是要钉的（2026-10-13 随基线重写校正，此前该条一直相对基线红着）"
   tags: [research, ledger, cancel, guardrail, navigation]
 
 - text: 别查天气了
@@ -808,3 +809,59 @@
 # 过宽分支「帮我看看」曾把 LBS 句整句劫持进 vision.describe（replace + 端侧抓帧上传）。
 # 收窄后：LBS 句由 nearby 自己的 hint 确定性接住；真视觉句仍由指代分支覆盖。
 
+# ── 「记住…」当场写入（2026-10-13，docs/design/2026-10-13-v2-200x5-followups.md §2）──────────
+# 能力目录此前没有「记住」：规划器拿生态服务桥（「拿铁」）、建提醒（「生日」）、闲聊顶替（200×5 `70b179b7` E01 / E02 各 5/5）。
+# initial_intents 照真实派错的落点写；负例里待办、提醒、在问、复合句、不以「我」开头的一律不碰。
+- text: 记住我喜欢喝拿铁
+  initial_intents: [shop.order]
+  expect_final_intents: [memory.remember]
+  source: "200×5 70b179b7 E01：5/5 被语义路由判成生态服务桥"
+  tags: [memory, remember, replace]
+
+- text: 记住我老婆的生日是五月二十号
+  initial_intents: [reminder.create]
+  expect_final_intents: [memory.remember]
+  source: "200×5 70b179b7 E02：5/5 当成建提醒，反问「什么时候提醒你」"
+  tags: [memory, remember, replace]
+
+- text: 记住，我女儿叫小满
+  initial_intents: []
+  expect_final_intents: [memory.remember]
+  source: "200×5 70b179b7 E04：一遍规划器先判不受话、再给零步"
+  tags: [memory, remember, replace]
+
+- text: 记住，我老婆的手机号是13800138000
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [memory.remember]
+  source: "200×5 70b179b7 E08：闲聊答「好的，我记下了」，什么也没写——交给能如实说「不记」的能力"
+  tags: [memory, remember, replace, pii]
+
+- text: 别忘了我不吃香菜
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [memory.remember]
+  source: "记忆祈使「别忘了」+ 第一人称事实"
+  tags: [memory, remember, replace]
+
+- text: 记一下要买牛奶
+  initial_intents: [reminder.create]
+  expect_final_intents: [reminder.create]
+  source: "待办口吻（「记一下」）不接，留给提醒的待办路径"
+  tags: [memory, guardrail, todo]
+
+- text: 记得明天提醒我带伞
+  initial_intents: [reminder.create]
+  expect_final_intents: [reminder.create]
+  source: "带提醒线索与相对日子的是定时提醒"
+  tags: [memory, guardrail, reminder]
+
+- text: 你还记得我女儿叫什么吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "回忆问句不是写入"
+  tags: [memory, guardrail, recall]
+
+- text: 记住我喜欢喝拿铁，然后帮我点一杯
+  initial_intents: [shop.order]
+  expect_final_intents: [shop.order]
+  source: "复合句交给规划器排两步，整句 replace 会吞掉第二个诉求"
+  tags: [memory, guardrail, compound]

@@ -139,12 +139,16 @@ schema_version: 1
 # 2026-10-12 放到 642：新增两个 active intent `frunk.open` / `frunk.close`（前备箱开放语音，核心旅程 K05「打开前备箱」
 # 被规划成 trunk.open、确认后开错对象）。危险动作按 2+2+1 正常覆盖、不进豁免表：两对 route_flip（开 vs 关、前备箱 vs 后备箱）
 # + 各一条换说法的第二正例，「打开后备箱」复用既有输入，端侧入口用例 `ei.dangerous.frunk` 复用「打开前备箱」，去重后 +4。旧尺子一条没删。
+# 2026-10-13 放到 648：新增 active intent `memory.remember`（「记住…」当场写入；200×5 `70b179b7` 里「记住我喜欢喝拿铁」5/5 被判成
+# 生态服务桥、「记住我老婆的生日…」5/5 当成建提醒）。覆盖矩阵机械新增正例 2（口味 / 家人称呼）、硬负例 3（待办「记一下」、
+# 带时间的提醒、回忆问句）、invariant 对照 1（「别忘了我不吃香菜」），六句都是新输入、去重后 +6。全族由整句锚定的 route_hint
+# 修复，记 `seen_regression`。旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 642
+    max_cases: 648
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

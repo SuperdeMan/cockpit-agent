@@ -1590,3 +1590,80 @@ cases:
       - input: {utterance: 把前备箱合上, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [frunk.close]}], forbidden_intents: [frunk.open, trunk.close], allow_extra_intents: false}
+
+  # ── 「记住…」当场写入 vs 待办 / 提醒 / 回忆（memory.remember，2026-10-13）──
+  # 能力目录此前没有「记住」：200×5 `70b179b7` 里「记住我喜欢喝拿铁」5/5 被判成生态服务桥、「记住我老婆的生日…」5/5
+  # 当成建提醒。新能力由整句锚定的 route_hint 接「记住 + 我…」单句事实；全族进入 route_hint 修复资产，记 seen_regression。
+  - id: tu.memory.remember-latte
+    title: 记住口味偏好（不被「拿铁」带去点咖啡）
+    family_id: tu.memory-remember-vs-todo
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [domain_attractor], domains: [memory, mcp], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-13}
+    turns:
+      - input: {utterance: 记住我喜欢喝拿铁, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [memory.remember]}], forbidden_intents: [shop.order, reminder.create], allow_extra_intents: false}
+  - id: tu.memory.remember-family-name
+    title: 记住家人称呼（第二正例）
+    family_id: tu.memory-remember-vs-todo
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [domain_attractor], domains: [memory], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-13}
+    turns:
+      - input: {utterance: 记住，我女儿叫小满, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [memory.remember]}], forbidden_intents: [reminder.create, chitchat.talk], allow_extra_intents: false}
+  - id: tu.memory.remember-paraphrase
+    title: 别忘了我不吃香菜（invariant 对照）
+    family_id: tu.memory-remember-vs-todo
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [memory], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-13}
+    relation: {base_case: tu.memory.remember-latte, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 别忘了我不吃香菜, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [memory.remember]}], forbidden_intents: [shop.order, reminder.create], allow_extra_intents: false}
+  - id: tu.memory.todo-not-remember
+    title: 记一下要买牛奶是待办（硬负例）
+    family_id: tu.memory-remember-vs-todo
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [memory, reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-13}
+    turns:
+      - input: {utterance: 记一下要买牛奶, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [memory.remember, shop.order], allow_extra_intents: false}
+  - id: tu.memory.timed-reminder-not-remember
+    title: 记得明天提醒我是定时提醒（硬负例第二例）
+    family_id: tu.memory-remember-vs-todo
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [memory, reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-13}
+    turns:
+      - input: {utterance: 记得明天早上八点提醒我带伞, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [memory.remember], allow_extra_intents: false}
+  - id: tu.memory.recall-not-remember
+    title: 你还记得我女儿叫什么吗是在问（硬负例第三例）
+    family_id: tu.memory-remember-vs-todo
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [question_vs_command], domains: [memory], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-10-13}
+    turns:
+      - input: {utterance: 你还记得我女儿叫什么吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [chitchat.talk]}], forbidden_intents: [memory.remember], allow_extra_intents: false}

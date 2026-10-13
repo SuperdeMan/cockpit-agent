@@ -42,6 +42,18 @@ _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个�
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 from runtime.polarity import NEG_WORDS   # 极性词表唯一来源（Q7/Q11 共用）
 from runtime.clause_split import split_clauses   # 分句分隔符唯一来源（拆步后「这一步自己那半句」）
+from runtime.memory_directive import directive_content   # 「记住…」祈使词唯一来源
+
+#: `memory.remember` 没写进去时的答复，按 Memory 交回的结果类别（`MemoryClient.remember_utterance`）。
+#: 一句也不说「记住了」：没存就说没存，存没存不确定就说不确定。
+_REMEMBER_SPEECH = {
+    "pii": "手机号、证件号这类信息我不记，需要用的时候你再告诉我。",
+    "not_stored": "这句我没能记下来，你可以换个说法再说一次。",
+    "stale": "这句我没能记下来，你可以换个说法再说一次。",
+    "off": "现在没开记忆，这句我记不下来。",
+    "timeout": "记忆这边没及时回话，我不确定记下来没有，过一会儿可以问我确认一下。",
+    "unavailable": "记忆服务暂时连不上，这次没记下来，稍后再说一次就行。",
+}
 
 _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
 #: 标题尾巴上的**域词**（「…的提醒」「…那条待办」）。查空之后再削一次尾，见
@@ -292,7 +304,8 @@ class ReminderAgent(BaseAgent):
                     "reminder.create_batch": self._create_batch,
                     "reminder.list": self._list,
                     "reminder.complete": self._complete, "reminder.cancel": self._cancel,
-                    "reminder.update": self._update}
+                    "reminder.update": self._update,
+                    "memory.remember": self._remember}
         h = handlers.get(intent.name)
         if not h:
             # R9 契约：诚实拒绝用 OK——FAILED 话术会被聚合器吞成裸「抱歉，处理失败」
@@ -318,6 +331,23 @@ class ReminderAgent(BaseAgent):
     def _state_key(self, ctx, key: str) -> str:
         """per-speaker 会话态键（列表序号 / 待补槽）收窄到 OwnerKey。"""
         return owner_scoped(key, self._uid(ctx), self._occ(ctx))
+
+    # ── memory.remember（2026-10-13，docs/design/2026-10-13-v2-200x5-followups.md §2）──
+    async def _remember(self, intent, ctx, meta) -> AgentResult:
+        """「记住，我女儿叫小满」：整句交给 Memory 当场抽取并写入（与后台抽取同一份治理），**按写入结果答复**。
+
+        只有 `stored` 才说「记住了」，复述的是用户自己的话（我→你），不念抽取改写过的条目；手机号、证件号这类
+        Memory 不调模型直接不记；超时只说不确定（客户端放弃之后 Memory 可能照样写完了）。话术原样呈现，不交聚合改写——
+        200×5 `70b179b7` E08 里闲聊对手机号答「好的，我记下了」，什么也没写。"""
+        raw = str(intent.raw_text or "").strip()
+        result = await ctx.remember_utterance(raw)
+        outcome = str(result.get("outcome") or "unavailable")
+        data = {"memory_outcome": outcome, "_speech_verbatim": True}
+        if outcome != "stored":
+            return AgentResult(speech=_REMEMBER_SPEECH.get(outcome, _REMEMBER_SPEECH["unavailable"]), data=data)
+        said = directive_content(raw) or raw.rstrip("。.！!～~ ")
+        said = said.replace("我", "你")
+        return AgentResult(speech=f"好的，记住了：{said}。" if said else "好的，记住了。", data=data)
 
     # ── create（含 P1a：update 续接 / snooze 收编 / 重复规则）──
     async def _create_batch(self, intent, ctx, meta) -> AgentResult:

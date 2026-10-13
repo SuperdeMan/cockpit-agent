@@ -209,12 +209,49 @@ capabilities:
     slot_shapes: {index: ordinal}   # C3 值形状，理由见 reminder.cancel 那处
     examples: ["把接孩子改到五点", "买牛奶那条推迟到明天九点", "改第二条到晚上八点",
                "带充电线的提醒改个时间"]
+  # 2026-10-13「记住…」当场写入（docs/design/2026-10-13-v2-200x5-followups.md §2）。挂在提醒 Agent：「记一下要买牛奶」（待办）、
+  # 「记得明天提醒我」（提醒）与「记住我女儿叫小满」（事实）同属「记…」一族，在一个 Agent 里分；当场抽取要调一次模型，
+  # 本 Agent 的 8 s 预算放得下（闲聊 2.5 s）。内容只取原话、不收槽——整句交给 Memory，与后台抽取同一份治理。
+  - intent: memory.remember
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters: {}
+      additional_parameters: reject
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
+    effect: write
+    description: 记住用户明说要长期记着的、关于自己的一件事（家人称呼、生日、口味与习惯、出行偏好），当场写进个人记忆，
+      按写入结果如实答复；手机号、证件号这类不记。不适用：待办（「记一下要买牛奶」）与定时提醒（「记得明天提醒我…」）
+      ——那些用 reminder.create；问自己记过什么用闲聊。
+    slots: []
+    whole_utterance: true
+    examples: ["记住，我女儿叫小满", "记住我喜欢喝拿铁", "别忘了我不吃香菜", "记住我开车不喜欢走高速",
+               "记住我老婆的生日是五月二十号"]
 
 # 确定性路由（R2.1）：弱 LLM 常把"提醒我X"落到 chitchat。guard 排除车辆功能语境的
 # "提醒"（限速/车道/碰撞等设备对象词，见 orchestrator/edge/fast_intent.py:1090）与
 # 说明书查询（"限速提醒是什么"归 manual）。pattern 为设计 §6.2 方向性草案，以
 # test/eval_corpus/route_hints_cases.yaml 实测收敛（Task 10）。
 route_hints:
+  # 2026-10-13「记住…」：句首「记住 / 记着 / 记好 / 记得 / 别忘了」+ 以「我」开头、单分句的一件事，钉到 memory.remember。
+  # 能力目录此前没有「记住」，规划器拿生态服务桥（「拿铁」）、建提醒（「生日」）、闲聊顶替；越权早退还会在规划前就答
+  # 「没有授权」（200×5 `70b179b7` E01 / E02 各 5/5）。「记一下 / 记个」是待办口吻、「你记得…」多半在问，都不接；
+  # guard 挡提醒线索、相对日子与钟点、疑问词、并列连接词——这些留给规划器在提醒 / 回忆 / 复合计划之间判。
+  # 2026-08-02 退役的 reminder.create replace hint 是前车之鉴：整句锚定、窄形态，以 route_hints_cases.yaml 实测收敛。
+  - pattern: '^[\s，,。.、]*(?:那|哎|诶|嘿|嗯|请|麻烦|你好|喂)*[\s，,、]*(?:帮我|给我|请)?(?:记住|记着|记好|记得|别忘了|别忘记|别忘)[\s，,：:、]*我[^，,。；;！!？?\n]{2,40}[。.！!～~\s]*$'
+    intent: memory.remember
+    policy: replace
+    priority: 132
+    guard: '提醒我|叫我|通知我|今天|明天|后天|今晚|明晚|昨天|前天|上午|下午|中午|晚上|早上|凌晨|傍晚|[0-9一二两三四五六七八九十]+\s*点|点半|周[一二三四五六日天]|星期|礼拜|下周|这周|本周|待会|一会儿|然后|顺便|再帮|并且|什么|哪里|哪儿|哪个|哪天|哪些|谁|几[个号点天岁次]|多少|怎么|为什么|为啥|是不是|有没有|吗[。.！!？?\s]*$|[?？]'
   # XS1：账号级「当前进行中任务」是 reminder.list 的窄查询句，不交给闲聊从历史文本
   # 重构。整句锚与「哪些」问法把完成命令、状态陈述、泛任务讨论全部挡在外面。
   - pattern: '^\s*(?:请|帮我|给我)?\s*(?:查|查询|看|看看|列(?:一下|出)?)?\s*(?:我)?(?:现在|当前)?(?:有)?哪些(?:正在进行|进行中|未完成)的?(?:任务|提醒|待办|安排)\s*[？?]*$'

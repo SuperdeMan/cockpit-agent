@@ -31,3 +31,19 @@ MEMORY_DIRECTIVE_RE = re.compile(
 def is_memory_directive(text: str | None) -> bool:
     """句首是显式的记忆类祈使指令（「记住…」）。"""
     return bool(MEMORY_DIRECTIVE_RE.match(POLITE_PREFIX_RE.sub("", (text or "").strip())))
+
+
+#: 祈使词与内容之间的分隔（「记住，我…」「别忘了：…」）。
+_SEPARATOR_RE = re.compile(r"^[\s，,：:、]+")
+
+
+def directive_content(text: str | None) -> str:
+    """记忆祈使后面要记的那件事：「记住，我女儿叫小满。」→「我女儿叫小满」；不是记忆祈使返回空串。
+
+    只剥礼貌前缀、祈使词与分隔符（同 `is_memory_directive` 一份正则），内容原样——答复「好的，记住了：…」复述的是用户的话，
+    不是抽取模型改写过的条目文本（2026-10-13「记住…」当场写入，提醒 Agent `memory.remember`）。"""
+    raw = POLITE_PREFIX_RE.sub("", (text or "").strip())
+    m = MEMORY_DIRECTIVE_RE.match(raw)
+    if not m:
+        return ""
+    return _SEPARATOR_RE.sub("", raw[m.end():]).rstrip("。.！!～~ ").strip()
