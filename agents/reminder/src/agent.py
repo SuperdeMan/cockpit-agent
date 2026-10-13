@@ -115,6 +115,10 @@ _TIME_SIGNAL_RE = re.compile(
 _REMINDABLE_REF_RE = re.compile(
     r"这场|那场|到时候|开赛|开场|比赛开始|开始前|开始的?时候|"
     r"到[^，。,]{0,6}之?前|到达前|抵达前|快到(的时候|时)?")
+#: 标题里的指代：说的是会话里的另一件事（「刚才那个」「买那个东西」），要靠规划器解开——原话不拿来顶替槽值（`_fuller_title`）。
+_TITLE_REFERENCE_RE = re.compile(r"那个|这个|那件|这件|那条|这条|那家|这家|刚才|刚刚|上面|前面说|之前说|它")
+#: 原话标题没剥干净：还带着提醒外壳（「第一场开始前提醒我观看」「remind me to…」）——那份不比槽值可靠。
+_TITLE_LEFTOVER_RE = re.compile(r"提醒|叫我|通知我|remind", re.IGNORECASE)
 _CN_IDX = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 # 批 5（评审 2026-09-19 留下的观察，真栈 CT2 T2）：**事件触发**——「之后一旦下雨就通知我」
@@ -951,9 +955,9 @@ class ReminderAgent(BaseAgent):
         这边挡「放宽之后别存丢」。
 
         判据窄到只认那一种形态：**槽值必须是原话抽取结果的子串**。
-        两者互不包含时说明它们讲的可能不是同一件事（planner 换了说法），
-        **一个字都不动**——同 `slot_fidelity` 那条「认不出的一律让路，
-        宁可不回填也不要回填错」。
+        两者互不包含、但还有两个字以上的公共片段时（planner 换了说法），**一个字都不动**——同 `slot_fidelity`
+        那条「认不出的一律让路，宁可不回填也不要回填错」。连两个字的公共片段都没有时（2026-10-13，核心旅程 N02：
+        「带伞」被安成范例里的「带充电线」），原话自己说清了一件事就存原话那份；原话是指代或没剥干净时照旧信槽值。
         """
         # 规划器的标题也会带命令外壳（「提醒我订花」）或句首「到 + 时间」从句（「到老婆生日那天早上八点提醒我订花」）：
         # 同原话一样先剥掉，否则话术成了「提醒你：提醒我订花」（核心旅程 E07，`a5b5ea4a`）
@@ -964,6 +968,13 @@ class ReminderAgent(BaseAgent):
         if not fuller or fuller == slot_title:
             return slot_title
         if slot_title and slot_title in fuller:
+            return fuller
+        # 槽值和原话连两个字的公共片段都没有（核心旅程 N02：用户说「带伞」，规划器把范例里的「带充电线」安了上来）：原话自己
+        # 说清了一件事就存原话那份——提醒的内容是用户说的，以后按自己的说法改期、取消也找得回（`find_by_title` 是 LIKE）。
+        # 原话是指代（「刚才那个」「这场」）或没剥干净时照旧信槽值：那里规划器替用户把指代解开了（赛程转提醒这类跨域标题）。
+        if (slot_title and _common_run(slot_title, fuller) < 2 and admit_task_title(fuller)[0]
+                and not _TITLE_REFERENCE_RE.search(fuller) and not _REMINDABLE_REF_RE.search(fuller)
+                and not _TITLE_LEFTOVER_RE.search(fuller)):
             return fuller
         return slot_title
 

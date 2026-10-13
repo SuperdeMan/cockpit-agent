@@ -1009,8 +1009,8 @@ def test_fuller_title_leaves_everything_else_alone():
     # ① 逐字相同 ⇒ 不动
     assert R._fuller_title("开会", "明天下午四点提醒我开会") == "开会"
     assert R._fuller_title("买牛奶", "记一下要买牛奶") == "买牛奶"
-    # ② 槽值**不是**抽取结果的子串 ⇒ 不动（planner 改写过，不是丢了一截）
-    assert R._fuller_title("周会", "明天下午四点提醒我参加例会") == "周会"
+    # ② 槽值**不是**抽取结果的子串、但还有两个字以上的公共片段 ⇒ 不动（planner 改写过，不是丢了一截）
+    assert R._fuller_title("服用降压药", "八点提醒我吃降压药") == "服用降压药"
     # ③ 抽取结果为空 ⇒ 不动
     assert R._fuller_title("交周报", "") == "交周报"
     # ④ 槽值为空由调用方那条既有分支处理，这里不许把空串换成别的
@@ -1331,3 +1331,36 @@ async def test_a_single_request_title_is_still_completed_from_the_whole_utteranc
     assert res.status == "ok", res.speech
     times, _ = await a.store.list_split("u1")
     assert [t.title for t in times] == [stored]
+
+
+def test_a_slot_title_with_nothing_in_common_with_what_the_user_said_gives_way():
+    """核心旅程 N02（`70b179b7` 一遍）：用户说「明天早上八点提醒我带伞」，规划器把范例「明天早上八点提醒我带充电线」的标题
+    安了上来，建成的是「带充电线」。槽值和原话连两个字的公共片段都没有、原话自己说清了一件事 ⇒ 存原话那份（以后「取消例会的提醒」
+    这类按用户说法的查找也找得回——修前「参加例会」被存成规划器的「周会」）。"""
+    from agents.reminder.src.agent import ReminderAgent as R
+    assert R._fuller_title("带充电线", "明天早上八点提醒我带伞") == "带伞"
+    assert R._fuller_title("周会", "明天下午四点提醒我参加例会") == "参加例会"
+    assert R._fuller_title("参加会议", "下午三点提醒我开会") == "开会"
+
+
+@pytest.mark.parametrize("slot_title,raw", [
+    ("观看曼城对阿森纳", "第一场开始前提醒我观看"),       # 赛程转提醒：原话没剥干净、说的是「这一场」
+    ("给张姐打电话", "提醒我做刚才说的那件事"),           # 指代：规划器从上文解开了
+    ("买牛奶", "明天提醒我买那个东西"),
+    ("给妈妈打电话", "remind me to call mom at 8"),      # 英文外壳剥不掉，那份不比槽值可靠
+    ("和客户开会", "深圳下雨就通知我，另外明天早上八点提醒我开代号X的会"),   # 整句两个诉求：原话那份带着外壳
+])
+def test_a_reference_or_an_unclean_utterance_keeps_the_planner_title(slot_title, raw):
+    from agents.reminder.src.agent import ReminderAgent as R
+    assert R._fuller_title(slot_title, raw) == slot_title
+
+
+@pytest.mark.asyncio
+async def test_n02_the_reminder_is_stored_with_what_the_user_said():
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="明天早上八点提醒我带伞",
+                           slots={"title": "带充电线", "time_text": "明天早上八点"})
+    assert res.status == "ok" and "带伞" in res.speech and "充电线" not in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert [r.title for r in times] == ["带伞"]
+
