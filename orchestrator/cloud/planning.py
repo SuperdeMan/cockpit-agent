@@ -234,6 +234,10 @@ def _verification_dict(cap) -> dict:
 # 用同一条：「记住我喜欢清淡」是长期偏好、不是本次口味）；这里只留别名。
 _POLITE_PREFIX_RE = _memory_directive.POLITE_PREFIX_RE
 _DIRECTIVE_RE = _memory_directive.MEMORY_DIRECTIVE_RE
+#: 越权早退的「打平」余量（`_scope_blocked_target`）：已授权能力的路由分贴着被挡下的 top-1、差不到这么多，路由就分不清，
+#: 不下「你没权限」的结论。待证参数（2026-10-13 线上 ResolveAgents 实测）：打平误判的「买牛奶那条办完了」差 0.006；
+#: 真越权的「帮我点一杯麦当劳的可乐」差 0.18、「附近有什么好吃的火锅店」差 0.33。改这个数要连同钉住它的用例一起改。
+_SCOPE_TIE_MARGIN = 0.05
 _CLARIFY_GOAL_RE = re.compile(
     r"澄清|询问(?:用户)?(?:意图|需求|想法)"
     r"|(?:没有|缺少)动词|意图(?:不明确|不清楚)"
@@ -3862,10 +3866,11 @@ class PlanBuilder:
         分不清就返回 None：**宁可退回今天的行为，也不冤枉一次「你没权限」**。
         没有被挡下的能力时（绝大多数身份）一次调用都不发生。
 
-        「分不清」也包括**打平**：前几名里有一条没被挡下的能力同样过了这道门槛，路由就说不清用户要的是哪条，
-        交给规划器在已授权的目录里判。200×5 后续批 N05（`284b52ce`）：「买牛奶那条办完了」线上生态服务桥 0.538、
-        提醒 0.532，早退把一句完成待办答成了「没有授权」（5 / 5）；「帮我点一杯麦当劳的可乐」生态服务桥 0.63、
-        已授权里最高 0.452，照旧说清没权限。
+        「分不清」也包括**打平**：前几名里有一条没被挡下的能力同样过了这道门槛、分数又贴着 top-1（差不到
+        `_SCOPE_TIE_MARGIN`），路由就说不清用户要的是哪条，交给规划器在已授权的目录里判。200×5 后续批 N05
+        （`284b52ce`）：「买牛奶那条办完了」线上生态服务桥 0.538、提醒 0.532，早退把一句完成待办答成了「没有授权」
+        （5 / 5）。只过门槛不算打平：「附近有什么好吃的火锅店」周边 0.885（模拟车车道的合成用户没授权）、导航 0.56，
+        路由很清楚要的是周边，照旧说清没权限。
         """
         if not blocked:
             return None
@@ -3879,9 +3884,11 @@ class PlanBuilder:
             return None
         floor = float(os.getenv("CLARIFY_FALLBACK_MIN", "0.5"))
         top = resolved[0]
-        if float(getattr(top, "score", 0.0) or 0.0) < floor:
+        top_score = float(getattr(top, "score", 0.0) or 0.0)
+        if top_score < floor:
             return None
         if any(r.manifest.agent_id not in blocked_by_id
-               and float(getattr(r, "score", 0.0) or 0.0) >= floor for r in resolved[1:]):
+               and float(getattr(r, "score", 0.0) or 0.0) >= max(floor, top_score - _SCOPE_TIE_MARGIN)
+               for r in resolved[1:]):
             return None
         return blocked_by_id.get(top.manifest.agent_id)

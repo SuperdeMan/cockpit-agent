@@ -204,6 +204,20 @@ def test_a_clearly_blocked_request_still_names_the_missing_permission():
     assert spy.plan_calls == 0 and spy.calls == []
 
 
+def test_a_permitted_runner_up_far_behind_is_not_a_tie():
+    """只过门槛不算打平（NB11 形态）：线上「附近有什么好吃的火锅店」周边 0.885（模拟车车道的合成用户没授权）、导航 0.56，
+    路由很清楚要的是周边——照旧说清没权限，不交给规划器去拿导航凑一个答案。"""
+    near = _agent("nearby", [_cap("nearby.search", ["category"])], requires=["payment.invoke"],
+                  display_name="周边发现", score=0.885)
+    nav = _agent("navigation", [_cap("navigation.navigate_to", ["destination"])], display_name="导航", score=0.56)
+    spy = _SpyWith([near, nav, _CHITCHAT], resolve_top=[near, nav])
+
+    final = _final(_run(_engine(spy), _req("附近有什么好吃的火锅店")))
+
+    assert [i["code"] for i in final.get("issues") or []] == [contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.plan_calls == 0 and spy.calls == []
+
+
 # ─── 命中：说出真实原因 ─────────────────────────────────────────────────────
 
 def test_scope_blocked_capability_is_named_as_the_real_reason():
