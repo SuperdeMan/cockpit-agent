@@ -6,6 +6,10 @@ the clauses. The edge must not run any part of them locally either: splitting th
 sentence executes the consequent and drops the condition. The CA2-10 real-stack
 probe (2026-10-02) saw 「如果深圳今天不下雪，就把空调打开」 split at the edge and
 the air conditioning switched on unconditionally. This is the only copy of the rule.
+
+The cloud asks the same question through ``waits_on_condition``: the same rule
+with one exclusion, 「只要…的」 meaning "only the ones that…" (no consequent).
+The edge keeps the broad ``is_deferred_instruction`` on purpose.
 """
 from __future__ import annotations
 
@@ -29,6 +33,23 @@ COMPLETE_DEFERRED_CONDITION_RE = re.compile(
 def is_deferred_instruction(text) -> bool:
     """Any part of this utterance may wait on a condition, so nothing may run before it is judged."""
     return bool(DEFERRED_CONDITION_RE.search(str(text or "")))
+
+
+#: 「只要评分四点五以上的」「只要靠窗的」：这里的「只要」是「只想要」——后面是一个「…的」名词短语、没有后件，不等任何条件
+#: （核心旅程 NB06：被当成条件句升成多轮，循环里补了一步不带目标的详情，挂起反问时把列表卡丢了）。只认「只要」起的这一截
+#: 直到句末（或空白——规划器把目标接在空白后面）都没有分句、没有就 / 便 / 才 / 都 / 则 / 的话、以「的」收尾（「就行 / 就好」
+#: 剥掉）；后件说出来了的（「只要评分四点五以上的，就导航到第一家」「只要下雨就关天窗」「只要下雨关天窗」）照旧是条件句。
+#: 2026-10-13 量过：条件反例 25 / 25 仍判条件，「…的」收尾的「只想要」15 / 15 认出（docs/design/2026-10-13-v2-200x5-followups.md §13）。
+_ONLY_WANT_RE = re.compile(
+    r"只要(?:(?!的话)[^，,。；;！!？?\s就便才都则]){1,30}?的(?:就行|就好|就可以|就够了)?[了吧呀啊呢嘛。！!]*(?=\s|$)")
+
+
+def waits_on_condition(text) -> bool:
+    """云端判「这句话（或规划目标）要不要等条件」：同一条延后条件判据，只是先去掉「只想要」义的「只要…的」。
+
+    端侧「不在本地执行」照旧用 `is_deferred_instruction`，任何「只要」都上云：拿不准就交给规划器——「车窗只要开左边的」
+    这类带挑选的说法不该在端侧就地执行。"""
+    return bool(DEFERRED_CONDITION_RE.search(_ONLY_WANT_RE.sub("", str(text or ""))))
 
 
 #: 以假设框架起句、条件和后件都说出来的条件指令（「如果深圳今天下雪，就帮我把空调打开」）。后件做不做取决于前件，前件要看过观察

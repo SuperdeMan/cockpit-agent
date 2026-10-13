@@ -34,6 +34,7 @@ def _agents():
         MockAgent("manual-rag", ["manual.query"], response_only=("manual.query",)),
         MockAgent("info", ["info.weather"]),
         MockAgent("reminder", ["reminder.create"]),
+        MockAgent("nearby", ["nearby.search"]),
     ]
 
 
@@ -77,3 +78,11 @@ def test_a_conditional_plan_mixing_observation_and_answer_steps_is_still_promote
     """「全是」只回答步才不升级：有一个观察步，条件计划的前半段就在。"""
     plan = _build("明天要是下雨就提醒我带伞", [("info", "info.weather"), ("chitchat", "chitchat.talk")])
     assert plan.complexity == "adaptive"
+
+
+def test_only_the_ones_that_is_not_promoted_to_adaptive():
+    """核心旅程 NB06：「只要评分四点五以上的」的「只要」是「只想要」——没有后件、不等条件。此前被升成多轮，循环里补了一步
+    不带目标的详情，挂起反问时把列表卡丢了。条件句照旧升。"""
+    assert _build("只要评分四点五以上的", [("nearby", "nearby.search")]).complexity == "simple"
+    assert _build("只要明天下雨就提醒我带伞", [("info", "info.weather")]).complexity == "adaptive"
+

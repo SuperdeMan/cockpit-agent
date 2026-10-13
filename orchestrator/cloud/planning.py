@@ -329,8 +329,8 @@ _EXPLICIT_CLOSE_ACTION_RE = re.compile(
     r"(?:^|[\s，,。；;！？!?]|先|再|然后|接着|随后|顺便)"
     r"(?:请|帮我|给我)?(?:关闭|关掉|关上|合上|收起|关)"
 )
-# 延后条件判据端云共用一份（端侧据此不就地执行，见 runtime/deferred_condition.py）。
-_DEFERRED_CONDITION_RE = deferred_condition.DEFERRED_CONDITION_RE
+# 延后条件判据端云共用一份（端侧据此不就地执行，见 runtime/deferred_condition.py）；云端判「要不要等条件」用
+# `deferred_condition.waits_on_condition`——同一条判据，只多认出「只想要」义的「只要…的」（核心旅程 NB06）。
 _COMPLETE_DEFERRED_CONDITION_RE = deferred_condition.COMPLETE_DEFERRED_CONDITION_RE
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
@@ -456,7 +456,7 @@ def _simple_goal_omits_multi_action_step(
         plan.complexity == "simple"
         and len(plan.steps) < 2
         and _MULTI_ACTION_CONNECTOR_RE.search(semantic_text)
-        and not _DEFERRED_CONDITION_RE.search(semantic_text)
+        and not deferred_condition.waits_on_condition(semantic_text)
         and not _NEGATED_SEQUENCE_HEAD_RE.search(utterance)
     )
 
@@ -1227,7 +1227,7 @@ def _preserve_conditional_replan_contract(plan: Plan | None, text: str) -> bool:
             or all(bool(step.response_only) for step in plan.steps)):
         return False
     semantic_goal = " ".join(part for part in (str(text or ""), plan.goal) if part)
-    if not _DEFERRED_CONDITION_RE.search(semantic_goal):
+    if not deferred_condition.waits_on_condition(semantic_goal):
         return False
     plan.complexity = "adaptive"
     if not plan.goal:
@@ -1317,8 +1317,8 @@ def _asks_several_questions(text: str) -> bool:
     """原话里有两个以上的问句（「胎压黄灯亮了，还能继续开吗？应该补到多少？」）：每问一件事，计划少一步就少答一问。
     分句同 `_origin_clauses`（`split_clauses` 不在问号处断句），问句判据是 `question_shape.is_non_directive_question`
     （「推荐三部电影」这类请求不算问句）。条件句不算：那条判据把「如果深圳明天下雨」也当成非指令句，而条件句有意把后一半
-    留到条件成立时再做——与多动作守卫同一条排除（`_DEFERRED_CONDITION_RE`）。"""
-    if _DEFERRED_CONDITION_RE.search(re.sub(r"\s+", "", str(text or ""))):
+    留到条件成立时再做——与多动作守卫同一条排除（`deferred_condition.waits_on_condition`）。"""
+    if deferred_condition.waits_on_condition(re.sub(r"\s+", "", str(text or ""))):
         return False
     return sum(1 for clause in _origin_clauses(text) if is_non_directive_question(clause)) >= 2
 
@@ -3444,7 +3444,7 @@ class PlanBuilder:
         指令分句 = 不是提问、不是否定、以指令起句（`step_grounding.opens_as_instruction`）；认不出的不算，保守一侧就是修前的整句拦。
         """
         if (any(frame in text for frame in HYPOTHETICAL_FRAMES)
-                or _DEFERRED_CONDITION_RE.search(text) or _COMPLETE_DEFERRED_CONDITION_RE.search(text)):
+                or deferred_condition.waits_on_condition(text) or _COMPLETE_DEFERRED_CONDITION_RE.search(text)):
             return None
         parts = [clause for sentence in _ORIGIN_SENTENCE_END_RE.split(text)
                  for clause in split_clauses(sentence) if clause.strip()]
