@@ -5,6 +5,8 @@
 > **P2 修订（2026-10-09）**：按总量封顶适得其反。每一轮真删了记录的 prune 都会让两个项目的下一次构建大面积冷启动，本项目的缓存与 release 镜像因此一起膨胀（§5「P2 修订」）。
 > 经用户批准，已一次性精确清理本项目失效缓存，可用 36.54 → 60.26 GiB。GC 改为：可用低于 target 才回收，一次清到 `prune_to_free_gib`，保底 `reserved_space_gib`，未达标就降一档再试（§4.4）。
 > drone 用户 2026-10-09 已同意（条件即保底与退避两条）。**已上线**：`b9d7819b` 经用户批准，基础设施锚 `ef2be611` → `abe367c4`（只换策略与 `retention.py`）；主机 GC 于 17:13 CST 更新，systemd 首轮 `not_needed`
+> **2026-10-13 复核**：保留策略每次发布都正常执行；GC 在跑，但 4 次真回收都被 10 GiB 保底挡在 60 GiB 以下，09:03 CST 起退避，§6 第 4 条「回收间隔以天计」不成立（实际 6–10 h）。
+> 增长主要来自 drone（镜像 +115 个、工作目录）以及每次回收后冷构建留下的失效副本。经用户批准，再次精确删除本项目失效缓存：可用 37.89 → 52.83 GiB。去掉保底的修订 drone 技术上同意，待两边用户批准（§5「2026-10-13 复核」）
 > 交付对象：发布链维护者（`scripts/cloud_release*.py`、`scripts/dev_stack.py`、`deploy/cloud/**`）；§4.4、§4.5 与 §4.8 是主机级事项，需与同机 drone-agent 取得共识
 > 关联：[`deploy/cloud/README.md`](../../deploy/cloud/README.md)、`deploy/cloud/remote-build.sh`、`activate-release.sh`、`backup.sh`、`scripts/cloud_release_lib.py`；
 > 本方案的起点是 2026-09-28 的只读盘点与两轮清理（[history「2026-09-28：云主机容量清理」](../agents-history.md)、[QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)），
@@ -297,7 +299,50 @@ timer 下次触发 19:04:57 CST；首轮 `Result=success`，回收 0B（Total �
   - 09:14Z 手动触发一轮：`Result=success`，`not_needed`，`available_before` = 64,684,396,544 B，零错误零 warning。`StateDirectory` 已建（root 0700，空）。
   - 锚 apply 到脚本更新之间没有轮次落在过渡窗口里（上一轮 17:05 CST、下一轮 18:03 CST）。
   - 收尾：保留策略 dry-run 用新 `retention.py` 正常；`status` 5/5 零 warning。审批材料在本地 `.artifacts/infrastructure-approval/b9d7819b…/`。
-  - 首次真回收时，要对照 `available_after` 与目标线（60 GiB）的偏差，确认 Bfree 换算无误。
+  - 新锚下首个发布 `2464356a`（10:20Z，另一会话部署）：
+    - 事务内回收 `20261009T102005Z-releases.json` 为 applied，退役 3 个目录，回收后可用 61,752,741,888 B（57.51 GiB）。
+    - verify `20261009T102149Z-2464356.json`。
+    - 这次构建用了 22 分钟：它是当天精确清理后的第一次构建，按机理本来就会冷启动。
+  - 首次真回收时，要对照 `available_after` 与目标线（60 GiB）的偏差，确认 Bfree 换算无误。2026-10-13 已核对，换算正确，见下一段。
+
+**2026-10-13 复核：GC 退避与本项目失效缓存清理**（证据在 `.artifacts/cloud-capacity-20261013/`：`ANALYSIS.md`、`cleanup/RESULT.md`）
+
+- **保留策略正常**：10-09 之后 41 次发布，每次都在事务内回收；`evidence/retention/` 共 198 份（releases 92、backups 106），全部 `applied`。release 镜像恰好 3 套（3.53 GiB），构建 / 上传目录为 0，备份 32 套。
+- **GC 在跑，但没达到目标**：
+  - 主机上安装的 3 个文件与 `b9d7819b` 的 blob sha256 一致；每轮 `success`、零错误。
+  - 10-12 06:07、16:05、22:01 与 10-13 08:00 CST 共 4 次真回收，各回收 3.2–8.0 GB。回收后可用依次为 50.53、49.05、43.26、36.25 GiB，都没到 60 GiB。
+  - 两段退避：10-12 23:01 起 8 轮；10-13 09:03 起，到 21:04 已 13 轮。下次触发线 31.25 GiB，只比构建闸高 1.25 GiB。
+  - 回收间隔只有 10 h、6 h、10 h，§6 第 4 条不成立。
+- **Bfree 换算正确**：实际传入的 `--min-free-space` = 69,702,258,688 B，等于 60 GiB 加上 `f_bfree − f_bavail` 的 1,288,513 块（ext4 保留块 1,284,417 + 预留簇 4,096）。回收不达标的原因不在换算。
+- **保底留住的是失效记录**：
+  - 4 次回收之后，本项目下一次发布都冷构建：`09a851bd` 12 分、`70b179b7` 17 分、`3f1b53b0` 10 分、`4fc69b40` 8 分。两次构建之间没有回收的 7 次发布都约 1 分钟。
+  - 清理前，同一 apt 步骤、同一父记录在缓存里有 4 份（各 627 MB），npm install / npm ci 各 5 份，两条 go build 各 4 份。只有最后一次冷构建那条链还在被命中。
+  - 本项目缓存 12.31 GiB 中，约 9.3 GiB 是这类副本。
+  - 也就是说，§4.4 第 5 条「保底避免清空两个项目的缓存」的前提不成立：回收一旦删了记录，保底里的记录也会被解绑，留下的只是占盘。
+- **增长来源**（10-09 清理后 60.26 GiB → 36.81 GiB）：
+  - 非本项目镜像 17.85 → 26.98 GiB：drone 新增 115 个，保留集已超出「当前 + 里程碑」（原因见下方 drone 回复）。
+  - `~/drone-agent` 17.4 GB，其中 `desk/service` 在 10-09 之后写入 3.64 GB。
+  - drone `da_edge_inference.node` 在 10-10 留下 3 个 core，共 1.17 GB。10-13 13:34Z 被 systemd-tmpfiles-clean 按 apport 自带的 3 天规则删掉，所以 GC 的 7 天规则（§4.5）实际不会命中。
+  - 构建缓存 3.83 → 19.0 GiB（本项目 12.31、drone 3.55）。
+  - 本项目 release 镜像反而从 10.51 降到 3.53 GiB。
+- **处置（用户批准）**：
+  - 13:49–13:51Z 在本项目事务锁内执行，drone 锁只探测，当时空闲；car-agent-64 事先确认窗口内不发布。
+  - 按 ID 精确删本项目失效缓存 672 条（快照 12.31 GiB，保留 source.local 与 pip 缓存挂载，集合闭合）。执行前用只读 `buildx du --filter` 预核一次，脚本内删除前再核一次，命中数都是 672；BuildKit 报回收 17.37 GB，复查剩余 0。
+  - 同时删除 `capacity` 报出的散落项 `shared/.env.bak-privkey-20261012T064912Z`。这是 `04fe3bba` 新增 `PRIVACY_DELETE_KEY` 前的整份备份，全程未读内容。
+  - 结果：可用 37.89 → 52.83 GiB，`buildx du` Total 24.32 → 6.954 GB。镜像、容器、release、备份未动。
+  - status 5/5、零 warning、capacity ok；verify `20261013T135228Z-673d7a7.json`。本项目下一次发布会冷构建一次。
+- **drone 回复（drone-agent-a3，13:5xZ；删除待其用户批准）**：
+  - 镜像保留集已超出「当前 + 里程碑」：P6 各工作包的准出版本和实调环境都被当作里程碑留下，现有 40 个版本、188 个标签，独占约 18 GiB。
+  - 两个方案：
+    - A：只留当前、上一版与 M0 基础，约 13.2 GiB。删除前先移除钉住旧镜像的 27 个已退出一次性容器。
+    - B：按原口径只删 4 个中间版本，约 0.77 GiB。
+  - 两案都包括：按 ID 删 drone 缓存 38 条（3.74 GiB）、D085 迁移前账本备份（1.11 GiB）、压缩 ULog、删已部署的传输包。合计 A 约 18.7 GiB，B 约 6.3 GiB。
+  - `desk/service` 是在用账本（1.20 GB）加两份迁移前账本备份（2.39 GB），属预期内的一次性增长。
+  - drone 的 apt 步骤排在每次提交都会变的层之后，每次部署新建一份。修 Dockerfile 由 drone 另提给其用户。
+- **去保底**：
+  - drone 技术上同意，需其用户批准；建议保留两把锁的探测与退避。
+  - drone 侧的记录也印证这一点：10-12 起每次回收之后，下一次构建都重建 venv；被保底留下的旧 venv 记录再也没被命中。
+  - 修订还需基础设施锚审批与系统配置授权，由两边用户决定。
 
 ## 6. 验收
 
