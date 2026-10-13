@@ -218,7 +218,10 @@ class SubprocessRunner:
                 list(argv),
                 cwd=cwd,
                 env=dict(env) if env is not None else None,
-                stdin=stdin,
+                # 非交互命令不继承调用方的 stdin（只有 attached 才把控制台交出去）：Windows 版 ssh.exe 继承
+                # 隐藏控制台作 stdin 时，远端命令结束后常常不退出（实测 6 次挂 5 次，接空设备 6/6 正常），
+                # 发布就一直卡在上传后的 chmod 上。
+                stdin=stdin if stdin is not None or attached else subprocess.DEVNULL,
                 stdout=None if attached else subprocess.PIPE,
                 stderr=None if attached else subprocess.PIPE,
                 creationflags=(

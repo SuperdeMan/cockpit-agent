@@ -356,6 +356,34 @@ def test_runner_failure_does_not_echo_full_argv(tmp_path: Path):
     assert "-c" not in message
 
 
+def test_runner_hands_detached_commands_an_empty_stdin_not_the_callers(tmp_path: Path):
+    """调用方的 stdin 一直开着（隐藏控制台、没人关的管道）时，非交互子命令要立即读到 EOF，不能跟着等。
+
+    Windows 版 ssh.exe 继承隐藏控制台作 stdin 时远端命令结束后常常不退出，发布因此卡在上传后的 chmod 上。
+    """
+    caller = (
+        "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+        "from scripts.cloud_release_lib import SubprocessRunner; "
+        "reader = [sys.executable, '-c', 'import sys; print(len(sys.stdin.buffer.read()))']; "
+        "print(SubprocessRunner().run(reader, cwd=Path(sys.argv[1]), timeout_s=15).stdout.strip())"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", caller, str(ROOT)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        process.wait(timeout=60)  # 调用方的 stdin 管道保持打开：不写、也不关
+        stdout = process.stdout.read().decode()
+        stderr = process.stderr.read().decode()
+    finally:
+        process.stdin.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "0"
+
+
 def test_runner_timeout_terminates_grandchild_process_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
