@@ -225,6 +225,9 @@ def dimension_value(item: dict, dim: str) -> float | None:
 def _render(dim: str, value: float) -> str:
     if dim == "closing":
         return f"营业到 {openhours.format_minute(int(value))}"
+    if dim == "distance" and 0 < value < 1:
+        # 不到 1 公里按米念：「30 米」比「0.03 公里」顺口（POI 距离留到 10 米，`673d7a7e`）
+        return f"{round(value * 1000)} 米"
     prefix, suffix = _DIM_LABEL[dim]
     body = f"{value:.2f}".rstrip("0").rstrip(".") if dim != "rating" else f"{value:g}"
     return f"{prefix}{body}{suffix}"

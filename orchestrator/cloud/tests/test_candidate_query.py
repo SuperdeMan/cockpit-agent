@@ -180,7 +180,7 @@ def test_superlative_without_a_reference_word_is_left_alone():
 def test_the_nearest_one_how_far_is_answered_from_the_card():
     """核心旅程 NB08（`70b179b7` 2 / 5 红）：「附近有停车场吗」→「最近的那个离我多远」进了 Planner，一遍估算没带上目的地、
     一遍取详情失败。答案就在候选台账里：先按最值点中一项，再答被问到的那一维。"""
-    assert cq.answer("最近的那个离我多远", _entry(_CAFES)) == "最近的是「甲咖啡」，0.4 公里。"
+    assert cq.answer("最近的那个离我多远", _entry(_CAFES)) == "最近的是「甲咖啡」，400 米。"
     assert "甲咖啡" in cq.answer("离我最近的那家多远", _entry(_CAFES))
 
 
@@ -197,14 +197,14 @@ def test_tied_nearest_ones_still_answer_how_far():
     并列照实说（不静默挑一个），被问的距离答出来。"""
     lots = [{"name": f"停车场{i}", "distance_km": 0.1} for i in range(8)]
     got = cq.answer("最近的那个离我多远", _entry(lots))
-    assert "0.1 公里" in got and "「停车场0」" in got and "等 8 个" in got
+    assert "100 米" in got and "「停车场0」" in got and "等 8 个" in got
 
 
 def test_the_nearest_one_a_few_dozen_metres_away_is_the_one():
     """提供方的距离留到 10 米后，几十米外那家就是最近的那个（取整到 0.1 km 时它是 0、被当成「没有距离」排除）。"""
     lots = [{"name": "西侧停车场", "distance_km": 0.02}, {"name": "高新园区停车场", "distance_km": 0.04},
             {"name": "海王银河科技大厦地下停车场", "distance_km": 0.1}]
-    assert cq.answer("最近的那个离我多远", _entry(lots)) == "最近的是「西侧停车场」，0.02 公里。"
+    assert cq.answer("最近的那个离我多远", _entry(lots)) == "最近的是「西侧停车场」，20 米。"
 
 
 def test_a_selected_one_followed_by_something_other_than_a_dimension_is_left_alone():
@@ -586,3 +586,10 @@ def test_ordinal_distance_with_a_from_here_phrase_is_answered():
     assert cq.answer("第二家离这里多远", entry, []) == "「二号店」3.4 公里。"
     assert cq.answer("第二家离我有多远", entry, []) == "「二号店」3.4 公里。"
     assert cq.answer("导航到第二家", entry, []) is None
+
+
+def test_under_a_kilometre_is_said_in_metres():
+    """不到 1 公里按米念（「30 米」，不是「0.03 公里」）；1 公里起照旧按公里。"""
+    assert cq._render("distance", 0.03) == "30 米" and cq._render("distance", 0.45) == "450 米"
+    assert cq._render("distance", 1.0) == "1 公里" and cq._render("distance", 2.35) == "2.35 公里"
+
