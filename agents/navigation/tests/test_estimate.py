@@ -317,6 +317,23 @@ def test_the_estimated_destination_is_the_center_of_the_next_deictic_nearby_sear
     assert (seen["near"].lat, seen["near"].lng) == (22.5405, 113.9412), "中心应是估算过的目的地，不是福田的会话位置"
 
 
+def test_a_destination_cut_short_by_the_planner_gets_its_anchor_back():
+    """核心旅程 NV16（`70b179b7` 4 / 5）：规划器把「小梅沙海滩」截成「小梅沙」，锚词复核失效，落到「小梅沙海滨乐园」。
+    原话里紧跟着槽值的正好是一个类目锚词时用原话那份；别的情形一个字不动。"""
+    restore = NavigationAgent._restore_anchor
+    assert restore("小梅沙", "去小梅沙海滩要开多久") == "小梅沙海滩"
+    assert restore("宝安", "去宝安机场要开多久") == "宝安机场"
+    assert restore("小梅沙海滩", "去小梅沙海滩要开多久") == "小梅沙海滩"          # 本来就带锚词
+    assert restore("小梅沙", "去小梅沙，海滩那边人多吗") == "小梅沙"            # 后面跟的不是锚词
+    assert restore("深圳", "从深圳出发去深圳机场") == "深圳"                    # 原话里出现两次，指不准
+    assert restore("世界之窗", "去世界之窗要开多久") == "世界之窗"
+
+    agent, calls = _agent({"小梅沙海滩": [POI(id="b1", name="小梅沙沙滩", address="盐田", lat=22.60, lng=114.32)]})
+    res = _estimate(agent, {"destination": "小梅沙"}, "去小梅沙海滩要开多久")
+    assert calls["search"] and calls["search"][0] == "小梅沙海滩"
+    assert "小梅沙沙滩" in res.speech
+
+
 def _estimate_with_memory(slots, raw_text, remembered):
     """估算一次，返回（结果, 每次算路用的 strategy）；记忆里放 `remembered` 这几条路线偏好。"""
     agent, _ = _agent({"深圳北站": [_NORTH]})

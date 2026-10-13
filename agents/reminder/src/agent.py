@@ -898,7 +898,10 @@ class ReminderAgent(BaseAgent):
         **一个字都不动**——同 `slot_fidelity` 那条「认不出的一律让路，
         宁可不回填也不要回填错」。
         """
-        if _CREATE_WRAPPER_RE.match(slot_title):
+        # 规划器的标题也会带命令外壳（「提醒我订花」）或句首「到 + 时间」从句（「到老婆生日那天早上八点提醒我订花」）：
+        # 同原话一样先剥掉，否则话术成了「提醒你：提醒我订花」（核心旅程 E07，`a5b5ea4a`）
+        if (_CREATE_WRAPPER_RE.match(slot_title) or _CMD_STRIP_RE.match(slot_title)
+                or _TIME_ARRIVAL_LEAD_RE.match(slot_title)):
             slot_title = cls._extract_title(slot_title)
         fuller = cls._extract_title(raw)
         if not fuller or fuller == slot_title:

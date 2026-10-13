@@ -175,6 +175,30 @@ def test_superlative_without_a_reference_word_is_left_alone():
     assert cq.answer("最晚关门的呢", _entry(_CAFES)) is None
 
 
+# ── 选中再取值：NB08 ─────────────────────────────────────────────────────
+
+def test_the_nearest_one_how_far_is_answered_from_the_card():
+    """核心旅程 NB08（`70b179b7` 2 / 5 红）：「附近有停车场吗」→「最近的那个离我多远」进了 Planner，一遍估算没带上目的地、
+    一遍取详情失败。答案就在候选台账里：先按最值点中一项，再答被问到的那一维。"""
+    assert cq.answer("最近的那个离我多远", _entry(_CAFES)) == "最近的是「甲咖啡」，0.4 公里。"
+    assert "甲咖啡" in cq.answer("离我最近的那家多远", _entry(_CAFES))
+
+
+def test_the_selected_one_answers_the_dimension_asked_not_the_one_it_was_picked_by():
+    """「最便宜的那家评分多少」要答评分——最值算子只会答它自己那一维（价格），所以选中取值排在它前面。"""
+    got = cq.answer("最便宜的那家评分多少", _entry(_CAFES))
+    assert "丙咖啡" in got and "评分 3.9" in got
+    got = cq.answer("评分最高的那个离我多远", _entry(_CAFES))
+    assert "乙咖啡" in got and "1.2 公里" in got
+
+
+def test_a_selected_one_followed_by_something_other_than_a_dimension_is_left_alone():
+    """选中词后面不是维度问句的照常进 Planner：「怎么走」要导航，「加油站」是一次新的找法；认不出是哪一维的最值也不劫持。"""
+    for text in ("最近的那个怎么走", "最近的那个加油站在哪", "最好的那家离我多远",
+                 "最近的那个加油站离我多远"):        # 选中词与维度问句之间隔着「加油站」：问的是另一种地方
+        assert cq.answer(text, _entry(_CAFES)) is None, text
+
+
 def test_empty_or_thin_candidate_set_is_left_alone():
     assert cq.answer("哪家最晚关门", None) is None
     assert cq.answer("哪家最晚关门", _entry([])) is None

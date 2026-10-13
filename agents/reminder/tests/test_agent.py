@@ -93,6 +93,16 @@ def test_a_leading_arrive_at_a_time_clause_is_not_part_of_the_title(raw, expecte
     assert ReminderAgent._extract_title(raw) == expected
 
 
+@pytest.mark.parametrize("slot_title,expected", [
+    ("提醒我订花", "订花"),
+    ("到老婆生日那天早上八点提醒我订花", "订花"),
+    ("老婆生日提醒订花", "老婆生日提醒订花"),     # 没有外壳：照旧信槽值
+])
+def test_the_planner_title_loses_its_command_wrapper_too(slot_title, expected):
+    """核心旅程 E07（`a5b5ea4a`）：规划器的标题带着「提醒我」外壳或句首时间从句，话术成了「提醒你：提醒我订花」。"""
+    assert ReminderAgent._fuller_title(slot_title, "到我老婆生日那天早上八点提醒我订花") == expected
+
+
 @pytest.mark.asyncio
 async def test_arriving_at_eight_is_a_timed_reminder_not_an_arrival():
     """「到八点提醒我吃药」此前建成地点「八点」的到达提醒，永远不会触发。现在是定时提醒：10:00 说的八点 → 今天 20:00。"""

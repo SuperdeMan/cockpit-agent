@@ -172,6 +172,16 @@ _ORDINAL_PICKS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
     (re.compile(rf"第\s*({CN_NUM_SRC})\s*(?:个|家|项|条|种|款|杯|份)\s*"
                 rf"{_PICK_GLUE}(?:{pattern})"), dim)
     for pattern, dim in _PICK_DIMS)
+#: 第五种算子：**按最值点中一项、再问它的一个维度**（「最近的那个离我多远」「最便宜的那家评分多少」）。
+#:
+#: 核心旅程 NB08（`70b179b7` 2 / 5 红）：「那个」不在指示词表里，这句进了 Planner——一遍估算没带上目的地、一遍取详情失败
+#: （过了的三遍里两遍是估算碰巧接上了候选，一遍是详情地址里的「西100米」凑上了判据）。答案就在候选台账里。
+#: ⚠ 它**不是**把「那个」加进指示词表：那样「最近的那个评分多少」会被最值算子答成距离。选中词（含「最」的短语 + 的 +
+#: 那 / 这个）后面**紧跟**维度问句才劫持，同序数取值的紧邻纪律；「最近的那个怎么走」「最近的那个加油站在哪」照常进 Planner。
+_SELECTED_PICKS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"(?P<sel>[^，。,；;！？!?\s的]{{0,4}}最[^，。,；;！？!?\s的]{{1,5}})的?(?:那|这)\s*(?:一)?\s*(?:个|家|间|条)\s*"
+                rf"{_PICK_GLUE}(?:{pattern})"), dim)
+    for pattern, dim in _PICK_DIMS)
 
 
 def _numeric(raw) -> float | None:
@@ -321,6 +331,37 @@ def _ordinal_pick_answer(text: str, items: list[dict]) -> str | None:
         if value is None:
             return f"「{name}」这一项没带{_DIM_NOUN[dim]}，这个我算不出来。"
         return f"「{name}」{_render(dim, value)}。"
+    return None
+
+
+def _selected_pick_answer(text: str, items: list[dict]) -> str | None:
+    """「最近的那个离我多远」→ 先按最值点中一项，再答它被问到的那个维度。
+
+    点不中也是确定性的回答（列表没带那一维、并列），不回落 LLM；选中词里认不出是哪一维的最值（「最好的那家」）才不劫持。
+    """
+    for pattern, dim in _SELECTED_PICKS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        selector = match.group("sel")
+        for superlative, by, want_max in _SUPERLATIVES:
+            if not superlative.search(selector):
+                continue
+            ranked = [(v, it) for it in items
+                      if (v := dimension_value(it, by)) is not None and it.get("name")]
+            if not ranked:
+                return f"刚才那份列表里没带{_DIM_NOUN[by]}信息，点不出{selector}的那个。"
+            best = max(v for v, _ in ranked) if want_max else min(v for v, _ in ranked)
+            winners = [it for v, it in ranked if v == best]
+            if len(winners) > 1:
+                names = "、".join(f"「{it.get('name')}」" for it in winners)
+                return f"{selector}的有 {len(winners)} 个：{names}，你说一下要哪个。"
+            name = str(winners[0].get("name") or "")
+            value = dimension_value(winners[0], dim)
+            if value is None:
+                return f"{selector}的是「{name}」，这一项没带{_DIM_NOUN[dim]}。"
+            return f"{selector}的是「{name}」，{_render(dim, value)}。"
+        return None
     return None
 
 
@@ -487,6 +528,9 @@ def is_candidate_aggregate_question(text: str,
     t = str(text or "").strip()
     if not t or NEW_SEARCH_RE.search(t):
         return False
+    selected = next((m for pattern, _ in _SELECTED_PICKS if (m := pattern.search(t))), None)
+    if selected and any(s.search(selected.group("sel")) for s, _, _ in _SUPERLATIVES):
+        return True                     # 「最近的那个离我多远」：选中词本身就在引用当前候选
     if not _has_reference(t, [it for it in (items or []) if isinstance(it, dict)]):
         return False
     if any(pattern.search(t) for pattern, _, _ in _SUPERLATIVES):
@@ -527,6 +571,10 @@ def answer(text: str, entry: dict | None,
         return got
     if not is_candidate_aggregate_question(text, items):
         return None
+    # 选中再取值排在最值之前：「最近的那个评分多少」要答评分，最值算子只会答它自己的那一维（距离）
+    got = _selected_pick_answer(t, items)
+    if got:
+        return got
     if len(items) >= 2:
         # 最值与合计**要求至少两项**——一项时没有「哪家最…」「一共」可言。
         # 序数取值没有这条限制：只读菜单命中单品后候选集就只有一项，

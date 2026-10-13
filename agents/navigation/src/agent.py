@@ -576,6 +576,8 @@ class NavigationAgent(BaseAgent):
         if choice:
             dest_text = choice["name"]
         raw_text = (intent.raw_text or "").strip()
+        if not choice:
+            dest_text = self._restore_anchor(dest_text, raw_text)
         if not dest_text:
             return AgentResult(status=NEED_SLOT, speech="您想算到哪里的路程？",
                                follow_up="说个目的地，比如「到深圳北站多远」",
@@ -818,7 +820,8 @@ class NavigationAgent(BaseAgent):
         # 这里把「深圳北站」导到站旁的「北站中心公园」、把「东方明珠」导到龙岗的住宅小区「东方·明珠城」，
         # 导航到目的地则解析到车站本体、对东方明珠反问上海那座塔还是附近的小区。
         # 视觉地标描述（「像贝壳那样的地方」）仍走下面按原话找候选的那一路：规划器可能把描述误抽成别的关键词。
-        if (self._is_navigation_phrase(raw_text) and not is_category
+        if (self._is_navigation_phrase(raw_text)
+                and (not is_category or self._names_the_destination(raw_text, keyword))
                 and not self._is_visual_landmark_description(raw_text)):
             return self._named_destination_handoff(keyword, raw_text)
 
@@ -988,6 +991,21 @@ class NavigationAgent(BaseAgent):
         return is_landmark_description(normalized)
 
     @classmethod
+    def _names_the_destination(cls, raw_text: str, keyword: str) -> bool:
+        """原话整句就是「导航去 / 去 / 到 + 这个关键词」（后面至多一个路程问法）、关键词又不是设施类目：它是用户说出的具名地点，
+        规划器另填的类目槽（「景点」）不改变这一点。核心旅程 NV28（`70b179b7` 1 / 5）：「导航去大梅沙海滨公园」被规划成
+        search_poi{category: 景点}，按类目搜，候选里没有它，也没发导航。关键词后面还有别的诉求（「…附近的停车场」「…旁边的景点」）
+        时不算——那是在它周边找；设施类目（充电 / 加油 / 停车…）照旧按搜索走、不自动导航。"""
+        k = (keyword or "").strip()
+        if not k or cls._is_category_search(k):
+            return False
+        m = re.match(r"\s*(?:请|帮我)?\s*(?:导航|带我)?\s*(?:去|到)?\s*" + re.escape(k), raw_text or "")
+        if m is None:
+            return False
+        rest = (raw_text or "")[m.end():].strip(" ，,。.！!？?吧呀啊")
+        return not rest or cls._ESTIMATE_ASK_RE.fullmatch(re.sub(r"^(?:要|需要|得)?(?:开|走)?", "", rest)) is not None
+
+    @classmethod
     def _is_category_search(cls, keyword: str, category_slot: str = "") -> bool:
         """本步是否为设施类目搜索（充电站/加油站/停车场…）。"""
         if (category_slot or "").strip():
@@ -1078,6 +1096,8 @@ class NavigationAgent(BaseAgent):
                 chosen = POI(id="dest_choice", name=choice["name"], address=choice.get("address", ""),
                              lat=float(choice["lat"]), lng=float(choice["lng"]))
         raw_text = (intent.raw_text or "").strip()
+        if not choice:
+            dest = self._restore_anchor(dest, raw_text)
         # 批 E：只说了从哪出发 ⇒ 目的地必须来自这句话或会话（planner 编的、原话兜底搜回起点的都不算）
         origin_only = self._unspoken_destination(dest, raw_text, meta)
         if origin_only:
@@ -2523,9 +2543,13 @@ class NavigationAgent(BaseAgent):
         # 全称在城市与核心名之间夹着区县（「深圳市南山区人民医院」）的是区里的同名机构，不是原话点的这座城市的那一家
         # （A/B：「深圳人民医院」曾因此从深圳市人民医院 19 km 落到南山区人民医院 2 km）。
         for prefix in (c, c.rstrip("市")):
-            if not (prefix and a.startswith(prefix) and len(a) - len(prefix) >= 4):
+            core = a[len(prefix):] if prefix and a.startswith(prefix) else ""
+            # 核心名正好三个字时，只认全称以它打头、它本身又不是类目词：「长沙橘子洲」之于长沙的「橘子洲风景名胜区」
+            # （核心旅程 NV14，`70b179b7` 一遍过不了这道、掉进模型猜地标，猜成「橘子洲头」落到深圳的湘菜馆）；「中医院」照旧太泛。
+            if len(core) < 3 or (len(core) == 3 and (not b.startswith(core)
+                                                      or NavigationAgent._category_anchor(core) is not None)):
                 continue
-            at = b.find(a[len(prefix):])
+            at = b.find(core)
             if at < 0:
                 continue
             infix = b[:at]
@@ -2694,6 +2718,21 @@ class NavigationAgent(BaseAgent):
             if q.endswith(suffix) and len(q) > len(suffix):
                 return suffix, expect
         return None
+
+    @classmethod
+    def _restore_anchor(cls, dest: str, raw_text: str) -> str:
+        """规划器把原话里的目的地截短、丢了类目锚词（「小梅沙海滩」→「小梅沙」）：原话里紧跟着槽值的正好是一个锚词时用原话那份。
+
+        核心旅程 NV16（`70b179b7` 4 / 5）：截短后锚词复核失效，落到「小梅沙海滨乐园」。只补 `_DEST_CATEGORY_ANCHORS` 里的锚词；
+        槽值在原话里不止出现一次、本身已带锚词、或后面跟的不是锚词时一个字不动——别的转述照旧信槽值。"""
+        d, raw = (dest or "").strip(), raw_text or ""
+        if not d or raw.count(d) != 1 or cls._category_anchor(d) is not None:
+            return d
+        rest = raw[raw.index(d) + len(d):]
+        for suffix, _expect in cls._DEST_CATEGORY_ANCHORS:
+            if rest.startswith(suffix):
+                return d + suffix
+        return d
 
     @staticmethod
     def _category_ok(poi: POI, expect: tuple[str, ...]) -> bool:

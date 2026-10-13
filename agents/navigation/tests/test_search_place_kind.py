@@ -60,6 +60,42 @@ def test_a_trip_estimate_question_is_handed_to_the_estimate_not_to_navigation():
     assert go.data["_escalate"]["intent"] == "navigation.navigate_to"
 
 
+def _search_slots(slots, raw_text, results=()):
+    agent = NavigationAgent()
+
+    async def search(kw, near=None, **kwargs):
+        return list(results)
+
+    async def no_landmark(description):
+        return []
+    agent.poi.search = search
+    agent._landmark_candidates = no_landmark
+    return asyncio.run(run_handle(agent, "navigation.search_poi", slots=slots, raw_text=raw_text,
+                                  ctx=make_context(), meta=dict(SZ)))
+
+
+def test_a_named_destination_with_a_type_slot_is_still_handed_to_navigation():
+    """核心旅程 NV28（`70b179b7` 1 / 5）：「导航去大梅沙海滨公园」被规划成 search_poi{category: 景点}——类目槽非空就当设施搜索，
+    绕过了「导航去 + 具名地点」的交接，按类目搜出来的候选里没有它，也没发导航。"""
+    unrelated = [_poi("r1", "红树林海滨生态公园"), _poi("s1", "深圳湾公园")]
+    go = _search_slots({"category": "景点", "keyword": "大梅沙海滨公园"}, "导航去大梅沙海滨公园", unrelated)
+    assert go.data["_escalate"] == {"intent": "navigation.navigate_to", "slots": {"destination": "大梅沙海滨公园"},
+                                    "reason": "search_named_destination"}
+    ask = _search_slots({"category": "景点", "keyword": "大梅沙海滨公园"}, "去大梅沙海滨公园要开多久", unrelated)
+    assert ask.data["_escalate"]["intent"] == "navigation.estimate"
+
+
+def test_a_search_around_a_named_place_or_for_a_facility_stays_a_search():
+    """关键词后面还有别的诉求是在它周边找；设施类目照旧按搜索走、不自动导航。"""
+    lots = [_poi("p1", "大梅沙海滨公园停车场")]
+    around = _search_slots({"category": "停车场", "keyword": "大梅沙海滨公园"}, "导航去大梅沙海滨公园附近的停车场", lots)
+    assert "_escalate" not in (around.data or {})
+    sights = _search_slots({"category": "景点", "keyword": "大梅沙海滨公园"}, "导航去大梅沙海滨公园旁边的景点", lots)
+    assert "_escalate" not in (sights.data or {})
+    fuel = _search_slots({"keyword": "加油站"}, "导航去加油站", [_poi("g1", "中石化加油站")])
+    assert "_escalate" not in (fuel.data or {})
+
+
 def test_a_not_found_estimate_question_is_handed_to_the_estimate_too():
     """「没找到」那条改派与交接同一个方向（带导航词的原话才改派：视觉地标描述搜不到时走这里）。"""
     ask = NavigationAgent._search_not_found("云岚国际中心", "去云岚国际中心要多久")
