@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-10-13T02:24:12.677942+00:00",
-    "commit": "4fc69b40"
+    "generated_at": "2026-10-15T15:13:03.246733+00:00",
+    "commit": "d2ed02ef"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 132
+      "count": 140
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 57,
-      "passed": 57,
+      "total": 60,
+      "passed": 60,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 75,
-      "passed": 75,
+      "total": 80,
+      "passed": 80,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 132,
-    "passed": 132,
+    "total": 140,
+    "passed": 140,
     "pass_rate": 1.0
   },
   "cases": {
@@ -1278,7 +1278,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-next\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::检索一下宁德时代最新财报要点": {
       "id": "route::检索一下宁德时代最新财报要点",
@@ -1297,7 +1297,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-next\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::查一下固态电池": {
       "id": "route::查一下固态电池",
@@ -1506,7 +1506,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-next\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::来点科技新闻": {
       "id": "route::来点科技新闻",
@@ -1525,7 +1525,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-next\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::英伟达最新消息": {
       "id": "route::英伟达最新消息",
@@ -2400,6 +2400,161 @@
         "recall"
       ],
       "source": "句形之外的问句照旧交规划器"
+    },
+    "route::以后只要下雨就提醒我关天窗": {
+      "id": "route::以后只要下雨就提醒我关天窗",
+      "bucket": "route_recall",
+      "text": "以后只要下雨就提醒我关天窗",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "replace"
+      ],
+      "source": "N10 925cd44c 一遍：先判澄清、条件句纠正后零步，落「没能拆成步骤」"
+    },
+    "route::之后一旦下雨就通知我": {
+      "id": "route::之后一旦下雨就通知我",
+      "bucket": "route_recall",
+      "text": "之后一旦下雨就通知我",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "replace"
+      ],
+      "source": "订阅不是要现在查的条件：不查天气"
+    },
+    "route::往后一有暴雨预警就马上告诉我": {
+      "id": "route::往后一有暴雨预警就马上告诉我",
+      "bucket": "route_recall",
+      "text": "往后一有暴雨预警就马上告诉我",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "replace"
+      ],
+      "source": "批 7 RS11 holdout 原句"
+    },
+    "route::以后一下雪就叫我": {
+      "id": "route::以后一下雪就叫我",
+      "bucket": "route_guardrail",
+      "text": "以后一下雪就叫我",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "noop"
+      ],
+      "source": "规划器已派对：不动"
+    },
+    "route::如果明天下雨就提醒我带伞": {
+      "id": "route::如果明天下雨就提醒我带伞",
+      "bucket": "route_guardrail",
+      "text": "如果明天下雨就提醒我带伞",
+      "expected": [
+        "info.weather"
+      ],
+      "actual": [
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "guardrail"
+      ],
+      "source": "一次性条件句：走条件判定（先查天气），不是订阅"
+    },
+    "route::只要有堵车就提醒我": {
+      "id": "route::只要有堵车就提醒我",
+      "bucket": "route_guardrail",
+      "text": "只要有堵车就提醒我",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "guardrail"
+      ],
+      "source": "光杆「只要」不带持久标记：交规划器"
+    },
+    "route::查一下路况，然后以后一堵车就通知我": {
+      "id": "route::查一下路况，然后以后一堵车就通知我",
+      "bucket": "route_guardrail",
+      "text": "查一下路况，然后以后一堵车就通知我",
+      "expected": [
+        "info.search",
+        "reminder.create"
+      ],
+      "actual": [
+        "info.search",
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "guardrail",
+        "compound"
+      ],
+      "source": "复合句：整句 replace 会吞掉查路况"
+    },
+    "route::以后下雨会提醒我吗": {
+      "id": "route::以后下雨会提醒我吗",
+      "bucket": "route_guardrail",
+      "text": "以后下雨会提醒我吗",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "subscription",
+        "guardrail"
+      ],
+      "source": "在问，不是订阅"
     }
   }
 }

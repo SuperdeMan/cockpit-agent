@@ -683,6 +683,41 @@ def test_complete_conditional_retries_instead_of_clarifying_future_outcome(monke
     assert "计划修正专用工具调用" in spy.last_system
 
 
+def test_complete_conditional_goal_marker_without_steps_gets_the_conditional_correction(monkeypatch):
+    """核心旅程 D05（`4fc69b40` 一遍）：首轮零步、goal 写「需要澄清：……需要先查天气再决定要不要开后备箱」。此前落到
+    `clarify_goal_with_steps`，第二次被要求交澄清卡（「你想对后备箱做什么？」）、违约后落闲聊，根本没进 T2。
+    完整条件句的「需要澄清」走条件句纠正：只规划观察前件、标 adaptive、下一次只许给计划。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "如果深圳今天不下雪，就帮我打开后备箱"
+    marker = {
+        "complexity": "adaptive", "addressed": True, "steps": [],
+        "goal": "需要澄清：深圳十月份不会下雪是一个常识事实，但用户用了条件句式，需要先查天气再决定要不要开后备箱。",
+    }
+    routed = {
+        "complexity": "adaptive", "goal": text, "addressed": True,
+        "steps": [{"id": "s1", "capability_ref": "cap_0001",
+                   "slots": {"city": "深圳", "date": "今天"}, "depends_on": [], "slot_refs": {}}],
+    }
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": marker}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": routed}]),
+    ])
+    agents = [
+        MockAgent("info", ["info.weather"]),
+        MockAgent("vehicle", ["trunk.open"]),
+    ]
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["info.weather"]
+    assert plan.complexity == "adaptive" and plan.clarify is None
+    assert plan.retry_policies == ["complete_conditional_clarified"]
+    assert "未来条件尚未知不是歧义" in spy.last_tool_user and "持久订阅" in spy.last_tool_user
+    assert "clarify" not in spy.last_tools["tools"][0]["function"]["parameters"]["properties"]
+
+
 def test_complete_conditional_never_accepts_repeated_clarification(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     clarify = {

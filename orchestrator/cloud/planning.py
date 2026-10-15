@@ -1619,9 +1619,15 @@ def _trigger_plan_only_contract_violated(state: PlanAttemptState) -> bool:
 
 
 def _trigger_complete_conditional_clarified(state: PlanAttemptState) -> bool:
-    """完整条件句仍被判成澄清——未来条件未知不是歧义，是 adaptive 的触发点。"""
-    return bool(state.parsed is not None and state.parsed.clarify
-                and _COMPLETE_DEFERRED_CONDITION_RE.search(str(state.text or "")))
+    """完整条件句仍被判成澄清——未来条件未知不是歧义，是 adaptive 的触发点。
+
+    澄清有两种出法：直接给澄清卡；或只在 goal 里写「需要澄清」、一步不给（2026-10-15 复核 D01 / D05 的首轮失败：
+    goal 写着「需要澄清：……需要先查天气再决定要不要开后备箱」，模型其实知道该怎么规划）。后一种此前落到
+    `clarify_goal_with_steps`，第二次被要求交澄清卡、违约后落闲聊，根本没进 T2。两种都按条件句纠正：只规划观察前件、
+    标 adaptive、下一次只许给计划。带着合法观察步的 goal 误澄清措辞另有出口（`complete_conditional_goal_marker`）。"""
+    wants_clarify = bool((state.parsed is not None and state.parsed.clarify)
+                         or state.goal_requires_clarification)
+    return wants_clarify and bool(_COMPLETE_DEFERRED_CONDITION_RE.search(str(state.text or "")))
 
 
 def _trigger_information_question_clarified(state: PlanAttemptState) -> bool:

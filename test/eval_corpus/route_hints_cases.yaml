@@ -891,3 +891,54 @@
   expect_final_intents: [info.search]
   source: "句形之外的问句照旧交规划器"
   tags: [memory, guardrail, recall]
+
+# ── 持久订阅 → 提醒域如实说做不到（2026-10-15，核心旅程 N10 `925cd44c`）──────────────────────────────
+# 完整条件句的重试纠正语曾把「以后只要下雨就提醒我关天窗」带去找观察能力，模型交零步。只认带持久标记的整句。
+- text: 以后只要下雨就提醒我关天窗
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "N10 925cd44c 一遍：先判澄清、条件句纠正后零步，落「没能拆成步骤」"
+  tags: [reminder, subscription, replace]
+
+- text: 之后一旦下雨就通知我
+  initial_intents: [info.weather]
+  expect_final_intents: [reminder.create]
+  source: "订阅不是要现在查的条件：不查天气"
+  tags: [reminder, subscription, replace]
+
+- text: 往后一有暴雨预警就马上告诉我
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [reminder.create]
+  source: "批 7 RS11 holdout 原句"
+  tags: [reminder, subscription, replace]
+
+- text: 以后一下雪就叫我
+  initial_intents: [reminder.create]
+  expect_final_intents: [reminder.create]
+  source: "规划器已派对：不动"
+  tags: [reminder, subscription, noop]
+
+- text: 如果明天下雨就提醒我带伞
+  initial_intents: [info.weather]
+  expect_final_intents: [info.weather]
+  source: "一次性条件句：走条件判定（先查天气），不是订阅"
+  tags: [reminder, subscription, guardrail]
+
+- text: 只要有堵车就提醒我
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "光杆「只要」不带持久标记：交规划器"
+  tags: [reminder, subscription, guardrail]
+
+- text: 查一下路况，然后以后一堵车就通知我
+  initial_intents: [info.search, reminder.create]
+  expect_final_intents: [info.search, reminder.create]
+  source: "复合句：整句 replace 会吞掉查路况"
+  tags: [reminder, subscription, guardrail, compound]
+
+- text: 以后下雨会提醒我吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "在问，不是订阅"
+  tags: [reminder, subscription, guardrail]
+

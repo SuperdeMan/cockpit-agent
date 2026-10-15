@@ -137,9 +137,12 @@ def test_now_text_is_in_business_time():
 
 
 def test_timeout_has_a_safe_default(monkeypatch):
+    # 2026-10-15：8.0 → 12.0（线上判定请求排在 RPM 窗口后面，3 / 76 次正好卡在 8 s）
+    monkeypatch.delenv("CONDITION_JUDGEMENT_TIMEOUT_S", raising=False)
+    assert cj.condition_judgement_timeout_s() == 12.0
     monkeypatch.setenv("CONDITION_JUDGEMENT_TIMEOUT_S", "abc")
-    assert cj.condition_judgement_timeout_s() == 8.0
+    assert cj.condition_judgement_timeout_s() == 12.0
     monkeypatch.setenv("CONDITION_JUDGEMENT_TIMEOUT_S", "-1")
-    assert cj.condition_judgement_timeout_s() == 8.0
+    assert cj.condition_judgement_timeout_s() == 12.0
     monkeypatch.setenv("CONDITION_JUDGEMENT_TIMEOUT_S", "2.5")
     assert cj.condition_judgement_timeout_s() == 2.5

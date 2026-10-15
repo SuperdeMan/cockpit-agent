@@ -112,3 +112,36 @@ def test_the_hint_takes_a_single_first_person_fact(text):
 ])
 def test_the_hint_leaves_everything_else_to_the_planner(text):
     assert not _hits(text)
+
+
+# ── 持久订阅的整句 hint（2026-10-15，核心旅程 N10）：提醒域如实说做不到 ─────────────────────────────
+
+def _subscription_hits(text):
+    manifest = load_manifest(_MANIFEST)
+    hints = [h for h in manifest.route_hints if h.intent == "reminder.create" and (h.policy or "replace") == "replace"]
+    agent = SimpleNamespace(manifest=SimpleNamespace(route_hints=hints))
+    return RouteHintEngine(lambda raw, _map: []).matches_replace(text, {"reminder": agent})
+
+
+@pytest.mark.parametrize("text", [
+    "以后只要下雨就提醒我关天窗",            # N10（`925cd44c` 一遍被条件句纠正带去找观察能力，零步）
+    "之后一旦下雨就通知我", "往后一有暴雨预警就马上告诉我", "今后一出雾霾预警就提醒我",
+    "从今往后每次油价上涨就通知我", "以后一下雪就叫我", "每当油价降了就告诉我", "以后有堵车就提醒我",
+    "一旦电量低于两成就提醒我",
+])
+def test_a_persistent_subscription_goes_to_the_reminder(text):
+    assert _subscription_hits(text)
+
+
+@pytest.mark.parametrize("text", [
+    "如果明天下雨就提醒我带伞", "要是下雨就提醒我关窗",       # 一次性条件句：走条件判定
+    "只要有堵车就提醒我", "只要明天下雨就提醒我带伞",        # 光杆「只要」：交规划器
+    "查一下路况，然后以后一堵车就通知我", "以后有堵车就提醒我，另外列出明天的提醒",   # 复合句
+    "以后下雨会提醒我吗", "能不能以后一下雨就提醒我", "以后只要下雨就提醒我关天窗可以吗",   # 在问
+    "以后别一下雨就提醒我",                                  # 否定
+    "以后再提醒我吧", "两小时以后提醒我", "以后每天早上八点提醒我吃药", "一到公司就提醒我拿文件",
+    "每次开车前提醒我检查胎压",
+])
+def test_the_subscription_hint_leaves_everything_else_to_the_planner(text):
+    assert not _subscription_hits(text)
+

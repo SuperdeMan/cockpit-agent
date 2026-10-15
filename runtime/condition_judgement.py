@@ -49,15 +49,21 @@ _SYSTEM = (
 )
 
 
+#: 判定一问的缺省上限（秒）。2026-10-12 按离线评测定 8.0（M3 p90 4.6 s、Flash p90 4.1 s）；2026-10-15 线上 76 次判定
+#: p50 1.5 s、p90 3.4 s，却有 3 次正好卡在 8.0 s——那几遍的模型调用里没有一笔超过 3.5 s，是判定请求排在账号级 RPM 窗口后面，
+#: 等超时了被当成「判不了」（D05 条件成立却答「我没法确认」）。放到 12.0：判定之后紧接着再规划（中间不查循环 deadline），
+#: 只有条件指令才多等这一问。待证参数。
+_DEFAULT_JUDGEMENT_TIMEOUT_S = 12.0
+
+
 def condition_judgement_timeout_s() -> float:
-    """前件判定一问的上限（秒）。判不出就按不执行收场。代码缺省 8.0：离线评测（先对照再下结论）M3 p90 4.6 s、
-    Flash p90 4.1 s，5 s 会把判对了的成立截成判不了；只有条件指令才多等这一问。不进 `.env.example`（部署闸按路径
-    硬阻断）；非法值回落缺省。"""
+    """前件判定一问的上限（秒）。判不出就按不执行收场；缺省见 `_DEFAULT_JUDGEMENT_TIMEOUT_S`。不进 `.env.example`
+    （部署闸按路径硬阻断）；非法值回落缺省。"""
     try:
-        value = float(os.getenv("CONDITION_JUDGEMENT_TIMEOUT_S", "") or 8.0)
+        value = float(os.getenv("CONDITION_JUDGEMENT_TIMEOUT_S", "") or _DEFAULT_JUDGEMENT_TIMEOUT_S)
     except ValueError:
-        return 8.0
-    return value if value > 0 else 8.0
+        return _DEFAULT_JUDGEMENT_TIMEOUT_S
+    return value if value > 0 else _DEFAULT_JUDGEMENT_TIMEOUT_S
 
 
 def observation_text(observations) -> str:
