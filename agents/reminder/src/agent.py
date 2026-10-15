@@ -845,6 +845,18 @@ class ReminderAgent(BaseAgent):
                                missing_slots=["title"])
         resolved = await self._resolve_place(pp.place, ctx)
         verb = "离开" if pp.trigger_on != ARRIVE else "到"
+        if resolved and resolved.get("unavailable"):
+            # 地图服务报错：不说「不知道在哪」——用户补了地址也一样查不到（同导航的诚实降级）
+            return AgentResult(speech=f"地图服务暂时不可用，没查到「{pp.place}」在哪，这条提醒先没建。",
+                               follow_up="稍后再说一次就行")
+        if resolved and resolved.get("ambiguous"):
+            # 近处借了名、外地另有本体：不替用户挑（同导航的借名反问），说清是哪两处
+            names = "和".join(f"「{n}」" for n in resolved["ambiguous"][:2])
+            return AgentResult(
+                status=NEED_SLOT,
+                speech=f"「{pp.place}」我找到两处：{names}，{verb}哪一个提醒你？",
+                follow_up="说更具体的名字就行",
+                missing_slots=["place_address"])
         if not resolved:
             return AgentResult(
                 status=NEED_SLOT,
@@ -859,14 +871,19 @@ class ReminderAgent(BaseAgent):
                    "vehicle_id": ctx.vehicle_id}))
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
-        return AgentResult(speech=f"好的，{verb}{pp.place}我就提醒你：{title}。",
+        # 解析到的地点名和用户说的不一样时念出来（同导航「话术报出实际名，用户可纠正」）
+        resolved_name = str(resolved.get("resolved_name") or "").strip()
+        where = f"{pp.place}（{resolved_name}）" if resolved_name and resolved_name != pp.place else pp.place
+        return AgentResult(speech=f"好的，{verb}{where}我就提醒你：{title}。",
                            ui_card=self._card_single(r, "created"))
 
     async def _resolve_place(self, place: str, ctx) -> dict | None:
         """地点 → 围栏数据。四级，全落空返回 None（调用方诚实追问）。
 
         ① 画像常用地点（家/公司/学校，带 lat/lng）；② 关系边一跳（「孩子学校」→ 校名）；
-        ③ 经 nearby.search 拿坐标（**卡片可跨 Agent 传、data 不能**，所以读 ui_card）；
+        ③ 交给导航按「导航到目的地」同一份解析（内部意图 `navigation.resolve_place`，2026-10-15）：名字核实过的那一个点；
+           近处借名、外地另有本体时回 `{"ambiguous": [名字…]}`，地图服务不可用回 `{"unavailable": True}`，由调用方如实说。
+           修前经 `nearby.search` 取第一个带坐标的候选、不核对名字，乱说一个地点会落到随便一个 POI 上；
         ④ 落空 → None。
         """
         alias = {"家": "home", "我家": "home", "家里": "home",
@@ -891,16 +908,23 @@ class ReminderAgent(BaseAgent):
         except Exception as e:
             logger.debug("关系边解析跳过：%s", e)
         try:
-            res = await self.agents.call("nearby", "nearby.search",
-                                         {"keyword": keyword}, ctx)
-            items = ((res.ui_card or {}).get("items") or []) if res else []
-            for it in items:
-                if it.get("lat") is not None and it.get("lng") is not None:
-                    return {"lat": it["lat"], "lon": it["lng"],
-                            "radius_m": _GEOFENCE_RADIUS_M,
-                            "resolved_name": it.get("name")}
+            res = await self.agents.call("navigation", "navigation.resolve_place",
+                                         {"place": keyword}, ctx)
+            data = (getattr(res, "data", None) or {}) if res else {}
+            status = data.get("status")
+            poi = data.get("poi") or {}
+            if status == "found" and poi.get("lat") is not None and poi.get("lng") is not None:
+                return {"lat": poi["lat"], "lon": poi["lng"],
+                        "radius_m": _GEOFENCE_RADIUS_M,
+                        "resolved_name": poi.get("name")}
+            if status == "ambiguous":
+                names = [f"{c['name']}（{c['city']}）" if c.get("city") else c["name"]
+                         for c in data.get("candidates") or [] if c.get("name")]
+                return {"ambiguous": names} if names else None
+            if status == "unavailable":
+                return {"unavailable": True}
         except Exception as e:
-            logger.debug("nearby 地点解析失败：%s", e)
+            logger.debug("导航地点解析失败：%s", e)
         return None
 
     # ── update（P1a：改时间；缺时间经 REMINDER_PENDING(action=update) 两轮续接）──

@@ -286,3 +286,78 @@ async def test_time_reminders_are_untouched_by_location_branch():
     assert res.status == "ok" and "08:00" in res.speech
     times, _ = await a.store.list_split("u1")
     assert len(times) == 1 and times[0].kind == "time"
+
+
+# ── 到达提醒的地点按导航的同一份解析核名字（2026-10-15，内部意图 `navigation.resolve_place`）──────────────
+
+class _Agents:
+    def __init__(self, data):
+        self.data, self.calls = data, []
+
+    async def call(self, agent_id, intent, slots, ctx, **kw):
+        from agents._sdk import AgentResult
+        self.calls.append((agent_id, intent, dict(slots)))
+        return AgentResult(data=self.data)
+
+
+async def _agent_resolving(data):
+    from unittest.mock import AsyncMock
+
+    from agents.reminder.src.agent import ReminderAgent
+    from agents.reminder.src.timeparse import FAIL, ParsedTime
+    a = ReminderAgent()
+    a.store = ReminderStore(dsn="")
+    await a.store.init()
+    a._llm_time_fallback = AsyncMock(return_value=ParsedTime(FAIL))
+    a._agents = _Agents(data)
+    return a
+
+
+def _ctx_without_relations():
+    from agents._sdk.testing import make_context
+    ctx = make_context()
+    ctx._memory.resolve_person_place.return_value = None
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_the_place_is_resolved_the_way_navigation_resolves_a_destination():
+    """修前经 `nearby.search` 取第一个带坐标的候选、不核对名字；现在交给导航同一份解析，答句报出实际落到的地点（可纠正）。"""
+    from agents._sdk.testing import run_handle
+    a = await _agent_resolving({"status": "found", "poi": {"name": "星巴克(科技园店)", "lat": 22.543, "lng": 113.944}})
+    res = await run_handle(a, "reminder.create", raw_text="到星巴克提醒我买咖啡豆", ctx=_ctx_without_relations())
+    assert res.status == "ok" and "到星巴克（星巴克(科技园店)）我就提醒你" in res.speech
+    assert a._agents.calls == [("navigation", "navigation.resolve_place", {"place": "星巴克"})]
+    [r] = await a.store.list_location_pending()
+    assert (r.extra["lat"], r.extra["lon"], r.extra["resolved_name"]) == (22.543, 113.944, "星巴克(科技园店)")
+
+
+@pytest.mark.asyncio
+async def test_a_borrowed_name_is_asked_not_picked():
+    from agents._sdk.testing import run_handle
+    a = await _agent_resolving({"status": "ambiguous", "candidates": [
+        {"name": "南京南站南广场", "city": "深圳市", "lat": 22.56, "lng": 113.95},
+        {"name": "南京南站", "city": "南京市", "lat": 31.97, "lng": 118.80}]})
+    res = await run_handle(a, "reminder.create", raw_text="到南京南站提醒我取票", ctx=_ctx_without_relations())
+    assert res.status == "need_slot" and "place_address" in res.missing_slots
+    assert "「南京南站南广场（深圳市）」和「南京南站（南京市）」" in res.speech
+    assert await a.store.list_location_pending() == []
+
+
+@pytest.mark.asyncio
+async def test_a_map_outage_is_said_as_such_and_nothing_is_stored():
+    from agents._sdk.testing import run_handle
+    a = await _agent_resolving({"status": "unavailable"})
+    res = await run_handle(a, "reminder.create", raw_text="到星巴克提醒我买咖啡豆", ctx=_ctx_without_relations())
+    assert res.status == "ok" and "地图服务暂时不可用" in res.speech and "不知道" not in res.speech
+    assert await a.store.list_location_pending() == []
+
+
+@pytest.mark.asyncio
+async def test_an_unresolvable_place_is_asked_as_before():
+    from agents._sdk.testing import run_handle
+    a = await _agent_resolving({"status": "not_found"})
+    res = await run_handle(a, "reminder.create", raw_text="到北大医院提醒我取报告", ctx=_ctx_without_relations())
+    assert res.status == "need_slot" and "我还不知道北大医院在哪" in res.speech
+    assert await a.store.list_location_pending() == []
+

@@ -393,6 +393,8 @@ class NavigationAgent(BaseAgent):
             # `safety.road_condition` 经 AgentClient 调用。进 manifest 就是在 planner 面前摆两个
             # 等价工具让它掷硬币（本文件 search_poi vs nearby.search 那条老账）。
             "navigation.route_traffic": self._route_traffic,
+            # 内部意图（2026-10-15）：同上不进 manifest，只供提醒的到达围栏把说出口的地点解析成一个点。
+            "navigation.resolve_place": self._resolve_named_place,
         }
         handler = handlers.get(intent.name)
         if handler:
@@ -689,6 +691,35 @@ class NavigationAgent(BaseAgent):
         if not parts:
             return "沿途基本畅通"
         return "沿途" + "、".join(parts) + ("，其余畅通" if _km("expedite_km") >= 0.1 else "")
+
+    async def _resolve_named_place(self, intent, ctx, meta) -> AgentResult:
+        """内部意图 `navigation.resolve_place`（2026-10-15）：把一个说出口的地点解析成**一个**具体地点，不导航、不出卡、不说话。
+
+        给提醒的到达围栏用。修前提醒自己经 `nearby.search` 取第一个带坐标的候选、不核对名字——乱说一个地点会落到随便一个 POI
+        上（`a5b5ea4a` 复测 E07 那条曾落到无关的店）。这里与「导航到目的地」同一份解析：`_find_destination` 严格校验（和原话
+        毫不沾边的兜底不收），再看近处是不是借了名（`_far_namesake`）——两个都说得通时不替用户挑，交回 ambiguous。
+        `data.status`：found（`data.poi`）/ ambiguous（`data.candidates`）/ not_found / unavailable。"""
+        place = str(intent.slots.get("place") or "").strip()
+        if not place:
+            return AgentResult(data={"status": "not_found"})
+        near = await self._current_position(ctx, meta)
+        _resolved, results = await self._find_destination(place, meta, near=near, limit=3, strict=True)
+        if not results:
+            return AgentResult(data={"status": "unavailable" if self._lookup_unavailable() else "not_found"})
+
+        def _brief(poi) -> dict:
+            return {"name": poi.name, "address": poi.address or "", "city": getattr(poi, "city", "") or "",
+                    "lat": poi.lat, "lng": poi.lng}
+
+        first = results[0]
+        far = await self._far_namesake(place, first, near, meta)
+        if far is not None:
+            if self._dest_matches(place, first.name, first.city):
+                return AgentResult(data={"status": "ambiguous", "candidates": [_brief(first), _brief(far)]})
+            first = far
+        if not (first.lat and first.lng):          # POI 坐标缺省是 0.0：没坐标的点围不了栏
+            return AgentResult(data={"status": "not_found"})
+        return AgentResult(data={"status": "found", "poi": _brief(first)})
 
     async def _route_traffic(self, intent, ctx, meta) -> AgentResult:
         road = (intent.slots.get("road") or "").strip()
