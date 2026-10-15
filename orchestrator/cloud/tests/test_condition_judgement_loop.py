@@ -74,14 +74,14 @@ def _edge(step_id, intent, description, *, confirm=False):
                 require_confirm=confirm, capability_description=description)
 
 
-def _run(origin, replan_steps, judge, *, more=None):
+def _run(origin, replan_steps, judge, *, more=None, max_iters=2):
     planner = _Planner([ReplanDecision(done=False, steps=replan_steps), *(more or [])])
     results = {"s1": StepResult("s1", StepStatus.OK, speech=WEATHER_SPEECH,
                                 data={"city": "深圳", "condition": "晴"})}
     results.update({s.id: StepResult(s.id, StepStatus.OK, speech="已为您打开空调")
                     for s in [*replan_steps, *(step for d in (more or []) for step in d.steps)]})
     executor = _Executor(results)
-    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=2, budget_ms=5000,
+    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=max_iters, budget_ms=5000,
                                 condition_judge=judge)
     initial = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather", slots={"city": "深圳"})],
                    complexity="adaptive", safety_origin_text=origin)
@@ -190,3 +190,40 @@ def test_without_a_judge_the_consequent_stays_blocked_as_before():
 
     assert executor.runs == [["s1"]]
     assert events[-1]["speech"] == "深圳今天不会下雪"
+
+
+# ── 前件成立、再规划派的写步一步都对不上后件：拦下、写回观察、再规划一次（2026-10-15，复测 `f6fa5c69` D01）────────
+
+def test_a_consequent_planned_backwards_gets_one_corrective_replan():
+    """「…就把空调打开」再规划派成 `hvac.off`：问句闸照旧拦下（后件没点名它），修前循环就此收场、空调没开。
+    现在把「对不上、已拦下、只做后件」写回观察再规划一次；派对了的那一步照常只凭后件点名放行。"""
+    judge = _Judge(_verdict("holds", "深圳今天不会下雪"))
+    off, on = _edge("r1", "hvac.off", "关闭空调"), _edge("r2", "hvac.on", "打开空调")
+    planner, executor, events = _run(D01, [off], judge, more=[ReplanDecision(done=False, steps=[on])])
+
+    assert executor.runs == [["s1"], ["r2"]]                 # 反了的那步一次都没执行
+    assert on.condition_released is True and off.condition_released is False
+    note = planner.observations[1][-1]
+    assert note["intent"] == cj.CHECK_INTENT and note["data"]["mismatched"] == ["hvac.off"]
+    assert "把空调打开" in note["speech"]
+
+
+def test_the_corrective_replan_happens_once():
+    """线上 adaptive 档最多 3 次再规划：纠正之后又派反了就收场，不再给第三次。"""
+    judge = _Judge(_verdict("holds", "深圳今天不会下雪"))
+    off, again, on = (_edge("r1", "hvac.off", "关闭空调"), _edge("r2", "hvac.off", "关闭空调"),
+                      _edge("r3", "hvac.on", "打开空调"))
+    planner, executor, _ = _run(D01, [off], judge, max_iters=3,
+                                more=[ReplanDecision(done=False, steps=[again]), ReplanDecision(done=False, steps=[on])])
+
+    assert executor.runs == [["s1"]] and len(planner.observations) == 2
+
+
+def test_no_corrective_replan_when_the_condition_does_not_hold():
+    judge = _Judge(_verdict("fails", "深圳今天不会下雪"))
+    on = _edge("r1", "hvac.on", "打开空调")
+    planner, executor, _ = _run(D02, [on], judge, more=[ReplanDecision(done=False, steps=[on])])
+
+    assert executor.runs == [["s1"]]
+    assert all(o.get("data", {}).get("mismatched") is None for obs in planner.observations for o in obs)
+

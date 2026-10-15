@@ -1625,8 +1625,12 @@ def _trigger_complete_conditional_clarified(state: PlanAttemptState) -> bool:
     goal 写着「需要澄清：……需要先查天气再决定要不要开后备箱」，模型其实知道该怎么规划）。后一种此前落到
     `clarify_goal_with_steps`，第二次被要求交澄清卡、违约后落闲聊，根本没进 T2。两种都按条件句纠正：只规划观察前件、
     标 adaptive、下一次只许给计划。带着合法观察步的 goal 误澄清措辞另有出口（`complete_conditional_goal_marker`）。"""
+    # 第三种：一步不给、也不说为什么（复测 `f6fa5c69` D01 两遍：`{"steps": [], "addressed": true}`）——此前落到
+    # `no_action_unconfirmed`，它的纠正推着模型「补上动作」，模型就当场排了无条件的 `hvac.on`（问句闸拦下、落闲聊）或再给零步。
+    # 零步的计划解析不成 Plan（`parsed is None`）——与 `no_action_unconfirmed` 同一个「空手而归」判据；守卫段先于它的收尾段求值
+    no_steps = bool(state.parsed is None and PlanBuilder._looks_like_no_action(state.data))
     wants_clarify = bool((state.parsed is not None and state.parsed.clarify)
-                         or state.goal_requires_clarification)
+                         or state.goal_requires_clarification or no_steps)
     return wants_clarify and bool(_COMPLETE_DEFERRED_CONDITION_RE.search(str(state.text or "")))
 
 

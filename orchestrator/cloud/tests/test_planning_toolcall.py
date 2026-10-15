@@ -718,6 +718,61 @@ def test_complete_conditional_goal_marker_without_steps_gets_the_conditional_cor
     assert "clarify" not in spy.last_tools["tools"][0]["function"]["parameters"]["properties"]
 
 
+def test_complete_conditional_with_no_steps_at_all_gets_the_conditional_correction(monkeypatch):
+    """复测 `f6fa5c69` D01 两遍：首轮 `{"steps": [], "addressed": true}`，一个字理由不给。此前落 `no_action_unconfirmed`，
+    它的纠正推着模型「补上动作」——一遍当场排了无条件的 `hvac.on`（问句闸拦下、落闲聊），一遍再给零步。走条件句纠正。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "如果深圳今天不下雪，就把空调打开"
+    empty = {"addressed": True, "steps": []}
+    routed = {
+        "complexity": "adaptive", "goal": text, "addressed": True,
+        "steps": [{"id": "s1", "capability_ref": "cap_0001",
+                   "slots": {"city": "深圳", "date": "今天"}, "depends_on": [], "slot_refs": {}}],
+    }
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": empty}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": routed}]),
+    ])
+    agents = [MockAgent("info", ["info.weather"]), MockAgent("vehicle", ["hvac.on"])]
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["info.weather"] and plan.complexity == "adaptive"
+    # 收尾段的「空手」计数照记，但纠正语只有条件句那段：`no_action_unconfirmed` 是缺省档，不覆盖已有的纠正
+    assert plan.retry_policies[0] == "complete_conditional_clarified"
+    assert "未来条件尚未知不是歧义" in spy.last_tool_user and "补齐步骤" not in spy.last_tool_user
+
+
+def test_complete_conditional_with_invalid_steps_and_a_clarify_goal_gets_the_conditional_correction(monkeypatch):
+    """模型给了步却全被能力校验丢掉（引用了不存在的能力），goal 又写「需要澄清」：原始数据里 steps 不空，「空手而归」判据不认它，
+    只有 goal 标记那一半接得住——同样走条件句纠正，而不是落到通用的结构校验反馈。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "如果深圳今天不下雪，就把空调打开"
+    invalid = {
+        "complexity": "adaptive", "addressed": True,
+        "goal": "需要澄清：要先查深圳今天的天气再决定开不开空调",
+        "steps": [{"id": "s1", "capability_ref": "cap_9999", "slots": {}, "depends_on": [], "slot_refs": {}}],
+    }
+    routed = {
+        "complexity": "adaptive", "goal": text, "addressed": True,
+        "steps": [{"id": "s1", "capability_ref": "cap_0001",
+                   "slots": {"city": "深圳", "date": "今天"}, "depends_on": [], "slot_refs": {}}],
+    }
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": invalid}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": routed}]),
+    ])
+    agents = [MockAgent("info", ["info.weather"]), MockAgent("vehicle", ["hvac.on"])]
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["info.weather"] and plan.complexity == "adaptive"
+    assert plan.retry_policies[0] == "complete_conditional_clarified"
+    assert "未来条件尚未知不是歧义" in spy.last_tool_user
+
+
 def test_complete_conditional_never_accepts_repeated_clarification(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     clarify = {

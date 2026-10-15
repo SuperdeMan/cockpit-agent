@@ -241,6 +241,9 @@ class LoopController:
         # 后件是一句话、只授权一次：放行过一批之后，后续再规划被问句闸拦下的写步照拦（200×5 `70b179b7` D01：
         # 第一批放行 `hvac.on`，第三批又出 `hvac.set`，同样点名空调又被放行）。
         consequent_released = False
+        # 前件成立、可再规划派出的写步一步都不是后件点名的（开关反了 / 对象不对）：拦下之后**再规划一次**，只一次
+        # （2026-10-15 核心旅程 D01：「…就把空调打开」派成 `hvac.off`，修前拦下即收场，空调没开）。
+        consequent_retried = False
         replans = 0
         exhausted = False
         batch_local_ids: dict[str, str] = {}   # 本批 {运行时 ID: 模型的局部 ID}（R3-06，只供 t2.iter 观测）
@@ -352,6 +355,14 @@ class LoopController:
                         "step(s) %s; dropping before dispatch",
                         [step.intent for step in blocked],
                     )
+                if (not kept and blocked and condition_verdict == cj.HOLDS
+                        and not consequent_released and not consequent_retried):
+                    # 拦下的那几步照旧不执行；把「对不上、已拦下、只做后件」写回观察，再规划一次（同一道闸，只放后件点名的步）
+                    consequent_retried = True
+                    observations.append(cj.mismatched_observation(
+                        condition_parts[0], condition_parts[1], [step.intent for step in blocked]))
+                    logger.info("Condition holds but the replan named none of the consequent; replanning once")
+                    continue
                 if not kept:
                     break
                 # 评审三轮 R3-06 兜底：规划器本该已经换成运行时 ID；不认识标签的（替身 / 旧实现）交回来的局部 ID
