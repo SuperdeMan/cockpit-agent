@@ -216,3 +216,37 @@ def test_public_contract_crosses_the_actual_python_servicer():
     assert final.speech == "简报" and final.need_confirm
     assert final.result_bundles[0].results[0].answer == ANSWER
     assert final.result_bundles[0].results[0].card_ref == "final:"
+
+
+# ── 挂起步自己没卡时，本轮唯一那张交互卡上屏（2026-10-15，核心旅程 NB06）────────────────────────────
+
+_LIST = {"type": "place_list", "display_priority": 1, "items": [{"id": "p1", "name": "川胖虎"}, {"id": "p2", "name": "渝味轩"}]}
+_ROUTE = {"type": "charging_route", "display_priority": 0, "items": [{"id": "c1", "name": "一号站"}]}
+_INFO = {"type": "weather", "display_priority": 2}
+
+
+def _ok(step_id, card, history=False):
+    return StepResult(step_id, StepStatus.OK, speech="", ui_card=card, from_history=history)
+
+
+def test_a_suspension_without_its_own_card_shows_the_turns_single_list():
+    """「已找到 5 个地点。您想看哪一家的详情？」——问的就是那份列表，不上屏用户没法挑（`70b179b7` NB06 一遍）。交互卡独显。"""
+    results = [_ok("s1", _LIST), _ok("s3", _INFO)]
+    assert result_bundle.suspension_list(None, results) == ("s1", _LIST)
+    assert result_bundle.suspension_cards(None, results) is _LIST
+
+
+def test_the_pending_steps_own_card_stays_the_authority():
+    own = {"type": "merchant_choices", "purpose": "store_choice"}
+    assert result_bundle.suspension_list(own, [_ok("s1", _LIST)]) is None
+    assert result_bundle.suspension_cards(own, [_ok("s1", _LIST)]) is own
+
+
+def test_two_interactive_cards_or_a_carried_over_one_are_not_guessed_between():
+    """两张交互卡分不清问的是哪份；上一轮带进来的（`from_history`）用户这一轮没看到——都照旧只附信息卡。"""
+    assert result_bundle.suspension_list(None, [_ok("s1", _LIST), _ok("s2", _ROUTE)]) is None
+    assert result_bundle.suspension_cards(None, [_ok("s1", _LIST), _ok("s2", _ROUTE), _ok("s3", _INFO)]) is _INFO
+    assert result_bundle.suspension_list(None, [_ok("s1", _LIST, history=True)]) is None
+    # 同一张卡在「本轮未播报」与「全部结果」里各出现一次（`_suspend` 的 public_results）不算两张
+    assert result_bundle.suspension_list(None, [_ok("s1", _LIST), _ok("s1", dict(_LIST))]) == ("s1", _LIST)
+

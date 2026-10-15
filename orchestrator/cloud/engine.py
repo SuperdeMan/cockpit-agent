@@ -2586,15 +2586,23 @@ class PlannerEngine:
         # 而那一轮的事实一件都没登记——T2 循环续接导航之后又挂起，下一句「取消导航」答「当前没有正在进行的导航」，
         # 车其实在导航（「导航去公司，顺便提醒我买牛奶」、提醒缺时间也是同形）；同样丢掉的还有已执行的控制目标、原话里的告警与约束。
         # ⇒ 挂起轮与完成轮用**同一份抽取**登记本轮已执行的事实（挂起步本身不是 OK，抽取不会把它当成做完了）。
-        # 仍然守住 C10-A「第 N 个只许指向用户最后一眼看到的那份列表」：这一轮 final 的卡片只是挂起步自己的，
-        # 候选集**只收挂起步**（它是选择卡时就是原来那条；兄弟步的列表用户没以卡片看见过，不收）。
+        # 仍然守住 C10-A「第 N 个只许指向用户最后一眼看到的那份列表」：候选集只收这一轮 final **上屏**的那份——挂起步自己的卡；
+        # 挂起步自己没卡时，本轮唯一那张交互卡（`suspension_list`，2026-10-15 核心旅程 NB06：「您想看哪一家的详情？」时列表不在屏上）。
+        # 那张卡可能出自更早的一批（T2 再规划），那一步不在这份计划里——从本轮登记过的步（`ctx.result_steps`）补进来抽候选。
+        listed = result_bundle.suspension_list(step_result.ui_card, public_results)
+        focus_plan, candidates_from = plan, {step_result.step_id}
+        if listed:
+            candidates_from = {step_result.step_id, listed[0]}
+            sibling = (getattr(ctx, "result_steps", None) or {}).get(listed[0])
+            if sibling is not None and all(s.id != listed[0] for s in plan.steps):
+                focus_plan = dataclasses.replace(plan, steps=[*plan.steps, sibling])
         if ctx.prefs.get("memory_enabled", "true") != "false":
             try:
                 await self.context.update_focus(
-                    ctx.session_id, plan, results,
+                    ctx.session_id, focus_plan, results,
                     user_id=ctx.user_id, exchange_id=ctx.request_id,
                     occupant_id=getattr(ctx, "occupant_id", ""),
-                    candidates_from={step_result.step_id})
+                    candidates_from=candidates_from)
             except Exception as exc:            # 焦点是 best-effort，绝不拖垮挂起
                 logger.debug("focus update on a suspend failed: %s", exc)
         # The pending step is always re-run from ``pending_plan``.  Keeping its

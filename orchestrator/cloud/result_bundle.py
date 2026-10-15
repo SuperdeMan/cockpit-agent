@@ -197,15 +197,42 @@ def with_results(event: dict, ctx, results: list) -> dict:
     return event
 
 
+def suspension_list(pending_card, results: list):
+    """挂起步自己没卡时，本轮唯一那张交互卡（列表 / 候选，`display_priority` < 2）→ `(step_id, card)`；否则 None。
+
+    挂起问的往往就是它（「已找到 5 个地点。您想看哪一家的详情？」）：不上屏，用户看不到要从哪份里挑（核心旅程 NB06
+    `70b179b7` 一遍）。挂起步自己有卡（确认卡 / 选择卡）时那张是当前交互的权威，一个字不动；本轮有两张以上交互卡时分不清问的是哪份，
+    照旧不上。上屏的这份就是用户最后一眼看到的列表——它的候选进焦点（`engine._suspend`），与 C10-A 同一口径。"""
+    if pending_card:
+        return None
+    found: list[tuple[str, dict]] = []
+    for result in results:
+        card = result.ui_card
+        if result.status != StepStatus.OK or result.from_history or not isinstance(card, dict):
+            continue
+        try:
+            interactive = int(card.get("display_priority", 2)) < 2
+        except (ValueError, TypeError):
+            interactive = False
+        if interactive and all(card != seen for _, seen in found):
+            found.append((result.step_id, card))
+    return found[0] if len(found) == 1 else None
+
+
 def suspension_cards(pending_card, results: list):
     """Keep the current interaction primary, add completed informational cards.
 
     Other interactive cards stay available in result details, without replacing the
     current candidate/confirmation authority. No new card-type routing table.
+    With no card of its own, a suspension shows the turn's single interactive card
+    alone (`suspension_list`), as the aggregator does for a completed turn.
     """
     if pending_card:
         # Existing clients consume the root type/confirmation_context directly.
         return pending_card
+    listed = suspension_list(pending_card, results)
+    if listed:
+        return listed[1]
     cards = []
     for result in results:
         card = result.ui_card

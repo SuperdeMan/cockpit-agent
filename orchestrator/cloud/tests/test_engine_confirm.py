@@ -1335,6 +1335,37 @@ def test_an_ordinary_suspend_registers_this_turns_facts_but_only_its_own_candida
     assert _suspend_with_card(None) == [("sess-1", 1, {"s1"})]
 
 
+def test_a_suspension_shows_and_registers_the_list_an_earlier_batch_produced():
+    """核心旅程 NB06（`70b179b7` 一遍）：T2 首批搜出列表，再规划那批的详情步缺目标、挂起问「您想看哪一家的详情？」——修前列表卡
+    不上屏（挂起只附信息卡），候选也只收挂起步自己（它没有列表）⇒ 用户看不到、也没法说「第二家」。挂起步自己没卡时，本轮唯一那张交互卡
+    上屏，它出自的那一步（不在当前这批计划里）从本轮登记过的步补进来抽候选。"""
+    from orchestrator.cloud import result_bundle
+    from orchestrator.cloud.models import Plan, Step, StepResult, StepStatus, PlanContext
+
+    engine, _, _ = _make_engine_interject()
+    calls = []
+
+    async def _spy_update_focus(session_id, plan, results, **kw):
+        calls.append(([s.id for s in plan.steps], kw.get("candidates_from")))
+    engine.context.update_focus = _spy_update_focus
+
+    listing = {"type": "place_list", "display_priority": 1,
+               "items": [{"id": "p1", "name": "川胖虎"}, {"id": "p2", "name": "渝味轩"}]}
+    ctx = PlanContext(session_id="sess-1", user_id="u1", request_id="r1")
+    first = Plan(steps=[Step(id="s1", agent_id="nearby", endpoint="x", intent="nearby.search", slots={})],
+                 raw_text="只要评分四点五以上的")
+    result_bundle.register_plan(ctx, first)                  # 首批（engine 登记）
+    batch = Plan(steps=[Step(id="t1_s1", agent_id="nearby", endpoint="x", intent="nearby.detail", slots={})],
+                 raw_text="只要评分四点五以上的")
+    searched = StepResult(step_id="s1", status=StepStatus.OK, speech="已找到 5 个地点。", ui_card=listing)
+    pending = StepResult(step_id="t1_s1", status=StepStatus.NEED_SLOT, speech="您想看哪一家的详情？",
+                         missing_slots=["target"])
+    final = asyncio.run(engine._suspend(pending, [searched, pending], batch, ctx, prior=[searched]))
+
+    assert final["ui_card"] == listing
+    assert calls == [(["t1_s1", "s1"], {"t1_s1", "s1"})]
+
+
 def test_a_safety_statement_is_never_a_slot_answer():
     """真栈（release `0d414816`，T47 收口探针 3 趟里 1 趟）：充电规划出了 `dest_choice` 选择卡之后，
     「检查过了，机油灯已经灭了，恢复正常了」被**整句填进 `destination`**，答成
