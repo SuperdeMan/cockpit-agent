@@ -46,13 +46,14 @@ journeys:
      known_red: "2026-10-12：「今天的天气适合去哪玩」近四次跑数全红（65ddeb85、08a62bf5、99178302 ×2）——规划器要么反问「想了解哪种信息」、要么只答天气，不按天气推荐去处"}
   - {id: A3-3, source: journeys/target_a.yaml, family: F08, lane: read_only}
   # ── F09 周边 ────────────────────────────────────────────────────
-  # 周边 / 停车 Agent 按整个 Agent 要求 payment.invoke（只为预留的下单桩）：只读旅程按条补这一项（只读车道从不确认）
-  - {id: B5-2, source: journeys/target_b.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB01, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB02, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB03, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB04, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB05, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  # 2026-10-16 起周边 Agent 不再要求 payment.invoke（后续批 §18.2），这些旅程不再按条补权限，按合成用户的真实权限跑
+  # （补着就验不到「没有支付权限的主体也看得到周边」这条，再回退也照样绿）
+  - {id: B5-2, source: journeys/target_b.yaml, family: F09, lane: read_only}
+  - {id: NB01, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB02, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB03, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB04, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
+  - {id: NB05, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F09, lane: read_only}
   # ── F06 导航：估算只读（冻结 P2，2026-10-10；本地目的地探针的案例表搬进语料）─────────
   - {id: NV01, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV02, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
@@ -76,7 +77,7 @@ journeys:
   - {id: NV20, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV21, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV22, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
-  - {id: NV27, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NV27, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV23, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV24, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
   - {id: NV25, source: eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml, family: F06, lane: read_only}
@@ -241,13 +242,13 @@ journeys:
   - {id: EN13, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN14, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN15, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
-  # F09 周边：只读条目按条补 payment.invoke（只读车道从不确认）；NB11 要发导航只能走模拟车，而运行器只给只读车道补这一项
-  - {id: NB06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
-  - {id: NB09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke],
+  # F09 周边：2026-10-16 起不再按条补 payment.invoke（同上）；NB11 要发导航，走模拟车
+  - {id: NB06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
+  - {id: NB07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
+  - {id: NB08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
+  - {id: NB09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only,
      known_red: "2026-10-16 复测（5ebc0bb4）4/5：修前 8 次全拿「第一家」当地名去搜；剩下一遍规划器把第一家的店名写进 keyword、category 写停车场、没给 location，中心只能从原话取到「第一家」，如实答「对不上是哪一家」。要修得让 Agent 判槽位角色（keyword 其实是中心），证据只有一遍，登记（后续批 §17.4）"}
-  - {id: NB10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only, scopes_extra: [payment.invoke]}
+  - {id: NB10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
   - {id: NB11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: simulated_vehicle,
      known_red: "2026-10-12 读代码：周边 / 停车 Agent 按整个 Agent 要求 payment.invoke，运行器只许只读车道补这一项（scopes_extra 校验钉着），模拟车车道的合成用户第一轮搜索就会被拒（「当前账号没有『周边发现』这项能力的授权」）；没有支付权限的主体用不了周边是冻结设计 §11.7 登记的产品问题，拆到能力级权限之前红"}
   # F06 导航：导航动作走模拟车（B1-2 目的地焦点迁移、改目的地）

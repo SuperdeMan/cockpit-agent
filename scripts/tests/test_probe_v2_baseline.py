@@ -481,8 +481,8 @@ def test_a_write_lane_run_with_a_cleanup_failure_does_not_pass():
 
 
 def test_scopes_extra_is_only_payment_invoke_and_only_on_the_read_only_lane():
-    """冻结 P2（2026-10-10）：周边 / 停车 Agent 按整个 Agent 要求 payment.invoke，不给就连只读搜索都被拒。条目可补这一项，
-    只给只读车道（从不确认，支付一步都执行不了）；商户写、写车道一律拒。"""
+    """冻结 P2（2026-10-10）：按整个 Agent 要求 payment.invoke 的能力不给就连只读查询都被拒（当时是周边，2026-10-16 起只剩停车缴费）。
+    条目可补这一项，只给只读车道（从不确认，支付一步都执行不了）；商户写、写车道一律拒。"""
     base = {"family": "F09", "turns": [{"say": "附近有咖啡店吗", "expect": {}}]}
     probe.validate_case({**base, "lane": "read_only", "scopes_extra": ["payment.invoke"]})
     with pytest.raises(ValueError):
@@ -492,8 +492,14 @@ def test_scopes_extra_is_only_payment_invoke_and_only_on_the_read_only_lane():
                              "scopes_extra": ["payment.invoke"]})
 
 
-def test_the_manifest_carries_scopes_extra_into_the_case():
-    cases = {c["id"]: c for c in probe.load_manifest(probe.MANIFEST)}
+def test_the_manifest_carries_scopes_extra_into_the_case(tmp_path):
+    """条目写了就带进 case，没写就不带。用自带的小清单：真实清单 2026-10-16 起已没有条目用它（周边不再要求支付权限，后续批 §18.2）。"""
+    manifest = tmp_path / "manifest.yaml"
+    source = "eval_corpus/v2_runtime/core/f06_f07_f09_maps.yaml"
+    manifest.write_text(yaml.safe_dump({"version": 1, "split": "regression", "journeys": [
+        {"id": "NB01", "source": source, "family": "F09", "lane": "read_only", "scopes_extra": ["payment.invoke"]},
+        {"id": "NV01", "source": source, "family": "F06", "lane": "read_only"}]}), encoding="utf-8")
+    cases = {c["id"]: c for c in probe.load_manifest(manifest)}
     assert cases["NB01"]["scopes_extra"] == ["payment.invoke"]
     assert "scopes_extra" not in cases["NV01"]
 

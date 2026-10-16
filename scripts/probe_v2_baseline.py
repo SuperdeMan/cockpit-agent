@@ -67,8 +67,9 @@ _JOURNEY_TURN_KEYS = {"say", "expect"}
 #: 位置走 7 月旅程的 `setup.location`；别的键一律拒绝——meta 是下发给编排的，不许语料随手塞别的东西。
 _CASE_META_KEYS = {"input_source"}
 SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
-#: 清单条目可以按旅程补的权限（冻结 P2，2026-10-10）：周边 / 停车 Agent 按整个 Agent 要求 `payment.invoke`（只为预留的下单桩），
-#: 不给就连只读的搜索都被拒。只收这一项、只给只读车道——只读车道从不确认（`validate_case` 钉着），支付一步都执行不了；商户写永远不给。
+#: 清单条目可以按旅程补的权限（冻结 P2，2026-10-10）：按整个 Agent 要求 `payment.invoke` 的能力不给就连只读查询都被拒。当时是周边
+#: （只为预留的下单桩），2026-10-16 周边去掉了它（后续批 §18.2），清单里的条目随之撤掉；停车缴费 Agent 仍按整个 Agent 要求（`parking.pay`），
+#: 只读查费的旅程才用得着。只收这一项、只给只读车道——只读车道从不确认（`validate_case` 钉着），支付一步都执行不了；商户写永远不给。
 SCOPE_EXTRAS = ("payment.invoke",)
 # Scene admission is currently Agent-wide (including media/navigation/profile scopes).
 # Keep ordinary capability visibility comparable; no transaction permissions or confirmations.
