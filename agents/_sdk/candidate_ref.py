@@ -223,6 +223,16 @@ def resolve(value, meta, *, namespace: str) -> dict | None:
     items = live_items(meta, namespace=namespace)
     if items is None:
         return None
+    return resolve_items(text, items)
+
+
+def resolve_items(value, items: list[dict]) -> dict | None:
+    """槽值 → 一份**已经在手里**的候选（`[{"index", "name", ...}]`）里的那一项；判据与 `resolve` 同一份（原名 → 序数 → 唯一部分名）。
+
+    给不经下发、自己持有候选的消费方用：麦当劳选店续跑从自己存的草稿里挑门店（2026-10-16 demo-dqt1fu）。"""
+    text = str(value or "").strip()
+    if not text or not items:
+        return None
     return (_by_exact_name(text, items)
             or _by_ordinal(text, items)
             or _by_partial_name(text, items))

@@ -596,7 +596,8 @@ async def test_multiple_store_candidates_require_user_choice_and_stop_chain():
 
 
 @pytest.mark.asyncio
-async def test_real_store_choice_button_resumes_with_clean_official_keyword():
+async def test_real_store_choice_button_resumes_with_the_store_it_showed():
+    """按钮续跑按卡上那家门店的**身份**继续，不再拿名字重查官方门店（demo-dqt1fu：门店名互为子串时重查又是多家，选店成了死循环）。"""
     stores = _ok([
         {"storeCode": "S001", "beCode": "B001", "storeName": "南京东路店",
          "businessStatus": True},
@@ -617,8 +618,82 @@ async def test_real_store_choice_button_resumes_with_clean_official_keyword():
         _intent(store_hint=send_text), CTX, META)
 
     assert resumed.status == NEED_CONFIRM
-    assert client.calls[1][0] == "query-nearby-stores"
-    assert client.calls[1][1].get("keyword") == "南京东路店"
+    assert [name for name, _, _ in client.calls][:2] == ["query-nearby-stores", "query-meals"]
+    assert client.calls[1][1].get("storeCode") == "S001"
+
+
+# ── demo-dqt1fu：选店续跑（序号带句号 / 被挪进 item_query / 同名子串 / 挑不中照常解析）──────────────────────────
+_NESTED_STORES = _ok([
+    {"storeCode": "K001", "beCode": "KB1", "storeName": "麦当劳深圳前海科兴天地餐厅", "businessStatus": True},
+    {"storeCode": "K002", "beCode": "KB2", "storeName": "麦当劳深圳前海科兴天地餐厅甜品站", "businessStatus": True},
+    {"storeCode": "K003", "beCode": "KB3", "storeName": "麦当劳深圳前海科兴科学园餐厅", "businessStatus": True},
+])
+
+
+def _menu(**slots):
+    return SimpleNamespace(name="mcd.menu", slots={"city": "深圳市", **slots})
+
+
+@pytest.mark.asyncio
+async def test_the_first_one_with_a_full_stop_opens_the_first_stores_menu():
+    """demo-dqt1fu 第 2 轮「第一个。」：修前桥把它解析成店名写进了 item_query（商品查询槽），store_hint 里还是「第一个。」，
+    查门店又是多家。现在从草稿里按序号挑中第一家，请求槽从草稿恢复（桥误写的商品查询作废），直接出菜单。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    asked = await workflow.menu(_menu(store_hint="沙县精品小吃(老兵大厦店)"), CTX, META)
+    assert asked.status == NEED_SLOT and asked.data.get("checkout_token")
+
+    shown = await workflow.menu(_menu(store_hint="第一个。", item_query="麦当劳深圳前海科兴天地餐厅",
+                                      _candidate_ref_id="K001"), CTX, META)
+    assert shown.status != NEED_SLOT, shown.speech
+    assert [name for name, _, _ in client.calls] == ["query-nearby-stores", "query-meals"]
+    assert client.calls[1][1].get("storeCode") == "K001"
+
+
+@pytest.mark.asyncio
+async def test_an_ordinal_alone_picks_that_store():
+    """只有序号（桥没动它）：「第二个。」按草稿里的顺序挑中第二家。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    await workflow.menu(_menu(store_hint="科兴"), CTX, META)
+    shown = await workflow.menu(_menu(store_hint="第二个。"), CTX, META)
+    assert shown.status != NEED_SLOT, shown.speech
+    assert client.calls[1][1].get("storeCode") == "K002"
+
+
+@pytest.mark.asyncio
+async def test_a_store_button_picks_that_store_even_when_another_name_contains_it():
+    """按钮「选择麦当劳门店：麦当劳深圳前海科兴天地餐厅」：同名甜品站的名字把它整个包含进去，修前按子串重查又是两家。现在原名全等挑中正店。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    await workflow.menu(_menu(store_hint="科兴"), CTX, META)
+    shown = await workflow.menu(_menu(store_hint="选择麦当劳门店：麦当劳深圳前海科兴天地餐厅"), CTX, META)
+    assert shown.status != NEED_SLOT, shown.speech
+    assert client.calls[1][1].get("storeCode") == "K001"
+
+
+@pytest.mark.asyncio
+async def test_an_ordinal_the_bridge_moved_into_item_query_still_picks_the_store():
+    """裸「第二个」被桥当成错位槽挪走：store_hint 被清掉、店名写进 item_query——照样按店名挑中第二家。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    await workflow.menu(_menu(store_hint="科兴"), CTX, META)
+    shown = await workflow.menu(_menu(item_query="麦当劳深圳前海科兴天地餐厅甜品站"), CTX, META)
+    assert shown.status != NEED_SLOT, shown.speech
+    assert client.calls[1][1].get("storeCode") == "K002"
+
+
+@pytest.mark.asyncio
+async def test_a_store_not_on_the_card_is_looked_up_by_name_as_before():
+    """说了卡上没有的另一家：草稿作废，照常按名字查官方门店。"""
+    other = _ok([{"storeCode": "K009", "beCode": "KB9", "storeName": "麦当劳深圳南山书城餐厅", "businessStatus": True}])
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES, other], "query-meals": [MENU_RESULT]})
+    await workflow.menu(_menu(store_hint="科兴"), CTX, META)
+    shown = await workflow.menu(_menu(store_hint="麦当劳深圳南山书城餐厅"), CTX, META)
+    assert [name for name, _, _ in client.calls] == ["query-nearby-stores", "query-nearby-stores", "query-meals"]
+    assert client.calls[1][1].get("keyword") == "深圳南山书城餐厅" and client.calls[2][1].get("storeCode") == "K009"
+    assert shown.status != NEED_SLOT, shown.speech
 
 
 @pytest.mark.asyncio

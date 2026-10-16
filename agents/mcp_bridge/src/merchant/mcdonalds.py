@@ -19,6 +19,7 @@ from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from runtime.external_text import plain_name
 from runtime.external_url import https_url_host, pay_url_allowed
 
+from agents._sdk import candidate_ref
 from agents._sdk.candidate_ref import RESERVED_ID_SLOT
 from ..mcp_client import McpTimeout
 from .base import (DeclaredBusinessRejected, MerchantWorkflow,
@@ -122,6 +123,14 @@ class McDonaldsWorkflow(MerchantWorkflow):
 
     async def prepare(self, intent, ctx, meta) -> AgentResult:
         slots = dict(getattr(intent, "slots", {}) or {})
+        user_id, session_id = self._owner(ctx)
+        # 先试选店续跑：这一句在回答上一轮的选店卡时，请求槽从草稿恢复（桥误写进 item_query 的店名随之作废）
+        resumed = await self._resume_store_choice(slots, user_id=user_id, session_id=session_id)
+        if isinstance(resumed, AgentResult):
+            return resumed
+        chosen = None
+        if resumed is not None:
+            slots, chosen = resumed
         candidate_id = str(slots.pop(RESERVED_ID_SLOT, "") or "").strip()
         item_query = self._choice_value(slots.get("item_query"), "餐品")
         if not item_query:
@@ -136,12 +145,12 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 status=NEED_SLOT, speech="点几份呢？一次最多帮您点 20 份。",
                 follow_up="比如说「两份」。", missing_slots=["quantity"])
 
-        user_id, session_id = self._owner(ctx)
         if not user_id or not session_id:
             return self.refused("当前会话身份不完整，暂时不能创建真实订单。")
 
         now = self._clock()
-        store, store_code, refusal = await self._resolve_store(slots, now=now, user_id=user_id)
+        store, store_code, refusal = await self._resolve_store(
+            slots, now=now, user_id=user_id, session_id=session_id, chosen=chosen)
         if refusal is not None:
             return refusal
 
@@ -781,13 +790,25 @@ class McDonaldsWorkflow(MerchantWorkflow):
                     return True
         return False
 
-    async def _resolve_store(self, slots: dict, *, now, user_id: str = ""):
+    async def _resolve_store(self, slots: dict, *, now, user_id: str = "", session_id: str = "",
+                             chosen: dict | None = None):
         """把 store_hint/city 解析成一家可下单的官方门店。
 
         返回 `(store, store_code, refusal)`——`refusal` 非 None 时调用方原样返回。
         下单与看菜单**共用这一份**判定：打烊、营业状态可靠性、同名多店消歧，
-        抄成两份就会漂移（B1 的成因）。
+        抄成两份就会漂移（B1 的成因）。`chosen`：选店续跑从草稿里挑中的那家（`_resume_store_choice`），
+        按门店身份直接用，不再按名字重查官方门店。
         """
+        if chosen is not None:
+            store_code = str(chosen.get("storeCode") or "")
+            if not store_code:
+                return None, "", self._reselect_store(
+                    "门店信息不完整，不能继续下单，请换一家门店。")
+            if not self._store_orderable(chosen, slots, now=now):
+                return None, "", self._reselect_store(
+                    f"{self._store_name(chosen) or '这家麦当劳'}现在不能下单（可能已打烊）。"
+                    "可以换一家门店或稍后再试。")
+            return chosen, store_code, None
         store_hint = self._store_keyword(
             self._choice_value(slots.get("store_hint"), "门店"))
         city = str(slots.get("city") or "").strip()
@@ -851,10 +872,12 @@ class McDonaldsWorkflow(MerchantWorkflow):
                         "reason": "mcd_store_unresolved",
                     }
                 return None, "", refusal
-            return None, "", self._store_choices(open_stores)
+            return None, "", await self._store_choices(
+                open_stores, slots=slots, user_id=user_id, session_id=session_id)
         candidates = store_matches or open_stores
         if len(candidates) != 1:
-            return None, "", self._store_choices(candidates)
+            return None, "", await self._store_choices(
+                candidates, slots=slots, user_id=user_id, session_id=session_id)
         # 唯一候选且（无 hint 或 hint 已命中）——直接选定，不挂起追问
         # （demo-3ukshz 探针：单候选也出「请选择一家」并挂起补槽，随后两句新意图
         # 全被当成补槽答案吞掉）。
@@ -874,8 +897,15 @@ class McDonaldsWorkflow(MerchantWorkflow):
         """
         slots = dict(getattr(intent, "slots", {}) or {})
         now = self._clock()
+        user_id, session_id = self._owner(ctx)
+        resumed = await self._resume_store_choice(slots, user_id=user_id, session_id=session_id)
+        if isinstance(resumed, AgentResult):
+            return resumed
+        chosen = None
+        if resumed is not None:
+            slots, chosen = resumed
         store, store_code, refusal = await self._resolve_store(
-            slots, now=now, user_id=self._owner(ctx)[0])
+            slots, now=now, user_id=user_id, session_id=session_id, chosen=chosen)
         if refusal is not None:
             return refusal
         try:
@@ -1094,7 +1124,9 @@ class McDonaldsWorkflow(MerchantWorkflow):
         return MerchantWorkflow.refused(
             speech, "换一家麦当劳门店试试？说店名或商圈都行。")
 
-    def _store_choices(self, stores: list[dict]) -> AgentResult:
+    async def _store_choices(self, stores: list[dict], *, slots: dict | None = None,
+                             user_id: str = "", session_id: str = "") -> AgentResult:
+        shown = list(stores[:3])
         choices = [MerchantChoice(
             id=str(store.get("storeCode") or ""),
             name=self._store_name(store) or "麦当劳门店",
@@ -1102,12 +1134,63 @@ class McDonaldsWorkflow(MerchantWorkflow):
                       else "支持预约"),
             send_text=f"选择麦当劳门店：{self._store_name(store)}",
             data={"store_code": str(store.get("storeCode") or "")},
-        ) for store in stores[:3]]
-        return AgentResult(
+        ) for store in shown]
+        result = AgentResult(
             status=NEED_SLOT,
             speech="找到多家可用的麦当劳门店，请选择一家。",
             follow_up="请选择具体门店。", missing_slots=["store_hint"],
             ui_card=self.choice_card("store", choices))
+        # 选店续跑（demo-dqt1fu，与瑞幸 `_store_choices` 同构）：卡上这几家官方门店连同原请求存成草稿，用户下一句（序号 / 按钮 / 店名）
+        # 从这里按门店身份挑（`_resume_store_choice`），不再按名字重查官方门店——门店名互为子串时重查又是多家，选店成了死循环。
+        # 存不下就照旧只出卡，回答走按名字解析的老路。
+        if user_id and session_id and shown:
+            draft = MerchantDraft(
+                token=secrets.token_urlsafe(24), merchant=self.merchant,
+                operation="select_store", user_id=user_id, session_id=session_id,
+                store={"operation": "select_store", "candidates": copy.deepcopy(shown)},
+                items=[], amount_cents=0,
+                upstream_args={"request": {
+                    str(key): str(value) for key, value in (slots or {}).items()
+                    if value is not None and key not in ("store_hint", RESERVED_ID_SLOT)}},
+                schema_digest=self._schema_digest(), created_at=time.time())
+            if await self.drafts.put(draft):
+                result.data = {"checkout_token": draft.token}
+        return result
+
+    async def _resume_store_choice(self, slots: dict, *, user_id: str, session_id: str):
+        """这一句在回答上一轮的选店卡 ⇒ (从草稿恢复的请求槽, 选中的那家官方门店)；不是 / 挑不中 ⇒ None（照常按名字解析）。
+
+        回答在 `store_hint`（引擎补槽填的；按钮那句剥掉固定前缀），或被桥的候选集解析挪进了 `item_query`（选店卡与菜单共用
+        `mcd.menu` 这个来源，桥把门店当成了商品——demo-dqt1fu 第 2 轮「第一个。」）。按 `candidate_ref` 同一份判据在草稿的候选里挑
+        （原名 → 序号 → 唯一部分名）；请求槽从草稿恢复，桥误写的商品查询与候选 id 随之作废。挑不中时草稿已经消费掉，照常解析
+        （用户可能说了另一家）。"""
+        answers = [self._choice_value(slots.get("store_hint"), "门店"), str(slots.get("item_query") or "").strip()]
+        if not user_id or not session_id or not any(answers):
+            return None
+        draft = await self.drafts.consume_current(
+            user_id=user_id, session_id=session_id, merchant=self.merchant,
+            expected_action="select_store")
+        if draft is None:
+            return None
+        if draft.operation != "select_store":
+            await self.drafts.put(draft)       # 别的操作（下单确认）的草稿：放回，选店的回答消费不了它
+            return None
+        candidates = [store for store in ((draft.store or {}).get("candidates") or [])
+                      if isinstance(store, dict)]
+        saved = (draft.upstream_args or {}).get("request")
+        if draft.schema_digest != self._schema_digest() or not candidates or not isinstance(saved, dict):
+            return None
+        listed = [{"index": index, "name": self._store_name(store)}
+                  for index, store in enumerate(candidates, 1) if self._store_name(store)]
+        picked = next((item for item in (candidate_ref.resolve_items(answer, listed) for answer in answers if answer)
+                       if item is not None), None)
+        if picked is None:
+            return None
+        store = candidates[picked["index"] - 1]
+        restored = {str(key): str(value) for key, value in saved.items()}
+        restored["store_hint"] = self._store_name(store)
+        logger.info("麦当劳选店续跑：%r → %s", answers, restored["store_hint"])
+        return restored, store
 
     @staticmethod
     def _menu_products(data) -> list[dict]:
