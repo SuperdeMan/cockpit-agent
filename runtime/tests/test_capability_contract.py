@@ -74,13 +74,15 @@ def test_frozen_production_inventory_and_legacy_roundtrip():
                 strict_migrations.add((restored.agent_id, c.intent))
                 with pytest.raises(cc.ContractError):
                     cc.validate_capability(restored, c)
-    assert count == 143
-    # 迁到严格契约的旧能力（加上下文范围要改 ABI 指纹）：道路安全（CA2-07）、导航（CA2-19 S4）
+    assert count == 140
+    # 迁到严格契约的旧能力（加上下文范围 / 改权限声明要改 ABI 指纹）：道路安全（CA2-07）、导航（CA2-19 S4）、
+    # 周边发现（2026-10-16，去掉用不到的 payment.invoke：没有支付权限的主体此前连只读的周边搜索都看不到，核心旅程 A1-5 / NB11）
     migrated = {("road-safety", intent) for intent in (
         "safety.driving_advice", "safety.driver_state", "safety.weather_alert", "safety.road_condition")} | {
         ("navigation", f"navigation.{name}") for name in (
             "search_poi", "navigate_to", "estimate", "reroute", "cancel", "set_place",
-            "reverse_geocode", "locate", "poi_detail")}
+            "reverse_geocode", "locate", "poi_detail")} | {
+        ("nearby", f"nearby.{name}") for name in ("search", "detail", "order")}
     # 新增即严格契约的能力（不在历史白名单里，不是迁移）：场景定义问（2026-10-05）、香氛开关现状查询（2026-10-11）、
     # 前备箱开 / 关（2026-10-12，核心旅程 K05：前备箱开放语音，需确认的写能力）、「记住…」当场写入（2026-10-13，
     # 提醒 Agent 的 memory.remember：整句交给 Memory，无槽）
