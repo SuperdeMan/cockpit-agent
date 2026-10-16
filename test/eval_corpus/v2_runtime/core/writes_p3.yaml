@@ -208,7 +208,8 @@ cases:
     family: deferred_condition_not_now
     vehicle_keys: [hvac_on]
     turns:
-      - {say: "车里温度低于20度的时候打开空调", expect: {actions_allowed: []}}
+      # 用户 2026-10-16 裁决：建成带「车内温度低于20度」触发条件的场景——挂保存确认、念出条件，当场不动车（收尾取消，不存）
+      - {say: "车里温度低于20度的时候打开空调", expect: {need_confirm: true, actions_allowed: [], speech_any: ["低于20度"]}}
     cleanup:
       - {say: "关闭空调"}
   # D02 的「帮我」说法（2026-10-12）：带「帮我 / 请」整句不再算提问，首轮问句闸不拦后件——前件为假照样不该开

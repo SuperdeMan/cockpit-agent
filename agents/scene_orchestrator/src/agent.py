@@ -30,7 +30,7 @@ from runtime.question_shape import is_non_directive_question
 from .catalog import action_type_for, affected_state_keys, is_danger, load_catalog, \
     resolve_command, restore_action, validate_action
 from .compiler import Draft, action_desc, actions_preview, compile_scene, \
-    extract_scene_name, extract_spec
+    extract_scene_name, extract_spec, stated_condition_name, stated_event_trigger, trigger_phrase
 from .solve import solve
 from .state_mirror import StateMirror
 from .store import BUILTIN, DISABLED, ENABLED, Scene, SceneStore, USER
@@ -249,6 +249,9 @@ class SceneOrchestratorAgent(BaseAgent):
         if not name or name == raw:
             name = extract_scene_name(raw)
         name = name or (pend.get("name") or "")
+        if not name and stated_event_trigger(raw):
+            # 核心旅程 D03：「车里温度低于20度的时候打开空调」没说场景名——说了事件条件的那句话本身就是名字，不再反问
+            name = stated_condition_name(raw)
         spec = (intent.slots.get("spec") or "").strip()
         if not spec or spec == raw:
             spec = extract_spec(raw, name)
@@ -287,7 +290,7 @@ class SceneOrchestratorAgent(BaseAgent):
 
         existing = await self.store.get_by_name(self._uid(ctx), name)
         draft = await compile_scene(self.llm, self.catalog, spec or raw, name_hint=name,
-                                    model=os.getenv("LLM_MODEL_SCENE", ""))
+                                    model=os.getenv("LLM_MODEL_SCENE", ""), origin=raw)
         if not draft.ok:
             await self._save_kv(ctx, SCENE_PENDING, {})
             return AgentResult(speech=draft.error)
@@ -299,7 +302,7 @@ class SceneOrchestratorAgent(BaseAgent):
         return AgentResult(
             status=NEED_CONFIRM,
             speech=f"{lead}：{self._preview_speech(draft.actions)}。"
-                   f"{self._dropped_speech(draft)}保存吗？",
+                   f"{self._trigger_speech(draft.triggers)}{self._dropped_speech(draft)}保存吗？",
             follow_up="说「确认」就存下来",
             ui_card=self._scene_card("confirm", name, draft.description, draft.actions))
 
@@ -736,6 +739,12 @@ class SceneOrchestratorAgent(BaseAgent):
     def _preview_speech(actions: list, limit: int = 4) -> str:
         head = "、".join(action_desc(a) for a in actions[:limit])
         return head + ("等" if len(actions) > limit else "")
+
+    @staticmethod
+    def _trigger_speech(triggers: list) -> str:
+        """确认话术念出触发条件：触发只问一句要不要开启、不自动执行（设计 D6），照实说（核心旅程 D03：修前条件不念，用户听不出存下的是什么）。"""
+        phrases = [p for p in (trigger_phrase(t) for t in triggers or []) if p]
+        return f"{'、'.join(phrases)}我会问你要不要开启。" if phrases else ""
 
     @staticmethod
     def _dropped_speech(draft: Draft) -> str:

@@ -124,6 +124,76 @@ class Draft:
                    ok=bool(d.get("actions")))
 
 
+#: 用户原话里说出的事件条件（核心旅程 D03，用户 2026-10-16 裁决：「车里温度低于20度的时候打开空调」建成带条件的场景）。
+#: 只认「对象 + 比较 + 数值 + 的时候 / 时」整段都在原话里的说法——比较方向与数值都取自原话；对象只收触发词表里的车内温度
+#: 与电量（`catalog.TRIGGER_EVENT_KEYS`），车外 / 室外 / 天气的温度不是 `cabin_temp`，不认。修前模型把条件写漏、或写成动作的
+#: `when`（只管激活那一刻、不会到点问），场景存下来只能每次手动开。触发只问一句要不要开启、零执行权（设计 D6）。
+_STATED_CONDITION_RE = re.compile(
+    r"(?P<subject>(?:车里|车内)?(?:的)?温度|剩余电量|电池电量|电量)\s*"
+    r"(?P<cmp>低于|不到|小于|少于|高于|超过|大于)\s*(?P<value>\d{1,3})\s*(?:度|℃|%|％)?\s*(?:以下|以上)?\s*"
+    r"(?P<when>的时候|时)")
+_OUTSIDE_TEMPERATURE_RE = re.compile(r"车外|外面|室外|户外|外边|天气|气温")
+_STATED_OPS = {"低于": "lt", "不到": "lt", "小于": "lt", "少于": "lt", "高于": "gt", "超过": "gt", "大于": "gt"}
+_OP_WORDS = {"lt": "低于", "lte": "不高于", "gt": "高于", "gte": "达到", "eq": "是", "ne": "不是"}
+
+
+def stated_event_trigger(text: str) -> dict | None:
+    """原话里说出的事件条件 ⇒ 一条事件触发器（未经 `validate_trigger`）；没有 / 是车外温度 ⇒ None。"""
+    m = _STATED_CONDITION_RE.search(text or "")
+    if not m:
+        return None
+    subject = m.group("subject")
+    if "温度" in subject and _OUTSIDE_TEMPERATURE_RE.search(text or ""):
+        return None
+    key = "battery" if "电" in subject else "cabin_temp"
+    return {"type": "event", "spec": {"key": key, "op": _STATED_OPS[m.group("cmp")], "value": int(m.group("value"))}}
+
+
+def stated_condition_name(text: str) -> str:
+    """说了事件条件、又没有现成场景名时的名字：原话去掉「的时候 / 时」与前后的客气话、标点（「车里温度低于20度打开空调」），至多 20 字。"""
+    m = _STATED_CONDITION_RE.search(text or "")
+    if not m:
+        return ""
+    head = (text or "")[m.start():m.start("when")]
+    tail = re.sub(r"^[\s，,]*(?:就|自动|帮我|给我|请)*", "", (text or "")[m.end():])
+    return re.sub(r"[，,。.！!？?～~\s]", "", head + tail)[:20]
+
+
+def trigger_phrase(trigger: dict) -> str:
+    """确认话术里念的触发条件（「车内温度低于20度时」「每天12:30」）；认不出的触发不念。"""
+    spec = (trigger or {}).get("spec") or {}
+    if (trigger or {}).get("type") == "time":
+        at = str(spec.get("at") or "")
+        return {"daily": f"每天{at}", "workday": f"工作日{at}"}.get(str(spec.get("recur") or ""), at)
+    key, op, value = spec.get("key"), str(spec.get("op") or ""), spec.get("value")
+    word = _OP_WORDS.get(op, "")
+    if key == "cabin_temp" and word:
+        return f"车内温度{word}{value}度时"
+    if key == "battery" and word:
+        return f"电量{word}{value}%时"
+    if key == "speed_kmh" and word:
+        return f"车速{word}{value}公里时"
+    if key == "gear" and op == "eq":
+        return f"挂{value}挡时"
+    if key == "location.city" and op in ("eq", "enter"):
+        return f"到{value}时"
+    return ""
+
+
+def _ensure_stated_trigger(draft: "Draft", origin: str, cat: Catalog) -> None:
+    """原话说了事件条件：草稿里没有同一个键的触发器、或方向 / 数值与原话不一致 ⇒ 按原话补上 / 改正（原话是权威，模型说了不算）。"""
+    stated = stated_event_trigger(origin)
+    if stated is None:
+        return
+    cleaned, _why = validate_trigger(stated, cat)
+    if cleaned is None:
+        return
+    key = cleaned["spec"]["key"]
+    kept = [t for t in draft.triggers
+            if not (t.get("type") == "event" and (t.get("spec") or {}).get("key") == key)]
+    draft.triggers = kept + [cleaned]
+
+
 def extract_scene_name(text: str) -> str:
     """从原话里抠场景名（「帮我创建一个钓鱼模式：…」→ 钓鱼模式）。抠不出 → 空串。
 
@@ -222,8 +292,10 @@ def _prompt(cat: Catalog, text: str, name_hint: str) -> str:
 
 
 async def compile_scene(llm, cat: Catalog, text: str, *, name_hint: str = "",
-                        model: str = "", timeout: float = 30.0) -> Draft:
-    """NL → Draft。LLM 产候选、确定性校验裁决（LLM 说了不算）。"""
+                        model: str = "", timeout: float = 30.0, origin: str = "") -> Draft:
+    """NL → Draft。LLM 产候选、确定性校验裁决（LLM 说了不算）。
+
+    `origin`：用户原话（planner 给的 `spec` 是转述）。原话里说出的事件条件按原话落成触发器（`_ensure_stated_trigger`）。"""
     raw = ""
     data: dict | None = None
     missing: tuple[str, ...] = ()
@@ -251,6 +323,7 @@ async def compile_scene(llm, cat: Catalog, text: str, *, name_hint: str = "",
                 draft = build_draft(data, cat, text=text, name_hint=name_hint)
                 missing = _missing_supported_families(text, draft)
                 if not missing:
+                    _ensure_stated_trigger(draft, origin or text, cat)
                     return draft
                 logger.warning(
                     "scene compile attempt %d omitted supported families: %s",

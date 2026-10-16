@@ -757,3 +757,21 @@ def test_claim_recognizes_a_question_about_a_known_scene():
 def test_claim_leaves_component_modes_directives_and_bare_words_alone():
     for text in ("运动模式是什么意思", "打开露营模式", "露营是什么意思"):
         assert _claim(text)["confident"] is False, text
+
+
+def test_create_from_a_stated_condition_names_itself_and_keeps_the_trigger():
+    """核心旅程 D03（用户 2026-10-16 裁决：建成带条件的场景）：「车里温度低于20度的时候打开空调」没说场景名不再反问，
+    触发条件按原话存下、确认话术念出来——到点只问一句要不要开启，不自动执行（设计 D6）。"""
+    reply = json.dumps({"name": "x", "description": "低温开空调",
+                        "actions": [{"type": "vehicle.control", "command": "hvac.on", "params": {}}]},
+                       ensure_ascii=False)
+    kv, a = KV(), _agent(reply)
+    text = "车里温度低于20度的时候打开空调"
+
+    res = _run(run_handle(a, "scene.create", slots={"spec": text}, raw_text=text, ctx=_ctx(kv)))
+
+    assert res.status == "need_confirm" and not res.actions
+    assert "车内温度低于20度时我会问你要不要开启" in res.speech and "保存吗" in res.speech
+    draft = kv.data[SCENE_PENDING]["draft"]
+    assert draft["name"] == "车里温度低于20度打开空调"
+    assert draft["triggers"] == [{"type": "event", "spec": {"key": "cabin_temp", "op": "lt", "value": 20}}]

@@ -332,3 +332,39 @@ def test_compile_triggers(cat):
     assert d.triggers[0] == {"type": "event",
                              "spec": {"key": "battery", "op": "lt", "value": 20}}
     assert len(d.notes) >= 2, "幻觉键/非法时刻要诚实告知，不静默丢"
+
+
+# ── 原话里说出的事件条件落成触发器（核心旅程 D03，用户 2026-10-16 裁决：建成带条件的场景）──────────
+
+def test_stated_event_conditions_are_read_from_the_users_words():
+    assert CP.stated_event_trigger("车里温度低于20度的时候打开空调") == {
+        "type": "event", "spec": {"key": "cabin_temp", "op": "lt", "value": 20}}
+    assert CP.stated_event_trigger("电量低于20%的时候打开节能模式")["spec"] == {"key": "battery", "op": "lt", "value": 20}
+    assert CP.stated_event_trigger("车外温度低于5度的时候打开座椅加热") is None      # 车外温度不是 cabin_temp
+    assert CP.stated_event_trigger("温度低于20度打开空调") is None                   # 没有「的时候 / 时」不算条件
+    assert CP.stated_condition_name("车里温度低于20度的时候打开空调") == "车里温度低于20度打开空调"
+
+
+_HVAC_ONLY = json.dumps({"name": "低温开空调", "description": "低温开空调",
+                         "actions": [{"type": "vehicle.control", "command": "hvac.on", "params": {}}]},
+                        ensure_ascii=False)
+
+
+def test_a_condition_the_model_left_out_is_kept_as_a_trigger(cat):
+    """修前模型把条件写漏（或写成动作的 when，只管激活那一刻），场景存下来只能每次手动开。"""
+    text = "车里温度低于20度的时候打开空调"
+    d = _run(CP.compile_scene(FakeLLM(_HVAC_ONLY), cat, text, name_hint="车里温度低于20度打开空调", origin=text))
+    assert d.ok and d.triggers == [{"type": "event", "spec": {"key": "cabin_temp", "op": "lt", "value": 20}}]
+
+
+def test_the_users_numbers_win_over_the_models(cat):
+    wrong = json.dumps({**json.loads(_HVAC_ONLY), "triggers": [
+        {"type": "event", "spec": {"key": "cabin_temp", "op": "gte", "value": 30}}]}, ensure_ascii=False)
+    text = "车内温度低于18度时打开空调"
+    d = _run(CP.compile_scene(FakeLLM(wrong), cat, text, origin=text))
+    assert d.triggers == [{"type": "event", "spec": {"key": "cabin_temp", "op": "lt", "value": 18}}]
+
+
+def test_a_scene_without_a_stated_condition_gets_no_trigger(cat):
+    d = _run(CP.compile_scene(FakeLLM(_GOOD), cat, "建个钓鱼模式：座椅放平、开外循环、氛围灯10%"))
+    assert d.ok and d.triggers == []
