@@ -2024,6 +2024,111 @@ def _derive_choice_view(focus: "Focus") -> None:
         focus.last_choice_purpose = str(entry.get("purpose") or "list")
 
 
+def merge_focus(previous: "Focus | None", focus: "Focus") -> "Focus":
+    """本轮抽出的焦点 + 上一份焦点 ⇒ 接力后的那一份（原地改 `focus` 并返回；`previous` 只读）。
+
+    `update_focus` 落盘与 T2 循环中途下发（200×5 后续批 §18.3：再规划出来的步要看到本轮刚建的路线）共用这一份——
+    合并规则只在这里写一次。各维的接力口径见下面逐条注释。"""
+    # W18-a：墓碑接力（ts 不续期），本轮被顶掉 / 过期的组在下面追加
+    retired = list(getattr(previous, "retired_candidate_sets", None) or []) \
+        if previous is not None else []
+    # Q2 候选集台账：**旧组保留、新组追加**，按 ts 限龄、封顶 N 组。
+    # 这里刻意**不是**「第四个字段也加一条粘性接力」——那是卡里点名
+    # 不要做的第三次打补丁。三格粘性（last_places/active_route/
+    # safety_alert）各自是被真栈烧出来的补丁；候选集换的是**载体**：
+    # 一张有来源、有版本、有时效的台账，新旧共存而不是互相覆盖。
+    if previous is not None:
+        prior_sets = list(getattr(previous, "candidate_sets", None) or [])
+        merged = _live_candidate_sets(prior_sets)
+        # 过期的那些从台账里掉出去了——它们的名字进墓碑（W18-a）
+        retired += [t for t in (_tombstone(s, time.time())
+                                for s in prior_sets if s not in merged) if t]
+        fresh = focus.candidate_sets
+        # 合并键带 `is_fallback`：**兜底那份与点名那份不是同一件事的两个
+        # 版本，是两种东西**。首版键只有 (intent, purpose)，于是
+        # 「川菜 → 兜底美食」两轮同键，兜底当场把点名那份挤掉——
+        # N5 换了个地方原样复发（测试当场抓到）。
+        # W08 起键带第四维 `query_signature`：A 附近 / B 附近是两批共存，
+        # 「换一批」是同键新版本（revision+1）。判据在 `candidate_merge_key`。
+        _key = candidate_merge_key
+        previous_by_key = {_key(s): s for s in merged}
+        for entry in fresh:
+            prior = previous_by_key.get(_key(entry))
+            if prior is not None:
+                entry["revision"] = int(prior.get("revision") or 1) + 1
+        fresh_keys = {_key(s) for s in fresh}
+        # 同键的旧组被本轮新组取代；其余原样留着，
+        # **ts 原样携带不续期**（时效从它产生那一刻起算）。
+        focus.candidate_sets = [
+            s for s in merged if _key(s) not in fresh_keys
+        ] + fresh
+    kept = _live_candidate_sets(focus.candidate_sets)
+    # 封顶时被顶掉的那几组也进墓碑（W18-a）：它们是被**新批**挤出去的，不是过期
+    evicted = kept[:-_CANDIDATE_SETS_MAX] if len(kept) > _CANDIDATE_SETS_MAX else []
+    retired += [t for t in (_tombstone(s, time.time()) for s in evicted) if t]
+    focus.candidate_sets = kept[-_CANDIDATE_SETS_MAX:]
+    focus.retired_candidate_sets = _live_tombstones(retired)[-_RETIRED_SETS_MAX:]
+    _derive_choice_view(focus)
+    if previous is not None and not focus.last_places \
+            and previous.last_places:
+        focus.last_places = list(previous.last_places)
+        # 接力**原样携带**取回时刻，不续期——时效从 nearby.search
+        # 那一刻起算，接力多少轮都不能让「刚才那家」变成「上周那家」。
+        focus.last_places_ts = float(
+            getattr(previous, "last_places_ts", 0.0) or 0.0)
+    if previous is not None and not focus.active_route \
+            and not focus.route_ended \
+            and getattr(previous, "active_route", None):
+        # 原样携带（含 ts 不续期）：路线时效从 navigate 那一刻起算。
+        # ⚠ `route_ended` 时**不接力**：那一轮的空是显式终止，不是「本轮没
+        # 产生新路线」。两者在数据上都是空 dict，判据只能靠旗子（QA I-017）。
+        focus.active_route = dict(previous.active_route)
+    # Q9 安全告警同款粘性：**只有新的告警才替换它**，普通轮不得把它抹掉。
+    # 这一格正是 SF3 那三轮缺的东西——第二轮问「高速还能开吗」不产生
+    # 任何告警，不接力的话安全态当场蒸发，第三轮自然就只剩音量可挑了。
+    # 同样**原样携带 ts 不续期**：告警时效从它响起那一刻算。
+    # ⚠ 2026-08-27 起这里**不再只在本轮为空时接力**（C1-C）：
+    # 本轮新来一条 amber、上一轮那条 critical 还没解除时，
+    # 「有新的就换掉」等于**用一句无关的话把安全约束降了级**。
+    # 改成同一条严重级比较——本轮为空那种情况仍然逐字同旧（merge 取旧）。
+    # ⚠ 2026-09-19 起 `safety_alert_cleared` 时**不接力**（QA T47 裁决 A）：那一轮的空
+    # 是用户明确解除，不是「本轮没产生新告警」。同一句里的新告警仍在 `focus.safety_alert`
+    # 里，不受影响。
+    if (previous is not None and getattr(previous, "safety_alert", None)
+            and not focus.safety_alert_cleared):
+        focus.safety_alert = merge_safety_alert(
+            dict(previous.safety_alert), focus.safety_alert)
+    # W07：活动任务帧粘性接力——ts 不续期。写任务只被写任务顶掉：本轮只是一次
+    # 查询（read）而上一件写任务还活着时，帧留给写任务（改口的对象是它）。
+    prior_task = getattr(previous, "active_task", None) if previous is not None else None
+    if active_task_live(prior_task):
+        fresh_task = focus.active_task
+        same_task = bool(fresh_task) and fresh_task.get("task_id") == prior_task.get("task_id")
+        if not fresh_task or (
+                not same_task and fresh_task.get("kind") == "read"
+                and prior_task.get("kind") == "write"):
+            focus.active_task = dict(prior_task)
+    # C12-B：会话偏好约束**后说的覆盖先说的、没说的沿用**。
+    # 普通轮（这一句没提口味）必须原样保住——不接力就等于「说过的话
+    # 只算一轮」，那和没有载体是一回事。
+    if previous is not None and getattr(previous, "session_constraints", None):
+        focus.session_constraints = merge_constraints(
+            dict(previous.session_constraints), focus.session_constraints)
+    # W03：撤销（None）只在合并里有意义，落盘的永远是归一后的「说过且仍有效」
+    focus.session_constraints = merge_constraints(
+        {}, focus.session_constraints)
+    if previous is not None and not focus.last_city \
+            and focus.last_intent not in WEATHER_CONTEXT_INTENTS \
+            and getattr(previous, "last_city", ""):
+        focus.last_city = str(previous.last_city)
+    # `route_ended` 是**本轮事实**，不跨轮——存进去下一轮读回来仍是 True
+    # 就会永久关掉接力（一个只该响一次的旗子变成了常态）。
+    focus.route_ended = False
+    focus.safety_alert_cleared = False
+    focus.focus_ts = time.time()          # W09：短时引用的寿命从此刻起算
+    return focus
+
+
 class ContextManager:
     """编排器侧上下文统一读写门面。Phase 1 只做装配（assemble）。"""
 
@@ -2153,103 +2258,7 @@ class ContextManager:
                                                   occupant_id=occupant_id)
                 stored_before = await self.session.load_focus(
                     session_id, owner_user_id=user_id) or {}
-                # W18-a：墓碑接力（ts 不续期），本轮被顶掉 / 过期的组在下面追加
-                retired = list(getattr(previous, "retired_candidate_sets", None) or []) \
-                    if previous is not None else []
-                # Q2 候选集台账：**旧组保留、新组追加**，按 ts 限龄、封顶 N 组。
-                # 这里刻意**不是**「第四个字段也加一条粘性接力」——那是卡里点名
-                # 不要做的第三次打补丁。三格粘性（last_places/active_route/
-                # safety_alert）各自是被真栈烧出来的补丁；候选集换的是**载体**：
-                # 一张有来源、有版本、有时效的台账，新旧共存而不是互相覆盖。
-                if previous is not None:
-                    prior_sets = list(getattr(previous, "candidate_sets", None) or [])
-                    merged = _live_candidate_sets(prior_sets)
-                    # 过期的那些从台账里掉出去了——它们的名字进墓碑（W18-a）
-                    retired += [t for t in (_tombstone(s, time.time())
-                                            for s in prior_sets if s not in merged) if t]
-                    fresh = focus.candidate_sets
-                    # 合并键带 `is_fallback`：**兜底那份与点名那份不是同一件事的两个
-                    # 版本，是两种东西**。首版键只有 (intent, purpose)，于是
-                    # 「川菜 → 兜底美食」两轮同键，兜底当场把点名那份挤掉——
-                    # N5 换了个地方原样复发（测试当场抓到）。
-                    # W08 起键带第四维 `query_signature`：A 附近 / B 附近是两批共存，
-                    # 「换一批」是同键新版本（revision+1）。判据在 `candidate_merge_key`。
-                    _key = candidate_merge_key
-                    previous_by_key = {_key(s): s for s in merged}
-                    for entry in fresh:
-                        prior = previous_by_key.get(_key(entry))
-                        if prior is not None:
-                            entry["revision"] = int(prior.get("revision") or 1) + 1
-                    fresh_keys = {_key(s) for s in fresh}
-                    # 同键的旧组被本轮新组取代；其余原样留着，
-                    # **ts 原样携带不续期**（时效从它产生那一刻起算）。
-                    focus.candidate_sets = [
-                        s for s in merged if _key(s) not in fresh_keys
-                    ] + fresh
-                kept = _live_candidate_sets(focus.candidate_sets)
-                # 封顶时被顶掉的那几组也进墓碑（W18-a）：它们是被**新批**挤出去的，不是过期
-                evicted = kept[:-_CANDIDATE_SETS_MAX] if len(kept) > _CANDIDATE_SETS_MAX else []
-                retired += [t for t in (_tombstone(s, time.time()) for s in evicted) if t]
-                focus.candidate_sets = kept[-_CANDIDATE_SETS_MAX:]
-                focus.retired_candidate_sets = _live_tombstones(retired)[-_RETIRED_SETS_MAX:]
-                _derive_choice_view(focus)
-                if previous is not None and not focus.last_places \
-                        and previous.last_places:
-                    focus.last_places = list(previous.last_places)
-                    # 接力**原样携带**取回时刻，不续期——时效从 nearby.search
-                    # 那一刻起算，接力多少轮都不能让「刚才那家」变成「上周那家」。
-                    focus.last_places_ts = float(
-                        getattr(previous, "last_places_ts", 0.0) or 0.0)
-                if previous is not None and not focus.active_route \
-                        and not focus.route_ended \
-                        and getattr(previous, "active_route", None):
-                    # 原样携带（含 ts 不续期）：路线时效从 navigate 那一刻起算。
-                    # ⚠ `route_ended` 时**不接力**：那一轮的空是显式终止，不是「本轮没
-                    # 产生新路线」。两者在数据上都是空 dict，判据只能靠旗子（QA I-017）。
-                    focus.active_route = dict(previous.active_route)
-                # Q9 安全告警同款粘性：**只有新的告警才替换它**，普通轮不得把它抹掉。
-                # 这一格正是 SF3 那三轮缺的东西——第二轮问「高速还能开吗」不产生
-                # 任何告警，不接力的话安全态当场蒸发，第三轮自然就只剩音量可挑了。
-                # 同样**原样携带 ts 不续期**：告警时效从它响起那一刻算。
-                # ⚠ 2026-08-27 起这里**不再只在本轮为空时接力**（C1-C）：
-                # 本轮新来一条 amber、上一轮那条 critical 还没解除时，
-                # 「有新的就换掉」等于**用一句无关的话把安全约束降了级**。
-                # 改成同一条严重级比较——本轮为空那种情况仍然逐字同旧（merge 取旧）。
-                # ⚠ 2026-09-19 起 `safety_alert_cleared` 时**不接力**（QA T47 裁决 A）：那一轮的空
-                # 是用户明确解除，不是「本轮没产生新告警」。同一句里的新告警仍在 `focus.safety_alert`
-                # 里，不受影响。
-                if (previous is not None and getattr(previous, "safety_alert", None)
-                        and not focus.safety_alert_cleared):
-                    focus.safety_alert = merge_safety_alert(
-                        dict(previous.safety_alert), focus.safety_alert)
-                # W07：活动任务帧粘性接力——ts 不续期。写任务只被写任务顶掉：本轮只是一次
-                # 查询（read）而上一件写任务还活着时，帧留给写任务（改口的对象是它）。
-                prior_task = getattr(previous, "active_task", None) if previous is not None else None
-                if active_task_live(prior_task):
-                    fresh_task = focus.active_task
-                    same_task = bool(fresh_task) and fresh_task.get("task_id") == prior_task.get("task_id")
-                    if not fresh_task or (
-                            not same_task and fresh_task.get("kind") == "read"
-                            and prior_task.get("kind") == "write"):
-                        focus.active_task = dict(prior_task)
-                # C12-B：会话偏好约束**后说的覆盖先说的、没说的沿用**。
-                # 普通轮（这一句没提口味）必须原样保住——不接力就等于「说过的话
-                # 只算一轮」，那和没有载体是一回事。
-                if previous is not None and getattr(previous, "session_constraints", None):
-                    focus.session_constraints = merge_constraints(
-                        dict(previous.session_constraints), focus.session_constraints)
-                # W03：撤销（None）只在合并里有意义，落盘的永远是归一后的「说过且仍有效」
-                focus.session_constraints = merge_constraints(
-                    {}, focus.session_constraints)
-                if previous is not None and not focus.last_city \
-                        and focus.last_intent not in WEATHER_CONTEXT_INTENTS \
-                        and getattr(previous, "last_city", ""):
-                    focus.last_city = str(previous.last_city)
-                # `route_ended` 是**本轮事实**，不跨轮——存进去下一轮读回来仍是 True
-                # 就会永久关掉接力（一个只该响一次的旗子变成了常态）。
-                focus.route_ended = False
-                focus.safety_alert_cleared = False
-                focus.focus_ts = time.time()          # W09：短时引用的寿命从此刻起算
+                merge_focus(previous, focus)
                 record = _merge_owned_fields(
                     stored_before, asdict(focus), occupant_id)
                 await self.session.save_focus(
