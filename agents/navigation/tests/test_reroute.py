@@ -466,7 +466,7 @@ def test_swap_charger_replaces_it_in_place_near_the_old_one():
 def test_swap_charger_skips_stations_already_on_the_route():
     third = POI(id="c3", name="星星充电(民治站)", lat=22.6200, lng=114.0300)
     res, _ = _swap([_CHARGER_A, _CHARGER_B], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2"), third],
-                   slots={"remove_waypoint": "路特斯"})
+                   slots={"remove_waypoint": "路特斯"}, raw_text="路特斯那个充电站换一家")
     nav = next(a for a in res.actions if a["type"] == "navigate")
     assert [w["name"] for w in nav["payload"]["waypoints"]] == [third.name, _CHARGER_B["name"]]
 
@@ -477,6 +477,21 @@ def test_swap_with_two_chargers_and_no_name_asks_instead_of_guessing():
     assert not res.actions and not calls["search"]
     # 挂起追问 `remove_waypoint`，下一句「换第二个」续接这一步；不给 follow_up（手机端会把它整句做成 chip 发出）
     assert res.status == "need_slot" and res.missing_slots == ["remove_waypoint"] and not res.follow_up
+
+
+def test_a_station_the_planner_picked_is_not_a_name_the_user_said():
+    """核心旅程 EN07 r5（`5ebc0bb4`）：原话「换一个充电站」没点名，规划器却在 `remove_waypoint` 里写了某个站名——修前按它
+    换掉、换完才问换哪一个。几个充电站时用户没点名就反问、不动路线（200×5 后续批 §18.4）。"""
+    res, calls = _swap([_CHARGER_A, _CHARGER_B], [], slots={"remove_waypoint": _CHARGER_B["name"]})
+    assert res.status == "need_slot" and res.missing_slots == ["remove_waypoint"] and "换哪一个" in res.speech
+    assert not res.actions and not calls["search"]
+
+
+def test_an_ordinal_the_planner_wrote_is_not_one_the_user_said():
+    """原话「换一个充电站」没说序号，规划器却在 `remove_waypoint` 里写了「第二个」：同样不算点名，反问、不动路线。"""
+    res, calls = _swap([_CHARGER_A, _CHARGER_B], [], slots={"remove_waypoint": "第二个"})
+    assert res.status == "need_slot" and "换哪一个" in res.speech
+    assert not res.actions and not calls["search"]
 
 
 def _two_chargers_meta(**extra):

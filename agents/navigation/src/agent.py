@@ -19,7 +19,7 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
                                   location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
-from runtime.charger_swap import asks_to_swap_charger, is_charger_name
+from runtime.charger_swap import asks_to_swap_charger, is_charger_name, names_stop
 from runtime.route_stops import on_route, plain_name, same_stop
 from runtime.slots import STEP_ORIGIN_META, is_place_placeholder
 from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
@@ -2158,6 +2158,22 @@ class NavigationAgent(BaseAgent):
     #: 换站时在原站附近取多少个候选（高德按距离排，原站自己通常排第一）
     _SWAP_SCAN = 6
 
+    @staticmethod
+    def _named_by_user(value, *said) -> str:
+        """换站点名的那个值，只有出自用户自己的话才算（200×5 后续批 §18.4，核心旅程 EN07 r5）。
+
+        序号要在原话里说过（续接轮「换第二个」）；站名要有一段特征部分出现在原话里（`charger_swap.names_stop`）。规划器替用户
+        挑的站——原话「换一个充电站」、槽里却写了某个站名——不算点名：几个充电站时照旧反问换哪一个，不替用户决定。
+        `said`：本轮原话、被续接那一步的原话（`STEP_ORIGIN_META`）。"""
+        value = str(value or "").strip()
+        texts = [str(text) for text in said if text]
+        if not value or not texts:
+            return ""
+        n = ordinal_in(value)
+        if n:
+            return value if any(ordinal_in(text) == n for text in texts) else ""
+        return value if any(names_stop(text, value) for text in texts) else ""
+
     async def _swap_charger(self, waypoints: list, named: str, meta) -> tuple[str, str, bool]:
         """把路线上的充电站换成原站附近的另一家（原位替换，`waypoints` 就地改）。
 
@@ -2316,7 +2332,7 @@ class NavigationAgent(BaseAgent):
         planned = str((meta or {}).get(STEP_ORIGIN_META) or "")
         if asks_to_swap_charger(raw_text) or asks_to_swap_charger(planned):
             note, swapped, ask = await self._swap_charger(
-                waypoints, (intent.slots.get("remove_waypoint") or "").strip(), meta)
+                waypoints, self._named_by_user(intent.slots.get("remove_waypoint"), raw_text, planned), meta)
             if ask:
                 # 几个充电站又没点名换哪个：挂起追问，下一句「换第二个」续接这一步（`remove_waypoint` 声明了序号槽形）。
                 # 不给 follow_up：手机端会把它整句做成 chip 原样发出，两个选项塞不进一句

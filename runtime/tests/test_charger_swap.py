@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.charger_swap import asks_to_swap_charger, is_charger_name
+from runtime.charger_swap import asks_to_swap_charger, is_charger_name, names_stop
 
 
 @pytest.mark.parametrize("text", [
@@ -53,3 +53,17 @@ def test_another_charger_is_told_apart_from_a_swap_and_a_plain_search():
     for text in ("再换一个充电站", "换一个充电站", "导航去深圳北站，在附近找个充电桩", "附近有充电站吗",
                  "顺路加个充电站", "还有别的充电站吗"):
         assert not asks_for_another_charger(text), text
+
+
+# ── 原话有没有点名某个站（200×5 后续批 §18.4）────────────────────────────────────
+
+@pytest.mark.parametrize("text,name,named", [
+    ("换一个充电站", "深铁灵晔超级充电站(深圳北超充站·华为超充技术支持)", False),   # EN07 r5：规划器替用户挑的
+    ("换个别的充电站", "特来电充电站（北站东广场）", False),
+    ("换一个快充", "星星充电(民治站)", False),
+    ("路特斯那个充电站换一家", "路特斯汽车充电站(北站闪充站)", True),
+    ("把深铁那个换掉", "深铁灵晔超级充电站(深圳北超充站·华为超充技术支持)", True),
+    ("特来电那个换一个", "特来电充电站（北站东广场）", True),
+])
+def test_names_stop_needs_a_distinctive_part_of_the_name(text, name, named):
+    assert names_stop(text, name) is named
