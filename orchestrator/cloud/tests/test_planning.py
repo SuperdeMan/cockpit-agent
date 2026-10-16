@@ -1074,6 +1074,10 @@ def test_does_not_inject_trip_when_planner_unavailable():
 
 # ── M5 P2 退役记录（2026-07-29）────────────────────────────────────────────────
 
+#: 有新证据的窄句式（intent → pattern 开头）；证据见上面那条测试的说明与对应 manifest 注释
+_EVIDENCED = {"nearby.search": (r"^(?:那|那个|这个)?(第\s*[一二两三四五六七八九十\d]{1,3}\s*(?:家|个))",)}
+
+
 def test_retired_hints_are_gone_by_design():
     """上方原有的「hint 应当补步/改写」断言已删除——它们描述的机制不存在了。
 
@@ -1094,6 +1098,11 @@ def test_retired_hints_are_gone_by_design():
 
     本测试守住两件仍可离线验证的事：①这些 intent 作为**能力**依然存在（域没有消失，
     只是不再有正则替模型做决定）；②没人在没有新证据的情况下把 hint 悄悄加回来。
+
+    **有证据的新句式不算加回来**（2026-10-16，核心旅程 NB09）：退役的是宽口径的「附近有…」两条；「第一家附近有停车场吗」
+    这种以候选第 N 项为中心再搜的窄句式，线上 8 次跑数（`70b179b7` ×5 + `99178302` ×1 + `c96becf8` ×2，钉 M3）规划器
+    派对 `nearby.search` 5 次、落闲聊 2 次、错派详情 1 次——模型做不稳，证据写在 nearby manifest 注释里。`_EVIDENCED`
+    按 pattern 开头逐条放行；别的 nearby.search hint 照旧拦。
     """
     import glob as _glob
     import pathlib as _pl
@@ -1107,6 +1116,8 @@ def test_retired_hints_are_gone_by_design():
         d = _yaml.safe_load(open(p, encoding="utf-8")) or {}
         caps |= {str(c.get("intent")) for c in (d.get("capabilities") or [])}
         for h in (d.get("route_hints") or []):
+            if any(str(h.get("pattern") or "").startswith(head) for head in _EVIDENCED.get(str(h.get("intent")), ())):
+                continue
             hints.setdefault(str(h.get("intent")), []).append(d.get("agent_id"))
     for i in retired:
         assert i in caps or i.startswith("shop."), f"{i} 的能力也消失了——退役只该去掉规则"

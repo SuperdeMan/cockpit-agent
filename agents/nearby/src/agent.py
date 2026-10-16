@@ -17,6 +17,7 @@ from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_location_from_meta, rough_km
 from agents._sdk.provenance import attach
+from runtime.cntime import CN_NUM_SRC
 from runtime.session_constraints import (NO_QUEUE_RE, NO_SPICY_RE,
                                          SPICY_MARKS, constraints_in,
                                          merge_constraints)
@@ -36,6 +37,8 @@ class _Unlocated:
     place: str
     #: 解析中心的那次检索本身报错（日配额用尽 / QPS 超限）⇒ 定位不到不等于没有，不能说「没找到」
     search_failed: bool = False
+    #: 中心是「第 N 家」这种序号指代、却没被换成店名（编排 `engine._resolve_ordinal_slots` 只换得了同域列表里的那一项）
+    ordinal: bool = False
 
 
 #: 行政区名的后缀：比「用户有没有说出这座城」时剥掉（「曲靖市」⇒「曲靖」）。长的在前。
@@ -338,6 +341,10 @@ class NearbyAgent(BaseAgent):
         歧义，真栈解析到**呼和浩特**分店。先用富 provider 按当前坐标偏置搜该名，
         top1 名字包含校验通过才取其坐标；搜不到/校验不过回退地址 geocode（原行为）。
         """
+        ordinal = self._ordinal_anchor(intent)
+        if ordinal:
+            # 「第一家附近」走到这里还是序号 ⇒ 编排没能换成店名（没有同域列表 / 序号越界）：不拿「第一家」当地名去搜（NB09），如实说
+            return _Unlocated(ordinal, ordinal=True)
         near = self._near(intent, meta)
         if near is None or near.lat or not near.address:
             return near                      # 无位置 / 已是坐标 → 原样
@@ -393,6 +400,9 @@ class NearbyAgent(BaseAgent):
 
         R9 诚实降级的形态：不出卡、**不带 data**——带了 data，结果校验会把空列表判成「数据源没返回」，再补一句「要不要我再试一次？」
         （`executor._should_report`；真栈 `684bfeec` RS43 3/3 原样）。"""
+        if unlocated.ordinal:
+            # 序号指代对不上列表：不拿「第一家」当地名去搜（NB09）
+            return AgentResult(speech=f"对不上「{unlocated.place}」是哪一家，说个店名我帮您找它附近的。")
         if unlocated.search_failed:
             # 检索报错、地理编码又没在本地定位到：不知道它在不在，说「没找到」是假话（同导航地图报错不说没找到，2026-10-08 日配额用尽）
             return AgentResult(speech=f"周边搜索服务暂时不可用，没查到「{unlocated.place}」在哪，稍后再试一次？")
@@ -411,6 +421,9 @@ class NearbyAgent(BaseAgent):
         r"^(?:请|帮我|帮忙|麻烦|想|想找|找|查|查一下|看看|搜|搜一下|推荐)?\s*(?:一下)?"
         r"(?P<place>[^，,。！？!?\s那这我你咱]{2,15}?)(?:的)?(?:附近|周边|周围|一带|旁边)")
     _NEAR_ALIAS_SLOTS = ("near", "around", "area")   # planner 偶发用的未声明槽名，只作地名别名
+    #: 「第一家附近」的「第一家」是在指代刚列出的那份候选，不是地名（核心旅程 NB09：修前拿「第一家」去搜地名，答「没找到「第一家」」）。
+    #: 量词与 `candidate_query` / `reply_position` 同一组；整值就是一句序号指代才算，「第一家书店」这种名字不算。
+    _ORDINAL_ANCHOR_RE = re.compile(rf"^(?:那|这|刚才)?(?:那个|这个)?第\s*({CN_NUM_SRC})\s*(?:家|个|项|条)$")
 
     #: `location` 槽尾巴上的「附近 / 周边 / 一带」不是地名的一部分：真栈 `ee94c595` 规划写成 `location=霁川国际中心附近`，
     #: 答出「没找到「霁川国际中心附近」」；对存在的地名，带着它去做名字校验（「万象城附近」⊄「深圳湾万象城」）也必然不过（评审四轮待办，2026-09-25）。
@@ -434,9 +447,17 @@ class NearbyAgent(BaseAgent):
         """原话里「X 附近」的 X，或未声明的 near / around / area 槽；没有 ⇒ 空串。"""
         for name in cls._NEAR_ALIAS_SLOTS:
             value = str(intent.slots.get(name) or "").strip()
-            if 2 <= len(value) <= 15:
+            # 上限 40：带分店注记的完整店名常常超过 15 个字（NB09：「NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)」被丢掉，落回原话里的「第一家」）
+            if 2 <= len(value) <= 40:
                 return value
         return cls._raw_place_anchor(intent)
+
+    @classmethod
+    def _ordinal_anchor(cls, intent) -> str:
+        """搜索中心是「第 N 家」这种序号指代 ⇒ 那句指代；否则空串。只看 `_near` 真正会用的那一个值（有 location 槽就是它，
+        否则别名槽 / 原话的「X 附近」）——编排已把槽里的「第一家」换成店名时，原话里那句「第一家附近」不许把它盖回去。"""
+        value = str(cls._location_slot(intent) or cls._place_anchor(intent) or "").strip()
+        return value if value and cls._ORDINAL_ANCHOR_RE.match(value) else ""
 
     @staticmethod
     def _names_overlap(a: str, b: str, min_run: int = 2) -> bool:
@@ -461,6 +482,9 @@ class NearbyAgent(BaseAgent):
         loc = cls._location_slot(intent)
         raw = cls._raw_place_anchor(intent)
         if not loc or not raw or "," in loc:
+            return ""
+        if cls._ORDINAL_ANCHOR_RE.match(raw):
+            # 原话的 X 是「第一家」这种序号指代，不是说出来的地名：槽里是它解析后的那一项（编排换的店名），不算陈旧（NB09）
             return ""
         return "" if cls._names_overlap(raw, loc) else raw
 

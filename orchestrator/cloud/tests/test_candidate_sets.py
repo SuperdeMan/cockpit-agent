@@ -992,3 +992,39 @@ def test_a_batch_whose_slots_lost_the_place_is_still_nameable_when_the_producer_
     assert len(named) == 1
     # 裸序数仍绑最新那批（行为逐字同旧）
     assert focus.last_choices == ["书城·甲", "书城·乙"]
+
+
+# ── 同域步的序号槽值换成候选名字（核心旅程 NB09）────────────────────────────────────────────
+
+def _nearby_focus():
+    return Focus(candidate_sets=[{
+        "source_intent": "nearby.search", "agent_id": "nearby", "purpose": "list", "ts": time.time(),
+        "is_fallback": False, "items": [
+            {"name": "NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)", "lat": 22.547, "lng": 114.085},
+            {"name": "黄色咖啡店", "lat": 22.548, "lng": 114.086}]}])
+
+
+def test_an_ordinal_slot_of_a_same_domain_step_becomes_the_listed_name():
+    """「第一家附近有停车场吗」：hint 把「第一家」填进 location，修前附近 Agent 拿它当地名去搜。只换名字，不带坐标。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="nearby", intent="nearby.search",
+                            slots={"location": "第一家", "keyword": "停车场"})])
+
+    PlannerEngine._apply_focus_meta(plan, _nearby_focus())
+
+    assert plan.steps[0].slots == {"location": "NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)", "keyword": "停车场"}
+
+
+def test_ordinals_of_other_domains_numbers_and_out_of_range_stay():
+    """「取消第二个」指提醒自己的列表、导航那一步不是这份候选的域；纯数字不是序号；第五家越界，交 Agent 如实说。"""
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="reminder", intent="reminder.cancel", slots={"index": "第二个"}),
+        Step(id="s2", agent_id="navigation", intent="navigation.navigate_to", slots={"destination": "第一家"}),
+        Step(id="s3", agent_id="nearby", intent="nearby.search", slots={"location": "第五家", "rating_min": "2"}),
+    ])
+
+    PlannerEngine._apply_focus_meta(plan, _nearby_focus())
+
+    assert plan.steps[0].slots == {"index": "第二个"}
+    assert plan.steps[1].slots == {"destination": "第一家"}
+    assert plan.steps[2].slots == {"location": "第五家", "rating_min": "2"}
+

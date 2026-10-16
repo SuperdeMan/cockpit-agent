@@ -186,6 +186,18 @@ route_hints:
   #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
   #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
   #   要恢复：git log -S '(附近|周边|就近|最近的?|旁边|这边|哪儿?' 找回原块。
+  # 2026-10-16 核心旅程 NB09：「第一家附近有停车场吗」——以刚列出的第 N 家为中心再搜。只认「第 N 家 / 个 + 附近 / 周边 +
+  # 有（没有）X」的整句；问距离 / 营业 / 评分、导航、带别的话都不碰。槽里的「第一家」由编排在派发前换成那份候选第 N 项的名字
+  # （`engine._resolve_ordinal_slots`，只给名字），中心照旧按名字走偏置检索 + 名字校验。现有语料 6 384 句命中 1 句（NB09 本身）。
+  # 恢复 hint 的证据（上面两条退役的是宽口径「附近有…」）：线上 8 次跑数（钉 M3：`70b179b7` ×5、`99178302` ×1、`c96becf8` ×2）
+  # 规划器派对 `nearby.search` 5 次、落闲聊 2 次、错派详情 1 次——模型做不稳；守卫测试 `test_retired_hints_are_gone_by_design`
+  # 按 pattern 开头只放行这一条。
+  - pattern: '^(?:那|那个|这个)?(第\s*[一二两三四五六七八九十\d]{1,3}\s*(?:家|个))(?:的)?(?:附近|周边|旁边|周围)(?:有没有|有)(?:什么)?([^，,。？?！!\s]{2,8}?)(?:吗|呢|没有)?[？?。！!～~\s]*$'
+    intent: nearby.search
+    policy: replace
+    priority: 60
+    guard: '导航|带我|怎么走|多远|多久|几点|营业|评分|人均|电话|地址'
+    slots: {location: "$1", keyword: "$2"}
 requires_permissions:
   - location.read
   - network.external

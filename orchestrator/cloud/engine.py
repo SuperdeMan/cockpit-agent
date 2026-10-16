@@ -3684,7 +3684,34 @@ class PlannerEngine:
                     slots["name"] = str(focus.last_poi)
                     step.slots = slots
 
+        PlannerEngine._resolve_ordinal_slots(plan, focus)
         PlannerEngine._downlink_focus_meta(plan, focus)
+
+    @staticmethod
+    def _resolve_ordinal_slots(plan: Plan, focus) -> None:
+        """同域步的槽值整值就是一句序号指代（「第一家」）⇒ 换成那份候选第 N 项的名字（核心旅程 NB09）。
+
+        「第一家附近有停车场吗」：hint / 规划器把「第一家」填进 `location`，附近 Agent 拿它当地名去搜，答「没找到「第一家」」。只给名字、
+        不给坐标（同候选下发 `candidate_downlink` 的最小化口径），地点仍由 Agent 按名字检索、校验；Agent 不必为此多声明一个上下文 scope
+        （那会改动能力 ABI，冻结迁移清单不许为此扩充）。只认同域那一组（步的 intent 域 == 候选 `source_intent` 的域）：「取消第二个」
+        指的是提醒自己的列表、「第二天第一个景点」指行程内部，都不是这份候选；纯数字、带别的内容的槽值不碰；序号越界不换（Agent 如实说）。"""
+        for step in plan.steps:
+            domain = str(step.intent or "").split(".", 1)[0]
+            entry = candidate_set_for(focus, domain)
+            if not entry or str(entry.get("source_intent") or "").split(".", 1)[0] != domain:
+                continue
+            items = [it for it in (entry.get("items") or []) if isinstance(it, dict)]
+            for key, value in list((step.slots or {}).items()):
+                if not isinstance(value, str) or "第" not in value:
+                    continue
+                index = reply_position(value)
+                if not index or not 0 < index <= len(items):
+                    continue
+                name = str(items[index - 1].get("name") or "").strip()
+                if name:
+                    step.slots[key] = name
+                    logger.info("ordinal slot %s=%r of %s resolved to item %d %r",
+                                key, value, step.intent, index, name[:30])
 
     @staticmethod
     def _downlink_focus_meta(plan: Plan, focus) -> None:

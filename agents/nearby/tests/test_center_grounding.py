@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from agents._sdk.location import LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP
 from agents._sdk.testing import run_handle
@@ -193,3 +194,52 @@ def test_the_radius_is_the_navigation_one():
     from agents.navigation.src import agent as navigation
     assert navigation._LOCAL_RADIUS_KM == LOCAL_RADIUS_KM == 150.0
     assert navigation._NOT_FOUND_FOLLOW_UP == NOT_FOUND_FOLLOW_UP
+
+
+# ── 「第一家附近」（核心旅程 NB09）：编排在派发前把槽里的「第一家」换成那份候选第 N 项的名字 ──────────────
+
+_NOWWA = "NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)"
+
+
+class _Listed:
+    """按店名的偏置检索搜得到那家店；别的检索回一个停车场。记下每一次检索的关键词与中心。"""
+
+    def __init__(self):
+        self.searches: list[tuple[str, object]] = []
+
+    async def search(self, keyword, near=None, meta=None, **kw):
+        self.searches.append((keyword, near))
+        if keyword == _NOWWA:
+            return [Place(id="n1", name=_NOWWA, lat=22.547, lng=114.085)]
+        return [Place(id="p1", name="华富洋大厦停车场", lat=22.5471, lng=114.0852)]
+
+    async def geocode(self, address, *, meta=None):
+        return None
+
+
+def _centre(spy):
+    return spy.searches[-1][1]
+
+
+def test_a_rewritten_shop_name_is_the_centre_even_though_the_words_say_the_first_one():
+    """编排已把 location 换成店名：原话里那句「第一家附近」不许把它盖回去。"""
+    spy = _Listed()
+    res = _run(spy, {"category": "停车场", "location": _NOWWA}, "第一家附近有停车场吗", meta=_SHENZHEN)
+    assert spy.searches[0][0] == _NOWWA and (_centre(spy).lat, _centre(spy).lng) == (22.547, 114.085)
+    assert "没找到" not in res.speech
+
+
+def test_a_full_shop_name_in_the_near_slot_is_used():
+    """规划器在 `near` 里填了带分店注记的完整店名（23 个字）：修前超过 15 个字就丢掉，落回原话里的「第一家」。"""
+    spy = _Listed()
+    _run(spy, {"category": "停车场", "near": _NOWWA}, "第一家附近有停车场吗", meta=_SHENZHEN)
+    assert spy.searches[0][0] == _NOWWA
+
+
+def test_an_ordinal_that_was_not_resolved_is_said_plainly():
+    """修前拿「第一家」当地名去搜，答「没找到「第一家」」。编排换不了（没有同域列表 / 序号越界）就如实说，不去搜。"""
+    for slots in ({"category": "停车场", "location": "第一家"}, {"category": "停车场"}):
+        spy = _Listed()
+        res = _run(spy, slots, "第一家附近有停车场吗", meta=_SHENZHEN)
+        assert res.speech == "对不上「第一家」是哪一家，说个店名我帮您找它附近的。" and spy.searches == []
+
