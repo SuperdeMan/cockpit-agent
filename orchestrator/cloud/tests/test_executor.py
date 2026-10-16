@@ -241,6 +241,43 @@ def test_resolve_slot_refs_still_never_overwrites_a_real_value():
     assert step.slots == {"poi_id": "用户指定的那家"}
 
 
+def test_a_bare_path_to_a_finished_step_is_resolved_like_the_dollar_form():
+    """连 `$` 都不带的裸路径（200×5 后续批 §18.7：历史计划里 15 次字面引用 13 次是它）：前缀是本轮已完成的步 ⇒
+    同 `$s1.data…` 一样解析成真值并记来源。修前只写在 slots 里的那几次原样发给了下游（EN07 的 `add_waypoint`）。"""
+    done = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="navigation.find_charger",
+                             data={"items": [{"name": "华润万象城充电站"}]})}
+    step = Step(id="s2", agent_id="navigation", intent="navigation.reroute",
+                slots={"add_waypoint": "s1.data.items.0.name"})
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+
+    assert step.slots == {"add_waypoint": "华润万象城充电站"}
+    assert json.loads(step.meta["_trusted_slot_refs"])["add_waypoint"]["ref"] == "s1.data.items.0.name"
+
+
+def test_a_reference_that_does_not_resolve_is_dropped_not_sent_downstream():
+    """NB09 `3168262c` r1：`poi_id` 指向这一步自己、`location` 与 slot_refs 同写一条解析不到的路径——修前两串路径分别被当成
+    POI id 和地名发给周边。解析不到的引用不是值：丢掉，交下游按缺槽处理；同一步里真值照留。悬空的 `${…}` / `$…` / `$ref.` 同理。"""
+    detail = Step(id="s1", agent_id="nearby", intent="nearby.detail",
+                  slots={"poi_id": "s1.data.items.0.id", "name": "NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)"})
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(detail, {})
+    assert detail.slots == {"name": "NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)"}
+
+    done = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="nearby.detail",
+                             data={"name": "NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)"})}
+    search = Step(id="s2", agent_id="nearby", intent="nearby.search",
+                  slots={"category": "停车场", "location": "s1.data.items.0.location"},
+                  slot_refs={"location": "s1.data.items.0.location"})
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(search, done)
+    assert search.slots == {"category": "停车场"}
+
+    dangling = Step(id="s2", agent_id="nearby", intent="nearby.search",
+                    slots={"keyword": "${s9.data.items.0.name}", "location": "$s9.data.items.0.name",
+                           "near": "$ref.poi_id", "category": "停车场"})
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(dangling, done)
+    assert dangling.slots == {"category": "停车场"}
+
+
 def test_resolve_slot_refs_records_executor_trusted_provenance():
     """跨步来源只能由执行器依据已完成结果盖章，不能采用 Planner 自报 meta。"""
     done = {

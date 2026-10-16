@@ -748,9 +748,13 @@ class DagExecutor:
             # 两种线上实测的占位形态：`${s1.data...}` 与**裸 $ 前缀**
             # `$s1.data.items.0.name`（2026-08-14 真栈：后者穿过 ${} 专用正则、
             # 作为 store_hint 原样发给商户，被官方按非法关键词拒绝）。
+            # 第三种连 `$` 都不带：`s1.data.items.0.name`（200×5 后续批 §18.7：历史计划里 15 次字面引用 13 次是它，
+            # 只写在 slots 里的那几次原样发给了下游）。前缀是本轮已完成的步才解析——解析得了的只有这一种。
+            bare = re.fullmatch(r"(([A-Za-z0-9_-]+)\.data\.[A-Za-z0-9_.]+)", raw_value.strip())
             match = (re.fullmatch(r"\$\{([^{}]+)\}", raw_value.strip())
                      or re.fullmatch(r"\$([A-Za-z0-9_-]+\.data\.[A-Za-z0-9_.]+)",
-                                     raw_value.strip()))
+                                     raw_value.strip())
+                     or (bare if bare and bare.group(2) in done else None))
             if not match:
                 continue
             value = self._resolve_ref(match.group(1), done)
@@ -823,6 +827,20 @@ class DagExecutor:
         self._anchor_store_from_focus(step, trusted, ctx, done.keys())
         self._hint_store_from_plan(step, done, ctx)
         self._restore_slot_fidelity(step, ctx, trusted)
+
+        # 到这里还是引用残渣的槽（解析不到的占位、与 slot_refs 同写又解析不到的路径、悬空的 `$ref.` 别名）不是值：
+        # 留着就是把一串路径当地名 / POI id 发给下游（200×5 后续批 §18.7，NB09 `3168262c` r1：`poi_id="s1.data.items.0.id"`
+        # 指向这一步自己、`location` 与 slot_refs 同写 `s1.data.items.0.location`）。丢掉，交给下游按缺槽处理（追问、用原话、
+        # 用别的槽）。放在门店锚定之后：锚定要先看见残渣才知道「没给门店」（同 `_REF_RESIDUE_RE` 那一条判据）。
+        for slot_name, raw_value in list(step.slots.items()):
+            if isinstance(raw_value, str) and (
+                    _REF_RESIDUE_RE.match(raw_value.strip())
+                    or re.fullmatch(r"\$ref\.[A-Za-z_][A-Za-z0-9_]*", raw_value.strip())):
+                step.slots.pop(slot_name)
+                trusted.pop(slot_name, None)
+                foreign.pop(slot_name, None)
+                logger.warning("Step %s(%s): 槽 %s 是没解析成的引用 %r，派发前丢掉",
+                               step.id, step.intent, slot_name, raw_value[:80])
 
         if trusted:
             step.meta["_trusted_slot_refs"] = json.dumps(
