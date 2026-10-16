@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-10-16T04:01:40.394279+00:00",
-    "commit": "f58e5ec8"
+    "generated_at": "2026-10-16T06:43:13.238154+00:00",
+    "commit": "b597f568"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 149
+      "count": 160
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 62,
-      "passed": 62,
+      "total": 66,
+      "passed": 66,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 87,
-      "passed": 87,
+      "total": 94,
+      "passed": 94,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 149,
-    "passed": 149,
+    "total": 160,
+    "passed": 160,
     "pass_rate": 1.0
   },
   "cases": {
@@ -1278,7 +1278,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r10\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::检索一下宁德时代最新财报要点": {
       "id": "route::检索一下宁德时代最新财报要点",
@@ -1297,7 +1297,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r10\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::查一下固态电池": {
       "id": "route::查一下固态电池",
@@ -1506,7 +1506,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r10\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::来点科技新闻": {
       "id": "route::来点科技新闻",
@@ -1525,7 +1525,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r10\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::英伟达最新消息": {
       "id": "route::英伟达最新消息",
@@ -2729,6 +2729,196 @@
         "guardrail"
       ],
       "source": "在问，不是建提醒"
+    },
+    "route::车里温度低于20度的时候打开空调": {
+      "id": "route::车里温度低于20度的时候打开空调",
+      "bucket": "route_recall",
+      "text": "车里温度低于20度的时候打开空调",
+      "expected": [
+        "scene.create"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "trigger",
+        "replace"
+      ],
+      "source": "D03 c96becf8 一遍判不受话、零步落技术失败"
+    },
+    "route::电量低于20%的时候打开节能模式": {
+      "id": "route::电量低于20%的时候打开节能模式",
+      "bucket": "route_recall",
+      "text": "电量低于20%的时候打开节能模式",
+      "expected": [
+        "scene.create"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "trigger",
+        "replace"
+      ],
+      "source": "不许当场执行：条件还没到"
+    },
+    "route::车内温度高于30度时打开空调": {
+      "id": "route::车内温度高于30度时打开空调",
+      "bucket": "route_guardrail",
+      "text": "车内温度高于30度时打开空调",
+      "expected": [
+        "scene.create"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "trigger",
+        "noop"
+      ],
+      "source": "规划器已派对：不动"
+    },
+    "route::如果车里温度低于20度就打开空调": {
+      "id": "route::如果车里温度低于20度就打开空调",
+      "bucket": "route_guardrail",
+      "text": "如果车里温度低于20度就打开空调",
+      "expected": [
+        "hvac.on"
+      ],
+      "actual": [
+        "hvac.on"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "trigger",
+        "guardrail"
+      ],
+      "source": "一次性条件句（如果…就…）走 T2 前件判定，不是场景"
+    },
+    "route::车里温度低于20度的时候提醒我开空调": {
+      "id": "route::车里温度低于20度的时候提醒我开空调",
+      "bucket": "route_guardrail",
+      "text": "车里温度低于20度的时候提醒我开空调",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "trigger",
+        "guardrail"
+      ],
+      "source": "要的是提醒，不是场景"
+    },
+    "route::车外温度低于5度的时候打开座椅加热": {
+      "id": "route::车外温度低于5度的时候打开座椅加热",
+      "bucket": "route_guardrail",
+      "text": "车外温度低于5度的时候打开座椅加热",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "trigger",
+        "guardrail"
+      ],
+      "source": "车外温度不是场景触发键"
+    },
+    "route::第一家附近有停车场吗": {
+      "id": "route::第一家附近有停车场吗",
+      "bucket": "route_guardrail",
+      "text": "第一家附近有停车场吗",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby",
+        "candidate",
+        "noop"
+      ],
+      "source": "规划器已派对：不动（中心由 Agent 按候选集解析）"
+    },
+    "route::第二家附近有没有加油站": {
+      "id": "route::第二家附近有没有加油站",
+      "bucket": "route_recall",
+      "text": "第二家附近有没有加油站",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby",
+        "candidate",
+        "replace"
+      ],
+      "source": "70b179b7 一遍规划成第一家的详情（poi_id 还是序号）"
+    },
+    "route::第一家附近怎么走": {
+      "id": "route::第一家附近怎么走",
+      "bucket": "route_guardrail",
+      "text": "第一家附近怎么走",
+      "expected": [
+        "navigation.navigate_to"
+      ],
+      "actual": [
+        "navigation.navigate_to"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby",
+        "candidate",
+        "guardrail"
+      ],
+      "source": "问路：不是再搜"
+    },
+    "route::第一家几点关门": {
+      "id": "route::第一家几点关门",
+      "bucket": "route_guardrail",
+      "text": "第一家几点关门",
+      "expected": [
+        "nearby.detail"
+      ],
+      "actual": [
+        "nearby.detail"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby",
+        "candidate",
+        "guardrail"
+      ],
+      "source": "问营业时间：不是再搜"
     }
   }
 }

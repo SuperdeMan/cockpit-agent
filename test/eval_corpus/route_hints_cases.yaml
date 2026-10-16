@@ -998,3 +998,71 @@
   source: "在问，不是建提醒"
   tags: [reminder, location, guardrail]
 
+# ── 车内温度 / 电量的事件条件 + 车控 → scene.create（2026-10-16，核心旅程 D03，用户裁决：建成带条件的场景）──────────
+- text: 车里温度低于20度的时候打开空调
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [scene.create]
+  source: "D03 c96becf8 一遍判不受话、零步落技术失败"
+  tags: [scene, trigger, replace]
+
+- text: 电量低于20%的时候打开节能模式
+  initial_intents: [hvac.on]
+  expect_final_intents: [scene.create]
+  source: "不许当场执行：条件还没到"
+  tags: [scene, trigger, replace]
+
+- text: 车内温度高于30度时打开空调
+  initial_intents: [scene.create]
+  expect_final_intents: [scene.create]
+  source: "规划器已派对：不动"
+  tags: [scene, trigger, noop]
+
+- text: 如果车里温度低于20度就打开空调
+  initial_intents: [hvac.on]
+  expect_final_intents: [hvac.on]
+  source: "一次性条件句（如果…就…）走 T2 前件判定，不是场景"
+  tags: [scene, trigger, guardrail]
+
+- text: 车里温度低于20度的时候提醒我开空调
+  initial_intents: [reminder.create]
+  expect_final_intents: [reminder.create]
+  source: "要的是提醒，不是场景"
+  tags: [scene, trigger, guardrail]
+
+- text: 车外温度低于5度的时候打开座椅加热
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "车外温度不是场景触发键"
+  tags: [scene, trigger, guardrail]
+
+# ── 「第 N 家附近有 X 吗」→ nearby.search（2026-10-16，核心旅程 NB09）──────────────────────────────
+- text: 第一家附近有停车场吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [nearby.search]
+  source: "NB09 c96becf8 一遍交闲聊：中心落回车辆位置、不出列表卡"
+  tags: [nearby, candidate, replace]
+
+- text: 第二家附近有没有加油站
+  initial_intents: [nearby.detail]
+  expect_final_intents: [nearby.search]
+  source: "70b179b7 一遍规划成第一家的详情（poi_id 还是序号）"
+  tags: [nearby, candidate, replace]
+
+- text: 第一家附近有停车场吗
+  initial_intents: [nearby.search]
+  expect_final_intents: [nearby.search]
+  source: "规划器已派对：不动（中心由 Agent 按候选集解析）"
+  tags: [nearby, candidate, noop]
+
+- text: 第一家附近怎么走
+  initial_intents: [navigation.navigate_to]
+  expect_final_intents: [navigation.navigate_to]
+  source: "问路：不是再搜"
+  tags: [nearby, candidate, guardrail]
+
+- text: 第一家几点关门
+  initial_intents: [nearby.detail]
+  expect_final_intents: [nearby.detail]
+  source: "问营业时间：不是再搜"
+  tags: [nearby, candidate, guardrail]
+
