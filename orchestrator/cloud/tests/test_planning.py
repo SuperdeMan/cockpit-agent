@@ -1075,7 +1075,8 @@ def test_does_not_inject_trip_when_planner_unavailable():
 # ── M5 P2 退役记录（2026-07-29）────────────────────────────────────────────────
 
 #: 有新证据的窄句式（intent → pattern 开头）；证据见上面那条测试的说明与对应 manifest 注释
-_EVIDENCED = {"nearby.search": (r"^(?:那|那个|这个)?(第\s*[一二两三四五六七八九十\d]{1,3}\s*(?:家|个))",)}
+_EVIDENCED = {"nearby.search": (r"^(?:那|那个|这个)?(第\s*[一二两三四五六七八九十\d]{1,3}\s*(?:家|个))",
+                                r"^(?:请问|帮我看看|帮我查查|看看|查查|查一下)?(?!第\s*[一二两三四五六七八九十\d])")}
 
 
 def test_retired_hints_are_gone_by_design():
@@ -1103,6 +1104,8 @@ def test_retired_hints_are_gone_by_design():
     这种以候选第 N 项为中心再搜的窄句式，线上 8 次跑数（`70b179b7` ×5 + `99178302` ×1 + `c96becf8` ×2，钉 M3）规划器
     派对 `nearby.search` 5 次、落闲聊 2 次、错派详情 1 次——模型做不稳，证据写在 nearby manifest 注释里。`_EVIDENCED`
     按 pattern 开头逐条放行；别的 nearby.search hint 照旧拦。
+    第二条（2026-10-16，200×5 后续批 §18.12）「某地附近有停车场吗」不是替模型选路：没有支付权限的主体问附近停车场，越权早退按语义路由
+    第一名（停车缴费）一次规划都没跑就答「没有授权」（`9aa84404` NB03）；已授权的 replace 档 hint 认走整句才不走早退。
     """
     import glob as _glob
     import pathlib as _pl

@@ -178,6 +178,34 @@ def test_an_arrival_reminder_at_a_brand_name_is_not_answered_as_a_missing_permis
     assert spy.calls == ["reminder.create"]
 
 
+def _nearby_hints() -> list:
+    """周边清单里真实声明的 route_hints（不抄一份进测试）。"""
+    from pathlib import Path
+    from agents._sdk.manifest import load_manifest
+    return list(load_manifest(str(Path(__file__).resolve().parents[3] / "agents" / "nearby" / "manifest.yaml")).route_hints)
+
+
+def test_a_parking_lot_question_is_not_answered_as_a_missing_payment_permission():
+    """`9aa84404` NB03（清单撤掉 scopes_extra 之后）：没有支付权限的主体问「海岸城附近有停车场吗」，语义路由 top-1 是停车缴费（按整个
+    Agent 要求 payment.invoke），规划前就答了「没有『停车缴费助手』的授权」。用周边清单里真实的停车场 hint：整句归周边，早退让路
+    （200×5 后续批 §18.12）；问停车费照旧说清没授权。"""
+    nearby = _agent("nearby", [_cap("nearby.search", ["location", "category"])], display_name="周边发现")
+    nearby.manifest.route_hints = _nearby_hints()
+    parking = _agent("parking-payment", [_cap("parking.query_fee"), _cap("parking.pay")],
+                     requires=["payment.invoke"], display_name="停车缴费助手")
+
+    spy = _SpyWith([nearby, parking, _CHITCHAT], resolve_top=[parking])
+    final = _final(_run(_engine(spy), _req("海岸城附近有停车场吗")))
+    assert not [i for i in final.get("issues") or []
+                if i["code"] == contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.calls == ["nearby.search"]
+
+    spy = _SpyWith([nearby, parking, _CHITCHAT], resolve_top=[parking])
+    final = _final(_run(_engine(spy), _req("停车费多少钱")))
+    assert [i["code"] for i in final.get("issues") or []] == [contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.calls == []
+
+
 def test_a_real_merchant_order_still_gets_the_scope_explanation():
     """反例：真点单「帮我在星巴克点一杯拿铁」不碰提醒的 hint，照旧说清没授权。"""
     memo = _agent("reminder", [_cap("reminder.create")], display_name="提醒")

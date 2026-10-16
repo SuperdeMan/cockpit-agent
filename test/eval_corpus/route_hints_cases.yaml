@@ -1066,3 +1066,24 @@
   source: "问营业时间：不是再搜"
   tags: [nearby, candidate, guardrail]
 
+# ── 「某地附近有停车场吗」→ nearby.search（2026-10-16，200×5 后续批 §18.12，核心旅程 NB03）──────────────────────
+# 不是替模型选路：没有支付权限的主体问附近停车场，越权早退按语义路由第一名（停车缴费）规划前就答了「没有授权」；
+# 已授权的 replace 档 hint 认走整句才不走早退。「那附近」让给规划器（上面 R3 那条守卫）。
+- text: 海岸城附近有停车场吗
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "NB03 9aa84404（清单撤掉 scopes_extra）：越权早退答「没有『停车缴费助手』的授权」"
+  tags: [nearby, parking, replace]
+
+- text: 万象天地附近有没有停车场
+  initial_intents: [nearby.search]
+  expect_final_intents: [nearby.search]
+  source: "规划器已派对：不动"
+  tags: [nearby, parking, noop]
+
+- text: 海岸城附近的停车场收费吗
+  initial_intents: []
+  expect_final_intents: []
+  source: "问收费：不归这条（守卫「费 / 收费」）"
+  tags: [nearby, parking, guard]
+
