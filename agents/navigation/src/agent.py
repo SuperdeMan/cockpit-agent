@@ -2376,6 +2376,15 @@ class NavigationAgent(BaseAgent):
                                            if slot_add in raw_text else False)
         else:
             add_word, prepend = self._parse_reroute_add(raw_text)
+        # 槽里是路线上已有的那个站，可原话没点它、也不是本轮前序步填的（`_filled_by_ref`）：那是规划器从上下文抄的，用户说的是
+        # 「再加一个」——按原话的类目另找一个不在路线上的（200×5 后续批 §18.11，EN07 `9aa84404` r5：「途经再加一个充电站」的槽写成
+        # 路线上的路特斯，答「已经在路线上了」，第二个站没加上）。用户自己点了这个站、或充电步推荐经引用填进来的，照旧如实说已在路线上。
+        if (slot_add and not _filled_by_ref("add_waypoint", meta)
+                and any(plain_name(w.get("name")) == plain_name(slot_add) for w in waypoints)
+                and not self._named_by_user(slot_add, raw_text, planned)):
+            spoken, spoken_prepend = self._parse_reroute_add(raw_text)
+            if spoken:
+                add_word, prepend = spoken, spoken_prepend
         if swapped and is_charger_name(add_word):
             add_word = ""         # 换站已经把新站放进路线，不在当前位置附近再加一个
         if (add_word and add_word not in (remove_word or "")

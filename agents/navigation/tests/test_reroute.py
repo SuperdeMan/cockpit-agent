@@ -579,21 +579,43 @@ def test_swap_does_not_remove_or_re_add_the_new_station():
 
 # ─── 2026-10-10 真栈 swap2：加途经点不重复加路线上已有的点 ───
 
-def _add(waypoints, results, slots=None, raw_text="途经再加一个充电站"):
+def _add(waypoints, results, slots=None, raw_text="途经再加一个充电站", extra_meta=None):
     agent, calls = _agent(search_results=results)
     res = asyncio.run(run_handle(
         agent, "navigation.reroute", slots=slots or {}, raw_text=raw_text,
-        ctx=make_context(), meta=_session_meta(waypoints=waypoints, destination="深圳北站",
-                                               lat=22.609, lng=114.029)))
+        ctx=make_context(), meta={**_session_meta(waypoints=waypoints, destination="深圳北站",
+                                                  lat=22.609, lng=114.029), **(extra_meta or {})}))
     nav = next((a for a in res.actions if a["type"] == "navigate"), None)
     return res, calls, [w["name"] for w in (nav or {}).get("payload", {}).get("waypoints", [])]
 
 
 def test_adding_a_stop_already_on_the_route_names_it_instead_of_adding_it_again():
-    """充电步推荐的正是路线上那个站，模型把它的名字接成 add_waypoint：修前按名字搜到它又加了一遍。点名的就是路线上那个 ⇒ 如实说、不搜。"""
-    res, calls, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1")], slots={"add_waypoint": _CHARGER_A["name"]})
-    assert f"{_CHARGER_A['name']}已经在路线上了" in res.speech
-    assert names.count(_CHARGER_A["name"]) <= 1 and not calls["search"]
+    """修前按名字搜到路线上那个站又加了一遍（2026-10-10 swap2）。用户自己点了它，或充电步推荐经引用填进来的（`_trusted_slot_refs`）
+    ⇒ 点名的就是路线上那个，如实说、不搜。"""
+    for raw, meta in (("再加一个路特斯的充电站", None),
+                      ("途经再加一个充电站", {"_trusted_slot_refs": json.dumps(
+                          {"add_waypoint": {"ref": "s1.data.items.0.name", "producer_intent": "charging.find"}})})):
+        res, calls, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2")],
+                                 slots={"add_waypoint": _CHARGER_A["name"]}, raw_text=raw, extra_meta=meta)
+        assert f"{_CHARGER_A['name']}已经在路线上了" in res.speech, raw
+        assert names.count(_CHARGER_A["name"]) <= 1 and not calls["search"], raw
+
+
+def test_another_stop_is_added_when_the_planner_copied_the_one_on_the_route():
+    """EN07 `9aa84404` r5：「途经再加一个充电站」，规划器把路线上那个站的名字抄进 add_waypoint，修前答「已经在路线上了」、第二个站没加上。
+    原话没点它、也不是引用填的 ⇒ 用户要的是「再加一个」：按原话的类目找，跳过路线上已有的（后续批 §18.11）。"""
+    res, _, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2")],
+                         slots={"add_waypoint": _CHARGER_A["name"]})
+    assert f"已顺路加上{_CHARGER_B['name']}" in res.speech
+    assert sorted(names) == sorted([_CHARGER_A["name"], _CHARGER_B["name"]])
+
+
+def test_a_station_the_planner_wrote_that_is_not_on_the_route_is_added_as_written():
+    """只改「抄了路线上已有的那个」：规划器写的站不在路线上，照旧按它加，不换成按类目找到的第一个。"""
+    other = {"name": "南方电网充电站(北站西)", "lat": 22.6120, "lng": 114.0250}
+    res, _, names = _add([_CHARGER_A], [_poi(other, "c3"), _poi(_CHARGER_B, "c2")],
+                         slots={"add_waypoint": _CHARGER_B["name"]})
+    assert f"已顺路加上{_CHARGER_B['name']}" in res.speech and other["name"] not in names
 
 
 def test_adding_a_category_skips_the_stops_already_on_the_route():
