@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { resolveView, dayLabel, groupByDay, timelineWindow, yForTime } from './reminderStage.mjs'
+import { resolveView, dayLabel, groupByDay, timelineWindow, undatedGroups, yForTime } from './reminderStage.mjs'
 
 const now = new Date(2026, 6, 11, 10, 0).getTime()   // 2026-07-11(周六) 10:00 本地
 const at = (dayOff, h, m = 0) => new Date(2026, 6, 11 + dayOff, h, m).getTime()
@@ -50,4 +50,15 @@ test('yForTime 线性映射并夹紧边界', () => {
   assert.equal(yForTime(at(0, 22), 8, 22, 140), 140)
   assert.equal(yForTime(at(0, 15), 8, 22, 140), 70)
   assert.equal(yForTime(at(0, 6), 8, 22, 140), 0)          // 窗外夹紧
+})
+
+test('undatedGroups：到达提醒单独成组，其余没时刻的照旧「时间待确认」', () => {
+  const items = [
+    { id: 'a', title: '带伞', kind: 'time', status: 'pending', fire_at_ms: now + 3600000 },
+    { id: 'b', title: '取票', kind: 'location', status: 'pending', time_display: '到深圳北站时' },
+    { id: 'c', title: '旧数据', kind: 'time', status: 'pending' },
+  ]
+  assert.deepEqual(undatedGroups(items).map((g) => [g.label, g.items.map((i) => i.id)]),
+    [['按地点提醒', ['b']], ['时间待确认', ['c']]])
+  assert.deepEqual(undatedGroups([items[0]]), [])
 })

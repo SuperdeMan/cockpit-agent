@@ -83,7 +83,7 @@ class Reminder:
     # M-B：提醒的 owner 是 (user_id, occupant_id)。此前全域零 occupant——两位乘员的
     # 提醒混在一张表、触达不区分人。vehicle_id 只是环境，不参与 owner 判定。
     occupant_id: str = PRIMARY
-    kind: str = "time"                 # time | todo
+    kind: str = "time"                 # time | todo | location
     fire_at: int = 0                   # epoch 秒（UTC）；todo 恒 0
     status: str = PENDING
     id: str = ""
@@ -293,6 +293,41 @@ class ReminderStore:
             1 for r in self._mem.values()
             if r.user_id == user_id and r.occupant_id == occ
             and r.kind == "todo" and r.status in statuses
+        )
+
+    async def list_location(self, user_id: str, *, statuses: tuple = ACTIVE,
+                            occupant_id: str = "", limit: int = 50) -> list[Reminder]:
+        """本人的到达 / 离开地点提醒，按创建时间升序；与 ``list_split`` 同 OwnerKey。
+
+        它们没有时刻，`list_split` 只取定时项与待办，此前「我有哪些提醒」永远列不出它们（200×5 后续批 §16）。"""
+        _u, occ = owner_of(user_id, occupant_id)
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM reminder_item WHERE user_id=$1 AND occupant_id=$4 "
+                    "AND kind=$5 AND status=ANY($2) ORDER BY created_at ASC LIMIT $3",
+                    user_id, list(statuses), limit, occ, LOCATION)
+            return [self._row(x) for x in rows]
+        return sorted((r for r in self._mem.values()
+                       if r.user_id == user_id and r.occupant_id == occ
+                       and r.kind == LOCATION and r.status in statuses),
+                      key=lambda r: r.created_at)[:limit]
+
+    async def count_location(self, user_id: str, *, statuses: tuple = ACTIVE,
+                             occupant_id: str = "") -> int:
+        """精确统计地点提醒；与 ``list_location`` 同 OwnerKey 但不受 LIMIT。"""
+        _u, occ = owner_of(user_id, occupant_id)
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                value = await conn.fetchval(
+                    "SELECT COUNT(*) FROM reminder_item "
+                    "WHERE user_id=$1 AND occupant_id=$3 AND kind=$4 AND status=ANY($2)",
+                    user_id, list(statuses), occ, LOCATION)
+            return int(value or 0)
+        return sum(
+            1 for r in self._mem.values()
+            if r.user_id == user_id and r.occupant_id == occ
+            and r.kind == LOCATION and r.status in statuses
         )
 
     async def find_by_title(self, user_id: str, q: str,

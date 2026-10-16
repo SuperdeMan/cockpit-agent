@@ -35,6 +35,18 @@ export function groupByDay(items, nowMs, cap = 6) {
   return { groups, more: Math.max(0, dated.length - shown.length) }
 }
 
+// 没有时刻的条目：按地点触发的提醒单独成组（time_display 是「到 X 时」），其余照旧标「时间待确认」。
+// 此前一律归「时间待确认」——列表收进到达提醒后（200×5 后续批 §16），「到深圳北站时」会被标成时间没定。
+export function undatedGroups(items) {
+  const undated = (items || []).filter((it) => !it.fire_at_ms)
+  const places = undated.filter((it) => it.kind === 'location')
+  const rest = undated.filter((it) => it.kind !== 'location')
+  return [
+    ...(places.length ? [{ label: '按地点提醒', items: places }] : []),
+    ...(rest.length ? [{ label: '时间待确认', items: rest }] : []),
+  ]
+}
+
 // 单日时间轴取窗：最早条目前 1h ～ 最晚条目后 2h，含当前时刻；空缺省 08–22
 export function timelineWindow(items, nowMs) {
   const hours = (items || []).filter((it) => it.fire_at_ms)

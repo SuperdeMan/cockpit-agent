@@ -19,7 +19,7 @@ from runtime.proactive import publish_proactive
 
 from .placeparse import ARRIVE, parse_place_text
 from .task_admission import admit_task_title
-from .store import (Reminder, ReminderStore, DONE, CANCELLED, FIRED,
+from .store import (Reminder, ReminderStore, ACTIVE, DONE, CANCELLED, FIRED,
                     LOCATION, PENDING)
 from .timeparse import (OK as T_OK, FAIL as T_FAIL, NEED_TIME as T_NEED_TIME, UNRESOLVED_DAY_RE, ParsedTime,
                         align_workday, business_tz, ends_with_time, format_display, names_day, parse_lead,
@@ -1168,6 +1168,11 @@ class ReminderAgent(BaseAgent):
         # 无日期待办没有可用于落入“今天/明天/未来三天”的时间事实；日期范围查询
         # 只展示定时提醒。默认总览、显式全部和“待办”视图仍包含待办。
         include_todos = not bool(to) or todo_only
+        # 到达 / 离开地点触发的提醒同样没有时刻：与待办同一口径，只进默认总览与「全部」，不进日期范围与「待办」视图。
+        # 此前列表只取定时项与待办，建完「到深圳北站提醒我取票」再问「我有哪些提醒」答「没有」（200×5 后续批 §16）。
+        # 默认总览只列还没触发的——已经到过的同过期的定时项一样，不算「接下来」。
+        include_places = not bool(to) and not todo_only
+        place_statuses = (PENDING,) if default_future else ACTIVE
         expired_count = 0
         if default_future:
             cutoff = ep(now_utc)
@@ -1198,21 +1203,27 @@ class ReminderAgent(BaseAgent):
             todos = []
         if todo_only:
             times = []
-        total = time_count + todo_count
+        places = (await self.store.list_location(
+            self._uid(ctx), statuses=place_statuses, occupant_id=self._occ(ctx))
+            if include_places else [])
+        place_count = (await self.store.count_location(
+            self._uid(ctx), statuses=place_statuses, occupant_id=self._occ(ctx))
+            if include_places else 0)
+        total = time_count + place_count + todo_count
         if total == 0:
             tail = (f"另有 {expired_count} 条已过期没处理的，要看的话说「看全部」。"
                     if expired_count else "")
             return AgentResult(speech=f"{label}没有提醒或待办。{tail}想加一条直接说"
                                       f"「明天早上八点提醒我…」。")
-        await self._refresh_active(ctx, times + todos)
-        head = "、".join(
-            f"{r.title}（{format_display(r.fire_at, now=now_utc, tz=self._tz)}）"
-            if r.fire_at else r.title for r in (times + todos)[:3])
+        # 口播的顺序 = 卡片的顺序 = 「第 N 条」参照系（C10-A）：定时项、地点提醒（卡片上排在 items 里定时项之后）、待办
+        listed = times + places + todos
+        await self._refresh_active(ctx, listed)
+        head = "、".join(self._list_phrase(r, now_utc) for r in listed[:3])
         speech = f"{label}共 {total} 条：{head}" + ("等。" if total > 3 else "。")
         if expired_count:
             speech += f"另有 {expired_count} 条已过期没处理的，说「看全部」可以查。"
         card = {"type": "reminder_list", "view": view, "date_label": label,
-                "items": [r.to_card_item(now=now_utc, tz=self._tz) for r in times],
+                "items": [r.to_card_item(now=now_utc, tz=self._tz) for r in times + places],
                 "todos": [r.to_card_item(now=now_utc, tz=self._tz) for r in todos]}
         return AgentResult(speech=speech, ui_card=card)
 
@@ -1247,7 +1258,9 @@ class ReminderAgent(BaseAgent):
         if wants_all:
             times, todos = await self.store.list_split(self._uid(ctx),
                                                    occupant_id=self._occ(ctx))
-            n = len(times) + len(todos)
+            # `cancel_all` 不分类型清掉全部在途项：数的时候地点提醒也得算上（只有地点提醒时此前答「现在没有」、一条也不清）
+            places = await self.store.list_location(self._uid(ctx), occupant_id=self._occ(ctx))
+            n = len(times) + len(places) + len(todos)
             if n == 0:
                 await self._clear_pending(ctx)
                 return AgentResult(speech="现在没有提醒或待办。")
@@ -1367,15 +1380,15 @@ class ReminderAgent(BaseAgent):
         """标题命中多条时不擅自操作（P0 单条语义）：反问澄清，并把候选写入 active，
         用户可续接「第 N 条」精确选中。避免旧实现 hits[0] 静默少删。"""
         now_utc = self._now_utc()
+        # 卡片先列有时刻 / 地点的（items）、再列待办（todos）：候选按同一顺序排，口播的「第 N 条」、卡片与参照系才是同一份
+        # （C10-A；此前候选是待办在前时，口播的第一条在卡片上排第二）。
+        hits = sorted(hits, key=lambda r: not self._listed_as_item(r))
         await self._refresh_active(ctx, hits)
-        lines = "、".join(
-            f"第{i}条 {r.title}"
-            f"（{format_display(r.fire_at, now=now_utc, tz=self._tz)}）" if r.fire_at
-            else f"第{i}条 {r.title}"
-            for i, r in enumerate(hits[:5], 1))
+        lines = "、".join(f"第{i}条 {self._list_phrase(r, now_utc)}"
+                         for i, r in enumerate(hits[:5], 1))
         card = {"type": "reminder_list", "view": "multi", "date_label": f"待{action}",
-                "items": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if r.fire_at],
-                "todos": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if not r.fire_at]}
+                "items": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if self._listed_as_item(r)],
+                "todos": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if not self._listed_as_item(r)]}
         # 单条低精度（`exact` 为空、子串覆盖率不达标）也走这里——话术要说清楚
         # **它跟你说的不是逐字一样**，否则「有 1 条都能对上」既不通顺、也读不出
         # 「这可能不是你要的那条」。判据在 `_resolve_targets`，这里只负责说人话。
@@ -1389,6 +1402,18 @@ class ReminderAgent(BaseAgent):
                            speech=speech,
                            missing_slots=["index"],
                            ui_card=card)
+
+    @staticmethod
+    def _listed_as_item(r: Reminder) -> bool:
+        """卡片上排进 items（带 time_display）的那类：有时刻的定时项，或按地点触发的提醒；其余进 todos。"""
+        return bool(r.fire_at) or r.kind == LOCATION
+
+    def _list_phrase(self, r: Reminder, now_utc) -> str:
+        """列表口播里的一项：定时项带时刻，地点提醒带「到 X 时」（与卡片 time_display 同一份），待办只念标题。"""
+        if r.fire_at:
+            return f"{r.title}（{format_display(r.fire_at, now=now_utc, tz=self._tz)}）"
+        when = (r.to_card_item(now=now_utc, tz=self._tz).get("time_display") or "") if r.kind == LOCATION else ""
+        return f"{r.title}（{when}）" if when else r.title
 
     # ── shared_state（conventions §9）──
     async def _refresh_active(self, ctx, items: list | None = None) -> None:
@@ -1409,7 +1434,9 @@ class ReminderAgent(BaseAgent):
             times, todos = await self.store.list_split(
                 self._uid(ctx), from_ts=cutoff,
                 occupant_id=self._occ(ctx))
-            items = times + todos
+            places = await self.store.list_location(
+                self._uid(ctx), statuses=(PENDING,), occupant_id=self._occ(ctx))
+            items = times + places + todos
         await ctx.save_shared_state(self._state_key(ctx, REMINDERS_ACTIVE), {
             "items": [{"id": r.id, "title": r.title} for r in items[:10]]})
 

@@ -4,7 +4,7 @@ import { useDriving } from '../DrivingContext'
 import { useStageView } from '../StageView'
 import { selectStage } from '../stagePresentation.mjs'
 import { stageMetrics } from '../vehicleStage.mjs'
-import { groupByDay, resolveView } from '../reminderStage.mjs'
+import { groupByDay, resolveView, undatedGroups } from '../reminderStage.mjs'
 import { present, cardTitle } from '../cardPresentation.mjs'
 import { CardRenderer, ProvBadge } from './Cards'
 import { Icon } from './Icon'
@@ -77,8 +77,7 @@ function AgendaStage({card}:{card:UiCard}) {
   const items:ReminderItem[]=c.type==='reminder_card'?[c.item].filter(Boolean):c.items||[]
   const view=resolveView(c)
   const {groups,more}=groupByDay(items,now,12)
-  const undated=items.filter(i=>!i.fire_at_ms)
-  const shown=[...groups,...(undated.length?[{label:'时间待确认',items:undated}]:[])]
+  const shown=[...groups,...undatedGroups(items)]
   return <section className="au-agenda-stage"><h2>{c.date_label || (view==='day'?'当天日程':'日程')}</h2><Source card={card} />
     {!items.length&&<p>没有查到日程。</p>}
     {shown.map((g,i)=><div className="au-agenda-group" key={i}><h3>{g.label}</h3>

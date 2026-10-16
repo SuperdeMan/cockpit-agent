@@ -1376,3 +1376,127 @@ def test_a_bare_remind_wrapper_on_the_planner_title_is_dropped():
     assert R._fuller_title("第一场开始前提醒我观看曼城", "第一场开始前提醒我观看") == "第一场开始前提醒我观看曼城"
     assert R._fuller_title("提醒事项整理", "明天提醒我做提醒事项整理") == "做提醒事项整理"   # 不是外壳：照旧
 
+
+# ── 到达提醒进列表（200×5 后续批 §16）──────────────────────────────────────
+
+def _seed_place(agent, title: str, place: str, *, status: str = "pending", created_at: int = 5,
+                trigger_on: str = ""):
+    agent.store._mem[f"p-{title}"] = Reminder(
+        id=f"p-{title}", user_id="u1", occupant_id="primary", title=title, kind="location",
+        status=status, created_at=created_at,
+        extra={"place": place, **({"trigger_on": trigger_on} if trigger_on else {})})
+
+
+def _active_titles(ctx) -> list:
+    written = [c.args[2] for c in ctx._memory.upsert_profile.call_args_list if c.args[1] == _ACTIVE_KEY]
+    return [item["title"] for item in json.loads(written[-1])["items"]]
+
+
+@pytest.mark.asyncio
+async def test_the_default_list_includes_pending_arrival_reminders_after_timed_ones():
+    """真栈（`3942f96f` 探针）：建完「到深圳北站的时候提醒我取票」再问「我有哪些提醒」，答「接下来没有提醒或待办」——列表只取
+    定时项与待办。到达提醒排在定时项之后、待办之前：口播、卡片、「第 N 条」参照系同一个顺序（C10-A）。"""
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "明天带伞", now + 86400)
+    _seed_place(a, "取票", "深圳北站")
+    _seed_place(a, "买菜", "公司", trigger_on="leave", created_at=6)
+    await a.store.add(Reminder(user_id="u1", title="买牛奶", kind="todo"))
+    ctx = make_context()
+
+    res = await run_handle(a, "reminder.list", raw_text="我有哪些提醒", ctx=ctx)
+
+    assert "接下来共 4 条" in res.speech
+    assert "取票（到深圳北站时）" in res.speech and "买菜（离开公司时）" in res.speech
+    assert [i["title"] for i in res.ui_card["items"]] == ["明天带伞", "取票", "买菜"]
+    assert res.ui_card["items"][1]["time_display"] == "到深圳北站时"
+    assert [t["title"] for t in res.ui_card["todos"]] == ["买牛奶"]
+    assert _active_titles(ctx) == ["明天带伞", "取票", "买菜", "买牛奶"]
+
+
+@pytest.mark.asyncio
+async def test_arrival_reminders_stay_out_of_dated_and_todo_views():
+    """没有时刻：与待办同一口径，不进「今天 / 明天…」这类日期范围，也不进「待办」视图。"""
+    a = await _agent()
+    _seed_place(a, "取票", "深圳北站")
+    await a.store.add(Reminder(user_id="u1", title="买牛奶", kind="todo"))
+
+    today = await run_handle(a, "reminder.list", raw_text="我今天有什么安排")
+    todos = await run_handle(a, "reminder.list", raw_text="只看待办")
+
+    assert "取票" not in today.speech and "取票" not in json.dumps(today.ui_card or {}, ensure_ascii=False)
+    assert "待办共 1 条" in todos.speech and "取票" not in todos.speech
+
+
+@pytest.mark.asyncio
+async def test_a_fired_arrival_reminder_is_not_upcoming_but_shows_in_the_full_list():
+    """已经到过的同过期的定时项一样不算「接下来」；「看全部」照列。"""
+    a = await _agent()
+    _seed_place(a, "取票", "深圳北站", status="fired")
+
+    upcoming = await run_handle(a, "reminder.list", raw_text="查看我的提醒")
+    everything = await run_handle(a, "reminder.list", raw_text="看全部提醒")
+
+    assert "没有提醒或待办" in upcoming.speech
+    assert "全部共 1 条" in everything.speech and "取票（到深圳北站时）" in everything.speech
+
+
+@pytest.mark.asyncio
+async def test_the_ordinal_after_a_list_reaches_an_arrival_reminder():
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "明天带伞", now + 86400)
+    _seed_place(a, "取票", "深圳北站")
+    ctx = make_context()
+    await run_handle(a, "reminder.list", raw_text="我有哪些提醒", ctx=ctx)
+    active = [c.args[2] for c in ctx._memory.upsert_profile.call_args_list if c.args[1] == _ACTIVE_KEY][-1]
+
+    res = await run_handle(a, "reminder.cancel", raw_text="取消第二条",
+                           ctx=make_context(context_values={_ACTIVE_SCOPE: active}))
+
+    assert res.status == "ok" and "取票" in res.speech
+    assert (await a.store.get("u1", "p-取票", statuses=(CANCELLED,))).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_clearing_everything_counts_arrival_reminders():
+    """`cancel_all` 不分类型清掉全部在途项：只剩到达提醒时，此前答「现在没有提醒或待办」、一条也不清。"""
+    a = await _agent()
+    _seed_place(a, "取票", "深圳北站")
+
+    res = await run_handle(a, "reminder.cancel", raw_text="把提醒都清空")
+
+    assert res.status == "need_confirm" and "全部 1 条" in res.speech
+
+
+@pytest.mark.asyncio
+async def test_clarify_lists_candidates_in_the_order_the_card_shows_them():
+    """澄清卡先列有时刻 / 地点的（items）、再列待办：候选里待办排在前面时，此前口播的「第 1 条」在卡片上排在后面，
+    「取消第一条」取消的不是卡片上第一行。"""
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await a.store.add(Reminder(user_id="u1", title="交物业费", kind="todo"))
+    _seed_place(a, "交物业费现金", "物业中心")
+    await _seed_raw(a, "交物业费账单", now + 86400)
+    ctx = make_context()
+
+    res = await run_handle(a, "reminder.cancel", raw_text="取消物业费", ctx=ctx)
+
+    assert res.status == "need_slot"
+    shown = [i["title"] for i in res.ui_card["items"]] + [t["title"] for t in res.ui_card["todos"]]
+    assert shown[-1] == "交物业费" and _active_titles(ctx) == shown
+    assert "第1条 交物业费现金（到物业中心时）" in res.speech and "第3条 交物业费" in res.speech
+
+
+@pytest.mark.asyncio
+async def test_the_refreshed_ordinal_frame_after_a_cancel_keeps_arrival_reminders():
+    """取消 / 完成之后无参刷新「第 N 条」参照系，与默认总览同一口径：剩下的到达提醒也在里面。"""
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "明天带伞", now + 86400)
+    _seed_place(a, "取票", "深圳北站")
+    ctx = make_context()
+
+    await run_handle(a, "reminder.cancel", raw_text="取消明天带伞", ctx=ctx)
+
+    assert _active_titles(ctx) == ["取票"]

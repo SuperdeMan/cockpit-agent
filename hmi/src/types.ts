@@ -740,7 +740,7 @@ export type PlaceDetailCard = {
 export type ReminderItem = {
   id: string
   title: string
-  kind: 'time' | 'todo'
+  kind: 'time' | 'todo' | 'location'   // location：到达 / 离开地点时提醒，没有时刻，time_display 是「到 X 时」
   status: 'pending' | 'fired' | 'done' | 'cancelled'
   time_display?: string   // "今天 14:30" / "明天 08:00"
   fire_at_ms?: number     // agenda 时间轴定位用；todo 无
