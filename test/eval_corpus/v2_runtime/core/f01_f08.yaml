@@ -44,7 +44,9 @@ cases:
     family: manual_context
     turns:
       - {say: "能量回收有几档", expect: {manual: true}}
-      - {say: "怎么调", expect: {manual: true}}
+      # 2026-10-16 F01：「派发 + 呈现」看不出手册答了「没有查到」——三次 200×5 里派到手册的 3 遍都这样判过（补全的槽被原话优先丢掉，
+      # docs/design/2026-10-16-f01-manual-follow-ups.md）
+      - {say: "怎么调", expect: {manual: true, speech_not: ["手册里没有查到"]}}
   - id: M10
     family: manual_colloquial
     turns:

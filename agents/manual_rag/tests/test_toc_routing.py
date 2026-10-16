@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agents._sdk.testing import run_handle
-from agents.manual_rag.src.agent import ManualRagAgent, _merge_routed, _retrieval_question
+from agents.manual_rag.src.agent import ManualRagAgent, _completes, _merge_routed, _retrieval_question
 from agents.manual_rag.src.providers.base import Chunk
 from agents.manual_rag.src.toc_router import (
     SCOPE_OTHER_VEHICLE,
@@ -44,6 +44,18 @@ def test_retrieval_question_prefers_the_users_words(raw, slot, expected):
     assert _retrieval_question(raw, slot) == expected
 
 
+@pytest.mark.parametrize("raw,slot,expected", [
+    ("怎么调", "能量回收怎么调", True),
+    ("怎么调？", "能量回收强度怎么调", True),
+    ("怎么调", "怎么调", False),                  # 没补任何东西
+    ("怎么调", "能量回收怎么设置", False),        # 改了用户的说法
+    ("", "能量回收怎么调", False),
+    ("怎么调", "", False),
+])
+def test_a_completion_only_adds_to_the_users_words(raw, slot, expected):
+    assert _completes(raw, slot) is expected
+
+
 def _agent(tmp_path, *responses):
     provider = _provider(tmp_path)
     provider.provenance_mode = "real"
@@ -66,6 +78,35 @@ def test_anaphoric_follow_up_retrieves_with_the_resolved_question(tmp_path):
     assert result.data["retrieval_basis"] == "anaphora"
     prompt = agent.llm.complete.await_args[0][0][1]["content"]
     assert "【用户原话】它有几档" in prompt and "【问题】座椅加热有几档" in prompt
+
+
+def test_an_elided_follow_up_retrieves_with_the_completed_question(tmp_path):
+    """F01 M09：「能量回收有几档」→「怎么调」——原话省略了主语、自己零命中，规划器按上一轮话题补全的槽才可检索。修前补全被
+    「原话优先」丢掉，三次 200×5 里派到手册的 3 遍都答「没有查到」。"""
+    agent, _ = _agent(tmp_path, "座椅加热可切换 3-2-1-off 三挡。")
+    result = asyncio.run(run_handle(
+        agent, "manual.query", slots={"question": "座椅加热怎么调"}, raw_text="怎么调"))
+    assert [chunk["page_start"] for chunk in result.ui_card["chunks"]][:1] == [37]
+    assert result.data["retrieval_basis"] == "completion"
+    prompt = agent.llm.complete.await_args[0][0][1]["content"]
+    assert "【用户原话】怎么调" in prompt and "【问题】座椅加热怎么调" in prompt
+
+
+def test_the_users_words_still_come_first_when_they_find_something(tmp_path):
+    """原话自己检索得到东西就用原话：补全只是零命中时的回退。"""
+    agent, _ = _agent(tmp_path, "座椅加热可切换 3-2-1-off 三挡。")
+    result = asyncio.run(run_handle(
+        agent, "manual.query", slots={"question": "座椅加热有几个档位怎么调"}, raw_text="座椅加热有几个档位"))
+    assert [chunk["page_start"] for chunk in result.ui_card["chunks"]][:1] == [37]
+    assert "retrieval_basis" not in result.data
+
+
+def test_a_slot_that_rewrites_the_users_words_is_not_a_completion(tmp_path):
+    """槽改了用户的说法（「怎么调」→「…怎么设置」）不算补全：照旧按原话检索，零命中就如实说没查到。"""
+    agent, _ = _agent(tmp_path, json.dumps({"scope": SCOPE_THIS_VEHICLE, "sections": []}))
+    result = asyncio.run(run_handle(
+        agent, "manual.query", slots={"question": "座椅加热怎么设置"}, raw_text="怎么调"))
+    assert not result.ui_card["sources"] and "没有查到" in result.speech
 
 
 def test_slot_vetoed_by_words_the_user_never_said_falls_back_to_the_users_words(tmp_path):

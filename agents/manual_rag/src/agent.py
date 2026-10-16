@@ -129,6 +129,13 @@ def _retrieval_question(raw: str, slot: str) -> tuple[str, str]:
     return raw, "raw"
 
 
+def _completes(raw: str, slot: str) -> bool:
+    """槽是不是原话的**补全**：原话的每个二元组都在槽里、槽多出内容——规划器只补上了原话省略的主语（「怎么调」→
+    「能量回收怎么调」），没改用户的说法。同 `_retrieval_question` 一把尺（`_bigrams`）。"""
+    said, written = _bigrams(raw), _bigrams(slot)
+    return bool(said) and said < written
+
+
 _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9])(?P<number>\d+(?:[.,]\d+)?)\s*(?P<wan>万)?\s*"
     r"(?P<unit>km/h|公里/小时|bar|%|公里|km|个月|分钟|min|小时|mm|cm|"
@@ -450,6 +457,11 @@ class ManualRagAgent(BaseAgent):
                 )
         chunks = await self.kb.retrieve(                   # 1) retrieve
             lookup, vehicle_model=vehicle_model)
+        if not chunks and basis == "raw" and _completes(raw, slot):
+            # 2026-10-16 F01（M09「能量回收有几档」→「怎么调」）：原话省略了主语、自己零命中，规划器按上一轮话题补全的槽才可
+            # 检索。修前补全被「原话优先」丢掉，三次 200×5 里派到手册的 3 遍都答「没有查到」。原话检索得到东西就不碰。
+            lookup, basis = slot, "completion"
+            chunks = await self.kb.retrieve(lookup, vehicle_model=vehicle_model)
         chunks, stage, sections = await self._route_if_unsure(lookup, chunks)
         trace = {"retrieval": stage,
                  **({"retrieval_basis": basis} if basis != "raw" else {}),
@@ -515,12 +527,12 @@ class ManualRagAgent(BaseAgent):
             f"\n{c.content}"
             for i, c in enumerate(chunks, start=1)
         )
-        # 检索用的是规划器补全的指代问题时，把用户原话一并给出：答案要回应的是用户说的那句。
+        # 检索用的是规划器补全的指代 / 省略主语问题时，把用户原话一并给出：答案要回应的是用户说的那句。
         # 按分句取的槽不给整句原话——其余分句是别的步骤的事：「打开后备箱，再告诉我空调有哪些
         # 模式」的手册步给了整句，模型会去答「后备箱的开启方式，手册里没有查到」（真栈 3 次里 2 次）。
         # 回忆式开头（「刚才你说…」）不给生成：它看不到对话历史，拿到这句会答「我刚才没有说过」（固定语料 V201）。
         asked = (f"【用户原话】{strip_recall_opener(raw)}\n【问题】{strip_recall_opener(lookup)}"
-                 if basis == "anaphora" and raw else f"【问题】{strip_recall_opener(lookup)}")
+                 if basis in ("anaphora", "completion") and raw else f"【问题】{strip_recall_opener(lookup)}")
         messages = [                                        # 2) generate
             {"role": "system",
              "content": _SYSTEM_MANUAL if authoritative else _SYSTEM_GENERIC},
