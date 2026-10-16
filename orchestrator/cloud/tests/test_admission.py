@@ -12,11 +12,14 @@ from orchestrator.cloud.admission import admission_messages, judge_addressed, pa
 
 
 def test_the_planner_section_is_still_byte_identical():
-    """规划器的受话段改由共享句子拼出来——一个字不许变（改前 SHA-256 / 长度）。"""
+    """规划器的受话段改由共享句子拼出来——一个字不许变（SHA-256 / 长度）。
+
+    2026-10-16 有意改过一句并换了快照（523 → 603 字）：「条件式指示不产生本轮动作步」改按做事方式起名，写明现在能查的条件句
+    不在此列（200×5 后续批 §15.1 的 A/B）。再改同样要先有 A/B。"""
     section = planning._ADDRESSED_SECTION
-    assert len(section) == 523
+    assert len(section) == 603
     assert hashlib.sha256(section.encode("utf-8")).hexdigest() == (
-        "d8627e4eef0db381ff9613cc0e964e4f52e7b9bc250a96c9d495a1f732c18784")
+        "5053c6d3d2edd9b2642b9d2fed230928903592e9ab41d7ebce5e04b90417c1f9")
 
 
 def test_the_light_prompt_carries_the_same_rules():
