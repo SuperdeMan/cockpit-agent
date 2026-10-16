@@ -78,6 +78,63 @@ hvac_already_on:
   - 空调已经是打开状态了
   speech_brief:
   - 开着呢
+# 需确认对象已经是目标状态（核心旅程 K15）：不挂确认、不执行，如实说（`val.already_holds`；带位置的车门锁不在此列）
+trunk_already_open:
+  scene: 后备箱已处于打开状态
+  status: 已是该态
+  speech_full:
+  - 后备箱已经是打开状态了
+  speech_brief:
+  - 后备箱已经开着呢
+trunk_already_close:
+  scene: 后备箱已处于关闭状态
+  status: 已是该态
+  speech_full:
+  - 后备箱已经是关闭状态了
+  speech_brief:
+  - 后备箱已经关着呢
+frunk_already_open:
+  scene: 前备箱已处于打开状态
+  status: 已是该态
+  speech_full:
+  - 前备箱已经是打开状态了
+  speech_brief:
+  - 前备箱已经开着呢
+frunk_already_close:
+  scene: 前备箱已处于关闭状态
+  status: 已是该态
+  speech_full:
+  - 前备箱已经是关闭状态了
+  speech_brief:
+  - 前备箱已经关着呢
+fuel_tank_cover_already_open:
+  scene: 油箱盖已处于打开状态
+  status: 已是该态
+  speech_full:
+  - 油箱盖已经是打开状态了
+  speech_brief:
+  - 油箱盖已经开着呢
+fuel_tank_cover_already_close:
+  scene: 油箱盖已处于关闭状态
+  status: 已是该态
+  speech_full:
+  - 油箱盖已经是关闭状态了
+  speech_brief:
+  - 油箱盖已经关着呢
+charging_port_already_open:
+  scene: 充电口盖已处于打开状态
+  status: 已是该态
+  speech_full:
+  - 充电口盖已经是打开状态了
+  speech_brief:
+  - 充电口盖已经开着呢
+charging_port_already_close:
+  scene: 充电口盖已处于关闭状态
+  status: 已是该态
+  speech_full:
+  - 充电口盖已经是关闭状态了
+  speech_brief:
+  - 充电口盖已经关着呢
 hvac_already_off:
   scene: 空调已处于关闭状态
   status: 已是该态

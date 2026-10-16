@@ -126,9 +126,11 @@ def test_dangerous_edge_call_requires_confirmation_before_state_change():
 def test_the_confirmation_question_names_the_action_that_would_run():
     """评审四轮（真栈 `5ca289c7` RS34）：「关闭后备箱」被规划成 `trunk.open`，确认问句只有通用句「这项操作可能影响车辆安全，
     请确认是否继续」，用户听不出方向，一句「好的」就开了后备箱。问句念的是**被派下来的 intent** 真会做的事——方向与位置都在里面。"""
-    executor = EdgeCallExecutor(VAL())
+    val = VAL()
+    executor = EdgeCallExecutor(val)
 
     opened = executor.execute(_call("trunk.open"))
+    val.state["trunk"] = "open"          # 默认关着时「关闭」已是该态、不再问（K15）；这里要的是关闭的那句确认
     closed = executor.execute(_call("trunk.close"))
     assert opened.status == closed.status == agent_pb2.ExecuteResponse.NEED_CONFIRM
     assert opened.speech == "要打开后备箱吗？这项操作可能影响车辆安全，请确认是否继续。"
@@ -362,3 +364,46 @@ def test_ask_gate_is_declared_in_knowledge_not_hardcoded():
     executor.val.commands["objects"]["aircon"].pop("value_required_operates")
     assert executor.execute(_call("hvac.set")).status != \
         agent_pb2.ExecuteResponse.NEED_SLOT
+
+
+# ── 核心旅程 K15：要达到的车态已经是了，不挂确认、不执行 ───────────────────────────
+
+def test_an_already_open_trunk_is_reported_without_asking_or_executing():
+    """修前后备箱开着又说「打开后备箱」照样挂确认，确认之后再发一次 trunk.open。"""
+    val = VAL()
+    val.state["trunk"] = "open"
+    executor = EdgeCallExecutor(val)
+
+    res = executor.execute(_call("trunk.open", meta={"answer_length": "detailed"}))
+
+    assert res.status == agent_pb2.ExecuteResponse.OK
+    assert res.speech == "后备箱已经是打开状态了" and not list(res.actions)
+    assert val.state["trunk"] == "open"
+
+
+def test_a_closed_trunk_still_asks_before_opening():
+    val = VAL()
+    executor = EdgeCallExecutor(val)
+
+    res = executor.execute(_call("trunk.open"))
+
+    assert res.status == agent_pb2.ExecuteResponse.NEED_CONFIRM and val.state["trunk"] == "closed"
+
+
+def test_door_locks_with_positions_always_ask():
+    """车门锁按门分开，单个状态键判不了「已经是了」：照旧确认。"""
+    val = VAL()
+    executor = EdgeCallExecutor(val)
+
+    res = executor.execute(_call("door_lock.close", {"positions": "左后"}))
+
+    assert res.status == agent_pb2.ExecuteResponse.NEED_CONFIRM
+
+
+def test_judging_already_holds_never_changes_the_car():
+    val = VAL()
+    before = dict(val.state)
+
+    assert val.already_holds({"data": {"object": "trunk", "operate": "close"}}) == "后备箱已经关着呢"
+    assert val.already_holds({"data": {"object": "trunk", "operate": "open"}}) == ""
+    assert val.state == before

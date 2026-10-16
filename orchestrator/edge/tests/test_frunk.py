@@ -132,9 +132,11 @@ def test_a_dispatched_frunk_open_asks_first_naming_the_frunk():
     asked = executor.execute(_call("frunk.open"))
     assert asked.status == agent_pb2.ExecuteResponse.NEED_CONFIRM
     assert asked.speech == "要打开前备箱吗？这项操作可能影响车辆安全，请确认是否继续。"
+    assert val.state["frunk"] == "closed"             # 只问不做
+    val.state["frunk"] = "open"                         # 默认关着时「关闭」已是该态、不再问（K15）
     closing = executor.execute(_call("frunk.close"))
     assert closing.speech == "要关闭前备箱吗？这项操作可能影响车辆安全，请确认是否继续。"
-    assert val.state["frunk"] == "closed"
+    assert val.state["frunk"] == "open"
 
 
 def test_a_confirmed_frunk_open_changes_only_the_frunk():

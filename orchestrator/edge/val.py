@@ -7,6 +7,7 @@ PoC 为内存模拟；真实实现对接 SOME-IP / AUTOSAR AP / VSOA / CAN。
 """
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import random
@@ -1070,6 +1071,32 @@ class VAL:
         """需确认命令的确认问句 key：`<object>_<operate>_confirm`（唯一一份，`edge_call` 与能力完整性门禁共用）。"""
         data = data or {}
         return f"{data.get('object', '')}_{data.get('operate', '')}_confirm"
+
+    def already_holds(self, structured: dict, answer_length: str = "short") -> str:
+        """需确认命令要达到的车态**已经是了** ⇒ 返回那句「后备箱已经是打开状态了」；不是 / 判不了 ⇒ 空串，照旧确认。
+
+        核心旅程 K15：后备箱开着又说「打开后备箱」，修前不看车态、照样挂确认（确认后再发一次 trunk.open）。目标态与执行时
+        同一份判据：在车态副本上跑 `_simulate`，不动真实车态。只认不带位置的对象（车门锁按门分开，单键判不了），且要有对应的
+        已态话术（`<对象>_already_<操作>`）；车态里没有这个键（读不到）不算已经是。"""
+        data = self._normalize_entities((structured or {}).get("data") or {})
+        obj, operate = data.get("object"), data.get("operate")
+        defs = ((self.commands or {}).get("objects") or {}).get(obj) or {}
+        key = f"{obj}_already_{operate}"
+        if not obj or not operate or defs.get("positions") or key not in (self.responses or {}):
+            return ""
+        # 车态挂在驱动上（`state` 只是转发）：在副本上算，算完原样换回。整段同步、中间没有 await，不会与别的请求交错
+        saved = self.driver.state
+        self.driver.state = copy.deepcopy(saved)
+        try:
+            state_key, target = self._simulate(obj, operate, data)
+        except Exception:                      # noqa: BLE001 —— 判不了就照旧确认
+            return ""
+        finally:
+            self.driver.state = saved
+        if state_key is None or state_key not in saved or saved.get(state_key) != target:
+            return ""
+        self._answer_length, self._multi = answer_length, False
+        return self._pick_response(key, data)
 
     def confirm_speech(self, structured: dict) -> str:
         """需确认命令的确认问句：念出**这一步真会执行的动作**，带位置（评审四轮，2026-09-25）。

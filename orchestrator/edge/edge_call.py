@@ -395,6 +395,10 @@ class EdgeCallExecutor:
             )
         confirmed = call.meta.get("confirmed", "").lower() == "true"
         if self.val._need_confirm(obj) and not confirmed:
+            # 核心旅程 K15：要达到的车态已经是了 ⇒ 如实说，不挂确认、不执行（确认之后再发一次只是一笔重复的副作用）
+            already = self.val.already_holds(structured, call.meta.get("answer_length", "short"))
+            if already:
+                return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK, speech=already)
             # 确认问句念出**被派下来的这条 intent** 真会做的事（「要关闭后备箱吗？…」）——修前是通用句，
             # 规划把「关闭」错成 `trunk.open` 时用户听不出来（评审四轮，`5ca289c7` RS34）
             # CA2-09：同时报出**问这句话时**的行驶状态；云端把它封进确认，确认派发时原样带回来比对。
