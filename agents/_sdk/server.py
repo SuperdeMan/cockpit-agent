@@ -4,8 +4,10 @@ from __future__ import annotations
 from runtime.context_access import project_meta
 import asyncio
 import contextlib
+import logging
 import os
 import socket
+import traceback
 
 import grpc
 from google.protobuf import struct_pb2
@@ -25,6 +27,21 @@ from .result import AgentResult
 
 _STATUS = {"ok": 0, "need_confirm": 1, "need_slot": 2, "failed": 3, "rejected": 4}
 _STATUS_DEFAULT = 3  # F16：未知 status 默认 FAILED（不是 OK），fail-closed
+
+logger = logging.getLogger("agent.sdk.server")
+
+
+def _log_handler_error(intent: str, exc: BaseException) -> None:
+    """handler 抛出的异常落一条带 trace 的告警：异常类型 + 抛出点（文件:行:函数），**不记 message**。
+
+    异常文字可能夹带第三方内容（同 `orchestrator/cloud/dispatch.error_attrs` 只收系统生成的错误码）；类型与源码位置都是
+    系统自己的。此前这里静默转成 `agent_error`，线上只看得到一个 err：2026-10-17 demo-dqt1fu 复测里麦当劳菜单抛
+    KeyError，collector 没有任何一行能说明是哪儿。
+    """
+    frames = traceback.extract_tb(exc.__traceback__)
+    where = (f"{os.path.basename(frames[-1].filename)}:{frames[-1].lineno}:{frames[-1].name}"
+             if frames else "?")
+    logger.warning("Agent handler raised %s at %s (intent=%s)", type(exc).__name__, where, intent)
 
 
 def _to_struct(d: dict | None) -> struct_pb2.Struct:
@@ -109,6 +126,7 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
             await gate.settle_uncertain("cancelled")
             raise
         except Exception as e:
+            _log_handler_error(request.intent.name, e)
             # 副作用可能已发生：准入记录记 unknown，不当成确定失败。
             await gate.settle_uncertain("agent_error")
             return agent_pb2.ExecuteResponse(
@@ -148,6 +166,7 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
                     await gate.settle(response)
                     yield agent_pb2.ExecuteEvent(final=response)
         except Exception as e:
+            _log_handler_error(request.intent.name, e)
             await gate.settle_uncertain("agent_error")
             yield agent_pb2.ExecuteEvent(final=agent_pb2.ExecuteResponse(
                 status=3,
