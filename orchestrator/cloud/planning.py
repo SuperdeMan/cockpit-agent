@@ -1606,6 +1606,12 @@ def _trigger_plan_only_contract_violated(state: PlanAttemptState) -> bool:
     if not state.plan_only_expected:
         return False
     data = state.data
+    if (isinstance(data, dict) and state.parsed is not None and state.parsed.steps
+            and _COMPLETE_DEFERRED_CONDITION_RE.search(str(state.text or ""))):
+        # 完整条件句交了合法的观察计划、只丢了外壳（complexity / goal）：`_preserve_conditional_replan_contract` 已按原话补回
+        # （不增删任何步），按补回的外壳核对。只为外壳整份判废，正确的计划就被扔了、落闲聊（复测 `494d1c49` D01 一遍：
+        # 条件句纠正之后模型交了 `{"addressed": true, "steps": [查天气]}`）。
+        data = {"complexity": state.parsed.complexity, "goal": state.parsed.goal, **data}
     return not (
         isinstance(data, dict)
         and set(data).issubset({

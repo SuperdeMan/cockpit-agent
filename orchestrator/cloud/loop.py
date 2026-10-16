@@ -317,6 +317,14 @@ class LoopController:
                     except Exception:
                         pass
                 if decision.done or not decision.steps:
+                    if (condition_verdict == cj.HOLDS and not consequent_released and not consequent_retried
+                            and not any(step_naming_score(condition_parts[1], step) > 0 for step in executed_steps)):
+                        # 前件成立、后件这一轮还没派过，再规划却说做完了（复测 `494d1c49` D01 一遍）：同「派错了」那条，写回观察再规划一次。
+                        # 「派过」按本轮执行过的步里有没有后件点名的算——提醒、导航这类不归问句闸管的后件派了也不会盖放行标记。
+                        consequent_retried = True
+                        observations.append(cj.mismatched_observation(condition_parts[0], condition_parts[1], []))
+                        logger.info("Condition holds but the replan ended without the consequent; replanning once")
+                        continue
                     break
                 fresh_steps = list(decision.steps)
                 if superseded:

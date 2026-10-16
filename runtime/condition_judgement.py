@@ -174,17 +174,19 @@ def check_observation(condition: str, consequent: str, evidence: str) -> dict:
 
 
 def mismatched_observation(condition: str, consequent: str, intents) -> dict:
-    """前件成立、再规划派出的写步却没有一步是后件点名的（开关反了、对象不对）时写回的观察：那几步已拦下没执行，
-    再规划一次只派后件那一步（2026-10-15 核心旅程 D01：「…就把空调打开」再规划派成 `hvac.off`，被拦下后空调没开）。"""
+    """前件成立、后件却没做成时写回给再规划的观察，再规划一次只派后件那一步（2026-10-15 核心旅程 D01）：
+    `intents` 非空 = 上一批派出的写步没有一步是后件点名的（「…就把空调打开」派成 `hvac.off`），已拦下没执行；
+    为空 = 上一批什么都没派就说做完了。"""
     phrase = consequent_phrase(consequent)
-    listed = "、".join(str(i) for i in intents if i) or "那几步"
+    listed = "、".join(str(i) for i in intents if i)
+    told = (f"上一批派出的 {listed} 不是用户要做的那件事（开关方向或对象对不上），已拦下没有执行"
+            if listed else "上一批还没有派出用户要做的那件事")
     return {
         "step_id": "condition_check",
         "status": "ok",
         "intent": CHECK_INTENT,
         "data": {"condition": condition, "verdict": HOLDS, "mismatched": list(intents)},
-        "speech": (f"条件「{condition}」已经成立，但上一批派出的 {listed} 不是用户要做的那件事（开关方向或对象对不上），"
-                   f"已拦下没有执行。按用户原话，现在只要做：{phrase}"),
+        "speech": f"条件「{condition}」已经成立，但{told}。按用户原话，现在只要做：{phrase}",
         "error": "",
     }
 

@@ -227,3 +227,50 @@ def test_no_corrective_replan_when_the_condition_does_not_hold():
     assert executor.runs == [["s1"]]
     assert all(o.get("data", {}).get("mismatched") is None for obs in planner.observations for o in obs)
 
+
+def test_a_replan_that_ends_without_the_consequent_gets_one_corrective_replan():
+    """复测 `494d1c49` D01 一遍：判定成立后再规划什么都没派就说做完了，空调没开。同「派错了」那条：写回观察、再规划一次。"""
+    judge = _Judge(_verdict("holds", "深圳今天不会下雪"))
+    on = _edge("r2", "hvac.on", "打开空调")
+    planner = _Planner([ReplanDecision(done=True, steps=[]), ReplanDecision(done=False, steps=[on])])
+    results = {"s1": StepResult("s1", StepStatus.OK, speech=WEATHER_SPEECH, data={"city": "深圳"}),
+               "r2": StepResult("r2", StepStatus.OK, speech="已为您打开空调")}
+    executor = _Executor(results)
+    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000,
+                                condition_judge=judge)
+    initial = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather", slots={"city": "深圳"})],
+                   complexity="adaptive", safety_origin_text=D01)
+    ctx = PlanContext(raw_text=D01, safety_origin_text=D01)
+
+    async def collect():
+        return [e async for e in controller.run(goal="g", initial_plan=initial, agents=[], ctx=ctx, user_text=D01)]
+
+    asyncio.run(collect())
+    assert executor.runs == [["s1"], ["r2"]] and on.condition_released is True
+    note = planner.observations[1][-1]
+    assert note["data"]["mismatched"] == [] and "还没有派出" in note["speech"]
+
+
+def test_a_consequent_already_dispatched_outside_the_gate_is_not_asked_for_again():
+    """后件是提醒这类不归问句闸管的步：派了也不盖放行标记。它已经执行过，再规划说做完了就是做完了——不能再催一次（会重复建提醒）。"""
+    origin = "如果深圳今天不下雪，就提醒我带伞"
+    judge = _Judge(_verdict("holds", "深圳今天不会下雪"))
+    remind = Step(id="r1", agent_id="reminder", intent="reminder.create", slots={"title": "带伞"},
+                  capability_description="创建提醒")
+    planner = _Planner([ReplanDecision(done=False, steps=[remind]), ReplanDecision(done=True, steps=[]),
+                        ReplanDecision(done=False, steps=[remind])])
+    results = {"s1": StepResult("s1", StepStatus.OK, speech=WEATHER_SPEECH, data={"city": "深圳"}),
+               "r1": StepResult("r1", StepStatus.OK, speech="好的，提醒你带伞")}
+    executor = _Executor(results)
+    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000,
+                                condition_judge=judge)
+    initial = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather", slots={"city": "深圳"})],
+                   complexity="adaptive", safety_origin_text=origin)
+    ctx = PlanContext(raw_text=origin, safety_origin_text=origin)
+
+    async def collect():
+        return [e async for e in controller.run(goal="g", initial_plan=initial, agents=[], ctx=ctx, user_text=origin)]
+
+    asyncio.run(collect())
+    assert executor.runs == [["s1"], ["r1"]] and len(planner.observations) == 2
+

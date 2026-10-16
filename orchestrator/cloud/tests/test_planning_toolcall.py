@@ -773,6 +773,28 @@ def test_complete_conditional_with_invalid_steps_and_a_clarify_goal_gets_the_con
     assert "未来条件尚未知不是歧义" in spy.last_tool_user
 
 
+def test_a_corrected_conditional_plan_missing_only_its_envelope_is_kept(monkeypatch):
+    """复测 `494d1c49` D01 一遍：条件句纠正之后模型交了 `{"addressed": true, "steps": [查天气]}`——计划对，只丢了 complexity / goal。
+    「只许给计划」的契约此前按原始字段整份判废、落闲聊；外壳已由 `_preserve_conditional_replan_contract` 按原话补回，按补回的核对。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "如果深圳今天不下雪，就把空调打开"
+    empty = {"addressed": True, "steps": []}
+    bare = {"addressed": True, "steps": [{"id": "s1", "capability_ref": "cap_0001",
+                                          "slots": {"city": "深圳", "date": "今天"}, "depends_on": [], "slot_refs": {}}]}
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": empty}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": bare}]),
+    ])
+    agents = [MockAgent("info", ["info.weather"]), MockAgent("vehicle", ["hvac.on"])]
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["info.weather"]
+    assert plan.complexity == "adaptive" and plan.goal == text
+    assert "plan_only_contract_violated" not in plan.retry_policies
+
+
 def test_complete_conditional_never_accepts_repeated_clarification(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     clarify = {
