@@ -42,6 +42,7 @@ from . import exemplars as _exemplars
 from . import skills as _skills
 from runtime import memory_directive as _memory_directive
 from runtime.affirmation import is_acknowledgment_only, offer_sentence
+from runtime.anaphora import has_elided_subject
 from runtime.clause_split import split_clauses
 from runtime.condition_judgement import consequent_phrase
 from runtime.clock import BUSINESS_TZ
@@ -482,6 +483,38 @@ def _focus_dependent_plan_conflicts(
         str(step.intent or "").split(".", 1)[0] != namespace
         for step in plan.steps
     )
+
+
+def _answers_only(catalog: PlannerCapabilityCatalog, agent_id: str, intent: str) -> bool:
+    """本请求目录里（Agent, 意图）这条能力是不是只回答的（manifest `response_only`，严格 True）。"""
+    agent = getattr(catalog, "agent_map", {}).get(agent_id)
+    for cap in (getattr(getattr(agent, "manifest", None), "capabilities", None) or []):
+        if str(getattr(cap, "intent", "") or "") == intent:
+            return getattr(cap, "response_only", False) is True
+    return False
+
+
+def _elided_follow_up_conflicts(
+        text: str, working_set: WorkingSet, plan: Plan | None,
+        catalog: PlannerCapabilityCatalog) -> bool:
+    """省略主语的追问把上一轮的只回答能力丢成了更差的计划（2026-10-16 F01 M09「能量回收有几档」→「怎么调」）。
+
+    上一轮是非兜底 Agent 的只回答能力（manifest `response_only`）、这句整句省略了主语（`runtime.anaphora.has_elided_subject`），
+    计划却零步 / 不受话 / 要澄清 / 全交兜底谈话 / 出现会执行的步骤 ⇒ 冲突，按 `focus_dependent_conflict` 重试一次。三次 200×5 里
+    这一句 8 遍：落闲聊 3、零步 1、写意图 `energy_recovery.set` 1。改派到别的只回答能力不算冲突；上一轮是兜底谈话或车控时不碰
+    （车控之后的「怎么调」可能是在说，交给规划器与方法问句闸）。零领域词。
+    """
+    focus = getattr(working_set, "focus", None)
+    last_intent = str(getattr(focus, "last_intent", "") or "").strip()
+    last_agent = str(getattr(focus, "last_agent_id", "") or "").strip()
+    if (not last_intent or not last_agent or last_agent == _FALLBACK_AGENT
+            or not has_elided_subject(text) or not _answers_only(catalog, last_agent, last_intent)):
+        return False
+    if (plan is None or not plan.addressed or plan.clarify is not None
+            or not plan.steps):
+        return True
+    return (all(step.agent_id == _FALLBACK_AGENT for step in plan.steps)
+            or any(not bool(getattr(step, "response_only", False)) for step in plan.steps))
 
 
 def _focused_list_batch_plan_conflicts(
@@ -1671,8 +1704,10 @@ def _trigger_focused_list_batch_conflict(state: PlanAttemptState) -> bool:
 
 
 def _trigger_focus_dependent_conflict(state: PlanAttemptState) -> bool:
-    return _focus_dependent_plan_conflicts(
-        state.text, state.working_set, state.parsed, state.catalog)
+    return (_focus_dependent_plan_conflicts(
+                state.text, state.working_set, state.parsed, state.catalog)
+            or _elided_follow_up_conflicts(
+                state.text, state.working_set, state.parsed, state.catalog))
 
 
 def _trigger_open_close_polarity_inverted(state: PlanAttemptState) -> bool:

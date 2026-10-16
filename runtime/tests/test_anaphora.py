@@ -10,7 +10,8 @@ import os
 import pytest
 import yaml
 
-from runtime.anaphora import ANAPHORIC_SUBJECTS, LEADING_PARTICLES, has_anaphoric_subject
+from runtime.anaphora import (ANAPHORIC_SUBJECTS, ELIDED_ACTIONS, LEADING_PARTICLES, has_anaphoric_subject,
+                              has_elided_subject)
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _COMMANDS = os.path.join(_ROOT, "orchestrator", "edge", "knowledge", "commands.yaml")
@@ -33,7 +34,7 @@ def _domain_vocabulary() -> set[str]:
 def test_no_marker_is_domain_vocabulary():
     vocab = _domain_vocabulary()
     assert len(vocab) > 50
-    for word in (*ANAPHORIC_SUBJECTS, *LEADING_PARTICLES):
+    for word in (*ANAPHORIC_SUBJECTS, *LEADING_PARTICLES, *ELIDED_ACTIONS):
         assert word not in vocab, f"`{word}` 是 VAL 领域词——判据必须是虚词 / 量词"
         assert not any(obj in word for obj in ("电", "续航", "空调", "车窗", "天窗", "音乐")), word
 
@@ -67,3 +68,38 @@ def test_anaphoric_subject_is_recognised(text):
 ])
 def test_non_anaphoric_subjects_are_left_alone(text):
     assert not has_anaphoric_subject(text), text
+
+
+# ── 省略主语（2026-10-16，F01 手册追问）────────────────────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "怎么调",                     # M09「能量回收有几档」之后的原话
+    "怎么调？",
+    "那怎么调呢",
+    "要怎么设置",
+    "怎么才能打开",
+    "那在哪里设置",
+    "有几档",
+    "能调吗",
+    "可以关吗",
+    "能不能调",
+])
+def test_elided_subject_is_recognised(text):
+    assert has_elided_subject(text), text
+
+
+@pytest.mark.parametrize("text", [
+    "能量回收怎么调",             # 主语在：规划器自己认
+    "它有几档",                   # 回指，另一维
+    "怎么去机场",                 # 动作不是泛化动作
+    "把空调关掉",
+    "能开空调吗",
+    "怎么办",
+    "几点了",
+    "调到多少合适",
+    "调一下",
+    "",
+])
+def test_sentences_with_a_subject_are_not_elided(text):
+    assert not has_elided_subject(text), text
+

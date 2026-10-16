@@ -54,3 +54,29 @@ def has_anaphoric_subject(text: str | None) -> bool:
     if not t:
         return False
     return bool(ANAPHORIC_SUBJECT_RE.match(t))
+
+
+# ── 省略主语（2026-10-16，F01 手册追问）────────────────────────────────────────────
+# 与上面的回指是同一维的另一种形态：主语不是代词，而是**整个没说**——「能量回收有几档」之后的「怎么调」。
+# 判据同样零领域词：句首引子之后只有疑问词 + 泛化动作 / 属性问法；带任何对象词的句子都不算（那由规划器自己认）。
+# 消费方是规划的省略追问护栏（`planning._elided_follow_up_conflicts`），只在上一轮是只回答能力时生效。
+
+#: 泛化动作：调 / 设置 / 开 / 关 / 用 / 切换…，不是任何对象名。
+ELIDED_ACTIONS = ("调节", "调整", "调", "设置", "设定", "设", "打开", "开启", "开", "关闭", "关掉", "关",
+                  "使用", "用", "操作", "切换")
+_ACTION_ALT = "|".join(sorted(map(re.escape, ELIDED_ACTIONS), key=len, reverse=True))
+#: 句末语气词与标点：剥掉之后整句匹配。
+_ELIDED_TAIL_RE = re.compile(r"[呢吗啊呀吧么嘛]*[？?。！!.～~\s]*$")
+ELIDED_SUBJECT_RE = re.compile(
+    rf"(?:(?:{_PARTICLE_ALT})[，,、\s]*)*"
+    rf"(?:(?:要|该|应该)?(?:怎么|如何|怎样|咋)(?:才能|才可以|才|可以|能)?(?:{_ACTION_ALT})(?:一下)?"
+    rf"|在哪(?:里|儿)?(?:{_ACTION_ALT})?"
+    rf"|(?:有|分)?几(?:个)?(?:档位?|挡位?|种)"
+    rf"|(?:能|可以|能不能|可不可以)(?:{_ACTION_ALT}))")
+
+
+def has_elided_subject(text: str | None) -> bool:
+    """「怎么调」「那在哪里设置」「有几档」「能调吗」→ True；
+    「能量回收怎么调」「它有几档」「怎么去机场」「把空调关掉」→ False。"""
+    t = _ELIDED_TAIL_RE.sub("", (text or "").strip())
+    return bool(t) and bool(ELIDED_SUBJECT_RE.fullmatch(t))
