@@ -43,6 +43,7 @@ from . import skills as _skills
 from runtime import memory_directive as _memory_directive
 from runtime.affirmation import is_acknowledgment_only, offer_sentence
 from runtime.clause_split import split_clauses
+from runtime.condition_judgement import consequent_phrase
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.question_shape import (
@@ -2194,6 +2195,14 @@ class PlanBuilder:
             plan = Plan(steps=[], addressed=False)
             plan_mode = f"{last_mode}_register_not_addressed"
 
+        # 完整条件句两轮都没交出计划（零步 / 判澄清 / 违约）：拿条件分句单独规划一次观察步，照旧进 T2（200×5 后续批 §16）。
+        # 掉档轮抢救出的计划还在时不抢（下面回落到它）。
+        if plan is None and salvage_kept is None:
+            observed = await self._plan_condition_observation(text, catalog, working_set, sk_block, ex_block)
+            if observed is not None:
+                plan = observed
+                plan_mode = "condition_observation_salvage"
+
         # **第三种合法的空 steps：受话了，而且不该做任何动作。**
         # 上面那条 R4.4 的放行只白名单了两种（不受话 / 澄清）。可是「空调先别关」这类
         # 否定句里，`negation-and-deferral` policy 教出来的**正确**输出恰恰是
@@ -3653,17 +3662,68 @@ class PlanBuilder:
     _ITEM_PUNCT_RE = re.compile(r"[\s·,，\-—]")
 
     @classmethod
+    def _item_core(cls, text) -> str:
+        return cls._ITEM_PUNCT_RE.sub("", cls._ITEM_NOTE_RE.sub("", str(text or "")))
+
+    @classmethod
     def _step_names_item(cls, step, name: str) -> bool:
         """这一步的某个槽值点名了这一项吗：去掉括号注记后任一方向包含，且较短的一方 ≥2 字。"""
-        core = cls._ITEM_PUNCT_RE.sub("", cls._ITEM_NOTE_RE.sub("", str(name or "")))
+        core = cls._item_core(name)
         if len(core) < 2:
             return False
         for value in (getattr(step, "slots", None) or {}).values():
             for raw in (value if isinstance(value, list) else [value]):
-                v = cls._ITEM_PUNCT_RE.sub("", cls._ITEM_NOTE_RE.sub("", str(raw or "")))
+                v = cls._item_core(raw)
                 if len(v) >= 2 and (v in core or core in v):
                     return True
         return False
+
+    @classmethod
+    def _value_is_item(cls, value: str, name: str) -> bool:
+        """这个槽值说的就是这一项：主干完整包含那一项的名字主干，或被它包含且自己至少 4 个字（「川菜」这类泛词不算）。"""
+        v, core = cls._item_core(value), cls._item_core(name)
+        if len(core) < 2 or len(v) < 2:
+            return False
+        return core in v or (v in core and len(v) >= 4)
+
+    @classmethod
+    def _bind_ordinal_item(cls, plan: Plan, index: int, item: dict, items: list) -> None:
+        """裸序数只指第 N 项：步的槽值点到同一份列表里**别的那一项**（id 逐字相等，或名字说的就是它）⇒ 改成第 N 项的。
+
+        真栈 `3942f96f` 探针：「第二家」被规划成第一家的详情（名字与 poi_id 都是第一家）；另一遍名字写对了第二家，poi_id 却填了
+        第一家的——详情按 id 取，念的是第一家。客户端发送前按卡片改写序数（带 `nearby_poi_id`），协议层直发的与漏改写的语音走到这里。
+        读步写步都改：写步改完再交给下面的写步闸，「第二家」长不出第一家的写操作。
+        """
+        target_id = str(item.get("id") or "").strip()
+        target_name = str(item.get("name") or "").strip()
+        others = [o for o in items if o is not item]
+        other_ids = {str(o.get("id") or "").strip() for o in others} - {"", target_id}
+        other_names = [str(o.get("name") or "") for o in others]
+        rebound = []
+        for step in plan.steps:
+            slots = dict(getattr(step, "slots", None) or {})
+            changed = False
+            for key, value in list(slots.items()):
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                v = value.strip()
+                if v in other_ids:
+                    if target_id:
+                        slots[key] = target_id
+                    else:
+                        slots.pop(key)          # 第 N 项没有 id：去掉错配的那个，让名字来定
+                    changed = True
+                elif (target_name and not cls._value_is_item(v, target_name)
+                      and any(cls._value_is_item(v, name) for name in other_names)):
+                    slots[key] = target_name
+                    changed = True
+            if changed:
+                step.slots = slots
+                rebound.append(step.intent)
+        if rebound:
+            logger.warning("Bare ordinal %d: step slot(s) named another item of the newest list; rebound %s to %r",
+                           index, rebound, target_name[:30])
+            plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_item_rebound"
 
     def _apply_ordinal_write_guard(self, plan: Plan, text: str, working_set,
                                    agents: list = None) -> Plan:
@@ -3682,6 +3742,8 @@ class PlanBuilder:
         entry, _named = resolve_candidate_scope(text, getattr(working_set, "focus", None))
         items = [it for it in ((entry or {}).get("items") or []) if isinstance(it, dict)]
         item = items[index - 1] if 0 < index <= len(items) else None
+        if item is not None:
+            self._bind_ordinal_item(plan, index, item, items)
         if item is not None and plan.clarify is None and (
                 bool(getattr(plan, "technical_failure", False))
                 or all(bool(getattr(step, "response_only", False)) for step in plan.steps)):
@@ -3755,6 +3817,46 @@ class PlanBuilder:
             options = [{"label": "看详情", "send_text": f"看{name}的详情"},
                        {"label": "导航过去", "send_text": f"导航去{name}"}]
         return {"question": f"第{index}个是「{name}」，你想让我拿它做什么？", "options": options}
+
+    async def _plan_condition_observation(self, text: str, catalog: PlannerCapabilityCatalog,
+                                          working_set: WorkingSet, skills_block: str = "",
+                                          exemplars_block: str = "") -> Plan | None:
+        """完整条件句两轮都没交出计划时的确定性抢救：拿条件分句单独规划一次查询它的步骤（200×5 后续批 §16）。
+
+        首轮零步是同一份输入下的采样方差（第八轮首轮 41 / 99，零步与非零步的目录逐字一致），条件句纠正接住了大半；两轮都没接住的
+        落闲聊、根本没进 T2（`3942f96f` D01 / X03 各一遍）。查一件事是规划器最稳的形态：把条件说成一句是非问（「深圳今天不下雪吗？」），
+        交回的步全是只读观察步（无副作用、不是纯应答）才收——标 adaptive，goal 与原话照旧是用户整句；T2 的前件判定与后件放行认的是
+        服务端持有的那份原话，与这次抢救无关。只在后件是一条指令时做（`step_grounding.instructs`，与 T2 纠正性再规划同一份判据）：
+        「如果找不到就问我」这类约束做事方式的话不碰。只在失败时多一次规划调用。
+        """
+        parts = deferred_condition.split_conditional_instruction(text)
+        if not parts or not _COMPLETE_DEFERRED_CONDITION_RE.search(str(text or "")):
+            return None
+        if not instructs(consequent_phrase(parts[1])):
+            return None
+        question = f"{parts[0]}吗？"
+        try:
+            raw = await self._llm_plan(question, catalog, working_set, skills_block=skills_block,
+                                       exemplars_block=exemplars_block)
+            data = self._extract_data(raw)
+            parsed = (self._parse_with_context(data, catalog, question, stage="build", attempt=2,
+                                               wire_mode="json_condition_observation")
+                      if data is not None else None)
+        except Exception as exc:                     # 抢救失败 = 没抢救，交回原有兜底
+            logger.warning("condition observation salvage failed: %s", type(exc).__name__)
+            return None
+        steps = list(getattr(parsed, "steps", None) or [])
+        if (not steps or self._side_effect_steps(steps) or self._write_steps(steps)
+                or any(bool(getattr(step, "response_only", False)) for step in steps)):
+            return None
+        parsed.complexity = "adaptive"
+        parsed.goal = str(text or "")
+        parsed.raw_text = str(text or "")
+        parsed.clarify = None
+        parsed.addressed = True
+        logger.info("Complete conditional planned nothing twice; observing the condition %r with %s",
+                    parts[0], [step.intent for step in steps])
+        return parsed
 
     def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:
         """把原话交给全局兜底 Agent（默认 chitchat）：**只回一句话，不做任何写操作。**

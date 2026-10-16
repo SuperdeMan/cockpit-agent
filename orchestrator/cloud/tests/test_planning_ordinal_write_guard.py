@@ -246,3 +246,63 @@ def test_a_technical_failure_routed_to_a_non_talk_step_asks_about_the_selected_i
     plan = builder._apply_ordinal_write_guard(plan, "第二个", WorkingSet(catalog=_agents(), focus=_cafe_focus()),
                                               _agents())
     _asks_about_the_second_cafe_unplanned(plan)
+
+
+# ── 裸序数只指第 N 项：槽值点到别的那一项就改正（200×5 后续批 §16）─────────────────────────────
+
+_SICHUAN = [{"id": "B0J01A0NXR", "name": "川胖虎·美蛙肥肠鱼(南山科技园店)", "lat": 22.54, "lng": 113.95},
+            {"id": "B0H3DRTH9W", "name": "先启半步颠小酒馆(南山科技园)", "lat": 22.54, "lng": 113.95},
+            {"id": "B0L2374XGN", "name": "熙雅古韵·私房菜(科技园店)", "lat": 22.55, "lng": 113.95}]
+
+
+def _sichuan_focus():
+    return Focus(candidate_sets=[{"source_intent": "nearby.search", "agent_id": "nearby", "purpose": "list",
+                                  "ts": time.time(), "is_fallback": False, "items": _SICHUAN}])
+
+
+def test_a_bare_ordinal_detail_planned_on_the_first_item_is_rebound_to_the_second():
+    """真栈 `3942f96f` 探针 Y01：「第二家」被规划成第一家的详情（名字与 poi_id 都是第一家）。"""
+    reply = _wire(("nearby", "nearby.detail", {"name": _SICHUAN[0]["name"], "poi_id": _SICHUAN[0]["id"]}))
+
+    plan = _build(reply, "第二家", focus=_sichuan_focus())
+
+    assert _intents(plan) == ["nearby.detail"]
+    assert plan.steps[0].slots == {"name": _SICHUAN[1]["name"], "poi_id": _SICHUAN[1]["id"]}
+
+
+def test_a_mismatched_id_is_rebound_while_the_right_name_stays():
+    """Y02：名字写对了第二家，poi_id 却是第一家的——详情按 id 取，念的是第一家。"""
+    reply = _wire(("nearby", "nearby.detail", {"name": _SICHUAN[1]["name"], "poi_id": _SICHUAN[0]["id"]}))
+
+    plan = _build(reply, "第二家。", focus=_sichuan_focus())
+
+    assert plan.steps[0].slots == {"name": _SICHUAN[1]["name"], "poi_id": _SICHUAN[1]["id"]}
+
+
+def test_values_that_are_not_another_item_are_left_alone():
+    """泛词（「私房菜」是第三家名字的一截，但不到 4 个字）不是哪一项；简称点到的就是第二项本身的，不动。"""
+    reply = _wire(("nearby", "nearby.detail", {"name": "先启半步颠", "poi_id": _SICHUAN[1]["id"]}),
+                  ("nearby", "nearby.search", {"keyword": "私房菜"}))
+
+    plan = _build(reply, "第二家", focus=_sichuan_focus())
+
+    assert plan.steps[0].slots == {"name": "先启半步颠", "poi_id": _SICHUAN[1]["id"]}
+    assert plan.steps[1].slots == {"keyword": "私房菜"}
+
+
+def test_a_sentence_that_is_more_than_an_ordinal_is_not_rebound():
+    reply = _wire(("nearby", "nearby.detail", {"name": _SICHUAN[0]["name"], "poi_id": _SICHUAN[0]["id"]}))
+
+    plan = _build(reply, "看看第二家", focus=_sichuan_focus())
+
+    assert plan.steps[0].slots["poi_id"] == _SICHUAN[0]["id"]
+
+
+def test_a_write_on_another_item_is_rebound_before_the_write_guard():
+    """列表产生方自己的写步（下单）点的是第一家：先改成第二家，再过写步闸——「第二个」长不出第一家的写操作。"""
+    reply = _wire(("nearby", "nearby.order", {"name": _SICHUAN[0]["name"]}))
+
+    plan = _build(reply, "第二个", focus=_sichuan_focus())
+
+    assert _intents(plan) == ["nearby.order"] and plan.steps[0].slots == {"name": _SICHUAN[1]["name"]}
+
