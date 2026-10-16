@@ -7,13 +7,15 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
 from orchestrator.cloud.context import Focus, WorkingSet
 from orchestrator.cloud.models import Plan, PlanContext, Step
-from orchestrator.cloud.planning import PlanBuilder, _assemble_capability_catalog, _elided_follow_up_conflicts
-from orchestrator.cloud.tests.test_retry_policy import _MockAgent, _Spy, _args, _no_resolve, _step, _tool
+from orchestrator.cloud.planning import (PlanBuilder, _assemble_capability_catalog, _elided_follow_up_conflicts,
+                                         _elided_follow_up_continuation)
+from orchestrator.cloud.tests.test_retry_policy import _EMPTY_STEPS, _MockAgent, _Spy, _args, _no_resolve, _step, _tool
 
 
 def _agents():
@@ -26,10 +28,14 @@ def _agents():
     for agent, only in ((chat, True), (info, True), (manual, True), (energy, False)):
         for cap in agent.manifest.capabilities:
             cap.response_only = only
+    manual.manifest.capabilities[0].slots = ["question"]          # 只声明一个槽：续上话题的那句就是它的输入
+    info.manifest.capabilities[0].slots = ["query", "region"]      # 两个槽：不猜填哪个
     return [chat, info, manual, energy]
 
 
-_AFTER_MANUAL = Focus(last_intent="manual.query", last_agent_id="manual-rag")
+_AFTER_MANUAL = Focus(last_intent="manual.query", last_agent_id="manual-rag", origin_exchange_id="e1")
+_HISTORY = [{"role": "user", "text": "能量回收有几档", "exchange_id": "e1"},
+            {"role": "assistant", "text": "能量回收有三档：柔和、标准、自定义。", "exchange_id": "e1"}]
 
 
 def _plan(*steps, addressed=True, clarify=None):
@@ -98,3 +104,62 @@ def test_the_planner_is_asked_again_and_the_follow_up_stays_on_the_manual(_plann
     assert list(plan.retry_policies) == ["focus_dependent_conflict"]
     assert [step.intent for step in plan.steps] == ["manual.query"]
     assert spy.tool_calls == 2
+
+
+# ── S2b：重试之后仍落兜底谈话 ⇒ 续上上一轮的话题交回那条能力 ──────────────────────────────────
+
+def _continuation(text, focus, history):
+    return _elided_follow_up_continuation(text, WorkingSet(catalog=_agents(), focus=focus, history=history),
+                                          _assemble_capability_catalog(_agents()))
+
+
+def test_the_topic_of_the_previous_turn_is_carried_into_the_only_slot():
+    assert _continuation("怎么调", _AFTER_MANUAL, _HISTORY) == (
+        "manual-rag", "manual.query", "question", "能量回收有几档，怎么调")
+
+
+@pytest.mark.parametrize("focus,history", [
+    (_AFTER_MANUAL, [{"role": "user", "text": "空调有哪些模式", "exchange_id": "e0"}]),   # 对不上紧邻上一轮
+    (_AFTER_MANUAL, []),
+    (Focus(last_intent="info.search", last_agent_id="info", origin_exchange_id="e1"), _HISTORY),  # 两个槽：不猜
+    (Focus(last_intent="chitchat.talk", last_agent_id="chitchat", origin_exchange_id="e1"), _HISTORY),
+    (Focus(last_intent="energy_recovery.set", last_agent_id="vehicle", origin_exchange_id="e1"), _HISTORY),
+])
+def test_no_continuation_without_a_provable_topic_and_a_single_input(focus, history):
+    assert _continuation("怎么调", focus, history) is None
+
+
+def test_without_an_origin_the_latest_user_turn_is_the_topic():
+    focus = Focus(last_intent="manual.query", last_agent_id="manual-rag")
+    assert _continuation("怎么调", focus, _HISTORY)[3] == "能量回收有几档，怎么调"
+    assert _continuation("能量回收怎么调", focus, _HISTORY) is None      # 带主语：规划器自己认
+
+
+def test_a_planner_that_keeps_giving_no_steps_still_ends_on_the_manual(_planner_env):
+    """线上 `14861a1a` M09 r1：省略追问重试之后模型连给三次零步，修前最后落闲聊凭常识答。"""
+    spy = _Spy(tool_replies=[_tool(_EMPTY_STEPS) for _ in range(6)])
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    ctx = PlanContext(session_id="elided-continuation", user_id="owner",
+                      granted_permissions=["profile.read", "location.read"])
+    plan = asyncio.run(builder.build(
+        "怎么调", WorkingSet(catalog=_agents(), focus=_AFTER_MANUAL, history=_HISTORY), ctx))
+
+    assert [(step.intent, step.slots) for step in plan.steps] == [
+        ("manual.query", {"question": "能量回收有几档，怎么调"})]
+    assert plan.plan_mode.endswith("_elided_continuation")
+    assert "focus_dependent_conflict" in plan.retry_policies
+
+
+def test_an_alert_in_focus_keeps_the_fallback_talk(_planner_env):
+    """会话里有未解除的安全告警：空计划轮由上面的安全处理改写成带告警立场的兜底谈话，续接不许把它换掉（告警提醒会丢）。"""
+    focus = Focus(last_intent="manual.query", last_agent_id="manual-rag", origin_exchange_id="e1",
+                  safety_alert={"level": "amber", "signal": "胎压报警", "ts": int(time.time())})
+    spy = _Spy(tool_replies=[_tool(_EMPTY_STEPS) for _ in range(6)])
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    ctx = PlanContext(session_id="elided-continuation-alert", user_id="owner",
+                      granted_permissions=["profile.read", "location.read"])
+    plan = asyncio.run(builder.build("怎么调", WorkingSet(catalog=_agents(), focus=focus, history=_HISTORY), ctx))
+
+    assert [step.agent_id for step in plan.steps] == ["chitchat"]
+    assert "_elided_continuation" not in (plan.plan_mode or "")
+

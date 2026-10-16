@@ -494,6 +494,20 @@ def _answers_only(catalog: PlannerCapabilityCatalog, agent_id: str, intent: str)
     return False
 
 
+def _elided_follow_up_target(
+        text: str, working_set: WorkingSet,
+        catalog: PlannerCapabilityCatalog) -> tuple[str, str] | None:
+    """这句是跟在非兜底 Agent 只回答能力之后的省略主语追问 ⇒ 那条能力的 (agent_id, intent)；否则 None。
+    冲突判据与续接兜底共用这一份。"""
+    focus = getattr(working_set, "focus", None)
+    last_intent = str(getattr(focus, "last_intent", "") or "").strip()
+    last_agent = str(getattr(focus, "last_agent_id", "") or "").strip()
+    if (not last_intent or not last_agent or last_agent == _FALLBACK_AGENT
+            or not has_elided_subject(text) or not _answers_only(catalog, last_agent, last_intent)):
+        return None
+    return last_agent, last_intent
+
+
 def _elided_follow_up_conflicts(
         text: str, working_set: WorkingSet, plan: Plan | None,
         catalog: PlannerCapabilityCatalog) -> bool:
@@ -504,17 +518,44 @@ def _elided_follow_up_conflicts(
     这一句 8 遍：落闲聊 3、零步 1、写意图 `energy_recovery.set` 1。改派到别的只回答能力不算冲突；上一轮是兜底谈话或车控时不碰
     （车控之后的「怎么调」可能是在说，交给规划器与方法问句闸）。零领域词。
     """
-    focus = getattr(working_set, "focus", None)
-    last_intent = str(getattr(focus, "last_intent", "") or "").strip()
-    last_agent = str(getattr(focus, "last_agent_id", "") or "").strip()
-    if (not last_intent or not last_agent or last_agent == _FALLBACK_AGENT
-            or not has_elided_subject(text) or not _answers_only(catalog, last_agent, last_intent)):
+    if _elided_follow_up_target(text, working_set, catalog) is None:
         return False
     if (plan is None or not plan.addressed or plan.clarify is not None
             or not plan.steps):
         return True
     return (all(step.agent_id == _FALLBACK_AGENT for step in plan.steps)
             or any(not bool(getattr(step, "response_only", False)) for step in plan.steps))
+
+
+def _elided_follow_up_continuation(
+        text: str, working_set: WorkingSet,
+        catalog: PlannerCapabilityCatalog) -> tuple[str, str, str, str] | None:
+    """省略主语的追问在重试之后仍落兜底谈话 ⇒ (agent_id, intent, 槽名, 续上话题的问题)；不成立 ⇒ None（F01 M09 S2b）。
+
+    前提同冲突判据（`_elided_follow_up_target`：这句整句省略主语、上一轮是非兜底 Agent 的只回答能力），另加两条结构判据：那条能力
+    **只声明了一个槽**（续上话题的这句话就是它的输入，不猜槽名）；紧邻上一轮的用户原话在历史里（按焦点 `origin_exchange_id` 对账，
+    对不上就不续）。问题 = 上一轮原话 + 本句（「能量回收有几档，怎么调」）；手册按「原话零命中、槽是它的补全」检索。零领域词。
+    """
+    target = _elided_follow_up_target(text, working_set, catalog)
+    if target is None:
+        return None
+    last_agent, last_intent = target
+    focus = getattr(working_set, "focus", None)
+    agent = catalog.agent_map.get(last_agent)
+    cap = next((c for c in (getattr(getattr(agent, "manifest", None), "capabilities", None) or [])
+                if str(getattr(c, "intent", "") or "") == last_intent), None)
+    slots = [str(name) for name in (getattr(cap, "slots", None) or [])]
+    if len(slots) != 1:
+        return None
+    origin = str(getattr(focus, "origin_exchange_id", "") or "").strip()
+    said = [turn for turn in (getattr(working_set, "history", None) or [])
+            if isinstance(turn, dict) and turn.get("role") == "user" and str(turn.get("text") or "").strip()]
+    if origin:
+        said = [turn for turn in said if str(turn.get("exchange_id") or "").strip() == origin]
+    if not said:
+        return None
+    previous = str(said[-1]["text"]).strip()
+    return last_agent, last_intent, slots[0], f"{previous}，{str(text or '').strip()}"
 
 
 def _focused_list_batch_plan_conflicts(
@@ -2483,6 +2524,26 @@ class PlanBuilder:
                 plan.steps = talk.steps
                 plan.clarify = None
                 plan.plan_mode = f"{plan.plan_mode or ''}_safety_talk"
+        # 2026-10-16 F01 M09 S2b：省略主语的追问跟在只回答能力之后，重试之后仍零步 / 落兜底谈话 ⇒ 续上上一轮的话题交回那条能力
+        # （只回答、零动作）。线上 `14861a1a` 5 遍里 2 遍：省略追问重试后模型连给三次零步，最后落闲聊凭常识答。安全前提在场时不碰
+        # （上面两条安全处理优先），澄清卡与判不受话也不碰。
+        if (plan.addressed and not plan.clarify and not (premise_now or premise_focus)
+                and (not plan.steps or all(s.agent_id == _FALLBACK_AGENT for s in plan.steps))):
+            continuation = _elided_follow_up_continuation(text, working_set, catalog)
+            if continuation is not None:
+                agent_id, intent, slot, question = continuation
+                steps = self._validated_steps(
+                    [{"id": "s1", "agent_id": agent_id, "intent": intent, "slots": {slot: question},
+                      "depends_on": [], "slot_refs": {}}],
+                    {agent_id: catalog.agent_map[agent_id]})
+                if len(steps) == 1 and steps[0].response_only and not steps[0].require_confirm:
+                    logger.info("elided follow-up of %s continues its topic (替换 %s): %s",
+                                intent, [s.intent for s in plan.steps] or "empty", question[:40])
+                    plan.steps = steps
+                    plan.complexity = "simple"
+                    plan.technical_failure = False
+                    plan.clarify_wanted = False
+                    plan.plan_mode = f"{plan.plan_mode or ''}_elided_continuation"
         # ── 取消闸：一句取消话不许被规划成「新建」或交给兜底编造（余项，2026-08-29）──
         # 挂在常规规划出口、排在两条安全处理之后：三条判据都检查「这份计划与
         # 用户那句话的方向对不对得上」，并保持既有执行顺序。
