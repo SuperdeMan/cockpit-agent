@@ -163,6 +163,30 @@ def _task_title(text: str) -> bool | None:
     return None
 
 
+#: `place_name` 的长度上限：门店 / 地点名。带分店注记的名字常到 20 来字（高德 POI 名「瑞幸咖啡(前海科兴7栋店)」、官方门店名
+#: 「麦当劳深圳前海科兴天地餐厅」），选择卡按钮那句（「选择XX门店：」加店名，21 字）也要装得下；32 留余量。干活的仍是结构判据。
+_PLACE_NAME_MAX = 32
+#: 句末语气标点：ASR 常给「第一个。」「麦当劳深圳前海科兴科学园店。」——句末一个句号不算「一段话」。
+_TRAILING_STOP_RE = re.compile(r"[。！!～~\s]+$")
+
+
+def _place_name(text: str) -> bool | None:
+    """门店 / 地点名：一个名词短语（可带分店注记），不是一句话（2026-10-16 demo-dqt1fu）。
+
+    麦当劳选店追问挂着时，「瑞幸咖啡(前海科兴7栋店)这家瑞幸咖啡，我要看看菜单」被当成门店答案吞掉——请求在逗号后的第二个分句里。
+    句末标点先剥掉，之后含分句符、疑问词、新检索词或超长 ⇒ 长得不像（换题）；其余不定案：店名、序号、按钮那句都交回通用判据
+    （`item_name` 用不上：它不剥句末句号，「第一个。」会被当成一段话，上限 20 也装不下按钮那句）。
+    """
+    t = _TRAILING_STOP_RE.sub("", (text or "").strip())
+    if not t:
+        return True
+    if NEW_SEARCH_RE.search(t) or _QUESTION_RE.search(t) or _CLAUSE_RE.search(t):
+        return True
+    if len(t) > _PLACE_NAME_MAX:
+        return True
+    return None
+
+
 #: 形状名 → 判据。**加一种形状=加一行**，`_is_topic_change` 主体不动
 #: （同 `retry_policy` 的表驱动纪律）。
 SHAPES: dict[str, object] = {
@@ -170,14 +194,18 @@ SHAPES: dict[str, object] = {
     "item_name": _item_name,
     "ordinal": _ordinal,
     "task_title": _task_title,
+    "place_name": _place_name,
 }
 
-#: 声明缺省时按**槽名**兜底的形状。目前只有一条，而且它是刻意的：
+#: 声明缺省时按**槽名**兜底的形状。`order_id` 那条是刻意的：
 #: `order_id` 的严格形状在本机制诞生**之前**就对全部商户生效，
 #: 不能因为「某个 capability 忘了声明」而放松一条写路径身份闸——
 #: 漏声明的代价必须是「和以前一样严」，不是「突然变松」。
+#: 门店槽（麦当劳 `store_hint` / 瑞幸 `store_name`，2026-10-16 demo-dqt1fu）按槽名兜底而不是逐条声明：`slot_shapes` 算在能力 ABI 里，
+#: 四条商户能力还是旧契约，逐条声明会让冻结迁移清单对不上；这两个槽名只在商户能力里出现、到哪都是「一个门店名」，兜底与声明等价。
 #: 显式声明优先于本表。
-DEFAULT_SHAPE_BY_SLOT: dict[str, str] = {"order_id": "order_id"}
+DEFAULT_SHAPE_BY_SLOT: dict[str, str] = {
+    "order_id": "order_id", "store_hint": "place_name", "store_name": "place_name"}
 
 
 def shape_of(slot_name: str, declared: dict | None = None) -> str:

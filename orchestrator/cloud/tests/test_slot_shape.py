@@ -260,7 +260,8 @@ def test_shape_predicates_contain_no_domain_word():
 
 def test_shape_table_is_the_only_place_that_names_a_shape():
     """加一种形状=加一行表，不改主循环（同 `retry_policy` 的表驱动纪律）。"""
-    assert set(SHAPES) == {"order_id", "item_name", "ordinal", "task_title"}
+    # 2026-10-16 +1：place_name（门店 / 地点名，demo-dqt1fu）
+    assert set(SHAPES) == {"order_id", "item_name", "ordinal", "task_title", "place_name"}
     for name, fn in SHAPES.items():
         assert callable(fn), name
 
@@ -276,3 +277,45 @@ def test_task_title_accepts_only_short_imperative_phrases():
     assert _task_title("把文件交给张总，然后订会议室") is None
     assert _task_title("讲个笑话") is None                # 非祈使开头：不表态
     assert _task_title("把" + "很长的一件事" * 6) is None
+
+
+# ── 2026-10-16 demo-dqt1fu：`place_name`——门店 / 地点名，不是一句话 ─────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "瑞幸咖啡(前海科兴7栋店)这家瑞幸咖啡，我要看看菜单",    # 真栈原话：麦当劳选店追问挂着时被当成门店答案吞掉
+    "附近还有别的麦当劳吗",
+    "哪家近一点",
+    "科兴天地那家。离我最近的那家呢",
+    "麦" * 33,
+])
+def test_place_name_rejects_sentences(text):
+    assert verdict(["store_hint"], text, {"store_hint": "place_name"}) is True, text
+    assert verdict(["store_hint"], text) is True and verdict(["store_name"], text) is True, text   # 按槽名兜底
+
+
+@pytest.mark.parametrize("text", [
+    "第一个。",                                          # 真栈原话：ASR 句末带句号的序号
+    "选择麦当劳门店：麦当劳深圳前海科兴天地餐厅",          # 真栈原话：选店卡按钮（21 字）
+    "麦当劳深圳前海科兴科学园店。",                       # 真栈原话：带句号的店名
+    "瑞幸咖啡(前海科兴7栋店)",
+    "科兴天地那家",
+])
+def test_place_name_does_not_reject_store_answers(text):
+    """不定案（None）：店名、序号、按钮那句都交回通用判据——按钮与序号由选择卡那条白名单认。"""
+    assert verdict(["store_hint"], text, {"store_hint": "place_name"}) is None, text
+
+
+def test_the_store_choice_wait_no_longer_swallows_another_merchant_request():
+    """接到换题判据上：选店卡挂着时，第 8 轮那句判换题；序号、按钮、店名照旧当门店答案。"""
+    from types import SimpleNamespace
+
+    from orchestrator.cloud.engine import PlannerEngine
+
+    # 商户能力不逐条声明门店槽的形状（`slot_shapes` 进能力 ABI），按槽名兜底——这里就按真栈的样子不给声明
+    pending = SimpleNamespace(missing_slots=["store_hint"], slot_shapes={},
+                              completed_results={"s2": {"ui_card": {"type": "merchant_choices"}}},
+                              pending_step_id="s2")
+    assert PlannerEngine._is_topic_change("瑞幸咖啡(前海科兴7栋店)这家瑞幸咖啡，我要看看菜单", pending)
+    for answer in ("第一个。", "第二个", "选择麦当劳门店：麦当劳深圳前海科兴天地餐厅", "麦当劳深圳前海科兴科学园店。"):
+        assert not PlannerEngine._is_topic_change(answer, pending), answer
+
