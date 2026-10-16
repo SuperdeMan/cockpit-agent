@@ -16,7 +16,7 @@ from .dispatch import error_attrs
 from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
 from .planning import PlanBuilder, assign_runtime_ids
-from .step_grounding import step_naming_score
+from .step_grounding import directs, instructs, step_naming_score
 from .step_input import bind_step_inputs
 from .task_identity import bind_task_identity
 from . import result_bundle
@@ -241,9 +241,15 @@ class LoopController:
         # 后件是一句话、只授权一次：放行过一批之后，后续再规划被问句闸拦下的写步照拦（200×5 `70b179b7` D01：
         # 第一批放行 `hvac.on`，第三批又出 `hvac.set`，同样点名空调又被放行）。
         consequent_released = False
+        # 只有「要求做事」的后件能放行：问句闸拦「空调要开吗」是因为它在问、拦「就别开空调了」是因为它不让做，条件成立改变不了
+        # 这两件事——修前判定成立就按点名放行，再规划派出的 `hvac.on` / `hvac.off` 照样执行。
+        consequent_directs = bool(condition_parts) and directs(cj.consequent_phrase(condition_parts[1]))
         # 前件成立、可再规划派出的写步一步都不是后件点名的（开关反了 / 对象不对）：拦下之后**再规划一次**，只一次
         # （2026-10-15 核心旅程 D01：「…就把空调打开」派成 `hvac.off`，修前拦下即收场，空调没开）。
         consequent_retried = False
+        # 两条纠正性再规划只给「后件是一条指令」的句子（问句闸拆分句的同一份判据）：「…我要带伞吗」「…推荐几个公园」这类后件
+        # 由观察本身作答，催一次只是白加一次规划调用、还可能多派一步。认不出的不催，保守一侧就是修前的收场。
+        consequent_instructs = consequent_directs and instructs(cj.consequent_phrase(condition_parts[1]))
         replans = 0
         exhausted = False
         batch_local_ids: dict[str, str] = {}   # 本批 {运行时 ID: 模型的局部 ID}（R3-06，只供 t2.iter 观测）
@@ -317,7 +323,8 @@ class LoopController:
                     except Exception:
                         pass
                 if decision.done or not decision.steps:
-                    if (condition_verdict == cj.HOLDS and not consequent_released and not consequent_retried
+                    if (condition_verdict == cj.HOLDS and consequent_instructs
+                            and not consequent_released and not consequent_retried
                             and not any(step_naming_score(condition_parts[1], step) > 0 for step in executed_steps)):
                         # 前件成立、后件这一轮还没派过，再规划却说做完了（复测 `494d1c49` D01 一遍）：同「派错了」那条，写回观察再规划一次。
                         # 「派过」按本轮执行过的步里有没有后件点名的算——提醒、导航这类不归问句闸管的后件派了也不会盖放行标记。
@@ -343,7 +350,7 @@ class LoopController:
                 kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
                     fresh_steps, safety_origin_text,
                 )
-                if blocked and condition_verdict == cj.HOLDS and not consequent_released:
+                if blocked and condition_verdict == cj.HOLDS and consequent_directs and not consequent_released:
                     # 前件判为成立：被拦的写步里只放行后件点名的那几步（盖服务端标记，确认续接时认它）；再规划多派的照拦
                     released = [step for step in blocked
                                 if step_naming_score(condition_parts[1], step) > 0]
@@ -363,7 +370,7 @@ class LoopController:
                         "step(s) %s; dropping before dispatch",
                         [step.intent for step in blocked],
                     )
-                if (not kept and blocked and condition_verdict == cj.HOLDS
+                if (not kept and blocked and condition_verdict == cj.HOLDS and consequent_instructs
                         and not consequent_released and not consequent_retried):
                     # 拦下的那几步照旧不执行；把「对不上、已拦下、只做后件」写回观察，再规划一次（同一道闸，只放后件点名的步）
                     consequent_retried = True

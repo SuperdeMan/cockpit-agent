@@ -6,6 +6,9 @@
   修前删掉全部写步 / 需确认步——后备箱确认卡不出。现在每一步看**点名它的是哪一类分句**：指令分句点得比任何提问分句都准才保留；
 - **纯应答接受提议**（R4-01，`planning._apply_ack_write_guard`）：「好的」只接受助手最后那句提议点名的那一步。
 
+「这个分句是不是在要求做事 / 是不是一条指令」（`directs` / `instructs`）也只在这里：问句闸拆分句、T2 条件句的后件放行与
+纠正性再规划（`loop`）读同一份。
+
 点名的依据是**能力描述**（Registry 装配进 `Step.capability_description`，LLM 写不到）与**槽值**：
 描述的功能主干（第一个冒号 / 分号 / 句号 / 括号 / 逗号之前——后面是写给规划器的用法说明）去掉零领域操作词后的**对象部分**，
 或任一 ≥2 字槽值，在这句话里有 ≥2 字片段 ⇒ 点名；分数 = 主干里被这句话覆盖的字数 + 出现在这句话里的槽值字数，只在「谁点得更准」时比较。
@@ -17,7 +20,8 @@ from __future__ import annotations
 
 import re
 
-from runtime.question_shape import HOW_TO_ACTIONS, is_imperative_opening
+from runtime.polarity import is_negated_directive
+from runtime.question_shape import HOW_TO_ACTIONS, is_imperative_opening, is_non_directive_question
 
 #: 能力描述与指令常用的多字操作词（端侧 `capabilities._describe` 写的动词 + 问句判据的方法动词里 ≥2 字的那些）。
 OPERATION_WORDS = tuple(sorted({w for w in HOW_TO_ACTIONS if len(w) >= 2} | {
@@ -76,17 +80,25 @@ def naming_score(text: str, description: str, slots: dict | None = None) -> int:
     return max(1, _covered(description_head(description), t) + sum(len(_compact(v)) for v in hit_values))
 
 
-#: 开 / 关方向词。只收多字：单字「关」会撞上「关于」、单字「开」会撞上「开心 / 开车」。
+#: 开 / 关方向词。句中任意位置只认多字：单字「关」会撞上「关于」、单字「开」会撞上「开心 / 开车」。
 OPEN_WORDS = ("打开", "开启", "开一下")
 CLOSE_WORDS = ("关闭", "关掉", "关上", "合上", "关一下", "关了")
+#: 单字「开 / 关」只在分句开头（去掉承接 / 礼貌成分后）算方向——「就开空调」「帮我关下窗」；以它们打头、却不是方向的词除外。
+#: 修前「就开空调」点到 `hvac.off`（只认出对象「空调」）：T2 条件句判定成立后，再规划把方向派反了也会被当成后件放行。
+_NOT_DIRECTION_HEADS = ("开关", "开始", "开心", "开车", "开会", "关于", "关系", "关心", "关注")
 _OPEN_OPERATIONS = frozenset({"open", "on", "unfold"})
 _CLOSE_OPERATIONS = frozenset({"close", "off", "fold"})
 
 
+def _leads_with(text: str, head: str) -> bool:
+    body = _LEADING_FILLER_RE.sub("", _compact(text))
+    return body.startswith(head) and not body.startswith(_NOT_DIRECTION_HEADS)
+
+
 def inverts_stated_direction(text: str, step) -> bool:
     """这句话明确说了开（或关），而这一步是反方向——「关闭空调」点到了「空调」，但它不是 `hvac.on` 的依据。"""
-    says_open = any(word in str(text or "") for word in OPEN_WORDS)
-    says_close = any(word in str(text or "") for word in CLOSE_WORDS)
+    says_open = any(word in str(text or "") for word in OPEN_WORDS) or _leads_with(text, "开")
+    says_close = any(word in str(text or "") for word in CLOSE_WORDS) or _leads_with(text, "关")
     if says_open == says_close:
         return False
     operation = str(getattr(step, "intent", "") or "").rsplit(".", 1)[-1]
@@ -114,3 +126,13 @@ def opens_as_instruction(clause: str) -> bool:
         return True
     body = _LEADING_FILLER_RE.sub("", c)
     return any(body.startswith(word) for word in OPERATION_WORDS)
+
+
+def directs(clause: str) -> bool:
+    """这个分句在要求做事：不是提问（「空调要开吗」）、也不是否定（「就别开空调了」）。"""
+    return not is_non_directive_question(clause) and not is_negated_directive(clause)
+
+
+def instructs(clause: str) -> bool:
+    """这个分句是一条指令：要求做事、且以指令起句（`opens_as_instruction`）。认不出的不算。"""
+    return directs(clause) and opens_as_instruction(clause)

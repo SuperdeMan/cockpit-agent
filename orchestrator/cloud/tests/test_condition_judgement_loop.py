@@ -251,19 +251,12 @@ def test_a_replan_that_ends_without_the_consequent_gets_one_corrective_replan():
     assert note["data"]["mismatched"] == [] and "还没有派出" in note["speech"]
 
 
-def test_a_consequent_already_dispatched_outside_the_gate_is_not_asked_for_again():
-    """后件是提醒这类不归问句闸管的步：派了也不盖放行标记。它已经执行过，再规划说做完了就是做完了——不能再催一次（会重复建提醒）。"""
-    origin = "如果深圳今天不下雪，就提醒我带伞"
-    judge = _Judge(_verdict("holds", "深圳今天不会下雪"))
-    remind = Step(id="r1", agent_id="reminder", intent="reminder.create", slots={"title": "带伞"},
-                  capability_description="创建提醒")
-    planner = _Planner([ReplanDecision(done=False, steps=[remind]), ReplanDecision(done=True, steps=[]),
-                        ReplanDecision(done=False, steps=[remind])])
-    results = {"s1": StepResult("s1", StepStatus.OK, speech=WEATHER_SPEECH, data={"city": "深圳"}),
-               "r1": StepResult("r1", StepStatus.OK, speech="好的，提醒你带伞")}
+def _loop(origin, decisions, extra_results):
+    planner = _Planner(decisions)
+    results = {"s1": StepResult("s1", StepStatus.OK, speech=WEATHER_SPEECH, data={"city": "深圳"}), **extra_results}
     executor = _Executor(results)
     controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000,
-                                condition_judge=judge)
+                                condition_judge=_Judge(_verdict("holds", "深圳今天不会下雪")))
     initial = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather", slots={"city": "深圳"})],
                    complexity="adaptive", safety_origin_text=origin)
     ctx = PlanContext(raw_text=origin, safety_origin_text=origin)
@@ -272,5 +265,58 @@ def test_a_consequent_already_dispatched_outside_the_gate_is_not_asked_for_again
         return [e async for e in controller.run(goal="g", initial_plan=initial, agents=[], ctx=ctx, user_text=origin)]
 
     asyncio.run(collect())
-    assert executor.runs == [["s1"], ["r1"]] and len(planner.observations) == 2
+    return planner, executor
 
+
+def test_a_consequent_already_dispatched_outside_the_gate_is_not_asked_for_again():
+    """后件是放歌这类不归问句闸管的步：派了也不盖放行标记。它已经执行过，再规划说做完了就是做完了——不能再催一次（会重复派）。"""
+    play = Step(id="m1", agent_id="music", intent="music.play", slots={"artist": "周杰伦"},
+                capability_description="播放音乐")
+    planner, executor = _loop("如果深圳今天不下雪，就播放周杰伦的歌",
+                              [ReplanDecision(done=False, steps=[play]), ReplanDecision(done=True, steps=[]),
+                               ReplanDecision(done=False, steps=[play])],
+                              {"m1": StepResult("m1", StepStatus.OK, speech="为你播放周杰伦")})
+    assert executor.runs == [["s1"], ["m1"]] and len(planner.observations) == 2
+
+
+def test_a_consequent_that_is_a_question_is_not_asked_for_again():
+    """「…我要带伞吗」的后件由观察本身作答：再规划说做完了就收场，不白加一次规划调用。"""
+    planner, executor = _loop("如果明天下雨，我要带伞吗", [ReplanDecision(done=True, steps=[])], {})
+    assert executor.runs == [["s1"]] and len(planner.observations) == 1
+
+
+def test_a_backwards_write_for_a_question_consequent_is_dropped_without_a_retry():
+    """「…空调要开吗」是在问，不是指令：再规划派出的 `hvac.off` 照拦，但不催着它去开空调。"""
+    off = _edge("r1", "hvac.off", "关闭空调")
+    planner, executor = _loop("如果明天热，空调要开吗", [ReplanDecision(done=False, steps=[off])],
+                              {"r1": StepResult("r1", StepStatus.OK, speech="已为您关闭空调")})
+    assert executor.runs == [["s1"]] and len(planner.observations) == 1
+
+
+def test_a_question_consequent_never_releases_a_write():
+    """「…空调要开吗」在问：问句闸拦它的写步是因为它在问，条件成立改变不了这件事。修前判定成立就按点名放行、`hvac.on` 照样执行。"""
+    on = _edge("r1", "hvac.on", "打开空调")
+    planner, executor = _loop("如果明天热，空调要开吗", [ReplanDecision(done=False, steps=[on])],
+                              {"r1": StepResult("r1", StepStatus.OK, speech="已为您打开空调")})
+    assert executor.runs == [["s1"]] and on.condition_released is False
+
+
+def test_a_negated_consequent_never_releases_a_write():
+    """「…就别开空调了」不让做：再规划派出的 `hvac.on` 点到了「空调」，也不放行。"""
+    on = _edge("r1", "hvac.on", "打开空调")
+    planner, executor = _loop("如果深圳今天下雪，就别开空调了", [ReplanDecision(done=False, steps=[on])],
+                              {"r1": StepResult("r1", StepStatus.OK, speech="已为您打开空调")})
+    assert executor.runs == [["s1"]] and on.condition_released is False
+
+
+def test_a_single_character_direction_releases_only_its_own_way():
+    """「…就开空调」：单字「开」在后件开头就是方向。派反了的 `hvac.off` 不放行（修前只认出对象「空调」、照放）；`hvac.on` 照放。"""
+    off = _edge("r1", "hvac.off", "关闭空调")
+    planner, executor = _loop("如果深圳今天不下雪，就开空调", [ReplanDecision(done=False, steps=[off])],
+                              {"r1": StepResult("r1", StepStatus.OK, speech="已为您关闭空调")})
+    assert executor.runs == [["s1"]] and off.condition_released is False
+
+    on = _edge("r2", "hvac.on", "打开空调")
+    planner, executor = _loop("如果深圳今天不下雪，就开空调", [ReplanDecision(done=False, steps=[on])],
+                              {"r2": StepResult("r2", StepStatus.OK, speech="已为您打开空调")})
+    assert executor.runs == [["s1"], ["r2"]] and on.condition_released is True

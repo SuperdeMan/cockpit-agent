@@ -161,3 +161,10 @@ def test_direction_words_decide_which_way_a_clause_points():
     assert inverts_stated_direction("打开空调", _edge(*HVAC_OFF)) is True
     assert inverts_stated_direction("打开空调", _edge(*HVAC_ON)) is False
     assert inverts_stated_direction("空调有哪些模式", _edge(*HVAC_ON)) is False     # 没说方向不判
+    # 单字「开 / 关」只在分句开头算方向（去掉「就 / 帮我」这类承接 / 礼貌成分后）
+    assert inverts_stated_direction("就开空调", _edge(*HVAC_OFF)) is True
+    assert inverts_stated_direction("帮我关下空调", _edge(*HVAC_ON)) is True
+    assert inverts_stated_direction("就开空调", _edge(*HVAC_ON)) is False
+    assert inverts_stated_direction("开关在哪", _edge(*HVAC_ON)) is False          # 「开关」不是方向
+    assert inverts_stated_direction("关于空调", _edge(*HVAC_ON)) is False
+    assert inverts_stated_direction("空调开着吗", _edge(*HVAC_OFF)) is False        # 不在开头不算

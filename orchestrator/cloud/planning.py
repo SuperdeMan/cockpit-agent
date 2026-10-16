@@ -45,13 +45,12 @@ from runtime.affirmation import is_acknowledgment_only, offer_sentence
 from runtime.clause_split import split_clauses
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
-from runtime.polarity import is_negated_directive
 from runtime.question_shape import (
     HYPOTHETICAL_FRAMES, carries_operation_cue, is_information_request, is_non_directive_question,
     is_reference_question, is_definition_only_question, is_complete_information_question,
     asks_switch_state,
 )
-from .step_grounding import opens_as_instruction, step_naming_score
+from .step_grounding import instructs, step_naming_score
 from .reply_position import reply_position
 from .admission import (ADDRESSEE_FALSE, ADDRESSEE_OBJECT_HEAD, ADDRESSEE_QUESTION,
                         ADDRESSEE_TRUE, ADDRESSEE_UNSURE)
@@ -3457,7 +3456,7 @@ class PlanBuilder:
         """整句里既有提问分句、又有以指令起句的分句 ⇒ `[(分句, 是提问, 是指令)]`；否则 None（按整句判，行为同修前）。
 
         假设 / 条件框架（「如果下雨，就把窗关上」）不拆：后半句是否执行取决于前半句，拆开会把条件指令当成立即执行。
-        指令分句 = 不是提问、不是否定、以指令起句（`step_grounding.opens_as_instruction`）；认不出的不算，保守一侧就是修前的整句拦。
+        指令分句 = 不是提问、不是否定、以指令起句（`step_grounding.instructs`）；认不出的不算，保守一侧就是修前的整句拦。
         """
         if (any(frame in text for frame in HYPOTHETICAL_FRAMES)
                 or deferred_condition.waits_on_condition(text) or _COMPLETE_DEFERRED_CONDITION_RE.search(text)):
@@ -3469,8 +3468,7 @@ class PlanBuilder:
         rows = []
         for clause in parts:
             asks = is_non_directive_question(clause)
-            acts = (not asks and not is_negated_directive(clause)
-                    and opens_as_instruction(clause))
+            acts = instructs(clause)
             rows.append((clause, asks, acts))
         if not any(acts for _, _, acts in rows) or not any(asks for _, asks, _ in rows):
             return None
