@@ -9,12 +9,28 @@ from types import SimpleNamespace
 from contextlib import asynccontextmanager
 
 import pytest
+import yaml
 from datetime import timedelta, timezone
+from pathlib import Path
 
 from agents._sdk import NEED_CONFIRM, NEED_SLOT, OK
 from agents._sdk.ledger import DONE, FAILED, LedgerTask
 from agents.mcp_bridge.src.mcp_client import McpTimeout
 from agents.mcp_bridge.src.merchant.mcdonalds import McDonaldsWorkflow
+
+_SERVERS = Path(__file__).resolve().parents[1] / "servers.yaml"
+
+
+def _declared_tools(intent: str) -> set[str] | None:
+    """生产装配口径：`agent.py` 按 servers.yaml 里这条麦当劳 workflow 的 `required_tools` 绑工具。
+
+    配置里没有这条意图 ⇒ None（不过滤，交给构造函数按工具契约拒载）。"""
+    servers = yaml.safe_load(_SERVERS.read_text(encoding="utf-8")) or {}
+    for server in servers.get("servers") or []:
+        for workflow in (server or {}).get("workflows") or []:
+            if (workflow or {}).get("intent") == intent and workflow.get("handler") == "mcdonalds":
+                return set(workflow.get("required_tools") or [])
+    return None
 
 
 CTX = SimpleNamespace(user_id="u1", session_id="s1", vehicle_id="v1")
@@ -365,6 +381,11 @@ def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
                                if is_write else {}))
         tools[name] = SimpleNamespace(client=client, tool=tool,
                                       input_schema=schema)
+    # 与生产同形：每条 workflow 只绑它在 servers.yaml 声明的工具。此前一律给全量——菜单路径上碰了写路径工具的代码
+    # （选店草稿的 schema 摘要遍历全部工具）单测全绿、上线即 KeyError（2026-10-17 demo-dqt1fu 复测）。
+    declared = _declared_tools(workflow_intent)
+    if declared is not None:
+        tools = {name: binding for name, binding in tools.items() if name in declared}
     server = SimpleNamespace(
         id="mcdonalds", demo=False,
         pay_url_hosts=(list(pay_url_hosts) if pay_url_hosts is not None

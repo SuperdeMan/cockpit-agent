@@ -44,6 +44,10 @@ _READ_TOOLS = (
 _ALL_TOOLS = _READ_TOOLS + ("create-order",)
 # 只读当店菜单：选店 + 取菜单，**一个写工具都不需要**。
 _MENU_TOOLS = ("query-nearby-stores", "query-meals")
+# 选店草稿的 schema 摘要只覆盖门店检索：候选就是它的返回，菜单与下单两条 workflow 都绑了它，草稿两边都认。
+# 摘要若照下单草稿遍历 `_ALL_TOOLS`，菜单 workflow（只绑上面两个工具）上就是 KeyError——2026-10-16 首版上线后
+# 菜单一走到选店卡就 agent_error，单测给的是全量工具没测出来（同下面工具契约表注释里瑞幸那次）。
+_STORE_CHOICE_TOOLS = ("query-nearby-stores",)
 # 逐 intent 的工具契约。用表不用「非 X 即全量」：新增 workflow intent 时漏配这里，
 # 桥在启动期就会以具名 ValueError 拒载——瑞幸侧 luckin.menu 首次上真栈时正是这样被抓到的
 # （单测给的是全量工具，只有容器里才走到这条校验）。
@@ -589,9 +593,9 @@ class McDonaldsWorkflow(MerchantWorkflow):
         return all(key in arguments and arguments[key] not in (None, "")
                    for key in required)
 
-    def _schema_digest(self) -> str:
+    def _schema_digest(self, names: tuple[str, ...] = _ALL_TOOLS) -> str:
         payload = {}
-        for name in _ALL_TOOLS:
+        for name in names:
             binding = self.tools[name]
             payload[name] = {
                 "schema": binding.input_schema,
@@ -1152,7 +1156,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 upstream_args={"request": {
                     str(key): str(value) for key, value in (slots or {}).items()
                     if value is not None and key not in ("store_hint", RESERVED_ID_SLOT)}},
-                schema_digest=self._schema_digest(), created_at=time.time())
+                schema_digest=self._schema_digest(_STORE_CHOICE_TOOLS), created_at=time.time())
             if await self.drafts.put(draft):
                 result.data = {"checkout_token": draft.token}
         return result
@@ -1178,7 +1182,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
         candidates = [store for store in ((draft.store or {}).get("candidates") or [])
                       if isinstance(store, dict)]
         saved = (draft.upstream_args or {}).get("request")
-        if draft.schema_digest != self._schema_digest() or not candidates or not isinstance(saved, dict):
+        if (draft.schema_digest != self._schema_digest(_STORE_CHOICE_TOOLS)
+                or not candidates or not isinstance(saved, dict)):
             return None
         listed = [{"index": index, "name": self._store_name(store)}
                   for index, store in enumerate(candidates, 1) if self._store_name(store)]
