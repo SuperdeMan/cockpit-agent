@@ -647,15 +647,19 @@ class NearbyAgent(BaseAgent):
 
     async def _search(self, intent, ctx, meta) -> AgentResult:
         category = self._resolve_category(intent)
+        weather = (intent.slots.get("weather_context") or "").strip()
+        named = any((intent.slots.get(k) or "").strip() for k in ("cuisine", "brand", "keyword"))
+        # 按天气推荐去处，规划器只给了天气、漏了类目（核心旅程 A1-5 `9aa84404` r5：再规划派出 `{weather_context: 晴}`，答成「想找哪一类」）：
+        # 用户问的就是「这天气适合去哪」，类目由天气定——与 weather-outing 指南同一条规则，恶劣天气（`_weather_word` 认得出）走室内
+        # 组合推荐，否则找景点。给了菜系 / 品牌 / 关键词的照旧按它们找（200×5 后续批 §18.9）。
+        if not category and weather and not named:
+            category = _INDOOR_SENTINEL if _weather_word(weather) else "景点"
         # G5：类目/菜系/品牌/关键词全空且无饮食信号 → 诚实追问，不猜「美食」
-        if not category and not any(
-                (intent.slots.get(k) or "").strip()
-                for k in ("cuisine", "brand", "keyword")):
+        if not category and not named:
             return AgentResult(
                 status=NEED_SLOT,
                 speech="想找哪一类地方？比如餐厅、动物园、商场或公园。",
                 follow_up="说个类目我就近帮你找", missing_slots=["category"])
-        weather = (intent.slots.get("weather_context") or "").strip()
         # 室内组（「(下雨天)去哪玩」→ planner 填 category=室内 + weather_context）：
         # 单一关键词表达不了「适合室内玩的地方」，走多类目扇出组合推荐
         if _CATEGORY_KEYWORD.get(category) == _INDOOR_SENTINEL:

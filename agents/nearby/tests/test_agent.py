@@ -454,6 +454,35 @@ def test_outdoor_search_with_good_weather_context_leads_positively():
     assert res.speech.startswith("天气不错")
 
 
+def test_weather_without_a_category_picks_the_category_by_the_weather():
+    """A1-5 `9aa84404` r5：再规划只给了 `weather_context=晴`、漏了类目，修前反问「想找哪一类地方」。用户问的就是「这天气适合去哪」：
+    好天气找景点、恶劣天气走室内组合推荐（与 weather-outing 指南同一条规则）；给了关键词的照旧按关键词找（后续批 §18.9）。"""
+    from agents.nearby.src.providers.base import Place
+
+    agent, seen = _capture_search()
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"weather_context": "晴"},
+                                 raw_text="今天的天气适合去哪玩", meta=_LOC))
+    assert seen["keyword"] == "景点" and "哪一类" not in res.speech
+
+    keywords = []
+
+    class _P:
+        async def search(self, keyword, **kw):
+            keywords.append(keyword)
+            return [Place(id=keyword, name=f"{keyword}1号", address="x", lat=22.5, lng=113.9, rating=4.5)]
+
+    rainy = NearbyAgent()
+    rainy.place = _P()
+    res = asyncio.run(run_handle(rainy, "nearby.search", slots={"weather_context": "中雨"},
+                                 raw_text="今天的天气适合去哪玩", meta=_LOC))
+    assert keywords == ["商场", "电影院", "博物馆"] and "雨天不太适合户外" in res.speech
+
+    named, seen_named = _capture_search()
+    asyncio.run(run_handle(named, "nearby.search", slots={"weather_context": "晴", "keyword": "露营地"},
+                           raw_text="天气这么好，附近有露营地吗", meta=_LOC))
+    assert seen_named["keyword"] != "景点"
+
+
 def test_mall_category_searches_mall_not_food():
     """『附近有什么商场』不再退化成默认餐饮/美食检索（同族潜伏缺陷）。"""
     agent, seen = _capture_search()
