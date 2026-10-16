@@ -11377,6 +11377,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - `f33a69a8`：裸序数「第 N 家」的步，槽值点到同一份列表里别的那一项（id 或名字）就改成第 N 项的；完整条件句两轮都零步时，拿条件分句
   （「深圳今天不下雪吗？」）单独规划一次观察步，只收只读步，后件须是指令。
 - 上线 `c8fd40d5`：apply 175 s，verify `20261016T043246Z-c8fd40d.json`；全量 12 273 / 38，门禁、smoke、HMI 测试与两端 typecheck 通过；变异 20 / 20。
+  随后按用户「推送部署验证」部署纯文档提交 `c96becf8`（与 `c8fd40d5` 代码一致）：apply 161 s，verify `20261016T050058Z-c96becf.json`。
+  部署克隆的 origin 是本地主仓库：工作树分支删掉后，只挂在主仓库 `origin/main` 上的提交默认拉不到（`unable to read tree`），
+  要显式 `git fetch origin +refs/remotes/origin/main:refs/remotes/upstream/main`。
 - 复测：D01–D07 各 5 / 5（D01 第一次 5 / 5，抢救线上触发一次）；探针：到达提醒进列表 2 / 2、品牌地名到达提醒 2 / 2、真点单照旧说没授权、「第二家」3 / 3。
 - ⛔ 教训：
   - 早退判据被误伤，先在线上量分数再决定改哪一层：误伤与真越权只隔 0.03，调阈值会随向量漂移翻转；把归属证据放回 Agent 的清单（窄 hint）更稳。
