@@ -2434,6 +2434,52 @@ async def test_store_choice_preserves_every_declared_spec_slot():
         f"选门店时丢了已声明的规格槽 {missing}——用户说过的规格不许在中途消失")
 
 
+@pytest.mark.asyncio
+async def test_store_choice_answered_by_ordinal_or_moved_name_picks_that_store():
+    """裸「第一个」回答瑞幸选店卡：修前只认店名全等；桥还会把它当错位槽挪进 item_query（换成店名、清掉 store_name）——
+    选店卡与菜单共用来源，桥分不清门店与商品（2026-10-16 demo-dqt1fu 同一根因，那次落在麦当劳）。现在与麦当劳同一份判据认序号，
+    被挪进 item_query 的店名全等也认；选中之后接着查商品，不再要门店。"""
+    choices = _ok([
+        {"deptId": 1, "deptName": "上海迪美一店", "longitude": 121.4730,
+         "latitude": 31.2300, "workStatus": "营业中", "distance": 0.08},
+        {"deptId": 2, "deptName": "上海迪美二店", "longitude": 121.4745,
+         "latitude": 31.2304, "workStatus": "营业中", "distance": 0.08},
+    ])
+    for answer in ({"store_name": "第一个"}, {"store_name": "", "item_query": "上海迪美一店"}):
+        store = FakeDraftStore()
+        workflow, client = _workflow(scripts={
+            "queryShopList": [choices], "searchProductForMcp": [SEARCH_RESULT],
+            "queryProductDetailInfo": [DETAIL_RESULT],
+            "switchProduct": [SWITCH_HOT_RESULT, SWITCH_SUGAR_RESULT],
+            "previewOrder": [PREVIEW_RESULT]}, store=store)
+        first = await workflow.prepare(_intent(store_name="瑞幸咖啡（迪美店）"), CTX, META)
+        assert first.status == NEED_SLOT and first.ui_card["choice_kind"] == "store"
+
+        # 回答轮门店名已经不是那条 POI 的名字，执行器重建不出门店三元组的可信引用（真栈同此）
+        resumed = await workflow.prepare(_intent(**answer), CTX, {})
+
+        assert "不在刚才的官方候选中" not in (resumed.speech or ""), (answer, resumed.speech)
+        assert [name for name, *_ in client.calls][:2] == ["queryShopList", "searchProductForMcp"], answer
+        assert not any(d.operation == "select_store" for d in store.current.values()), answer
+
+
+@pytest.mark.asyncio
+async def test_a_product_in_item_query_does_not_consume_the_store_choice():
+    """选店卡挂着时 item_query 里是商品（不是候选门店的原名）：草稿原样放回，行为同修前。"""
+    choices = _ok([
+        {"deptId": 1, "deptName": "上海迪美一店", "longitude": 121.4730,
+         "latitude": 31.2300, "workStatus": "营业中", "distance": 0.08},
+        {"deptId": 2, "deptName": "上海迪美二店", "longitude": 121.4745,
+         "latitude": 31.2304, "workStatus": "营业中", "distance": 0.08},
+    ])
+    store = FakeDraftStore()
+    workflow, _ = _workflow(scripts={"queryShopList": [choices]}, store=store)
+    await workflow.prepare(_intent(store_name="瑞幸咖啡（迪美店）"), CTX, META)
+    assert await workflow._resume_store_choice(
+        {"store_name": "", "item_query": "生椰拿铁（首创）"}, user_id="user-1", session_id="session-1") is None
+    assert [d.operation for d in store.current.values()] == ["select_store"]
+
+
 # ── 选品续跑（2026-08-22，真栈按住之后补）─────────────────────────────────
 #
 # `_product_choices` 原本只出一张卡、**不留任何上下文**，于是用户点了商品之后

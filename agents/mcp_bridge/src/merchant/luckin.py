@@ -14,6 +14,7 @@ from dataclasses import replace
 from itertools import islice
 
 from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
+from agents._sdk import candidate_ref
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from runtime.external_text import plain_name
 from runtime.external_url import https_url_host, pay_url_allowed
@@ -1929,7 +1930,10 @@ class LuckinWorkflow(MerchantWorkflow):
     async def _resume_store_choice(self, slots: dict, *, user_id: str,
                                    session_id: str):
         selected_name = str(slots.get("store_name") or "").strip()
-        if not selected_name:
+        # 裸「第一个」回答选店卡时，桥把它当错位槽挪进了 item_query（换成店名、清掉 store_name）——选店卡与菜单共用来源，桥分不清
+        # 门店与商品（2026-10-16 demo-dqt1fu 同一根因，那次落在麦当劳）。这时 item_query 里是某个候选门店的原名，只在**全等**时认它。
+        moved = "" if selected_name else str(slots.get("item_query") or "").strip()
+        if not selected_name and not moved:
             return None
         choice_prefix = "选择瑞幸门店："
         if selected_name.startswith(choice_prefix):
@@ -1958,11 +1962,21 @@ class LuckinWorkflow(MerchantWorkflow):
                 status=NEED_SLOT, speech="门店选择已失效，请重新查询。",
                 missing_slots=[
                     "store_name", "store_longitude", "store_latitude"])
-        selected_norm = self._normalized_store(selected_name)
+        selected_norm = self._normalized_store(selected_name or moved)
         matches = [candidate for candidate in candidates
                    if isinstance(candidate, dict) and
                    self._normalized_store(candidate.get("deptName")) ==
                    selected_norm]
+        if moved and len(matches) != 1:
+            await self.drafts.put(draft)       # item_query 是商品不是门店：草稿原样放回，行为同修前
+            return None
+        if not matches and selected_name:
+            # 序号 / 唯一部分名（「第一个」「7栋那家」）：与麦当劳选店续跑同一份判据（`candidate_ref.resolve_items`）
+            picked = candidate_ref.resolve_items(selected_name, [
+                {"index": index, "name": str(candidate.get("deptName") or "")}
+                for index, candidate in enumerate(candidates, 1) if isinstance(candidate, dict)])
+            if picked is not None:
+                matches = [candidates[picked["index"] - 1]]
         source_lng = self._coordinate(source.get("longitude"), longitude=True)
         source_lat = self._coordinate(source.get("latitude"), longitude=False)
         if (len(matches) != 1 or source_lng is None or source_lat is None or
