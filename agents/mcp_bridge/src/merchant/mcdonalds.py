@@ -19,7 +19,7 @@ from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from runtime.external_text import plain_name
 from runtime.external_url import https_url_host, pay_url_allowed
 
-from ..candidate_ref import RESERVED_ID_SLOT
+from agents._sdk.candidate_ref import RESERVED_ID_SLOT
 from ..mcp_client import McpTimeout
 from .base import (DeclaredBusinessRejected, MerchantWorkflow,
                    normalize_menu_query, parse_quantity)

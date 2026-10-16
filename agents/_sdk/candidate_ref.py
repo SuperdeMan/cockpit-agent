@@ -1,5 +1,8 @@
 """文本入口 → 上一轮候选集里的那一项（QA 卡 Q10「双入口不等价」，2026-08-19）。
 
+2026-10-16 从 `agents/mcp_bridge/src/` 原样搬到 SDK（200×5 后续批 §18.7）：周边 Agent 也用它把「第一家附近」的「第一家」
+解析成刚列出的那一项。判据、正则、下发键名一字未改；归属仍按 `source_intent` 的域前缀，每个消费方传自己的 `namespace`。
+
 ## 它要修的是什么
 
 I-020：菜单卡上明明有巨无霸，**说**「点一份巨无霸」答商品不存在，**点**同一张卡上的
@@ -60,7 +63,7 @@ import re
 
 from runtime.cntime import CN_NUM_SRC, cn_int
 
-logger = logging.getLogger("mcp-bridge.candidate_ref")
+logger = logging.getLogger("sdk.candidate_ref")
 
 #: 下发键名。写在这里而不是各消费点——它是与编排的契约（`docs/conventions.md` §9.28），
 #: 抄成两份就会在改名那天只改一处。

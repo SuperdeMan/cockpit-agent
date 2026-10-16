@@ -36,7 +36,7 @@ from runtime.capability_contract import declaration, to_proto as contract_proto,
 from runtime.external_text import as_reference, plain_name, plain_utterance
 from runtime.external_url import https_url_host, pay_url_allowed
 
-from . import candidate_ref
+from agents._sdk import candidate_ref
 from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
                         check_account, check_egress, check_url, check_version,
                         load_local_capabilities, load_servers)

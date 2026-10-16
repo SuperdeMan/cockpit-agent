@@ -28,7 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 from agents._sdk.testing import make_context, run_handle
-from agents.mcp_bridge.src import candidate_ref
+from agents._sdk import candidate_ref
 from agents.mcp_bridge.src.admission import load_servers
 from agents.mcp_bridge.src.agent import McpBridgeAgent
 from orchestrator.cloud.context import candidate_downlink

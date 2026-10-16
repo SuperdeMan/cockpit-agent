@@ -1617,7 +1617,7 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
 
 #### 消费面：`candidate_slot` 声明 + 确定性翻译
 
-桥侧 `agents/mcp_bridge/src/candidate_ref.py`，**确定性纯函数、零 LLM、零网络**。
+`agents/_sdk/candidate_ref.py`（2026-10-16 从桥侧搬进 SDK，周边 Agent 解析「第一家附近」共用同一份），**确定性纯函数、零 LLM、零网络**。
 哪个槽吃候选集由 `servers.yaml` 的 workflow 字段 `candidate_slot` 声明
 （当前四条：`mcd.order`/`mcd.menu`/`luckin.order`/`luckin.menu` 均为 `item_query`）
 ——**加一家商户=改表不改主循环**，同 `retry_policy` 那条纪律。
