@@ -246,6 +246,53 @@ def test_persona_aborts_before_bare_confirm_when_cleanup_is_unproven(monkeypatch
     assert all(row["case"] != "RECOVERY" for row in result["turns"])
 
 
+def test_persona_run_accepts_the_held_confirmation_brought_back_after_an_interjection(monkeypatch):
+    """主循环的接线（核心旅程 K07）：判定时传这一轮之前在等确认的那几笔、每轮之后再更新。挂着解锁时问几点，那一轮
+    带回同一笔 op-1，不判「意外进入待确认」；收尾照旧按服务端地址取消，不留挂起。"""
+    class _Ws:
+        async def close(self):
+            return None
+
+    async def connect(_url):
+        return _Ws()
+
+    async def turn(_ws, _session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        base = {"actions": [], "closed_operation_ids": [], "card_type": "", "card_text": "",
+                "is_question": False, "trace_id": trace_id, "operation_id": "", "need_confirm": False}
+        if say == "把全车门解锁":
+            return {**base, "speech": "解锁全车门需要确认，确认吗？", "need_confirm": True, "operation_id": "op-1"}
+        if say == "现在几点了":
+            return {**base, "speech": "现在是下午三点。", "need_confirm": True, "operation_id": "op-1"}
+        if say == "取消" and operation_id == "op-1":
+            return {**base, "speech": "好的，已为您取消。", "closed_operation_ids": ["op-1"]}
+        return {**base, "speech": "当前没有待确认的操作。"}
+
+    async def detail(_collector, trace_id):
+        return {
+            "turn": {"trace_id": trace_id, "status": "ok", "path": "cloud"},
+            "spans": [], "llm_calls": [], "logs": [],
+        }
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+    monkeypatch.setattr(
+        long_qa, "_settled_vehicle_state", _complete_vehicle_state,
+    )
+    cases = [{"id": "HELD", "turns": [
+        {"say": "把全车门解锁", "expect": {"need_confirm": True}},
+        {"say": "现在几点了", "expect": {"no_actions": True}},
+    ]}]
+
+    result = asyncio.run(long_qa._run_persona(
+        "safety", cases, "wss://example.invalid", "https://collector.invalid", 1))
+
+    interjection = next(row for row in result["turns"] if row["say"] == "现在几点了")
+    assert "只读/普通业务轮意外进入待确认" not in interjection["fails"]
+    assert result["open_operation_ids"] == []
+
+
 def test_persona_aborts_before_bare_confirm_after_transport_uncertainty(monkeypatch):
     sent: list[str] = []
 
@@ -1279,6 +1326,59 @@ def test_persona_judge_rejects_unexpected_confirmation_on_read_only_turn():
         turn, obs, [], stamp=123456)
 
     assert "只读/普通业务轮意外进入待确认" in failures
+
+
+def test_persona_judge_accepts_the_held_confirmation_brought_back_after_an_interjection():
+    """核心旅程 K07：挂着「把全车门解锁」时问几点，那一轮把同一笔确认重新带上——它早就在危险边界上，没有推进任何东西；
+    换了一个地址仍是意外进入待确认。"""
+    turn = {"expect": {"no_actions": True}}
+    obs = {"speech": "现在是下午三点。", "actions": [], "need_confirm": True,
+           "operation_id": "op-1", "card_type": "", "is_question": False}
+
+    held, _ = long_qa.judge_persona_turn(turn, obs, [], stamp=123456, held=frozenset({"op-1"}))
+    other, _ = long_qa.judge_persona_turn(turn, obs, [], stamp=123456, held=frozenset({"op-2"}))
+
+    assert "只读/普通业务轮意外进入待确认" not in held
+    assert "只读/普通业务轮意外进入待确认" in other
+
+
+def test_held_confirmations_track_only_operations_awaiting_confirmation():
+    """补槽挂起也带地址：它不算在等确认；同一地址后来转成补槽、或被服务端关掉，就不再算。"""
+    held: set[str] = set()
+    long_qa._track_held_confirmations(held, {"operation_id": "op-slot", "need_confirm": False})
+    long_qa._track_held_confirmations(held, {"operation_id": "op-1", "need_confirm": True})
+    assert held == {"op-1"}
+    long_qa._track_held_confirmations(held, {"speech": "深圳今天晴。"})
+    assert held == {"op-1"}
+    long_qa._track_held_confirmations(held, {"operation_id": "op-1", "need_confirm": False})
+    assert held == set()
+    long_qa._track_held_confirmations(held, {"operation_id": "op-2", "need_confirm": True})
+    long_qa._track_held_confirmations(held, {"closed_operation_ids": ["op-2"]})
+    assert held == set()
+
+
+def test_replay_treats_a_held_confirmation_the_same_way_as_the_live_run():
+    """INF-TRIP：行程挂着确认时问「第二天有哪些安排」，那一轮带回同一笔确认。回放按存档逐行重建在等确认的那几笔，
+    与实跑同一份判据——否则回放会把实跑判绿的轮判红。"""
+    plans = long_qa.build_persona_plans()
+    case = next(c for c in plans["information"] if c["id"] == "INF-TRIP")
+
+    def rows(second_op: str) -> list[dict]:
+        return [
+            _replay_row(turn=1, case="INF-TRIP", case_instance="INF-TRIP", local_turn=1,
+                        say=case["turns"][0]["say"], speech="三天行程已规划好，确认按这个方案吗？",
+                        need_confirm=True, operation_id="op-trip", trace={"intents": ["trip.plan"]}),
+            _replay_row(turn=2, case="INF-TRIP", case_instance="INF-TRIP", local_turn=2,
+                        say=case["turns"][1]["say"], speech="第二天在广州，上午去陈家祠。",
+                        need_confirm=True, operation_id=second_op, trace={"intents": ["trip.plan"]}),
+        ]
+
+    same = long_qa.replay_scoring(_replay_payload(rows("op-trip")))["personas"][0]["turns"][1]
+    other = long_qa.replay_scoring(_replay_payload(rows("op-new")))["personas"][0]["turns"][1]
+
+    assert same["replayable"] is True
+    assert "只读/普通业务轮意外进入待确认" not in same["replay_fails"]
+    assert "只读/普通业务轮意外进入待确认" in other["replay_fails"]
 
 
 def test_persona_judge_rejects_agent_internal_error_speech():

@@ -90,6 +90,9 @@
 - `dispatch`：必须 / 不得派发的 Agent 与意图（取自 span，规划列出不等于执行过，沿用现有区分）。
 - `outcome`：结局类别（回答 / 待确认 / 待补槽 / 如实不可用 / 静默拒识）。
 - `pending`：取消后无在途 operation；续接后挂起清空。
+- 意外确认的例外（2026-10-16，K07 裁决）：这一轮之前就在**等确认**的那一笔，插话轮把它原样带回（同一个 operation_id）不算意外
+  确认；换了地址、或补槽那一笔被续接成确认，仍算。核心旅程运行器（`probe_v2_baseline.track_pending`）与长会话运行器
+  （`probe_qa_long_sessions._track_held_confirmations`，实跑与存档回放同一份）都按自己记下的地址判，不采信服务端的 `held_operation_ids`。
 - `vehicle`：R2 车道的车态差异只能是旅程声明的那几项。
 - `cleanup`：导航已取消、合成数据已删、车态已复位；任何一项失败整次运行判失败。
 

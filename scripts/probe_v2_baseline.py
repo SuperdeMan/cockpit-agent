@@ -253,11 +253,12 @@ def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS, 
 
 
 def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: float = 0.0,
-          lane: str = "read_only", vehicle_after: dict | None = None) -> dict:
+          lane: str = "read_only", vehicle_after: dict | None = None, held: str = "") -> dict:
     """Separate planning/dispatch from presentation; a spoken hint is not a card.
 
     写车道（§12）：动作只能是这一轮声明的 `actions_allowed`，`actions_required` 必须都出现，
-    `vehicle_values` 是这一轮之后车态应有的值；只读车道出现任何动作都是失败。"""
+    `vehicle_values` 是这一轮之后车态应有的值；只读车道出现任何动作都是失败。
+    `held` 是这一轮之前就在等确认的那一笔的地址（`track_pending`）：插话轮把它重新带上不算意外确认。"""
     spans = detail.get("spans") or []
     attrs = [s.get("attrs") or {} for s in spans if isinstance(s, dict)]
     intents = set(str((detail.get("turn") or {}).get("intents") or "").split(","))
@@ -290,7 +291,8 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: 
         failures.append("technical_failure")
     if expect.get("need_confirm") and not (obs.get("need_confirm") and obs.get("operation_id")):
         failures.append("pending_missing")
-    if obs.get("need_confirm") and not expect.get("need_confirm"):
+    # 核心旅程 K07（用户 2026-10-16 裁决）：插话轮把这一轮之前就在等确认的那一笔重新带上（同一个地址），不是凭空新挂的确认
+    if obs.get("need_confirm") and not expect.get("need_confirm") and not (held and obs.get("operation_id") == held):
         failures.append("unexpected_confirmation")
     if expect.get("manual"):
         if not manual_dispatched:
@@ -325,6 +327,16 @@ class _JourneyView:
 
 
 SOURCE_EVIDENCE = ROOT / "agents/manual_rag/resources/source_evidence.yaml"
+
+
+def track_pending(pending: str, confirming: bool, obs: dict) -> tuple[str, bool]:
+    """这一轮之后挂着的地址，以及它是不是在等确认（补槽挂起也带地址）。`judge` 的 `held` 只认这一轮之前就在等确认的那一笔：
+    补槽的那一笔被一句查询续接成确认，地址不变，仍是意外确认。"""
+    if obs.get("operation_id"):
+        pending, confirming = obs["operation_id"], bool(obs.get("need_confirm"))
+    if pending in (obs.get("closed_operation_ids") or []):
+        pending, confirming = "", False
+    return pending, confirming
 
 
 def manual_cards(node: dict) -> list[dict]:
@@ -532,6 +544,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
     token = sign_identity(secret, run_id=run_id, user_id=user, vehicle_id="v1",
                           scopes=scopes, timeout_s=1800)
     pending = ""
+    confirming = False                     # 挂着的那一笔是不是在等确认（`track_pending`）
     rows = []
     baseline = await audit._settled_vehicle_state(collector, include_unmanaged=True)
     if not baseline.settled:
@@ -548,6 +561,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                              "cleanup": bool(turn.get("cleanup"))})
                 continue
             trace = uuid.uuid4().hex
+            held = pending if confirming else ""
             start = time.monotonic()
             meta = {"llm_provider": manifest["chat"]["provider"], "llm_model": manifest["chat"]["model"]}
             if case.get("location"):            # 7 月旅程的 setup.location：这次会话的当前位置
@@ -568,16 +582,13 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                 if (call.get("provider"), call.get("model")) != (
                         manifest["chat"]["provider"], manifest["chat"]["model"]):
                     evidence_errors.append("model_drift")
-            if obs.get("operation_id"):
-                pending = obs["operation_id"]
-            if pending in (obs.get("closed_operation_ids") or []):
-                pending = ""
+            pending, confirming = track_pending(pending, confirming, obs)
             # 只读车道等车态回到快照才算稳定；写车道车态本来就会变，只等它稳定
             after = await audit._settled_vehicle_state(collector, required_keys=set(baseline.value),
                                                        expected=None if write else baseline.value,
                                                        include_unmanaged=True)
             verdict = judge(turn.get("expect") or {}, obs, detail, query=turn["say"], elapsed_s=elapsed / 1000,
-                            lane=lane, vehicle_after=after.value)
+                            lane=lane, vehicle_after=after.value, held=held)
             if turn.get("cancel_pending") and pending:
                 verdict["failures"].append("pending_not_closed")
             changed = {k for k in baseline.value.keys() | after.value.keys()

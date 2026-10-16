@@ -47,6 +47,23 @@ def test_an_unrequested_confirmation_is_not_success_even_without_actions():
     assert probe.judge({}, obs(need_confirm=True, operation_id="op-1"), {})["failures"] == ["unexpected_confirmation"]
 
 
+def test_the_held_confirmation_brought_back_after_an_interjection_is_not_unexpected():
+    """核心旅程 K07：插话轮带回的是这一轮之前就在等确认的那一笔（同一个地址）；换了地址仍是意外确认。"""
+    assert probe.judge({}, obs(need_confirm=True, operation_id="op-1"), {}, held="op-1")["failures"] == []
+    assert probe.judge({}, obs(need_confirm=True, operation_id="op-2"), {},
+                       held="op-1")["failures"] == ["unexpected_confirmation"]
+
+
+def test_only_an_operation_already_awaiting_confirmation_counts_as_held():
+    """补槽挂起也带地址：一句查询把它续接成确认，地址不变，之前却不在等确认 ⇒ 不算 held；关掉之后什么都不挂着。"""
+    state = probe.track_pending("", False, {"operation_id": "op-1", "need_confirm": False})
+    assert state == ("op-1", False)
+    state = probe.track_pending(*state, {"operation_id": "op-1", "need_confirm": True})
+    assert state == ("op-1", True)
+    assert probe.track_pending(*state, {"speech": "深圳今天晴。"}) == ("op-1", True)
+    assert probe.track_pending(*state, {"closed_operation_ids": ["op-1"]}) == ("", False)
+
+
 def test_freeze_refuses_dirty_inputs(monkeypatch):
     monkeypatch.setattr(probe, "_git", lambda *args: " M runtime/x.py")
     with pytest.raises(ValueError, match="clean"):

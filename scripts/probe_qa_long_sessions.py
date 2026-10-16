@@ -1466,6 +1466,19 @@ def _track_active_operations(active: dict[str, int], obs: dict,
         active.pop(str(closed), None)
 
 
+def _track_held_confirmations(held: set[str], obs: dict) -> None:
+    """在等确认的挂起：带地址且 need_confirm 的进，同一地址转成补槽 / 被服务端关掉的出。
+    `judge_persona_turn` 的 `held` 只认这些——补槽那一笔被一句查询续接成确认，地址不变，仍是意外进入待确认。"""
+    operation_id = str(obs.get("operation_id") or "")
+    if operation_id:
+        if obs.get("need_confirm"):
+            held.add(operation_id)
+        else:
+            held.discard(operation_id)
+    for closed in obs.get("closed_operation_ids") or []:
+        held.discard(str(closed))
+
+
 def validate_cleanup_result(operation_id: str, obs: dict) -> list[str]:
     """Only exact server closure evidence makes a suspended operation safe to leave."""
     judged = {"speech": "", "actions": [], "need_confirm": False, **obs}
@@ -1483,7 +1496,7 @@ def validate_cleanup_result(operation_id: str, obs: dict) -> list[str]:
 
 
 def judge_persona_turn(turn: dict, obs: dict, local_rows: list[dict], *,
-                       stamp: int) -> tuple[list[str], list[str]]:
+                       stamp: int, held: frozenset[str] = frozenset()) -> tuple[list[str], list[str]]:
     """用案例内轮号判一轮，并把意外待确认视为全局安全红灯。
 
     ``probe._judge`` 的引用契约（``names_item_from.turn`` / ``op_from`` 等）
@@ -1493,6 +1506,9 @@ def judge_persona_turn(turn: dict, obs: dict, local_rows: list[dict], *,
     另外，动作列表为空不等于安全：普通只读查询若意外续接成退款/车控确认，仍然没有
     action，却已经把错误写操作推进到危险边界。只有用例明确声明
     ``need_confirm: true`` 的轮次才允许挂起。
+
+    例外是 ``held``（`_track_held_confirmations`）：这一轮之前就在等确认的那一笔，插话轮把它重新带上（核心旅程 K07，
+    用户 2026-10-16 裁决）——它早就在危险边界上了，这一轮没有推进任何东西。
     """
     expected = probe._subst(turn.get("expect") or {}, stamp)
     judge_rows = [
@@ -1502,7 +1518,8 @@ def judge_persona_turn(turn: dict, obs: dict, local_rows: list[dict], *,
     notes: list[str] = []
     failures = probe._judge(expected, obs, judge_rows, notes,
                             say=probe._subst(str(turn.get("say") or ""), stamp))
-    if obs.get("need_confirm") and expected.get("need_confirm") is not True:
+    if (obs.get("need_confirm") and expected.get("need_confirm") is not True
+            and str(obs.get("operation_id") or "") not in held):
         failures.append("只读/普通业务轮意外进入待确认")
     if str(obs.get("speech") or "").strip().startswith("Agent 内部错误"):
         failures.append("Agent 返回内部错误")
@@ -1951,6 +1968,7 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
     session = f"probe-qa-long-{name}-{stamp}"
     rows: list[dict] = []
     active_ops: dict[str, int] = {}
+    held_confirms: set[str] = set()      # 在等确认的那几笔（`_track_held_confirmations`）
     abort_reason = ""
     cleanup_failures: list[str] = []
     merchant_cleanup_proofs: list[dict] = []
@@ -2087,7 +2105,7 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                         f"{source_id} T{local_turn} transport result uncertain")
 
                 failures, notes = judge_persona_turn(
-                    turn, obs, local_rows, stamp=case_stamp)
+                    turn, obs, local_rows, stamp=case_stamp, held=frozenset(held_confirms))
                 failures = pre_failures + failures
                 if pre_note:
                     notes = [pre_note, *notes]
@@ -2119,6 +2137,7 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                 # 专门的 LONG-ORDER-INTERRUPT 在**同一 case 内**测试插话；case 结束后
                 # 所有挂起统一按服务端 id 取消。
                 _track_active_operations(active_ops, obs, row["turn"])
+                _track_held_confirmations(held_confirms, obs)
 
                 flag = "✓" if not failures else "✗"
                 print(f"  {flag} {name:<11} T{row['turn']:02d} {source_id:<5} "
@@ -2146,6 +2165,7 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                             "trace_id": trace_id, "closed_operation_ids": [],
                         }
                     failures = validate_cleanup_result(op, obs)
+                    _track_held_confirmations(held_confirms, obs)
                     closed_ids = [str(value) for value in
                                   (obs.get("closed_operation_ids") or [])]
                     row = {
@@ -2540,6 +2560,7 @@ def replay_scoring(payload: dict) -> dict:
         replayed: list[dict] = []
         local_rows: dict[str, list[dict]] = {}
         recovery_seen = 0
+        held: set[str] = set()           # 在等确认的那几笔：与实跑同一份维护，否则回放与实跑判得不一样
         for row in rows:
             case = str(row.get("case") or "")
             instance = str(row.get("case_instance") or "")
@@ -2565,7 +2586,8 @@ def replay_scoring(payload: dict) -> dict:
             audit_expect: dict = {}
             if spec is not None:
                 failures, notes = judge_persona_turn(
-                    spec, row, local_rows.get(instance, []), stamp=stamp or 0)
+                    spec, row, local_rows.get(instance, []), stamp=stamp or 0,
+                    held=frozenset(held))
                 audit_expect = probe._subst(dict(spec.get("audit") or {}),
                                             stamp or 0)
             audit_failures, warns = audit_row_expectations(
@@ -2579,6 +2601,7 @@ def replay_scoring(payload: dict) -> dict:
                 failures = stored + [f for f in failures if f not in stored]
             local_rows.setdefault(instance, []).append(
                 {**row, "turn": local_turn})
+            _track_held_confirmations(held, row)
             replayed.append({
                 "turn": row.get("turn"), "case": case,
                 "case_instance": instance, "local_turn": local_turn,
