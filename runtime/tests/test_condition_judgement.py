@@ -116,6 +116,44 @@ def test_a_failing_call_is_unknown():
     assert asyncio.run(cj.judge_condition(llm, "深圳今天不下雪", [WEATHER], "x")) == (cj.UNKNOWN, "")
 
 
+
+# ── 结论与它自己引的证据矛盾（200×5 后续批 §18.8）────────────────────────────────
+
+def test_a_holds_whose_own_evidence_denies_the_condition_is_a_fails():
+    """`3168262c` 真栈 D02 r1 的原样输出（M3、温度 0）：对照写着「不会下雪」，结论却是 holds，证据复核只查出处，于是开了空调；
+    同一输入另外两遍都判 fails。证据逐字出自观察、又在否定条件 ⇒ 按不成立收场。"""
+    weather = {"step_id": "s1", "status": "ok", "intent": "info.weather",
+               "speech": "今天不会下雪。深圳当前晴，气温26℃，体感27℃，东风3级。", "data": {"weather": {"text": "晴"}}}
+
+    async def llm(_messages):
+        return ('{"check": "条件要判断深圳今天是否下雪，观察明确说明今天不会下雪且当前为晴天。", '
+                '"verdict": "holds", "evidence": "今天不会下雪。深圳当前晴"}')
+
+    assert asyncio.run(cj.judge_condition(llm, "深圳今天下雪", [weather], "x")) == (cj.FAILS, "今天不会下雪。深圳当前晴")
+
+
+@pytest.mark.parametrize("condition, evidence", [
+    ("深圳今天下雪", "今天不会下雪。深圳当前晴"),
+    ("深圳明天会下雨", "深圳明天不会下雨"),
+    ("今天是周五", "今天不是周五"),
+    ("路上有雨", "路上没有雨"),
+    ("胎压正常", "胎压不正常"),
+])
+def test_evidence_that_denies_what_the_condition_says(condition, evidence):
+    assert cj.evidence_denies_condition(condition, evidence)
+
+
+@pytest.mark.parametrize("condition, evidence", [
+    ("深圳今天不下雪", "今天不会下雪。深圳当前晴"),        # 条件自己就是否定说法：两边一致（D01）
+    ("深圳今天下雨", "深圳今天下雨，明天不会下雨"),         # 有一处是肯定的：不算否定
+    ("车里温度低于20度", "车内温度不到20度"),               # 「不到」不是否定词
+    ("电量低于百分之二十", "电量不足百分之二十"),
+    ("今天一直下雪", "今天不断下雪"),
+    ("今天下雪", "今天不只是下雪，还有大风"),
+])
+def test_evidence_that_does_not_deny_the_condition(condition, evidence):
+    assert not cj.evidence_denies_condition(condition, evidence)
+
 # ── 话术与写回观察 ───────────────────────────────────────────────────────────────
 
 def test_notes_say_why_nothing_was_done_in_the_users_words():

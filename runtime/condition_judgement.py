@@ -141,6 +141,38 @@ def parse_judgement(raw, observations_text: str) -> tuple[str, str]:
     return UNKNOWN, ""
 
 
+#: 事实否定（「今天不会下雪」「没有雨」「不是周五」）：证据里条件的说法前面紧挨着它们 ⇒ 证据在否定那个说法。只看紧挨着的那一个词：
+#: 「不断下雪」「不只是下雪」「不到20度」都不算（挨着的是「断」「是」「到」）。与 `polarity` 的禁止词（别 / 不要）回答的不是同一个问题。
+_DENIALS = ("不会", "不是", "没有", "不", "没", "未", "无", "非")
+
+
+def _denied_at(text: str, index: int) -> bool:
+    return text[:index].endswith(_DENIALS)
+
+
+def evidence_denies_condition(condition: str, evidence: str) -> bool:
+    """判成「成立」的证据却在否定条件本身：条件里某个说法（≥2 字）在条件里是肯定的，在证据里每一次出现都紧跟在否定词后面。
+
+    2026-10-16 真栈（`3168262c` 核心旅程 D02 r1，M3、温度 0）：条件「深圳今天下雪」、观察「今天不会下雪。深圳当前晴…」。判定器自己的
+    对照写着「观察明确说明今天不会下雪且当前为晴天」，结论却是 holds、证据「今天不会下雪。深圳当前晴」。证据复核只查出处，于是放行，
+    空调被打开了；同一输入另外两遍都判 fails（200×5 后续批 §18.8）。只认这一种翻转：数值比大小、换了说法的否定（「没怎么下」）不在此列，
+    仍靠判定本身与离线评测。条件自己就是否定说法的那一段（「今天不下雪」的「下雪」）不比。"""
+    cond, evid = _denoise(condition), _denoise(evidence)
+    checked: set[str] = set()
+    for size in range(_MIN_EVIDENCE, len(cond) + 1):
+        for start in range(len(cond) - size + 1):
+            piece = cond[start:start + size]
+            if piece in checked:
+                continue
+            checked.add(piece)
+            spots = [i for i in range(len(evid)) if evid.startswith(piece, i)]
+            if not spots or any(_denied_at(cond, i) for i in range(len(cond)) if cond.startswith(piece, i)):
+                continue
+            if all(_denied_at(evid, i) for i in spots):
+                return True
+    return False
+
+
 async def judge_condition(llm_fn, condition: str, observations, now_text: str) -> tuple[str, str]:
     """问一次：返回 (结论, 证据)。没有可信观察、没有条件、调用异常 ⇒ (unknown, "")。超时由调用方给 `llm_fn` 加。"""
     text = observation_text(observations)
@@ -150,7 +182,11 @@ async def judge_condition(llm_fn, condition: str, observations, now_text: str) -
         raw = await llm_fn(judgement_messages(condition, text, now_text))
     except Exception:
         return UNKNOWN, ""
-    return parse_judgement(raw, text)
+    verdict, evidence = parse_judgement(raw, text)
+    if verdict == HOLDS and evidence_denies_condition(condition, evidence):
+        # 结论与它自己引的证据矛盾：证据逐字出自观察、又在否定条件 ⇒ 按不成立收场，后件不执行
+        return FAILS, evidence
+    return verdict, evidence
 
 
 def consequent_phrase(consequent: str) -> str:

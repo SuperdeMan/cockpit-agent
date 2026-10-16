@@ -182,6 +182,17 @@ cases:
     expect: fails
     observations:
       - {intent: nearby.search, speech: "附近找到3家川菜馆：川味坊（800米）、蜀香园（1.2公里）、老成都（1.5公里）。", data: {count: 3}}
+  # 2026-10-16 真栈 `3168262c` D02 r1（M3、温度 0）原样：判定器的对照写着「不会下雪」，结论却是 holds，开了空调（200×5 后续批 §18.8）
+  - id: F19
+    condition: 深圳今天下雪
+    expect: fails
+    observations:
+      - intent: info.weather
+        speech: "今天不会下雪。深圳当前晴，气温26℃，体感27℃，东风3级。"
+        data: {weather: {text: 晴, air_quality: {aqi: "38", pm2p5: "19.0", primary_pollutant: "", category: 优}, feels_like: "27",
+               type: weather, wind_dir: 东风, city: 深圳, update_time: "2026-10-16T19:13+08:00", dew_point: "26", cloud: "98",
+               indices: [{text: "天气较好，较适宜进行各种运动，但因天气热，请适当减少运动时间，降低运动强度。", level: 较适宜, name: 运动指数},
+                         {text: "天气炎热，建议着短衫、短裙、短裤、薄型T恤衫等清凉夏季服装。", level: 炎热, name: 穿衣指数}]}}
 
   # ── 判不了 ──
   - id: U01
