@@ -193,6 +193,7 @@ class LoopController:
                   show_process: bool = False, thinking: bool = False,
                   settle=None,
                   superseded: dict[str, str] | None = None,
+                  prepare=None,
                   ) -> AsyncIterator[dict]:
         """`settle(steps, results)`：**完成轮**（不含挂起）合成 final 之前的收口回调（批 8 ①）。
 
@@ -204,7 +205,11 @@ class LoopController:
 
         `superseded`（`{旧值: 用户的新值}`，判据在 `orchestrator.cloud.superseded`）：这一次是补槽续接、用户的答案替换了
         挂起步里原来的值。再规划出的步槽值里仍含旧值的确定性丢掉（连同依赖它们的下游），全丢光就收场——
-        修前（`4438ea6b` 真栈 RS39）续接导航之后又按旧 goal 去搜「云岚国际中心」、再挂一条追问。"""
+        修前（`4438ea6b` 真栈 RS39）续接导航之后又按旧 goal 去搜「云岚国际中心」、再挂一条追问。
+
+        `prepare(batch, executed_steps, results)`：每一批**再规划**出来的步派发前的准备回调（engine 用它做焦点下发，
+        200×5 后续批 §18.3）。新规划轮、续接、改派都下发焦点事实，唯独这里的步此前一份都收不到——核心旅程 EN07：T2 再规划出的
+        `navigation.reroute` 读不到活动路线，答「当前没有正在进行的导航」。初计划的步由 engine 在进循环前下发过，不再调。"""
         results = list(seed_results or [])
         executed_steps: list = []  # 本轮跑过的全部步（初计划 + 每个再规划批），供 settle 抽焦点
         n_seed = len(results)      # 种子（确认续接带入，上轮已播报）不进挂起前缀
@@ -411,6 +416,8 @@ class LoopController:
                 # suspend 的正是 current，序列化空 skills → 恢复后再规划失忆。
                 current.skills = list(getattr(initial_plan, "skills", []) or [])
                 current.exemplars = list(getattr(initial_plan, "exemplars", []) or [])
+                if prepare is not None:
+                    prepare(current, list(executed_steps), list(results))
 
             done_seed = {result.step_id: result for result in results}
             batch_start = len(results)     # 批 7 ①：这一批的结果从这里开始

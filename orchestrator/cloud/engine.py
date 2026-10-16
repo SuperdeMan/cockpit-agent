@@ -64,7 +64,7 @@ from runtime.session_constraints import (constraint_recall_answer, constraints_i
                                          is_pure_constraint_statement,
                                          merge_constraints, phrase_of)
 from .context import (ContextManager, active_task_live, build_context, candidate_downlink,
-                      candidate_set_for,
+                      candidate_set_for, extract_focus, merge_focus,
                       references_a_candidate, resolve_candidate_scope,
                       retired_candidate_hit, safety_alert_active,
                       WEATHER_CONTEXT_INTENTS, normalize_weather_city_slot,
@@ -1595,7 +1595,8 @@ class PlannerEngine:
                     seed_results=seed_results,
                     working_set=working_set,
                     show_process=show_process, thinking=complex_task,
-                    settle=settled.settle, superseded=superseded):
+                    settle=settled.settle, superseded=superseded,
+                    prepare=self._loop_focus_preparer(getattr(working_set, "focus", None) or resume_focus)):
                 if event.get("kind") == "final":
                     if settled.done:
                         self._decorate_loop_final(event, plan, held_pending, ctx)
@@ -1800,7 +1801,9 @@ class PlannerEngine:
                     seed_results=results,
                     working_set=working_set,
                     show_process=show_process, thinking=complex_task,
-                    settle=settled.settle):
+                    settle=settled.settle,
+                    prepare=self._loop_focus_preparer(getattr(working_set, "focus", None) or resume_focus,
+                                                      executed_before=plan.steps)):
                 if event.get("kind") == "final":
                     if settled.done:
                         self._decorate_loop_final(event, plan, held_pending, ctx)
@@ -3690,6 +3693,19 @@ class PlannerEngine:
 
         PlannerEngine._resolve_ordinal_slots(plan, focus)
         PlannerEngine._downlink_focus_meta(plan, focus)
+
+    @staticmethod
+    def _loop_focus_preparer(focus, executed_before=()):
+        """T2 循环每批再规划步派发前的焦点下发（200×5 后续批 §18.3，核心旅程 EN07：再规划出的改线步此前读不到活动路线）。
+
+        下发的是「本轮开始时的焦点 + 本轮已执行步骤刚产生的事实」，合并与落盘同一份 `merge_focus`——只用本轮开始的那份，
+        同一轮前面刚建的新路线会被旧路线顶掉，改线就改到了错的路线上。`executed_before`：进循环之前就执行过的步
+        （reactive 升级时的初计划；adaptive 的初计划在循环里执行，已经在 `executed_steps` 里）。"""
+        def prepare(batch, executed_steps, results):
+            fresh = extract_focus(Plan(steps=list(executed_before) + list(executed_steps)), results)
+            current = merge_focus(focus, fresh) if fresh is not None else focus
+            PlannerEngine._apply_focus_meta(batch, current)
+        return prepare
 
     @staticmethod
     def _resolve_ordinal_slots(plan: Plan, focus) -> None:
