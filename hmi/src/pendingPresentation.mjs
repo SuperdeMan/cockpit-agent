@@ -24,11 +24,14 @@ export class PendingPolicyView {
   }
 }
 
-// Local location consent is separate from service writes. Last message for each live id wins.
+// Local location consent is separate from service writes.
+// 每个仍有效的地址由**最早**那条消息呈现：它是发起确认的那一轮，卡片说明的就是这笔操作。插话后服务端会把同一个地址重新带上
+// （核心旅程 K07），那条消息挂的是插话自己的卡片（天气…），拿它呈现会把商户下单说成「车辆操作」。
 export function pendingMessages(messages, liveIds, localConfirmation, policyView, now = Date.now(), localMessageId) {
   const ids = new Set(liveIds || [])
   const found = new Map()
-  for (const message of messages) if (message.needConfirm && message.operationId && ids.has(message.operationId)) {
+  for (const message of messages) if (message.needConfirm && message.operationId && ids.has(message.operationId)
+      && !found.has(message.operationId)) {
     if (!policyView?.get(message.operationId, now)?.expired) found.set(message.operationId, message)
   }
   const rows = [...found.values()]

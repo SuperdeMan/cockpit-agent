@@ -3098,11 +3098,15 @@ class PlannerEngine:
         hint = f"对了，{what}还在等你{PlannerEngine._pending_ask_word(held_pending)}。"
         follow = str(final.get("follow_up") or "")
         final["follow_up"] = (follow + (" " if follow else "") + hint).strip()
-        # 核心旅程 K07（用户 2026-10-16 裁决）：挂着的是**确认**、这一轮自己又没有新的挂起 ⇒ 把那条确认重新带上——插话后
-        # 客户端的确认条被新消息顶掉了，光靠一句软提醒，用户得自己记得说「确认」。寻址键与截止时刻都是挂起那一刻的（插话不续命），
+        # 核心旅程 K07（用户 2026-10-16 裁决）：挂着的是**确认**、这一轮自己又没有新的挂起 ⇒ 把那条确认重新带上，最新一轮的 final
+        # 如实说「还有一笔在等确认」（修前只有软提醒、need_confirm 为假）。两端的确认条按待确认台账按地址合并，不出第二张卡；客户端
+        # 台账丢了（重启 / 重连）也从这一轮恢复。寻址键与截止时刻都是挂起那一刻的（插话不续命），
         # 确认仍然只执行那一笔（同一个 operation_id，认领与重放闸不变）。补槽 / 选择类挂起照旧只给软提醒。
+        # 这一轮自己执行了动作的也只给软提醒：HMI 不给带确认的消息渲染车控结果卡（`ChatView.ControlResults`），
+        # 带上会把刚执行的结果藏掉。
         if (held_id and getattr(held_pending, "phase", "") == "wait_confirm"
-                and not final.get("need_confirm") and not final.get("operation_id")):
+                and not final.get("need_confirm") and not final.get("operation_id")
+                and not final.get("actions")):
             final["need_confirm"] = True
             final["operation_id"] = held_id
             final["confirm_policy"] = contracts.held_confirm_policy(held_pending)

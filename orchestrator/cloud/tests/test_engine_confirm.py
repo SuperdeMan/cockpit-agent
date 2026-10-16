@@ -1543,6 +1543,19 @@ def test_a_held_slot_question_only_gets_the_soft_reminder():
     assert "还在等你继续补充" in final["follow_up"]
 
 
+def test_a_turn_that_executed_an_action_only_gets_the_soft_reminder():
+    """插话本身执行了车控（挂着后备箱时说「把空调打开」）：HMI 不给带确认的消息渲染车控结果卡，带上确认会把刚执行的结果藏掉。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.engine import PlannerEngine
+    held = SimpleNamespace(phase="wait_confirm", operation_id="op-1", pending_plan={"goal": "打开后备箱"})
+    final = {"speech": "空调已打开。", "actions": [{"type": "hvac.on"}]}
+
+    PlannerEngine._append_pending_hint(final, held)
+
+    assert not final.get("need_confirm") and "operation_id" not in final
+    assert final["held_operation_ids"] == ["op-1"] and "还在等你确认" in final["follow_up"]
+
+
 def test_a_turn_with_its_own_prompt_keeps_it():
     """这一轮自己挂了新的确认 / 追问：最新的提示是它，不拿旧那条盖掉。"""
     from types import SimpleNamespace
