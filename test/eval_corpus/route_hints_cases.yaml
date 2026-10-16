@@ -942,3 +942,59 @@
   source: "在问，不是订阅"
   tags: [reminder, subscription, guardrail]
 
+# ── 到达 / 离开地点提醒 → reminder.create（2026-10-16，200×5 后续批 §16）─────────────────────────────
+# 品牌地名把语义路由带去商户：没有商户 scope 的身份被越权早退答成「没有授权」。整句锚定、与 placeparse 同一口径。
+- text: 到星巴克的时候提醒我买咖啡豆
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [reminder.create]
+  source: "真栈 3942f96f 探针 2 / 2 被越权早退判给生态服务桥（线上生态服务桥 0.627、提醒 0.506）"
+  tags: [reminder, location, replace]
+
+- text: 离开公司的时候提醒我买菜
+  initial_intents: [navigation.search_poi]
+  expect_final_intents: [reminder.create]
+  source: "离开某地触发：与到达同一口径"
+  tags: [reminder, location, replace]
+
+- text: 到家了提醒我收快递
+  initial_intents: [reminder.create]
+  expect_final_intents: [reminder.create]
+  source: "规划器已派对：不动"
+  tags: [reminder, location, noop]
+
+- text: 导航去星巴克，到了提醒我买咖啡豆
+  initial_intents: [navigation.navigate_to, reminder.create]
+  expect_final_intents: [navigation.navigate_to, reminder.create]
+  source: "复合句：整句 replace 会吞掉导航"
+  tags: [reminder, location, guardrail, compound]
+
+- text: 快到家的时候提醒我开空调
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "ETA 族（快到 / 之前 / 提前）走导航交接链，placeparse 让路"
+  tags: [reminder, location, guardrail]
+
+- text: 到八点提醒我吃药
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "到的是一个时间，不是地方"
+  tags: [reminder, location, guardrail]
+
+- text: 到公司提醒我的那条取消掉
+  initial_intents: [reminder.cancel]
+  expect_final_intents: [reminder.cancel]
+  source: "取消那条到达提醒：不许改写成新建"
+  tags: [reminder, location, guardrail]
+
+- text: 到家提醒我的事有哪些
+  initial_intents: [reminder.list]
+  expect_final_intents: [reminder.list]
+  source: "列表查询：不许改写成新建"
+  tags: [reminder, location, guardrail]
+
+- text: 到星巴克的时候会提醒我吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "在问，不是建提醒"
+  tags: [reminder, location, guardrail]
+

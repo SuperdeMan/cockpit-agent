@@ -155,6 +155,43 @@ def test_a_permitted_route_hint_outranks_the_router_guessing_a_blocked_capabilit
     assert spy.calls == ["memory.remember"]
 
 
+def _reminder_hints() -> list:
+    """提醒清单里真实声明的 route_hints（不抄一份进测试）。"""
+    from pathlib import Path
+    from agents._sdk.manifest import load_manifest
+    return list(load_manifest(str(Path(__file__).resolve().parents[3] / "agents" / "reminder" / "manifest.yaml")).route_hints)
+
+
+def test_an_arrival_reminder_at_a_brand_name_is_not_answered_as_a_missing_permission():
+    """真栈 `3942f96f` 探针：「到星巴克的时候提醒我买咖啡豆」语义路由 top-1 是没授权的生态服务桥（0.627，提醒 0.506），
+    规划前就答了「没有授权」（2 / 2）。用提醒清单里真实的到达提醒 hint：整句归提醒，早退让路、派出建提醒。"""
+    memo = _agent("reminder", [_cap("reminder.create")], display_name="提醒")
+    memo.manifest.route_hints = _reminder_hints()
+    shop = _agent("mcp-bridge", [_cap("shop.order", ["item"])], requires=["merchant.order"],
+                  display_name="生态服务桥")
+    spy = _SpyWith([memo, shop, _CHITCHAT], resolve_top=[shop])
+
+    final = _final(_run(_engine(spy), _req("到星巴克的时候提醒我买咖啡豆")))
+
+    assert not [i for i in final.get("issues") or []
+                if i["code"] == contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.calls == ["reminder.create"]
+
+
+def test_a_real_merchant_order_still_gets_the_scope_explanation():
+    """反例：真点单「帮我在星巴克点一杯拿铁」不碰提醒的 hint，照旧说清没授权。"""
+    memo = _agent("reminder", [_cap("reminder.create")], display_name="提醒")
+    memo.manifest.route_hints = _reminder_hints()
+    shop = _agent("mcp-bridge", [_cap("shop.order", ["item"])], requires=["merchant.order"],
+                  display_name="生态服务桥")
+    spy = _SpyWith([memo, shop, _CHITCHAT], resolve_top=[shop])
+
+    final = _final(_run(_engine(spy), _req("帮我在星巴克点一杯拿铁")))
+
+    assert [i["code"] for i in final.get("issues") or []] == [contracts.ISSUE_PERMISSION_SCOPE_MISSING]
+    assert spy.calls == []
+
+
 def test_a_blocked_agents_own_hint_does_not_lift_the_scope_explanation():
     """没授权的 Agent 自己的 hint 不在扫描面里（权限过滤后的注册表），越权解释照旧。"""
     hint = SimpleNamespace(pattern="^导航去", guard="", policy="replace", priority=128,

@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-10-15T15:13:03.246733+00:00",
-    "commit": "d2ed02ef"
+    "generated_at": "2026-10-16T04:01:40.394279+00:00",
+    "commit": "f58e5ec8"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 140
+      "count": 149
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 60,
-      "passed": 60,
+      "total": 62,
+      "passed": 62,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 80,
-      "passed": 80,
+      "total": 87,
+      "passed": 87,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 140,
-    "passed": 140,
+    "total": 149,
+    "passed": 149,
     "pass_rate": 1.0
   },
   "cases": {
@@ -1278,7 +1278,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::检索一下宁德时代最新财报要点": {
       "id": "route::检索一下宁德时代最新财报要点",
@@ -1297,7 +1297,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::查一下固态电池": {
       "id": "route::查一下固态电池",
@@ -1506,7 +1506,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::来点科技新闻": {
       "id": "route::来点科技新闻",
@@ -1525,7 +1525,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r8\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent-wt-r9\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::英伟达最新消息": {
       "id": "route::英伟达最新消息",
@@ -2555,6 +2555,180 @@
         "guardrail"
       ],
       "source": "在问，不是订阅"
+    },
+    "route::到星巴克的时候提醒我买咖啡豆": {
+      "id": "route::到星巴克的时候提醒我买咖啡豆",
+      "bucket": "route_recall",
+      "text": "到星巴克的时候提醒我买咖啡豆",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "replace"
+      ],
+      "source": "真栈 3942f96f 探针 2 / 2 被越权早退判给生态服务桥（线上生态服务桥 0.627、提醒 0.506）"
+    },
+    "route::离开公司的时候提醒我买菜": {
+      "id": "route::离开公司的时候提醒我买菜",
+      "bucket": "route_recall",
+      "text": "离开公司的时候提醒我买菜",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "replace"
+      ],
+      "source": "离开某地触发：与到达同一口径"
+    },
+    "route::到家了提醒我收快递": {
+      "id": "route::到家了提醒我收快递",
+      "bucket": "route_guardrail",
+      "text": "到家了提醒我收快递",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "noop"
+      ],
+      "source": "规划器已派对：不动"
+    },
+    "route::导航去星巴克，到了提醒我买咖啡豆": {
+      "id": "route::导航去星巴克，到了提醒我买咖啡豆",
+      "bucket": "route_guardrail",
+      "text": "导航去星巴克，到了提醒我买咖啡豆",
+      "expected": [
+        "navigation.navigate_to",
+        "reminder.create"
+      ],
+      "actual": [
+        "navigation.navigate_to",
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "guardrail",
+        "compound"
+      ],
+      "source": "复合句：整句 replace 会吞掉导航"
+    },
+    "route::快到家的时候提醒我开空调": {
+      "id": "route::快到家的时候提醒我开空调",
+      "bucket": "route_guardrail",
+      "text": "快到家的时候提醒我开空调",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "guardrail"
+      ],
+      "source": "ETA 族（快到 / 之前 / 提前）走导航交接链，placeparse 让路"
+    },
+    "route::到八点提醒我吃药": {
+      "id": "route::到八点提醒我吃药",
+      "bucket": "route_guardrail",
+      "text": "到八点提醒我吃药",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "guardrail"
+      ],
+      "source": "到的是一个时间，不是地方"
+    },
+    "route::到公司提醒我的那条取消掉": {
+      "id": "route::到公司提醒我的那条取消掉",
+      "bucket": "route_guardrail",
+      "text": "到公司提醒我的那条取消掉",
+      "expected": [
+        "reminder.cancel"
+      ],
+      "actual": [
+        "reminder.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "guardrail"
+      ],
+      "source": "取消那条到达提醒：不许改写成新建"
+    },
+    "route::到家提醒我的事有哪些": {
+      "id": "route::到家提醒我的事有哪些",
+      "bucket": "route_guardrail",
+      "text": "到家提醒我的事有哪些",
+      "expected": [
+        "reminder.list"
+      ],
+      "actual": [
+        "reminder.list"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "guardrail"
+      ],
+      "source": "列表查询：不许改写成新建"
+    },
+    "route::到星巴克的时候会提醒我吗": {
+      "id": "route::到星巴克的时候会提醒我吗",
+      "bucket": "route_guardrail",
+      "text": "到星巴克的时候会提醒我吗",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location",
+        "guardrail"
+      ],
+      "source": "在问，不是建提醒"
     }
   }
 }
