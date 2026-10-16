@@ -2072,6 +2072,8 @@ class PlanBuilder:
         retry_with_tool = False
         salvage_kept = None  # 掉档轮抢救出来的可用计划：重试工具通道失败时的回落
         salvage_attempt = -1             # 追加批 N（N-3）：抢救计划出自哪一轮
+        recheck_kept = None              # 被「多动作遗漏」复核判掉的那份可执行计划：重试交不出可执行计划时的回落
+        recheck_attempt = -1
         last_no_action_attempt = -1      # 最近一次「受话、零步」出自哪一轮
         clarification_expected = False   # 上一轮要过澄清专用 schema
         plan_only_expected = False       # 上一轮要过计划修正专用 schema
@@ -2177,7 +2179,15 @@ class PlanBuilder:
             retries.begin_attempt(state)
 
             # 守卫段：首个命中即停，命中即判掉本版计划（控制器统一施加）。
+            pre_guard = state.parsed
             guard_hits = retries.run(STAGE_GUARD, state)
+            # 「多动作遗漏」只是复核覆盖面（纠正话术写着：单个能力确实承接全部动作的可以保持一个 step）：被它判掉的那份可执行计划
+            # 留着，重试交不出可执行计划时照原计划执行——强制重试不许比不重试更差（同下面 V219 那条）。200×5 后续批 §18.10：
+            # EN07「途经再加一个充电站」的「再」每次都被当成第二个动作，`9aa84404` r1 重试零步、整轮落成技术失败。别的守卫判掉的
+            # 计划本身是错的（极性反了、丢了焦点、该澄清），不留。
+            if (pre_guard is not None and pre_guard.steps and pre_guard.addressed and pre_guard.clarify is None
+                    and any(policy.trigger is TriggerKind.MULTI_ACTION_OMITTED for policy in guard_hits)):
+                recheck_kept, recheck_attempt = pre_guard, attempt
             if any(policy.trigger is TriggerKind.EXPLICIT_INPUT_NOT_ADDRESSED
                    for policy in guard_hits):
                 nudged_attempt = attempt + 1
@@ -2320,6 +2330,15 @@ class PlanBuilder:
             logger.info("toolcall retry after salvage failed; keeping salvaged plan")
             plan = salvage_kept
             plan_mode = "toolcall_salvage_kept"
+        # 「多动作遗漏」复核之后没拿到可执行计划：照原计划执行（见循环里 `recheck_kept`）。不回落的条件同上面 N-3 那条：重试轮说了
+        # 零步、原话是求信息的请求、原计划里有写步。
+        if (plan is None and recheck_kept is not None
+                and not (last_no_action_attempt > recheck_attempt and is_information_request(text)
+                         and self._write_steps(recheck_kept.steps))):
+            logger.info("multi-action recheck produced no executable plan; keeping the plan it rechecked (%s)",
+                        [s.intent for s in recheck_kept.steps])
+            plan = recheck_kept
+            plan_mode = "multi_action_recheck_kept"
 
         # 追加批 F（F-2，2026-09-23）：**求信息的请求**，模型说过一次「受话了、无需动作」、两轮又都没交出合法计划
         # ⇒ 兜底谈话就是答案，不是技术失败。真栈 `f9bec423`：「推荐三部适合全家看的电影」一轮不受话 + 一轮无需动作、

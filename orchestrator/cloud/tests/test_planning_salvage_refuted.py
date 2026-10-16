@@ -229,3 +229,58 @@ def test_a_directive_still_falls_back_to_its_salvaged_vehicle_write():
     """带对象与方向的指令不是求信息的请求：重试的零步照旧不推翻抢救计划（回落规则不变）。"""
     plan = _build_vehicle("能量回收调到最强")
     assert [s.intent for s in plan.steps] == ["energy_recovery.set"], plan.steps
+
+
+# ── 「多动作遗漏」复核之后没拿到可执行计划（200×5 后续批 §18.10，EN07 `9aa84404` r1）──────────────────────
+def _build_recheck(text, first, retry):
+    replies = [first, retry]                     # 两轮都走工具通道：第 1 轮单步，被「多动作遗漏」判掉重要一份
+
+    async def llm_tools(messages, tools):
+        return replies.pop(0)
+
+    async def llm(messages):
+        return "这不是 JSON"
+
+    async def resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=resolve, llm_tool_fn=llm_tools)
+    return asyncio.run(builder.build(text, WorkingSet(catalog=_agents_with_manual()), PlanContext(session_id="t")))
+
+
+_REROUTE = ("navigation", "navigation.reroute")
+
+
+def test_a_recheck_that_comes_back_empty_keeps_the_plan_it_rechecked():
+    """「途经再加一个充电站」的「再」是「再多一个」，被当成第二个动作复核；重试交了零步，修前整轮落成技术失败。复核只问覆盖面，
+    原来那一步是用户要的：照原计划执行（强制重试不许比不重试更差）。"""
+    plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NO_ACTION_CALL)
+    assert [s.intent for s in plan.steps] == ["navigation.reroute"], plan.steps
+    assert plan.plan_mode == "multi_action_recheck_kept" and plan.technical_failure is False
+
+
+def test_a_recheck_refuted_on_an_information_request_does_not_execute_the_write():
+    """同 N-3：求信息的请求，重试说了零步、原计划里有写步 ⇒ 不回落到它（交给求信息那条兜底谈话）。"""
+    plan = _build_recheck("推荐三部适合全家看的电影，再说说哪部最好看",
+                          _tool_call(("navigation", "navigation.navigate_to")), _NO_ACTION_CALL)
+    assert "navigation.navigate_to" not in [s.intent for s in plan.steps], plan.steps
+
+
+def test_a_recheck_that_returns_a_plan_uses_that_plan():
+    plan = _build_recheck("导航去万象天地，再加一个充电站", _tool_call(_REROUTE),
+                          _tool_call(("navigation", "navigation.navigate_to"), _REROUTE))
+    assert [s.intent for s in plan.steps] == ["navigation.navigate_to", "navigation.reroute"], plan.steps
+    assert plan.plan_mode != "multi_action_recheck_kept"
+
+
+def test_a_plan_another_guard_threw_out_is_not_kept():
+    """只留「多动作遗漏」判掉的那份：别的守卫判掉的计划本身是错的。这里模型自己在 goal 里说要澄清、却给了改线一步
+    （`clarify_goal_with_steps`，守卫顺序在前、首个命中即停），重试零步也不许回落去执行它。"""
+    catalog = _assemble_capability_catalog(_agents_with_manual())
+    clarify_but_acts = ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": {
+        "addressed": True, "goal": "需要澄清：用户没说要加哪一个充电站",
+        "steps": [{"id": "s1", "capability_ref": catalog.pair_to_ref[_REROUTE], "slots": {}, "depends_on": [],
+                   "slot_refs": {}}]}}])
+    plan = _build_recheck("途经再加一个充电站", clarify_but_acts, _NO_ACTION_CALL)
+    assert "navigation.reroute" not in [s.intent for s in plan.steps], (plan.steps, plan.plan_mode)
+
