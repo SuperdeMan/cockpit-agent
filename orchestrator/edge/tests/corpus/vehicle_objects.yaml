@@ -59,6 +59,9 @@ intent_recognition:
   # 2026-10-11（核心旅程 P3 C02）：香氛开关现状查询（operate=query，VAL 要收下它）
   - {text: 香氛现在开着吗, object: fragrance}
   - {text: 帮我看看香氛开着吗, object: fragrance}
+  # 2026-10-16（核心旅程 K12）：充电口盖开关现状查询（operate=query，只读不挂确认，VAL 要收下它）
+  - {text: 充电口现在开着吗, object: charging_port}
+  - {text: 帮我看看充电口开着吗, object: charging_port}
 
 val_execution:
   - {object: aircon, operate: set, value: "23", expect: {hvac_on: true, hvac_temp: 23}}

@@ -377,6 +377,21 @@ charging_port_close_success:
   - 充电口盖已关闭
   speech_brief:
   - 关了
+# 充电口盖开关现状（2026-10-16，核心旅程 K12）：{value} 由 VAL 按车态填「开着」/「关着」
+charging_port_query_success:
+  scene: 充电口盖状态
+  status: 成功
+  speech_full:
+  - 充电口盖现在{value}
+  speech_brief:
+  - 充电口盖{value}
+charging_port_query_unavailable:
+  scene: 充电口盖状态
+  status: 未读到
+  speech_full:
+  - 暂时读不到充电口盖的状态，可以看一下中控屏
+  speech_brief:
+  - 暂时读不到充电口盖状态
 # ── 需确认对象的确认问句：`<object>_<operate>_confirm`（评审四轮，2026-09-25）──
 # 念出**这一步真会执行的动作**——它由云侧派下来的 intent 决定，不是用户原话、也不是模型写的 goal。
 # 修前一律是通用句「这项操作可能影响车辆安全，请确认是否继续」：真栈 `5ca289c7` RS34，「关闭后备箱」被规划成

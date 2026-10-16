@@ -349,9 +349,12 @@ objects:
     - project-c
   charging_port:
     display_name: 充电口盖
+    # query：开关现状查询（2026-10-16，核心旅程 K12）。只读，读 `charging_port` 作答、不改状态、不挂确认（`require_confirm`
+    # 管的是开 / 关）；意图级效果由 operate 推导为 read（`runtime.intent_effect`），对象级 effect 仍是 write。
     operates:
     - open
     - close
+    - query
     attrs: []
     modes: []
     positions: false
@@ -363,6 +366,7 @@ objects:
     edge_intents:
     - charging_port.close
     - charging_port.open
+    - charging_port.query
     voice_forbidden: false
     projects:
     - project-a

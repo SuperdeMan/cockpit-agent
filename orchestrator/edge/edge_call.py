@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 from orchestrator.edge.vehicle_driver import COMMAND_REF
 from runtime import effect_evidence
+from runtime.intent_effect import is_write_intent
 from runtime import operation as operation_contract
 from runtime import operation_gate
 from val import VAL
@@ -394,7 +395,8 @@ class EdgeCallExecutor:
                 missing_slots=[missing],
             )
         confirmed = call.meta.get("confirmed", "").lower() == "true"
-        if self.val._need_confirm(obj) and not confirmed:
+        operate = str((structured.get("data") or {}).get("operate") or "")
+        if self.val._need_confirm(obj, operate) and not confirmed:
             # 核心旅程 K15：要达到的车态已经是了 ⇒ 如实说，不挂确认、不执行（确认之后再发一次只是一笔重复的副作用）
             already = self.val.already_holds(structured, call.meta.get("answer_length", "short"))
             if already:
@@ -409,7 +411,7 @@ class EdgeCallExecutor:
                 follow_up="说“确认”后我再执行。",
                 **({"data": _struct({"confirm_state": snapshot})} if snapshot else {}),
             )
-        if confirmed and self.val._need_confirm(obj):
+        if confirmed and self.val._need_confirm(obj, operate):
             changed = self._confirm_state_changed(call.meta.get("confirm_state", ""))
             if changed:
                 return agent_pb2.ExecuteResponse(
@@ -463,5 +465,8 @@ class EdgeCallExecutor:
             speech=speech,
             data=_struct({"intent": intent_name, "executed": True,
                           effect_evidence.RECEIPT: effect_evidence.make_receipt(ref, changed)}),
-            actions=[action],
+            # 只读意图（问状态 / 读数，`*.query`）不是动作——与本地快路径 `server._reports_action` 同一口径、同一份判据
+            # （`runtime.intent_effect.is_write_intent`）。修前云端派下来的「充电口现在开着吗」会回传一个车控动作，
+            # 写车道判成未声明动作、审计说「执行过」（2026-10-16，核心旅程 K12）。
+            actions=[action] if is_write_intent(intent_name) else [],
         )

@@ -124,6 +124,13 @@ exemptions:
     reason: 端侧原子只读查询，走端侧确定性快路径不经 LLM 落域；判句在 runtime/question_shape.py::asks_switch_state，已由 runtime/tests/test_switch_state_question.py（问法正反例）、orchestrator/edge/tests/test_fragrance_state_query.py（原话 → 意图 → VAL → 话术，含只读不改状态、不回传动作）与 orchestrator/edge/tests/corpus/ 参数化语料覆盖。
     owner: 泓舟
     reviewed_at: 2026-10-11
+  # ── 2026-10-16（核心旅程 K12）新增一条：充电口盖开关现状查询 ──
+  # 与 fragrance.query 同族（只读的端侧原子查询），沿用同一条判据。充电口的开 / 关（危险动作）仍由对抗套件覆盖，这条只是读车态。
+  - intent: charging_port.query
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子只读查询，走端侧确定性快路径不经 LLM 落域；判句在 runtime/question_shape.py::asks_switch_state，已由 runtime/tests/test_switch_state_question.py（问法正反例）、orchestrator/edge/tests/test_charging_port_state_query.py（原话 → 意图 → VAL → 话术，含只读不改状态、不挂确认、不回传动作，开 / 关照旧确认）与 orchestrator/edge/tests/corpus/ 参数化语料覆盖。
+    owner: 泓舟
+    reviewed_at: 2026-10-16
   - intent: fragrance.set
     requirements: [positive, hard_negative, relation]
     reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。

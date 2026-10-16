@@ -88,7 +88,7 @@ def test_frozen_production_inventory_and_legacy_roundtrip():
     # 提醒 Agent 的 memory.remember：整句交给 Memory，无槽）
     new_strict = {("scene-orchestrator", "scene.describe"), ("edge-vehicle", "fragrance.query"),
                   ("edge-vehicle", "frunk.open"), ("edge-vehicle", "frunk.close"),
-                  ("reminder", "memory.remember")}
+                  ("reminder", "memory.remember"), ("edge-vehicle", "charging_port.query")}
     assert strict_migrations == migrated | new_strict
     assert len(cc.migration_inventory()) == 156  # immutable historical whitelist
 
@@ -331,8 +331,8 @@ def test_inventory_check_turns_red_if_one_current_producer_drops_the_contract(mo
         ci.inventory(validate=True)
     monkeypatch.setattr(ci, "collect_manifests", original)
     # 2026-10-05 +1：新增 scene.describe；2026-10-11 +1：fragrance.query；2026-10-12 +2：frunk.open / frunk.close；
-    # 2026-10-13 +1：memory.remember
-    assert len(ci.inventory(validate=True)) == 161
+    # 2026-10-13 +1：memory.remember；2026-10-16 +1：charging_port.query（充电口盖开关现状，核心旅程 K12）
+    assert len(ci.inventory(validate=True)) == 162
 
 
 def test_metadata_migration_keeps_the_planner_catalog_projection_identical():

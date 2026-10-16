@@ -232,12 +232,10 @@ def lane_speech(reach, table) -> list[str]:
     from val import VAL
 
     val = VAL()
-    objects = (val.commands or {}).get("objects") or {}
     errs = []
     for obj, items in sorted(reach.items()):
         if _exempt(table, obj, "speech"):
             continue
-        confirm = bool((objects.get(obj) or {}).get("require_confirm"))
         for intent, data in items:
             key = val._build_response_key(obj, data["operate"], data)
             if key not in (val.responses or {}):
@@ -246,9 +244,11 @@ def lane_speech(reach, table) -> list[str]:
             elif key == "generic_success":
                 errs.append(f"`{intent}` 落到通用话术 `generic_success`"
                             "——用户听不出刚才到底做了什么；补 responses 或进台账")
-            # 需确认的 intent 还要有确认问句（评审四轮）：修前一律念通用句，规划把「关闭」错成 `.open` 时用户听不出方向
+            # 需确认的 intent 还要有确认问句（评审四轮）：修前一律念通用句，规划把「关闭」错成 `.open` 时用户听不出方向。
+            # 「需不需要确认」用 VAL 自己那一份判据（`_need_confirm`，按操作判）：只读查询（`charging_port.query`，2026-10-16）
+            # 从不挂确认，不该要求它有确认问句；开 / 关照旧要求
             confirm_key = val.confirm_response_key(data)
-            if confirm and confirm_key not in (val.responses or {}):
+            if val._need_confirm(obj, data["operate"]) and confirm_key not in (val.responses or {}):
                 errs.append(f"`{intent}` 需要二次确认，但确认问句 `{confirm_key}` 不在 responses.yaml"
                             "——确认时只能念通用句，用户听不出要确认的是什么")
     return errs

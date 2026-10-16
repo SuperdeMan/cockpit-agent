@@ -39,6 +39,9 @@ def _tire_pressure_normal(value) -> bool:
 #: 判句在 `runtime.question_shape.asks_switch_state`，这里只管读哪一个键、怎么念——别的开关对象要支持时加一行。
 _SWITCH_STATE_QUERIES = {
     "fragrance": ("fragrance", "fragrance_level", "浓度{}档"),
+    # 充电口盖开关现状（2026-10-16，核心旅程 K12「充电口现在开着吗」：修前没有能力可派，诚实答看不了）。
+    # 车态是 open / closed 字符串（盖 / 口类对象的口径），读的时候归一成开 / 关；没有档位
+    "charging_port": ("charging_port", "", ""),
 }
 
 
@@ -183,7 +186,7 @@ class VAL:
         # 这道闸把它变成不变量：将来谁往 `_apply` 加一条 trunk 分支，也绕不过确认。
         # 命名前缀即对象名（trunk./door_lock./fuel_tank_cover./charging_port./frunk.），
         # 对 hvac./window./media. 这些 require_confirm=false 的对象是零成本 no-op。
-        if not confirmed and self._need_confirm(command.split(".")[0]):
+        if not confirmed and self._need_confirm(*command.split(".", 1)):
             return False, self._pick_response("Car_general_restrictions_5")
         # 安全态门控示例：高速行驶中不完全打开车窗
         if command == "window.open":
@@ -261,7 +264,7 @@ class VAL:
         #    只靠每条上游路径自觉，任何绕过闭环的路径（如云端降级兜底）都能开后备箱。
         #    话术复用 Car_general_restrictions_5（本就是确认提示），用户听到的是
         #    「这项操作需要确认」——语义正确，无需新 key。
-        if self._need_confirm(obj) and not confirmed:
+        if self._need_confirm(obj, operate) and not confirmed:
             return False, self._pick_response("Car_general_restrictions_5")
 
         # 5. 模拟状态变更
@@ -470,11 +473,14 @@ class VAL:
         gear = self.state.get("gear", "P")
         return speed > 0 or gear not in ("P", "N")
 
-    def _need_confirm(self, obj: str) -> bool:
-        """检查是否为危险动作（需要二次确认）。"""
+    def _need_confirm(self, obj: str, operate: str = "") -> bool:
+        """检查是否为危险动作（需要二次确认）。
+
+        对象级 `require_confirm` 管的是会改车态的操作；只读的开关现状查询（`query`，`_simulate` 里不写车态）不算——
+        「充电口现在开着吗」要是也挂确认，问一句现状就得说「确认」（2026-10-16，核心旅程 K12）。"""
         objects = self.commands.get("objects", {})
         obj_def = objects.get(obj, {}) if objects else {}
-        return obj_def.get("require_confirm", False)
+        return bool(obj_def.get("require_confirm", False)) and operate != "query"
 
     # ── 状态模拟 ──────────────────────────────────────────
 
@@ -503,6 +509,8 @@ class VAL:
             # 不按缺省当「关着」念——同电量 / 胎压查询那条「不编车况」（CA2-19 S1）
             on_key, level_key, _words = _SWITCH_STATE_QUERIES[obj]
             on = self.state.get(on_key)
+            if on in ("open", "closed"):      # 盖 / 口类对象的车态口径（充电口）
+                on = on == "open"
             if not isinstance(on, bool):
                 return None, None
             return None, {"on": on, "level": self.state.get(level_key) if level_key else None}
@@ -950,6 +958,8 @@ class VAL:
             return "fuel_tank_cover_open_success" if operate == "open" else "fuel_tank_cover_close_success"
 
         if obj == "charging_port":
+            if operate == "query":
+                return "charging_port_query_success"     # 读不到时 `execute` 换成 `charging_port_query_unavailable`
             return "charging_port_open_success" if operate == "open" else "charging_port_close_success"
 
         if obj == "rear_view_mirror":

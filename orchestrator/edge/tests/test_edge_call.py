@@ -390,6 +390,20 @@ def test_a_closed_trunk_still_asks_before_opening():
     assert res.status == agent_pb2.ExecuteResponse.NEED_CONFIRM and val.state["trunk"] == "closed"
 
 
+def test_a_charging_port_state_question_from_the_cloud_does_not_ask_to_confirm():
+    """云端派下来的 `charging_port.query`（核心旅程 K12）：只读查询不挂确认、不改车态、不回传动作；开照旧确认。"""
+    val = VAL()
+    val.state["charging_port"] = "open"
+    executor = EdgeCallExecutor(val)
+
+    res = executor.execute(_call("charging_port.query"))
+
+    assert res.status == agent_pb2.ExecuteResponse.OK and "开着" in res.speech
+    assert not list(res.actions) and val.state["charging_port"] == "open"
+    val.state["charging_port"] = "closed"
+    assert executor.execute(_call("charging_port.open")).status == agent_pb2.ExecuteResponse.NEED_CONFIRM
+
+
 def test_door_locks_with_positions_always_ask():
     """车门锁按门分开，单个状态键判不了「已经是了」：照旧确认。"""
     val = VAL()

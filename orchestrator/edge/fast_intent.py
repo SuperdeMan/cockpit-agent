@@ -57,6 +57,8 @@ LOCAL_INTENTS = {
     "volume.set", "volume.inc", "volume.dec",
     # 油箱盖 / 充电口盖
     "fuel_tank_cover.open", "fuel_tank_cover.close",
+    # 充电口盖开关现状查询（2026-10-16，核心旅程 K12「充电口现在开着吗」修前没有能力可派、诚实答看不了）
+    "charging_port.query",
     "charging_port.open", "charging_port.close",
     # 除雾（前/后挡各一个物理开关；除霜同一组能力，差异只在词表层）
     "front_defogger.open", "front_defogger.close",
@@ -809,6 +811,10 @@ def _classify_structured(text: str) -> dict | None:
 
     # ── 充电口盖 ──────────────────────────────────────────
     if "充电口" in t or "充电盖" in t:
+        # 问开关现状是只读查询，排在开 / 关之前（同香氛那条；判据在 runtime/question_shape.py）。只读不挂确认：
+        # `VAL._need_confirm` 对 query 不要求确认（核心旅程 K12）
+        if asks_switch_state(t):
+            return _s("query", "query", "query", "charging_port", conf=0.9)
         if "关" in t:
             return _s("setting", "control", "close", "charging_port", conf=0.93)
         return _s("setting", "control", "open", "charging_port", conf=0.93)

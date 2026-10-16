@@ -572,7 +572,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         if not structured:
             return False
         obj = structured.get("data", {}).get("object", "")
-        return bool(obj) and self.val._need_confirm(obj)
+        # 只读的开关现状查询（「充电口现在开着吗」）不改车态，可以本地秒回（2026-10-16，核心旅程 K12）
+        return bool(obj) and self.val._need_confirm(obj, str(structured.get("data", {}).get("operate") or ""))
 
     @staticmethod
     def _executed_names(items) -> list[str]:
