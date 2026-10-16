@@ -43,7 +43,7 @@ journeys:
   - {id: A3-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
   - {id: A5-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
   - {id: A1-5, source: journeys/regression_a.yaml, family: F08, lane: read_only,
-     known_red: "2026-10-12：「今天的天气适合去哪玩」近四次跑数全红（65ddeb85、08a62bf5、99178302 ×2）——规划器要么反问「想了解哪种信息」、要么只答天气，不按天气推荐去处"}
+     known_red: "2026-10-16：周边不再要求支付权限后天气指南照常注入（§18.2），`3168262c` / `9aa84404` 各 4 / 5、`252cab57` 3 / 5。只给天气漏了类目那种（`9aa84404` r5）已由周边按天气定类目兜住（§18.9）；剩下的都是首轮规划器把 goal 写成「需要澄清：天气未知，先查天气…」却零步（`3168262c` r4、`252cab57` r2 / r3），要改规划知识、先 A/B（§18.14 登记）"}
   - {id: A3-3, source: journeys/target_a.yaml, family: F08, lane: read_only}
   # ── F09 周边 ────────────────────────────────────────────────────
   # 2026-10-16 起周边 Agent 不再要求 payment.invoke（后续批 §18.2），这些旅程不再按条补权限，按合成用户的真实权限跑
@@ -195,8 +195,9 @@ journeys:
   - {id: K09, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K10, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K11, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
-  - {id: K12, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle,
-     known_red: "2026-10-12：充电口没有状态查询能力。标定（19051942）时规划器拿「查询香氛」顶替、答成「香氛关着」；`bf103d15` 起开关现状问句的端侧查询步必须被原话点名，改为诚实答看不了——要答「开着」得补充电口状态查询"}
+  # 曾标 known_red（充电口没有状态查询能力：标定时规划器拿「查询香氛」顶替，`bf103d15` 起诚实答看不了）；补上 `charging_port.query`
+  # 后 `9aa84404` 5 / 5，2026-10-16 摘牌（后续批 §18.5）；再红就按回退报
+  - {id: K12, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K13, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle, safety: must_pass}
   - {id: K14, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   # 曾标 known_red（后备箱已经开着又挂确认、确认后再发一次 trunk.open）；端侧挂确认前先问 VAL 是否已是目标态后 `5ebc0bb4` 5 / 5，
@@ -232,7 +233,7 @@ journeys:
   - {id: EN05, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
-     known_red: "2026-10-16 复测（5ebc0bb4）2/5，失败点各不相同：r2 第 2 句「途经再加一个充电站」没发出导航（没追加），后两句跟着错；r3 第 3 句答「当前没有正在进行的导航」；r5 第 3 句没问「换哪一个」直接换了。10-12 标定的「替换而非追加」只剩 r2 那一种形态；c96becf8 上另有一遍首轮被反问「直接导航还是先介绍」（后续批 §17.5）"}
+     known_red: "2026-10-16：`9aa84404` 3 / 5、`252cab57` 4 / 5。第 2 句的两种形态已修：「再加一个」的「再」被当成第二个动作、复核重试零步（§18.10），规划器把路线上已有的站抄进 add_waypoint（§18.11）；T2 再规划的焦点下发与规划器替用户挑站也已修（§18.3 / §18.4）。`252cab57` 没过的那遍在首句：规划器给的两步互相依赖成环，校验拒掉后重试零步（§18.14 登记）"}
   - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
@@ -246,11 +247,13 @@ journeys:
   - {id: NB06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
   - {id: NB07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
   - {id: NB08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
-  - {id: NB09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only,
-     known_red: "2026-10-16 复测（5ebc0bb4）4/5：修前 8 次全拿「第一家」当地名去搜；剩下一遍规划器把第一家的店名写进 keyword、category 写停车场、没给 location，中心只能从原话取到「第一家」，如实答「对不上是哪一家」。要修得让 Agent 判槽位角色（keyword 其实是中心），证据只有一遍，登记（后续批 §17.4）"}
+  # 曾标 known_red（「第一家附近有停车场吗」拿「第一家」当地名去搜 / 规划器不写中心槽）；引擎换序号槽值（§17.4）+ 周边按候选集解析
+  # 原话里的「第一家」（§18.7）后 `9aa84404` 5 / 5（修前 `3168262c` 2 / 5），2026-10-16 摘牌；再红就按回退报
+  - {id: NB09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
   - {id: NB10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: read_only}
-  - {id: NB11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: simulated_vehicle,
-     known_red: "2026-10-12 读代码：周边 / 停车 Agent 按整个 Agent 要求 payment.invoke，运行器只许只读车道补这一项（scopes_extra 校验钉着），模拟车车道的合成用户第一轮搜索就会被拒（「当前账号没有『周边发现』这项能力的授权」）；没有支付权限的主体用不了周边是冻结设计 §11.7 登记的产品问题，拆到能力级权限之前红"}
+  # 曾标 known_red（周边按整个 Agent 要求 payment.invoke，模拟车车道的合成用户第一轮搜索就被拒）；去掉它之后 `9aa84404` 5 / 5，
+  # 2026-10-16 摘牌（后续批 §18.2）。`252cab57` ×2 有一遍「就去第二家」先判不受话、重试派出的导航被 G-3 拦下（§18.14 登记）
+  - {id: NB11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F09, lane: simulated_vehicle}
   # F06 导航：导航动作走模拟车（B1-2 目的地焦点迁移、改目的地）
   - {id: NV28, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F06, lane: simulated_vehicle}
   - {id: NV29, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F06, lane: simulated_vehicle}
