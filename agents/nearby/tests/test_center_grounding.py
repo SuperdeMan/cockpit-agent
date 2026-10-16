@@ -13,10 +13,12 @@ from __future__ import annotations
 import asyncio
 import json
 
+from agents._sdk import candidate_ref
 from agents._sdk.location import LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP
 from agents._sdk.testing import run_handle
 from agents.nearby.src.agent import NearbyAgent, _names_the_area
 from agents.nearby.src.providers.base import GeocodeHit, GeoPoint, Place
+from orchestrator.cloud.context import candidate_downlink
 
 _SHENZHEN = {"current_lat": "22.5410", "current_lng": "114.0579"}
 _XUANWEI = GeocodeHit(lat=26.219, lng=104.104, province="云南省", city="曲靖市", district="宣威市")
@@ -242,4 +244,37 @@ def test_an_ordinal_that_was_not_resolved_is_said_plainly():
         spy = _Listed()
         res = _run(spy, slots, "第一家附近有停车场吗", meta=_SHENZHEN)
         assert res.speech == "对不上「第一家」是哪一家，说个店名我帮您找它附近的。" and spy.searches == []
+
+
+# ── 规划器一个中心槽都没写、序号只在原话里（200×5 后续批 §18.7）：按下发的候选集把「第一家」解析成店名 ──────────────
+
+def _listed_meta(*names, source_intent="nearby.search"):
+    """编排真实的下发投影（`candidate_downlink`）：消费方的期望从产生方派生，两端形状对不上就红。"""
+    produced = candidate_downlink({"source_intent": source_intent,
+                                   "items": [{"name": n, "lat": 22.5, "lng": 114.0} for n in names]})
+    return {**_SHENZHEN, candidate_ref.META_KEY: json.dumps(produced, ensure_ascii=False)}
+
+
+def test_the_first_one_in_the_words_is_the_first_shop_listed():
+    """`3168262c` r4：只给了 `category=停车场`。原话里的「第一家」按候选集解析成店名，照样按名检索、校验，这批记店名。"""
+    spy = _Listed()
+    res = _run(spy, {"category": "停车场"}, "第一家附近有停车场吗", meta=_listed_meta(_NOWWA, "黄色咖啡店"))
+    assert spy.searches[0][0] == _NOWWA and (_centre(spy).lat, _centre(spy).lng) == (22.547, 114.085)
+    assert "对不上" not in res.speech and res.data["_candidate_place"] == _NOWWA
+
+
+def test_the_shop_name_the_planner_put_in_keyword_is_the_centre_not_the_search_term():
+    """`5ebc0bb4` r4：店名写进 keyword、类目写停车场、没给中心。店名是中心不是检索词——留着只会去搜名字里带这家店的停车场。"""
+    spy = _Listed()
+    _run(spy, {"category": "停车场", "keyword": _NOWWA}, "第一家附近有停车场吗", meta=_listed_meta(_NOWWA, "黄色咖啡店"))
+    assert spy.searches[0][0] == _NOWWA and _NOWWA not in spy.searches[-1][0]
+
+
+def test_a_list_from_another_domain_or_an_ordinal_out_of_range_is_still_said_plainly():
+    """只认本域那一组（菜单里的「第一个」不是一家店）；序号越界不猜。都照旧如实说、不去搜。"""
+    for meta, raw in ((_listed_meta("巨无霸套餐", source_intent="mcd.menu"), "第一家附近有停车场吗"),
+                      (_listed_meta(_NOWWA), "第三家附近有停车场吗")):
+        spy = _Listed()
+        res = _run(spy, {"category": "停车场"}, raw, meta=meta)
+        assert res.speech.startswith("对不上「第") and spy.searches == [], (raw, res.speech)
 

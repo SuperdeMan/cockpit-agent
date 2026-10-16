@@ -240,4 +240,7 @@ edge_intents: []
 # （「我不吃辣，也不想排长队」）。它与记忆画像是前景/背景两回事——真栈 T28 说完、
 # T29 就拿到 10 家川菜，因为那句话落在 chitchat 轮、nearby 只读得到当轮原话。
 # 判据与词表在 `runtime/session_constraints.py`，本 Agent 只消费。
-context_scopes: [location, session_constraints]   # 周边搜索按需下发精确位置（最小化）
+# `candidates`（2026-10-16，200×5 后续批 §18.7，核心旅程 NB09）：「第一家附近有停车场吗」规划器常常一个中心槽都不写，
+# 序号只在原话里；按下发的候选集把「第一家」解析成刚列出的那一项的店名（`agents/_sdk/candidate_ref`）。下发只有本域
+# 那一组的序号与名字，不带坐标与 id。周边三条能力已是严格契约，改上下文范围不碰冻结迁移清单。
+context_scopes: [location, session_constraints, candidates]   # 周边搜索按需下发精确位置（最小化）

@@ -14,6 +14,7 @@ import re
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM, FAILED
+from agents._sdk import candidate_ref
 from agents._sdk.http import ProviderError
 from agents._sdk.location import LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_location_from_meta, rough_km
 from agents._sdk.provenance import attach
@@ -37,7 +38,7 @@ class _Unlocated:
     place: str
     #: 解析中心的那次检索本身报错（日配额用尽 / QPS 超限）⇒ 定位不到不等于没有，不能说「没找到」
     search_failed: bool = False
-    #: 中心是「第 N 家」这种序号指代、却没被换成店名（编排 `engine._resolve_ordinal_slots` 只换得了同域列表里的那一项）
+    #: 中心是「第 N 家」这种序号指代，编排没换成店名、按下发的候选集也解析不出（没有本域列表 / 序号越界）
     ordinal: bool = False
 
 
@@ -343,9 +344,13 @@ class NearbyAgent(BaseAgent):
         """
         ordinal = self._ordinal_anchor(intent)
         if ordinal:
-            # 「第一家附近」走到这里还是序号 ⇒ 编排没能换成店名（没有同域列表 / 序号越界）：不拿「第一家」当地名去搜（NB09），如实说
-            return _Unlocated(ordinal, ordinal=True)
-        near = self._near(intent, meta)
+            named = self._candidate_center(intent, meta)
+            if not named:
+                # 「第一家附近」按候选集也解析不出是哪一家（没有本域列表 / 序号越界）：不拿「第一家」当地名去搜（NB09），如实说
+                return _Unlocated(ordinal, ordinal=True)
+            near = GeoPoint(address=named)   # 解析出的店名照样走下面的按名检索与名字校验
+        else:
+            near = self._near(intent, meta)
         if near is None or near.lat or not near.address:
             return near                      # 无位置 / 已是坐标 → 原样
         cur = current_location_from_meta(meta)
@@ -458,6 +463,19 @@ class NearbyAgent(BaseAgent):
         否则别名槽 / 原话的「X 附近」）——编排已把槽里的「第一家」换成店名时，原话里那句「第一家附近」不许把它盖回去。"""
         value = str(cls._location_slot(intent) or cls._place_anchor(intent) or "").strip()
         return value if value and cls._ORDINAL_ANCHOR_RE.match(value) else ""
+
+    @classmethod
+    def _candidate_center(cls, intent, meta) -> str:
+        """中心是「第 N 家」⇒ 刚列出的本域候选里那一项的店名；解析不出 ⇒ 空串（NB09，200×5 后续批 §18.7）。
+
+        编排只换得了**槽值**里的序号（`engine._resolve_ordinal_slots`），可规划器常常一个中心槽都不写——只给
+        `category=停车场`，或把店名写进 keyword——序号只在原话里。这里按下发的候选集解析（`candidates` 上下文：只有
+        本域那一组的名字，不带坐标与 id），判据与 MCP 桥同一份（`candidate_ref`：在范围内、一句里只有一个序号）。"""
+        ordinal = cls._ordinal_anchor(intent)
+        if not ordinal:
+            return ""
+        item = candidate_ref.resolve(ordinal, meta, namespace="nearby")
+        return str((item or {}).get("name") or "").strip()
 
     @staticmethod
     def _names_overlap(a: str, b: str, min_run: int = 2) -> bool:
@@ -647,7 +665,8 @@ class NearbyAgent(BaseAgent):
         kw_slot = (intent.slots.get("keyword") or "").strip()
         # 原话里的地名被 planner 填进了 keyword（「万象城」）：它是中心不是检索词——留着只会剩下
         # 名字里带「万象城」的店。`location` 槽照旧优先（用户明说的中心），这里只剥 keyword。
-        anchor = self._place_anchor(intent)
+        # 原话的中心是「第一家」时比对的是它解析出的店名（NB09：规划器把第一家的店名写进 keyword、类目写停车场）。
+        anchor = self._candidate_center(intent, meta) or self._place_anchor(intent)
         if anchor and kw_slot and (kw_slot == anchor or anchor in kw_slot) and \
                 len(kw_slot) <= len(anchor) + 2:
             kw_slot = ""
@@ -921,7 +940,8 @@ class NearbyAgent(BaseAgent):
             if stale_for:
                 candidate_place = stale_for          # 陈旧槽让路：这批是按原话那个地方搜的
             else:
-                candidate_place = loc_slot if (loc_slot and "," not in loc_slot) else self._place_anchor(intent)
+                candidate_place = loc_slot if (loc_slot and "," not in loc_slot) else (
+                    self._candidate_center(intent, meta) or self._place_anchor(intent))   # 「第一家」那批记店名
         if candidate_place:
             extra_data["_candidate_place"] = candidate_place
         if center_src == "none":

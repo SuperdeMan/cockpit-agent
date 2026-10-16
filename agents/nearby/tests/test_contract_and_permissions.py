@@ -38,3 +38,30 @@ def test_every_slot_the_agent_reads_is_a_declared_parameter():
         for name in names:
             assert cc.argument_error(contract, {name: "深圳湾"}) == "", (intent, name)
         assert not set(NearbyAgent._NEAR_ALIAS_SLOTS) & set(caps[intent].slots), intent
+
+
+def test_the_first_one_reaches_the_agent_through_the_real_downlink():
+    """「第一家附近」（§18.7）：真实 manifest 声明的上下文范围 → 编排下发 → 按主体权限投影，周边收到本域那一组的名字、
+    能解析出「第一家」。Agent 侧直接塞 meta 的用例验不到这条链路；不声明 `candidates` 就收不到（同一道门控）。"""
+    import time
+    from types import SimpleNamespace
+
+    from agents._sdk import candidate_ref
+    from orchestrator.cloud.context import Focus
+    from orchestrator.cloud.engine import PlannerEngine
+    from orchestrator.cloud.models import Plan, Step
+    from runtime.context_access import project_meta
+
+    manifest, _caps_ = _caps()
+    shop = "NOWWA挪瓦咖啡(美宜佳深圳华富洋大厦店)"
+    focus = Focus(candidate_sets=[{
+        "source_intent": "nearby.search", "agent_id": "nearby", "purpose": "list", "ts": time.time(),
+        "is_fallback": False, "items": [{"name": shop, "lat": 22.547, "lng": 114.085}, {"name": "黄色咖啡店"}]}])
+    plan = Plan(steps=[Step(id="s1", agent_id="nearby", intent="nearby.search",
+                            context_scopes=list(manifest.context_scopes))])
+    PlannerEngine._apply_focus_meta(plan, focus)
+    subject = SimpleNamespace(granted_permissions=["profile.read", "location.read"], user_id="u1", prefs={})
+    meta = project_meta(subject, plan.steps[0].meta, plan.steps[0].context_scopes)
+    assert candidate_ref.resolve("第一家", meta, namespace="nearby")["name"] == shop
+    assert "22.547" not in meta[candidate_ref.META_KEY]          # 只下发名字，不带坐标
+
