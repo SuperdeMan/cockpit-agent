@@ -693,6 +693,26 @@ def test_store_hint_is_completed_from_in_plan_nearby_producer():
     assert "store_hint" not in plain.slots
 
 
+def test_store_hint_takes_the_listed_store_that_matches_the_search_not_the_first_item():
+    """demo-dqt1fu：搜「麦当劳」的第一项是一家沙县小吃，被当成麦当劳的门店线索，官方查不到、退回默认门店、选店成了死循环。
+    线索只取名字里带这次搜索词（结果自带的 `_candidate_label`）的那一项；一项都对不上就不补；城市不分品牌，照旧补。"""
+    listing = {"_candidate_label": "麦当劳", "items": [
+        {"name": "沙县精品小吃(老兵大厦店)", "city": "深圳市", "lng": 113.94, "lat": 22.54},
+        {"name": "麦当劳(深圳前海科兴天地餐厅)", "city": "深圳市", "lng": 113.94, "lat": 22.55}]}
+    done = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="nearby.search", data=listing)}
+    step = Step(id="s2", agent_id="mcp-bridge", intent="mcd.menu",
+                slots={}, declared_slots=["store_hint", "city", "item_query"])
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done, _focus_ctx(_LAST_PLACES))
+    assert step.slots["store_hint"] == "麦当劳(深圳前海科兴天地餐厅)" and step.slots["city"] == "深圳市"
+
+    only_other = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
+                                   data={"_candidate_label": "麦当劳", "items": listing["items"][:1]})}
+    step = Step(id="s2", agent_id="mcp-bridge", intent="mcd.menu",
+                slots={}, declared_slots=["store_hint", "city", "item_query"])
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, only_other, _focus_ctx(_LAST_PLACES))
+    assert "store_hint" not in step.slots and step.slots["city"] == "深圳市"
+
+
 def test_steps_without_declared_store_slots_are_never_anchored():
     """锚定门控（demo-mkemhn 2fd09d52/44943f00）：capability 没声明门店三槽的步骤
     （chitchat/nearby/任何非商户步）绝不吃焦点补槽——此前门店三槽被注进了

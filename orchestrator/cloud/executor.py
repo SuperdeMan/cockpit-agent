@@ -121,6 +121,19 @@ def _normalize_store_name(value: str) -> str:
     return text
 
 
+def _store_from_listing(data: dict) -> dict | None:
+    """周边结果里给商户当门店线索的那一项：名字里带这次搜的词（产生方自带的 `_candidate_label`，品牌优先、否则检索词）的第一项。
+
+    一项都对不上 ⇒ None：不拿别家冒充（demo-dqt1fu）。结果没带搜索词时保持原行为，取第一项。"""
+    items = [it for it in ((data or {}).get("items") or []) if isinstance(it, dict)]
+    if not items:
+        return None
+    label = _normalize_store_name((data or {}).get("_candidate_label"))
+    if not label:
+        return items[0]
+    return next((it for it in items if label in _normalize_store_name(it.get("name"))), None)
+
+
 def _match_place_index(places: list, hint: str):
     """按名字在服务端持有的门店列表里找**下标**。找不到返回 None —— 不拿第一条顶替。
 
@@ -982,13 +995,17 @@ class DagExecutor:
         declared = getattr(step, "declared_slots", None) or []
         if "store_hint" not in declared:
             return
-        item = next(
-            (items[0] for result in done.values()
+        listing = next(
+            (data for result in done.values()
              if str(getattr(result, "source_intent", "") or "") == "nearby.search"
              and getattr(getattr(result, "status", None), "value", "") == "ok"
-             for items in [(getattr(result, "data", None) or {}).get("items") or []]
-             if items and isinstance(items[0], dict)),
+             for data in [getattr(result, "data", None) or {}]
+             if any(isinstance(it, dict) for it in data.get("items") or [])),
             None)
+        # 门店线索只取**名字里带这次搜的词**的那一项（demo-dqt1fu：搜「麦当劳」的第一项是一家沙县小吃，被当成麦当劳的门店线索，
+        # 官方查不到、退回默认门店列表、选店成了死循环）；城市不分品牌，照旧取这批结果的第一项。
+        item = _store_from_listing(listing) if listing is not None else None
+        city_item = next((it for it in (listing or {}).get("items") or [] if isinstance(it, dict)), None)
         if item is not None:
             name = str(item.get("name") or "").strip()
             current_hint = str(step.slots.get("store_hint") or "").strip()
@@ -1005,7 +1022,7 @@ class DagExecutor:
         # 面，这让「选择麦当劳门店：X」这类无 nearby 前置的直点句也能走位置检索。
         # 门店名（store_hint）仍**只吃本轮**，跨轮品牌错配的判据不变。
         if "city" in declared and not str(step.slots.get("city") or "").strip():
-            city = str((item or {}).get("city") or "").strip()
+            city = str((city_item or {}).get("city") or "").strip()
             source = "本轮 nearby.search"
             if not city:
                 places = list(getattr(ctx, "focus_places", None) or [])
