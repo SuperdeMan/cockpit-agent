@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import time
+from types import SimpleNamespace
 from typing import Callable
 
 from runtime.issues import (  # noqa: F401 —— 受控枚举经本模块对云侧统一出口
@@ -118,13 +119,17 @@ def object_summary(step) -> str:
 
 def build_confirm_policy(*, operation_id: str, step, state,
                          user_text: str = "",
-                         describe: Callable[[str], str] | None = None) -> dict:
+                         describe: Callable[[str], str] | None = None,
+                         known_summary: str = "") -> dict:
     """NEED_CONFIRM 轮的确认策略。返回 dict（cloud 事件面统一用 dict，server 再转 proto）。
 
     `describe`：intent → 能力的中文描述（engine 从 Registry 目录取）；见 `action_summary`。
+    `known_summary`：挂起那一刻已经算好的那句人话摘要（`SessionState.action_summary`）——插话轮重新带上确认时
+    用它，不再问一次 Registry；它就是当时确认卡上的同一句。
     """
     declared = bool(getattr(step, "require_confirm", False))
-    summary = action_summary(step, describe)
+    known = str(known_summary or "").strip()
+    summary = known if known and not is_machine_intent_name(known) else action_summary(step, describe)
     source = SUMMARY_FROM_CAPABILITY
     if not summary:
         # 没有人话摘要时**明确回退用户原话**，并说清出处——不把模型 goal 当执行事实，
@@ -145,6 +150,24 @@ def build_confirm_policy(*, operation_id: str, step, state,
         "server_now_ms": now_ms(),
         "summary_source": source,
     }
+
+
+def held_confirm_policy(state) -> dict:
+    """插话之后重新带上的那条确认（核心旅程 K07，用户 2026-10-16 裁决：答完插话、重新提示还有待确认的操作）。
+
+    同一笔挂起的确认契约：寻址键、截止时刻是挂起那一刻定的（插话不续命）；摘要用挂起时存下的那句，存的为空就回退那条任务的
+    起点原话；风险档按挂起步的 `require_confirm` 声明。不读模型的 goal。"""
+    plan = getattr(state, "pending_plan", None) or {}
+    wanted = str(getattr(state, "pending_step_id", "") or "")
+    record = next((item for item in (plan.get("steps") or [])
+                   if isinstance(item, dict) and str(item.get("id") or "") == wanted), {})
+    slots = record.get("slots") if isinstance(record.get("slots"), dict) else {}
+    step = SimpleNamespace(intent=str(record.get("intent") or ""), slots=dict(slots),
+                           require_confirm=bool(record.get("require_confirm")))
+    return build_confirm_policy(
+        operation_id=str(getattr(state, "operation_id", "") or ""), step=step, state=state,
+        user_text=str(plan.get("safety_origin_text") or plan.get("raw_text") or ""),
+        known_summary=str(getattr(state, "action_summary", "") or ""))
 
 
 def build_clarify_card(*, operation_id: str, clarify: dict, state) -> dict:

@@ -3098,6 +3098,14 @@ class PlannerEngine:
         hint = f"对了，{what}还在等你{PlannerEngine._pending_ask_word(held_pending)}。"
         follow = str(final.get("follow_up") or "")
         final["follow_up"] = (follow + (" " if follow else "") + hint).strip()
+        # 核心旅程 K07（用户 2026-10-16 裁决）：挂着的是**确认**、这一轮自己又没有新的挂起 ⇒ 把那条确认重新带上——插话后
+        # 客户端的确认条被新消息顶掉了，光靠一句软提醒，用户得自己记得说「确认」。寻址键与截止时刻都是挂起那一刻的（插话不续命），
+        # 确认仍然只执行那一笔（同一个 operation_id，认领与重放闸不变）。补槽 / 选择类挂起照旧只给软提醒。
+        if (held_id and getattr(held_pending, "phase", "") == "wait_confirm"
+                and not final.get("need_confirm") and not final.get("operation_id")):
+            final["need_confirm"] = True
+            final["operation_id"] = held_id
+            final["confirm_policy"] = contracts.held_confirm_policy(held_pending)
 
     # 对话落库(append_turn)/历史·记忆召回(_history/_recall)/上下文构建(build_context)
     # 均已迁入 context.py（ContextManager + 模块级 build_context），统一上下文生命周期。

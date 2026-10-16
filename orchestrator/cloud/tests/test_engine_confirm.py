@@ -350,7 +350,10 @@ def test_interjection_keeps_pending_and_confirm_resumes():
 
     events = _run(engine, _req("帮我看看附近有什么景点"))
     final = events[-1]
-    assert not final.get("need_confirm")                         # 插话轮正常完成
+    # K07（用户 2026-10-16 裁决）：插话轮正常完成，同时把挂着的那条确认重新带上——同一个寻址键、同一个截止时刻
+    assert final.get("need_confirm") and final.get("operation_id") == state0.operation_id
+    assert final["confirm_policy"]["operation_id"] == state0.operation_id
+    assert final["confirm_policy"]["expires_at_ms"] == int(state0.expires_at * 1000)
     state1 = asyncio.run(session.load("sess-1", owner_user_id="u1"))
     assert state1 is not None and state1.phase == "wait_confirm"  # 旧挂起原样保留
     assert state1.pending_step_id == state0.pending_step_id
@@ -1506,3 +1509,48 @@ def test_a_slot_answer_correction_does_not_cancel_the_pending_slot():
     events = _run(engine, _req("不对，是明天九点"))
     assert "已为您取消" not in (events[-1].get("speech") or "")
     assert spy.llm_plan_calls == 0          # 交给补槽分支，没有被当成「取消挂起 + 新请求」重新规划
+
+
+def test_the_reattached_confirm_uses_the_summary_stored_at_suspension():
+    """重新带上的确认用挂起那一刻存下的那句摘要（当时确认卡上的同一句），不读模型 goal；风险档按挂起步的声明。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.engine import PlannerEngine
+    held = SimpleNamespace(
+        phase="wait_confirm", operation_id="op-1", expires_at=1_900_000_000.0, pending_step_id="s1",
+        action_summary="打开后备箱",
+        pending_plan={"goal": "模型写的目标", "raw_text": "帮我把后备箱打开吧",
+                      "steps": [{"id": "s1", "intent": "trunk.open", "slots": {}, "require_confirm": True}]})
+    final = {"speech": "深圳今天晴。"}
+
+    PlannerEngine._append_pending_hint(final, held)
+
+    assert final["need_confirm"] is True and final["operation_id"] == "op-1"
+    policy = final["confirm_policy"]
+    assert policy["action_summary"] == "打开后备箱" and policy["risk"] == "high"
+    assert policy["expires_at_ms"] == 1_900_000_000_000 and policy["target_intent"] == "trunk.open"
+
+
+def test_a_held_slot_question_only_gets_the_soft_reminder():
+    """补槽 / 选择类挂起不重新挂确认（K07 的裁决只管确认），照旧一句软提醒。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.engine import PlannerEngine
+    held = SimpleNamespace(phase="wait_slot", operation_id="op-2", pending_plan={"goal": "订餐"})
+    final = {"speech": "深圳今天晴。"}
+
+    PlannerEngine._append_pending_hint(final, held)
+
+    assert not final.get("need_confirm") and "operation_id" not in final
+    assert "还在等你继续补充" in final["follow_up"]
+
+
+def test_a_turn_with_its_own_prompt_keeps_it():
+    """这一轮自己挂了新的确认 / 追问：最新的提示是它，不拿旧那条盖掉。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.engine import PlannerEngine
+    held = SimpleNamespace(phase="wait_confirm", operation_id="op-old", pending_plan={})
+    final = {"speech": "要关闭车窗吗？", "need_confirm": True, "operation_id": "op-new"}
+
+    PlannerEngine._append_pending_hint(final, held)
+
+    assert final["operation_id"] == "op-new" and "confirm_policy" not in final
+
