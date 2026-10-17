@@ -233,7 +233,7 @@ journeys:
   - {id: EN05, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
-     known_red: "2026-10-16：`9aa84404` 3 / 5、`252cab57` 4 / 5。第 2 句的两种形态已修：「再加一个」的「再」被当成第二个动作、复核重试零步（§18.10），规划器把路线上已有的站抄进 add_waypoint（§18.11）；T2 再规划的焦点下发与规划器替用户挑站也已修（§18.3 / §18.4）。`252cab57` 没过的那遍在首句：规划器给的两步互相依赖成环，校验拒掉后重试零步，已修（§19.1，`57880d46`）。2026-10-17 `3d2f9a28` 4 / 5：没过的那遍在第 2 句，规划器把途经点写成「候选充电站」、导航按字面搜不到，第二个站没加上（第 3 句因而不问换哪一个），泛指的充电说法改按类目搜已修（§19.2）"}
+     known_red: "2026-10-16：`9aa84404` 3 / 5、`252cab57` 4 / 5。第 2 句的两种形态已修：「再加一个」的「再」被当成第二个动作、复核重试零步（§18.10），规划器把路线上已有的站抄进 add_waypoint（§18.11）；T2 再规划的焦点下发与规划器替用户挑站也已修（§18.3 / §18.4）。`252cab57` 没过的那遍在首句：规划器给的两步互相依赖成环，校验拒掉后重试零步，已修（§19.1，`57880d46`）。2026-10-17 `3d2f9a28` 4 / 5：没过的那遍在第 2 句，规划器把途经点写成「候选充电站」、导航按字面搜不到，第二个站没加上（第 3 句因而不问换哪一个），泛指的充电说法改按类目搜已修（§19.2）。`351bc935` 4 / 5：没过的那遍在首句——规划成单步导航、按原话「附近…充电」列沿途的站问去哪家，首句没加站，第 3 句于是直接换掉唯一的站；`3d2f9a28` r3 也出现过这种走法，是首句规划方差"}
   - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
      known_red: "2026-10-17：`3d2f9a28` 4 / 10（钉 M3，两组各 ×5；此前 collector 留存 10 遍 9 遍过）。第 2 句「那顺路加个充电站」6 遍失败里 5 遍规划器只出 `charging.find`（列站、不改线）、1 遍线格式写坏；提示词与历史时期实质相同（第 1 句回复逐字一致），是模型方差。确定性收口要么让充电 Agent 在单步找站时改派改线（需要「结果被后续步引用」的通用信号，否则两步计划会加两个站），要么规划知识先 A/B（§19.2 登记）"}
