@@ -278,16 +278,19 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-10-13 +179 → 14400：新增 `memory.remember`（「记住…」当场写入）。描述刻意写上边界——待办「记一下」与定时提醒用
     # reminder.create、问自己记过什么用闲聊——此前规划器把「记住」派给生态服务桥 / 建提醒。有意新增 +1 条，仍零裁剪（余量约 1600）。
     # 2026-10-16 +35 → 14435：新增端侧 `charging_port.query`（机械生成的「查询充电口盖」，同香氛 / 胎压）。有意新增 +1 条，仍零裁剪。
-    assert catalog.catalog_stats["chars_full"] == 14435
-    assert catalog.catalog_stats["chars_final"] == 14435
+    # 2026-10-17 +50 → 14485：`manual.query` 描述补「车主用口语问本车能不能做某事、有没有某功能…也归这里」（M10，容器 A/B 正例 21 → 37 / 40、
+    # 负例 0 / 40 不变；见 manifest 注释）。条数不变，仍零裁剪。
+    assert catalog.catalog_stats["chars_full"] == 14485
+    assert catalog.catalog_stats["chars_final"] == 14485
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
     # 余量随目录一起走（14221 → 1779；2026-10-12 加前备箱两条时看过一眼，仍零裁剪；2026-10-13 加 memory.remember
-    # 14400 → 1600，再看一眼：仍零裁剪，但只够再加七八条带边界描述的能力；2026-10-16 加 charging_port.query 14435 → 1565）。
+    # 14400 → 1600，再看一眼：仍零裁剪，但只够再加七八条带边界描述的能力；2026-10-16 加 charging_port.query 14435 → 1565；
+    # 2026-10-17 手册描述补一句 14485 → 1515）。
     # 这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 1565
+    assert 16000 - catalog.catalog_stats["chars_final"] == 1515
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

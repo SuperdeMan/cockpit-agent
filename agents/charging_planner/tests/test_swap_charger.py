@@ -237,3 +237,14 @@ def test_adding_a_charger_is_not_escalated_when_a_later_step_uses_this_result_or
         agent, calls = _agent()
         res = _find(agent, text, meta)
         assert "_escalate" not in (res.data or {}) and calls, (text, meta)
+
+
+def test_adding_a_charger_from_the_long_trip_plan_entry_is_handed_to_navigation_too():
+    """`292bb8f0` 复测 EN09 5 遍 2 遍：同一句被规划成 `charging.plan`，念了「建议途中补电 1 次」、路线没改。两个入口共用一份判据。"""
+    agent, calls = _agent()
+    res = asyncio.run(run_handle(agent, "charging.plan", slots={"destination": "厦门站"}, raw_text="那顺路加个充电站",
+                                 ctx=make_context(), meta={**LOC, "focus_active_route": _route([])}))
+    assert res.speech == "" and not calls
+    assert res.data["_escalate"]["intent"] == "navigation.reroute"
+    assert res.data["_escalate"]["slots"] == {"add_waypoint": "充电站"}
+

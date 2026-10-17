@@ -69,7 +69,8 @@ def test_names_stop_needs_a_distinctive_part_of_the_name(text, name, named):
     assert names_stop(text, name) is named
 
 
-@pytest.mark.parametrize("text", ["候选充电站", "充电站", "一个充电站", "附近的充电桩", "顺路的快充"])
+@pytest.mark.parametrize("text", ["候选充电站", "充电站", "一个充电站", "附近的充电桩", "顺路的快充",
+                                  "附近可用快充站", "空闲的充电桩", "能用的充电站"])
 def test_generic_charger_words_name_no_particular_station(text):
     """2026-10-17 EN07 r3：规划器写 `add_waypoint=候选充电站`，导航按字面搜不到，第二个站没加上。"""
     from runtime.charger_swap import is_generic_charger_word

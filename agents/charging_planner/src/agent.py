@@ -127,6 +127,22 @@ class ChargingPlannerAgent(BaseAgent):
         """活动路线上有没有途经点。"""
         return bool(cls._route_stops(meta))
 
+    @classmethod
+    def _add_route_charger(cls, intent, meta) -> AgentResult | None:
+        """正在导航、原话要在这趟路线上加一个充电站 ⇒ 零播报改派 `navigation.reroute`；否则 None。
+
+        EN09（2026-10-17）：「那顺路加个充电站」被规划成只找站（`3d2f9a28` 6 遍失败 5 遍）或长途补电方案（`292bb8f0` 5 遍 2 遍）——
+        列站 / 念方案、路线没改。挑站与改路线归导航（沿途找、按路线位置插入），同换站那一跳；找站与补电方案两个入口共用这一份。
+        计划里有后续步接着用这份结果（「找站 → 引用第一个改线」）时不改派——那一步会加，再改派就加了两个站（`result_consumed`：
+        执行器按计划下发的通用信号）。同一句里还在发起导航（「导航去X，顺路加个充电站」）的不改派：这一轮的新路线还没登记，
+        改派会把站加到旧路线上——那种句子由导航那一步带途经点。"""
+        raw = intent.raw_text or ""
+        if (asks_to_add_charger(raw) and "导航" not in raw and cls._route_active(meta)
+                and (meta or {}).get(RESULT_CONSUMED_META) != "true"):
+            return AgentResult(speech="", data={"_escalate": {
+                "intent": "navigation.reroute", "slots": {"add_waypoint": "充电站"}, "reason": "add_route_charger"}})
+        return None
+
     @staticmethod
     def _route_active(meta) -> bool:
         """有一条活动路线（编排下发的服务端事实里有目的地）。"""
@@ -163,16 +179,9 @@ class ChargingPlannerAgent(BaseAgent):
         if swap and self._route_has_stops(meta):
             return AgentResult(speech="", data={"_escalate": {
                 "intent": "navigation.reroute", "slots": {}, "reason": "swap_route_charger"}})
-        # EN09（2026-10-17）：正在导航，原话要在这趟路线上加一个充电站（「那顺路加个充电站」），规划器却只出了找站——列站、不改线
-        # （`3d2f9a28` 6 遍失败 5 遍是这样）。挑站与改路线归导航（沿途找、按路线位置插入），这里零播报改派，同换站那一跳。
-        # 计划里有后续步接着用这份找站结果（「找站 → 引用第一个改线」）时不改派——那一步会加，再改派就加了两个站
-        # （`result_consumed`：执行器按计划下发的通用信号）。同一句里还在发起导航（「导航去X，顺路加个充电站」）的不改派：
-        # 这一轮的新路线还没登记，改派会把站加到旧路线上——那种句子由导航那一步带途经点。
-        raw = intent.raw_text or ""
-        if (asks_to_add_charger(raw) and "导航" not in raw and self._route_active(meta)
-                and (meta or {}).get(RESULT_CONSUMED_META) != "true"):
-            return AgentResult(speech="", data={"_escalate": {
-                "intent": "navigation.reroute", "slots": {"add_waypoint": "充电站"}, "reason": "add_route_charger"}})
+        handoff = self._add_route_charger(intent, meta)
+        if handoff is not None:
+            return handoff
         # 没有活动路线的「换一个充电站」：排除这一会话里推荐过的站（此前照常找站，又推荐同一个——CA2-19 §9.1）
         seen = await self._recommended(ctx) if swap else []
         # 「再加一个充电站」：路线上已有的站不再推荐（2026-10-10 真栈 swap2：推荐的正是路线上那个，又被加了一遍）。
@@ -433,6 +442,11 @@ class ChargingPlannerAgent(BaseAgent):
 
     async def _plan(self, intent, ctx, meta) -> AgentResult:
         """规划长途充能策略。"""
+        # EN09 同一条（`_add_route_charger`）：正在导航时「那顺路加个充电站」被规划成长途补电方案（`292bb8f0` 复测 5 遍 2 遍）——
+        # 念了「建议途中补电 1 次」，路线没改。要的是改这趟路线，改派导航。
+        handoff = self._add_route_charger(intent, meta)
+        if handoff is not None:
+            return handoff
         dest = intent.slots.get("destination", "").strip()
         if not dest:
             return AgentResult(
