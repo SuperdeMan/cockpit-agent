@@ -626,3 +626,69 @@ def test_solve_treats_zero_percent_as_a_reading():
     assert out.itinerary[0].legs[0].charging_stops            # 0% 必须补电，不会被当成 50%
     speech, _ = pipeline.narrate(out)
     assert "没读到当前电量" not in speech
+
+
+# ── EN11（2026-10-17）：长途段的路线算不出不是 0 km ─────────────────────────────────────────────
+
+class _FlakyPOI(FakePOI):
+    """前 `fail` 次路线请求抛错（高德业务层失败，如按秒限流），之后返回配置的路线。"""
+    def __init__(self, fail, **kw):
+        super().__init__(**kw)
+        self.fail = fail
+        self.route_calls = 0
+
+    async def get_route(self, origin, destination, meta=None, with_polyline=False, waypoints=None):
+        self.route_calls += 1
+        if self.route_calls <= self.fail:
+            raise pipeline.ProviderError("amap direction_driving failed: CUQPS_HAS_EXCEEDED_THE_LIMIT")
+        return self.route
+
+
+def _inbound_trip(fail):
+    trip = Trip(destination="杭州", days=1)
+    trip.itinerary = [Day(day_index=1, stops=[
+        Stop(stop_id="s1", name="西湖", grounded=True, poi={"name": "西湖", "lat": 30.25, "lng": 120.16})])]
+    points = [{"lat": 22.53 + i * 0.1, "lng": 113.95, "cum_km": i * 20} for i in range(60)]
+    prov = _FlakyPOI(fail, search_map={"充电站": [_poi("沿途充电站", 24.5, 114.0)]},
+                     route={"distance_km": 1238.2, "duration_min": 780, "points": points})
+    return trip, prov
+
+
+def _solve_inbound(trip, prov, monkeypatch):
+    monkeypatch.setattr(pipeline, "_ROUTE_RETRY_S", 0.0)
+    return asyncio.run(pipeline.solve(prov, trip, 72, {"current_lat": "22.5410", "current_lng": "113.9412"},
+                                      full_range_km=500, day_cap_min=100000))
+
+
+def test_a_long_leg_that_fails_once_is_retried_and_weaves_charging(monkeypatch):
+    """`99178302` EN11 5 遍 3 遍：「当前位置 → 西湖」那一段 0 km、不补电。重试一次就排上补电。"""
+    trip, prov = _inbound_trip(fail=1)
+    out = _solve_inbound(trip, prov, monkeypatch)
+    inbound = out.itinerary[0].legs[0]
+    assert prov.route_calls == 2
+    assert inbound.distance_km == 1238.2 and inbound.charging_stops and not inbound.route_unknown
+
+
+def test_a_long_leg_that_keeps_failing_is_marked_unknown_and_narrated(monkeypatch):
+    """重试后仍失败：不当 0 km 静默成「不用补电」——标出来，话术如实说补电没排全；存取后标记还在。"""
+    trip, prov = _inbound_trip(fail=2)
+    out = _solve_inbound(trip, prov, monkeypatch)
+    inbound = out.itinerary[0].legs[0]
+    assert prov.route_calls == 2
+    assert inbound.route_unknown and not inbound.charging_stops
+    speech, _ = pipeline.narrate(out)
+    assert "长途路线这会儿没算出来" in speech and "补电没排全" in speech
+    assert Trip.from_dict(out.to_dict()).has_unknown_route()
+
+
+def test_a_short_leg_failure_is_not_retried_or_flagged(monkeypatch):
+    """市内短段算不出照旧按 0 计（只影响按日顺延），不重试、不标——话术不多一句。"""
+    trip = Trip(destination="近郊", days=1)
+    trip.itinerary = [Day(day_index=1, stops=[
+        Stop(stop_id="s1", name="A", grounded=True, poi={"name": "A", "lat": 30, "lng": 120}),
+        Stop(stop_id="s2", name="B", grounded=True, poi={"name": "B", "lat": 30.1, "lng": 120.1})])]
+    prov = _FlakyPOI(fail=5, route={"distance_km": 12.0, "duration_min": 20, "points": []})
+    monkeypatch.setattr(pipeline, "_ROUTE_RETRY_S", 0.0)
+    out = asyncio.run(pipeline.solve(prov, trip, 80, {}, full_range_km=500))
+    assert prov.route_calls == 1 and not out.has_unknown_route()
+    assert "没算出来" not in pipeline.narrate(out)[0]

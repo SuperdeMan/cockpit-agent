@@ -332,6 +332,29 @@ def test_status_reports_progress():
     assert res.ui_card["type"] == "trip_itinerary"
 
 
+def test_a_charging_question_gets_an_answer_even_when_no_charging_was_woven():
+    """EN11「这个行程全程要补几次电」：此前补电次数为 0 时只报站数。零次要说清是哪种零——不用补电 / 读不到电量 / 有段路线没算出来。"""
+    from agents.trip_planner.src.models import Leg
+    agent = TripPlannerAgent()
+
+    def ask(trip):
+        return asyncio.run(run_handle(agent, "trip.status", slots={}, raw_text="这个行程全程要补几次电",
+                                      ctx=_persisted_ctx(trip))).speech
+
+    trip = _trip_2days()
+    trip.ev = {"start_soc": 72}
+    assert "全程不用补电" in ask(trip)
+    trip.ev = {"start_soc": None}
+    assert "没读到电量" in ask(trip)
+    trip.ev = {"start_soc": 72}
+    trip.itinerary[0].legs = [Leg(from_stop_id="__origin__", to_stop_id="s1", route_unknown=True)]
+    assert "没算出来" in ask(trip) and "说不准" in ask(trip)
+    # 不问补电时照旧只报进度（不多一句）
+    plain = asyncio.run(run_handle(agent, "trip.status", slots={}, raw_text="行程到哪了",
+                                   ctx=_persisted_ctx(trip))).speech
+    assert "补电" not in plain
+
+
 def test_status_without_trip():
     agent = TripPlannerAgent()
     res = asyncio.run(run_handle(agent, "trip.status", slots={}, raw_text="行程到哪了"))

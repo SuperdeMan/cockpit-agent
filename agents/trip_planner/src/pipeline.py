@@ -12,6 +12,7 @@
 provider 在进程内复用（navigation 的 POIProvider）——跟随 charging_planner 先例，避免每 leg 跨 gRPC。
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import os
@@ -37,6 +38,9 @@ try:
     DAY_MAX_MIN = int(os.getenv("TRIP_DAY_MAX_MIN", "480"))
 except ValueError:
     DAY_MAX_MIN = 480
+# 长途段：两端直线距离超过它，路线算不出就不能按 0 计（补电编织靠它），重试一次、仍失败如实标出（`solve`）。
+_LONG_LEG_KM = 50.0
+_ROUTE_RETRY_S = 1.0
 
 # 放松节奏偏好（带老人/轻松/不累/悠闲）→ 每天更少停靠点。
 _PREF_RELAXED = ("带老人", "老人", "轻松", "不累", "不要太累", "悠闲", "慢", "带娃", "带孩子", "亲子")
@@ -692,21 +696,36 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float | None, meta,
     except (TypeError, ValueError):
         origin = None
 
+    unknown: set = set()          # 长途段重试后仍没算出来的 (from, to)——不是 0 km，见 `Leg.route_unknown`
+
     async def route(a: Stop, b: Stop):
-        """相邻已接地 stop 的路线（distance_km, drive_min, points），按 id 对缓存。"""
+        """相邻已接地 stop 的路线（distance_km, drive_min, points），按 id 对缓存。
+
+        市内短段算不出照旧按 0 计（只影响按日上限顺延，best-effort）。长途段（直线超过 `_LONG_LEG_KM`，如「当前位置 → 杭州」）
+        算不出就不是小事：按 0 计，方案就静默成了「全程不用补电」（核心旅程 EN11：同一句 5 遍 3 遍这样，那一段的高德请求业务层失败）。
+        所以长途段退避重试一次，仍失败记进 `unknown`，由调用方标出来、如实说。"""
         key = (a.stop_id, b.stop_id)
         if key in cache:
             return cache[key]
         res = (0.0, 0, [])
         if a.lat and a.lng and b.lat and b.lng:
-            try:
-                r = await poi_provider.get_route(
-                    GeoPoint(lat=a.lat, lng=a.lng), GeoPoint(lat=b.lat, lng=b.lng),
-                    meta=meta, with_polyline=True)
-                res = (float(r.get("distance_km") or 0), int(r.get("duration_min") or 0),
-                       r.get("points") or [])
-            except Exception as e:   # best-effort：算不出按 0 计（含 ProviderError）
-                logger.debug("route unavailable: %s", e)
+            long_leg = rough_km(a.lat, a.lng, b.lat, b.lng) > _LONG_LEG_KM
+            for attempt in range(2 if long_leg else 1):
+                try:
+                    r = await poi_provider.get_route(
+                        GeoPoint(lat=a.lat, lng=a.lng), GeoPoint(lat=b.lat, lng=b.lng),
+                        meta=meta, with_polyline=True)
+                    res = (float(r.get("distance_km") or 0), int(r.get("duration_min") or 0),
+                           r.get("points") or [])
+                    unknown.discard(key)
+                    break
+                except Exception as e:   # best-effort：短段算不出按 0 计（含 ProviderError）
+                    logger.info("route %s->%s unavailable (attempt %d): %s",
+                                a.stop_id, b.stop_id, attempt + 1, type(e).__name__)
+                    if long_leg:
+                        unknown.add(key)
+                        if attempt == 0:
+                            await asyncio.sleep(_ROUTE_RETRY_S)   # 高德按秒限流：错开这一秒再试
         cache[key] = res
         return res
 
@@ -763,7 +782,8 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float | None, meta,
             dist, drive_min, points = await route(a, b)
             leg = Leg(from_stop_id=a.stop_id, to_stop_id=b.stop_id,
                       distance_km=dist, drive_min=drive_min,
-                      soc_before=round(running) if soc_known else None)
+                      soc_before=round(running) if soc_known else None,
+                      route_unknown=(a.stop_id, b.stop_id) in unknown)
             if not soc_known:
                 leg.soc_after = None
                 day.legs.append(leg)
@@ -824,6 +844,9 @@ def narrate(trip: Trip) -> tuple[str, dict]:
     if "start_soc" in trip.ev and trip.ev.get("start_soc") is None:
         # CA2-19 S1：没读到电量就没排补电点——说清楚，别让用户以为全程不用充电
         lines.append("没读到当前电量，沿途补电没排，出发前按实际电量再帮你安排")
+    elif trip.has_unknown_route():
+        # EN11：长途段的路线没算出来，补电就没排全——同一个理由，说清楚
+        lines.append(f"去{trip.destination}有一段长途路线这会儿没算出来，沿途补电没排全，出发前按实际路线再帮你安排")
     theme_tag = f"按《{trip.theme}》主题" if trip.theme else ""
     head = (f"已{theme_tag}结合天气为您规划{trip.destination}{trip.days}天行程："
             if has_weather

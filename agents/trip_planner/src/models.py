@@ -45,6 +45,8 @@ class Leg:
     charging_stops: list = field(default_factory=list)  # [{name,address,lat,lng,at_km}]
     soc_before: int = 0
     soc_after: int = 0
+    # 长途段的路线这次没算出来（重试过）：距离不是 0、补电也就没排——话术与补电追问要如实说（核心旅程 EN11）
+    route_unknown: bool = False
 
 
 @dataclass
@@ -121,6 +123,10 @@ class Trip:
                 return dy
         return None
 
+    def has_unknown_route(self) -> bool:
+        """有长途段的路线没算出来（`Leg.route_unknown`）：补电没排全，话术与补电追问要如实说。"""
+        return any(leg.route_unknown for dy in self.itinerary for leg in (dy.legs or []))
+
     def first_stop(self) -> "Stop | None":
         """行程第一个已接地的停靠点（确认收尾时作导航第一站）。"""
         for dy in self.itinerary:
@@ -152,6 +158,7 @@ def _leg_from_dict(d: dict) -> Leg:
         charging_stops=list(d.get("charging_stops") or []),
         soc_before=int(d.get("soc_before", 0) or 0),
         soc_after=int(d.get("soc_after", 0) or 0),
+        route_unknown=bool(d.get("route_unknown")),
     )
 
 

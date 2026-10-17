@@ -103,6 +103,8 @@ _DAY_COUNT_RE = re.compile(r"(?<!第)\s*(?:[0-9]+|[一二两三四五六七八�
 # C7-A：裸 POI 名的跨城披露闸。150km 与 navigation R1 的区县级可信闸**同一把尺子**
 # ——「用户裸报一个名字时心智是本地」在两处是同一条判断。
 _CROSS_CITY_KM = 150.0
+#: 行程进度问句里问的是补电（「全程要补几次电」「电够不够」）——零次也要说清是哪种零（`_status`）
+_ASKS_CHARGING_RE = re.compile(r"[补充].{0,3}电|电够|续航")
 
 # R8：天气驱动改排——「哪天要下雨的话，把那天的安排换成室内的」（雨×室内 / 雨×换改调）
 _RAIN_INDOOR_RE = re.compile(
@@ -836,6 +838,14 @@ class TripPlannerAgent(BaseAgent):
             parts.append("行程已全部走完")
         if charge_total:
             parts.append(f"全程需补电{charge_total}次")
+        elif _ASKS_CHARGING_RE.search(intent.raw_text or ""):
+            # 问的就是补电（核心旅程 EN11「这个行程全程要补几次电」）：零次也要说清是哪种零——此前只报站数，问什么答什么没对上
+            if "start_soc" in trip.ev and trip.ev.get("start_soc") is None:
+                parts.append("规划时没读到电量，补电还没排，出发前按实际电量再帮你算")
+            elif trip.has_unknown_route():
+                parts.append(f"去{trip.destination}有一段长途路线没算出来，补电次数这会儿说不准，出发前按实际路线再帮你算")
+            else:
+                parts.append("按规划时的电量全程不用补电")
         return AgentResult(
             speech="，".join(parts) + "。", ui_card=trip.card_dict(),
             data={"total": total, "remaining": len(remaining), "charging": charge_total})
