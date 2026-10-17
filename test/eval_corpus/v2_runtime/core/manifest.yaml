@@ -232,11 +232,11 @@ journeys:
   - {id: EN04, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN05, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
-  - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
-     known_red: "2026-10-17：`292bb8f0` 4 / 5（规划器把站写成「附近可用快充站」，`d6b6b688` 起「可用 / 空闲」算泛指）、`d6b6b688` 3 / 5：r3 第 2 句首轮改线是对的，被「多动作遗漏」复核逼着重试、重试答不受话（第十三轮第三批起显式输入回落原计划，后续批 §20.5）；r4 第 2 句两轮都写「需要澄清」零步、落兜底——首轮澄清方差，同 A1-5 一族。同一 SHA 5 / 5 再摘"}
+  # 曾标 known_red（规划器把站写成「附近可用快充站」/ 复核重试翻成不受话 / 首轮澄清方差）；2026-10-18 `a5c108a2` 5 / 5（同一 SHA），摘牌；再红就按回退报
+  - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
-  - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
-     known_red: "2026-10-17：`3d2f9a28` 4 / 10 → `292bb8f0` 7 / 10（找站改派改线）→ `d6b6b688` 4 / 5（补电方案入口也改派、G-3 认「导航去 X」）。剩下的是规划器抽样出「需要澄清」零步（`d6b6b688` r3 第 1 句「需要澄清：用户给的是单一名词对象」、第 2 句两轮都要澄清）——与 A1-5 同一族，规划知识 A/B 已证伪那条路（后续批 §20.3）；同一 SHA 5 / 5 再摘"}
+  # 曾标 known_red（「那顺路加个充电站」只找站不改线 / 首轮澄清方差）；2026-10-18 `a5c108a2` 5 / 5（同一 SHA），摘牌；再红就按回退报
+  - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   # 曾标 known_red（「行程规划不看能源」）；2026-10-17 取证改判：「当前位置→第一站」那段高德路线业务层失败被当成 0 km（后续批 §20.4），长途段重试、仍失败如实说，`d6b6b688` 5 / 5，2026-10-17 摘牌；再红就按回退报
   - {id: EN11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: synthetic_writes}

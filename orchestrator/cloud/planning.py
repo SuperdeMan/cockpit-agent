@@ -15,7 +15,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import NamedTuple
 from security.permission import check_permission
 from runtime.capability_contract import step_fields as contract_step_fields, STATE_EFFECTS
@@ -52,7 +52,7 @@ from runtime.question_shape import (
     is_reference_question, is_definition_only_question, is_complete_information_question,
     asks_switch_state,
 )
-from .step_grounding import instructs, step_naming_score
+from .step_grounding import instructs, names_only_the_object, step_naming_score
 from .pending_cancel import detect_confirm_rejection
 from .reply_position import reply_position
 from .admission import (ADDRESSEE_FALSE, ADDRESSEE_OBJECT_HEAD, ADDRESSEE_QUESTION,
@@ -1729,6 +1729,40 @@ def _trigger_information_question_clarified(state: PlanAttemptState) -> bool:
     return wants_clarify and is_complete_information_question(str(state.text or ""))
 
 
+def _names_a_catalog_capability(text: str, catalog) -> bool:
+    """本请求目录里有能力被这句话点名（`step_naming_score` > 0：读 Registry 的能力描述，规划器不加领域词），且这句话不只是
+    某个被点名能力的对象名（`names_only_the_object`：「空调」是裸对象族，照旧可澄清）。"""
+    agent_map = getattr(catalog, "agent_map", None) or {}
+    named = False
+    for agent_id, intent in (getattr(catalog, "pair_to_ref", None) or {}):
+        manifest = getattr(agent_map.get(agent_id), "manifest", None)
+        for cap in getattr(manifest, "capabilities", None) or []:
+            description = getattr(cap, "description", "")
+            if str(getattr(cap, "intent", "") or "") != intent or not isinstance(description, str):
+                continue
+            if step_naming_score(text, SimpleNamespace(intent=intent, capability_description=description, slots={})) > 0:
+                if names_only_the_object(text, description):
+                    return False
+                named = True
+    return named
+
+
+def _trigger_named_directive_clarified(state: PlanAttemptState) -> bool:
+    """带操作线索、本轮目录里也有能力被它点名的指令仍被判成澄清（目标标记或澄清卡）——要做什么、对谁做都说了。
+
+    2026-10-18（200×5 后续批 §20.6）：「导航去厦门火车站」首轮零步、goal 写「需要澄清：用户给的是单一名词对象」，随后被
+    `clarify_goal_with_steps` 按裸对象族逼出「你希望我怎么处理…」。collector 留存 74 次「带操作线索、首轮就被逼去澄清」里，
+    被点名的 24 句（导航 / 充电 / 提醒 / 记忆 / 车控 / 条件句 / 车态问句）没有一句真该澄清；澄清评测语料里 6 句真歧义一句不触发
+    （都没有操作线索）。真该澄清的点不出能力（「怎么调」「把那个关了」「打开它」）；裸对象（「空调」）按子串认得出操作动词「调」，
+    靠「不只是对象名」（`names_only_the_object`）排除，照旧澄清。
+    点名只在模型想澄清、原话又带操作线索时才算（短路求值）。
+    """
+    wants_clarify = bool(state.goal_requires_clarification
+                         or (state.parsed is not None and state.parsed.clarify))
+    text = str(state.text or "")
+    return wants_clarify and carries_operation_cue(text) and _names_a_catalog_capability(text, state.catalog)
+
+
 def _trigger_clarify_copies_example(state: PlanAttemptState) -> bool:
     """澄清照抄了提示词结构示例里的对象（`CLARIFY_EXAMPLE_OBJECT`）：问题或选项里有它，用户原话与最近对话里都没有。
 
@@ -1852,6 +1886,7 @@ _RETRY_PREDICATES = {
         _trigger_complete_conditional_clarified,
     TriggerKind.INFORMATION_QUESTION_CLARIFIED:
         _trigger_information_question_clarified,
+    TriggerKind.NAMED_DIRECTIVE_CLARIFIED: _trigger_named_directive_clarified,
     TriggerKind.CLARIFY_COPIES_EXAMPLE: _trigger_clarify_copies_example,
     TriggerKind.FOCUSED_LIST_BATCH_CONFLICT:
         _trigger_focused_list_batch_conflict,

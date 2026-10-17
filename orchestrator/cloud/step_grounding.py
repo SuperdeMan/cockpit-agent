@@ -80,6 +80,16 @@ def naming_score(text: str, description: str, slots: dict | None = None) -> int:
     return max(1, _covered(description_head(description), t) + sum(len(_compact(v)) for v in hit_values))
 
 
+def names_only_the_object(text: str, description: str) -> bool:
+    """这句话**只有**这一步的对象名、别的什么都没说（「空调」「露营模式？」）——裸对象族，澄清正是为它准备的。
+
+    「打开空调」「空调呢」不算：对象名之外还有字。操作线索判据按子串认操作动词（「空调」里有「调」），裸对象得靠这一条排除。
+    """
+    t = _compact(text)
+    core = object_core(description)
+    return bool(t) and bool(core) and _covered(t, core) == len(t)
+
+
 #: 开 / 关方向词。句中任意位置只认多字：单字「关」会撞上「关于」、单字「开」会撞上「开心 / 开车」。
 OPEN_WORDS = ("打开", "开启", "开一下")
 CLOSE_WORDS = ("关闭", "关掉", "关上", "合上", "关一下", "关了")

@@ -59,6 +59,7 @@ class TriggerKind(Enum):
     PLAN_ONLY_CONTRACT_VIOLATED = "plan_only_contract_violated"
     COMPLETE_CONDITIONAL_CLARIFIED = "complete_conditional_clarified"
     INFORMATION_QUESTION_CLARIFIED = "information_question_clarified"
+    NAMED_DIRECTIVE_CLARIFIED = "named_directive_clarified"
     CLARIFY_COPIES_EXAMPLE = "clarify_copies_example"
     FOCUSED_LIST_BATCH_CONFLICT = "focused_list_batch_conflict"
     FOCUS_DEPENDENT_CONFLICT = "focus_dependent_conflict"
@@ -166,6 +167,11 @@ CORRECTION_TEMPLATES = {
         "\n\n校验反馈：用户原话已经是一个完整的信息问题（问方法、含义、有哪些、在哪、为什么等），"
         "问的对象和要的东西都说清楚了，不是对象不明。不要向用户反问选哪个动作，也不要执行任何"
         "改变状态的动作；请只规划本轮 catalog 里能回答这个问题的合法能力，goal 保留用户原问题。"
+    ),
+    "named_directive": (
+        "\n\n校验反馈：用户原话已经说了要做什么，也点名了要对谁做（本轮 catalog 里有能力的描述被它点名），"
+        "不是对象不明，也不是只给了一个对象。不要向用户反问选哪个动作；请直接按原话规划本轮 catalog 里的"
+        "合法能力，goal 保留用户原话。"
     ),
     "complete_conditional": (
         "\n\n校验反馈：用户原话是完整条件句，已经同时给出条件前件和条件"
@@ -281,6 +287,15 @@ RETRY_POLICIES: tuple = (
         trigger=TriggerKind.INFORMATION_QUESTION_CLARIFIED,
         stage=STAGE_GUARD, wire_modes=WIRE_ALL, attempt_limit=2,
         correction_template="information_question",
+        next_wire=NEXT_WIRE_PLAN_ONLY),
+    # 2026-10-18（200×5 后续批 §20.6）：带操作线索、目录里也有能力被点名的指令（「导航去厦门火车站」）被判成「需要澄清」，随后
+    # `clarify_goal_with_steps` 按裸对象族逼出澄清卡——排在它之前，下一次只许给计划（同上两条的先例）。只在首轮：末轮再判掉
+    # 只会把一张带选项的澄清卡换成「没听清」的失败话术。
+    RetryPolicy(
+        name="named_directive_clarified",
+        trigger=TriggerKind.NAMED_DIRECTIVE_CLARIFIED,
+        stage=STAGE_GUARD, wire_modes=WIRE_ALL, attempt_limit=1,
+        correction_template="named_directive",
         next_wire=NEXT_WIRE_PLAN_ONLY),
     # 2026-10-07：澄清照抄了结构示例的对象（用户没说过它）。排在条件句 / 信息问题两条之后——那两条有更具体的诊断，
     # 下一次只许给计划；这条兜剩下的形态（问候被逼着交澄清卡）。

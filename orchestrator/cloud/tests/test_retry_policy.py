@@ -77,7 +77,7 @@ def _inventory_rows() -> list[dict]:
 
 def test_inventory_parser_actually_found_the_table():
     """先证明解析器不是在空扫——扫不全的结构断言比没有更糟。"""
-    assert len(_inventory_rows()) == len(RETRY_POLICIES) == 15
+    assert len(_inventory_rows()) == len(RETRY_POLICIES) == 16
 
 
 def test_inventory_matches_the_code_table():
@@ -167,7 +167,7 @@ def test_planning_no_longer_holds_an_inline_guard_chain():
 # ── 3. 场景矩阵与消融 ──────────────────────────────────────────────────────
 
 class _MockAgent:
-    def __init__(self, agent_id, intents):
+    def __init__(self, agent_id, intents, descriptions=None):
         self.manifest = MagicMock()
         self.manifest.agent_id = agent_id
         self.manifest.capabilities = []
@@ -178,7 +178,7 @@ class _MockAgent:
         self.manifest.trust_level = "first_party"
         for intent in intents:
             cap = MagicMock()
-            cap.intent, cap.slots, cap.description = intent, [], ""
+            cap.intent, cap.slots, cap.description = intent, [], (descriptions or {}).get(intent, "")
             cap.examples, cap.heavy, cap.require_confirm = [], False, False
             self.manifest.capabilities.append(cap)
         self.manifest.route_hints = []
@@ -191,7 +191,9 @@ def _agents():
     return [_MockAgent("chitchat", ["chitchat.talk"]),
             _MockAgent("hvac", ["hvac.off", "hvac.on"]),
             _MockAgent("nearby", ["nearby.search"]),
-            _MockAgent("window", ["window.close", "window.open"])]
+            # 点名判据读能力描述（`named_directive_clarified`）；其余替身照旧空描述
+            _MockAgent("window", ["window.close", "window.open"],
+                       descriptions={"window.close": "关闭车窗", "window.open": "打开车窗"})]
 
 
 async def _no_resolve(query="", intent="", top_k=1):
@@ -309,6 +311,14 @@ _MATRIX = [
      ["clarify_copies_example"], (2, 0), "toolcall"),
     ("clarify_example_object_said_by_user", "云岚国际中心", None, {},
      [_tool(_EXAMPLE_CLARIFY)], [], [], (1, 0), "toolcall"),
+    # 2026-10-18：带操作线索、点名了能力的指令被判成澄清——下一次只许给计划（裸对象「车窗」照旧澄清）
+    ("named_directive", "打开车窗", None, {},
+     [_tool({"addressed": True, "goal": "需要澄清：用户只给了对象名，未说明意图", "steps": []}),
+      _tool(_args(goal="打开车窗", steps=[_step("cap_0006")]))], [],
+     ["named_directive_clarified"], (2, 0), "toolcall"),
+    ("bare_object_still_clarifies", "车窗", None, {},
+     [_tool({"addressed": True, "goal": "需要澄清：用户只给了对象名，未说明意图", "steps": []}), _tool(_CLARIFY)], [],
+     ["clarify_goal_with_steps"], (2, 0), "toolcall"),
     ("plan_only_contract_violated", "如果明天下雨就提醒我带伞", None, {},
      [_tool(_CLARIFY), _tool({**_args(goal="带伞"), "extra_key": 1})], [],
      ["complete_conditional_clarified", "plan_only_contract_violated"], (2, 0),
