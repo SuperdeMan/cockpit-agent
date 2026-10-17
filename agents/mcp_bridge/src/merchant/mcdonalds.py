@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from runtime.external_text import plain_name
+from runtime.proximity import asks_nearby
 from runtime.slots import is_place_placeholder
 from runtime.external_url import https_url_host, pay_url_allowed
 
@@ -155,7 +156,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
 
         now = self._clock()
         store, store_code, refusal = await self._resolve_store(
-            slots, now=now, user_id=user_id, session_id=session_id, chosen=chosen)
+            slots, now=now, user_id=user_id, session_id=session_id, chosen=chosen,
+            raw_text=str(getattr(intent, "raw_text", "") or ""))
         if refusal is not None:
             return refusal
 
@@ -808,13 +810,13 @@ class McDonaldsWorkflow(MerchantWorkflow):
         return False
 
     async def _resolve_store(self, slots: dict, *, now, user_id: str = "", session_id: str = "",
-                             chosen: dict | None = None):
+                             chosen: dict | None = None, raw_text: str = ""):
         """把 store_hint/city 解析成一家可下单的官方门店。
 
         返回 `(store, store_code, refusal)`——`refusal` 非 None 时调用方原样返回。
         下单与看菜单**共用这一份**判定：打烊、营业状态可靠性、同名多店消歧，
         抄成两份就会漂移（B1 的成因）。`chosen`：选店续跑从草稿里挑中的那家（`_resume_store_choice`），
-        按门店身份直接用，不再按名字重查官方门店。
+        按门店身份直接用，不再按名字重查官方门店。`raw_text`：这一步的原话（没给门店时看用户是不是在要附近的店）。
         """
         if chosen is not None:
             store_code = str(chosen.get("storeCode") or "")
@@ -828,7 +830,9 @@ class McDonaldsWorkflow(MerchantWorkflow):
             return chosen, store_code, None
         raw_hint = self._choice_value(slots.get("store_hint"), "门店")
         not_a_store = ("mcd_store_nearby" if is_place_placeholder(raw_hint)
-                       else "mcd_store_foreign" if self._foreign_poi(raw_hint) else "")
+                       else "mcd_store_foreign" if self._foreign_poi(raw_hint)
+                       # 没给门店、原话却在要附近的店（四次复测三次被规划成空槽的单步 `mcd.menu`）：同一跳
+                       else "mcd_store_nearby" if not raw_hint and asks_nearby(raw_text) else "")
         if not_a_store:
             # 两种线索都不是一家麦当劳（2026-10-17 demo-dqt1fu 复测），拿去查官方门店只会出错：
             # - 「附近 / 这里 / 当前位置」：规划器出单步 `mcd.menu{store_hint: 附近, city: 当前位置}`，官方接口按它当关键词查、
@@ -943,7 +947,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
         if resumed is not None:
             slots, chosen = resumed
         store, store_code, refusal = await self._resolve_store(
-            slots, now=now, user_id=user_id, session_id=session_id, chosen=chosen)
+            slots, now=now, user_id=user_id, session_id=session_id, chosen=chosen,
+            raw_text=str(getattr(intent, "raw_text", "") or ""))
         if refusal is not None:
             return refusal
         try:

@@ -1837,3 +1837,27 @@ def test_only_another_brands_map_name_counts_as_foreign():
     for hint in ("麦当劳(深圳科苑南路餐厅)", "McDonald's(科技园店)", "麦当劳深圳前海科兴天地餐厅", "科兴", "国贸店", ""):
         assert not foreign(hint), hint
 
+
+@pytest.mark.asyncio
+async def test_no_store_hint_but_asking_for_a_nearby_store_escalates_to_a_nearby_search():
+    """四次复测三次：「帮我查一下我附近的麦当劳有什么可以点单的？」被规划成空槽的单步 `mcd.menu`。没给门店、原话在要附近的店：
+    不退回收藏门店（demo-3ukshz：附近答成碧海君庭），也不要用户报城市，改派周边按品牌找。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    intent = SimpleNamespace(name="mcd.menu", slots={}, raw_text="帮我查一下我附近的麦当劳有什么可以点单的？")
+    result = await workflow.menu(intent, CTX, META)
+    assert client.calls == []
+    assert result.data["_escalate"] == {
+        "intent": "nearby.search", "slots": {"brand": "麦当劳"}, "reason": "mcd_store_nearby"}
+
+
+@pytest.mark.asyncio
+async def test_no_store_hint_without_asking_nearby_keeps_the_default_store_path():
+    """反向对照：「麦当劳有什么吃的」没说附近——照旧走默认门店（收藏）那条路，不改派。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [STORE_RESULT], "query-meals": [MENU_RESULT]})
+    intent = SimpleNamespace(name="mcd.menu", slots={}, raw_text="麦当劳有什么吃的")
+    result = await workflow.menu(intent, CTX, META)
+    assert "_escalate" not in (result.data or {})
+    assert client.calls and client.calls[0][1].get("searchType") == 1
+
