@@ -661,7 +661,7 @@ async def test_the_first_one_with_a_full_stop_opens_the_first_stores_menu():
     查门店又是多家。现在从草稿里按序号挑中第一家，请求槽从草稿恢复（桥误写的商品查询作废），直接出菜单。"""
     workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
         "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
-    asked = await workflow.menu(_menu(store_hint="沙县精品小吃(老兵大厦店)"), CTX, META)
+    asked = await workflow.menu(_menu(store_hint="科兴"), CTX, META)
     assert asked.status == NEED_SLOT and asked.data.get("checkout_token")
 
     shown = await workflow.menu(_menu(store_hint="第一个。", item_query="麦当劳深圳前海科兴天地餐厅",
@@ -1793,3 +1793,47 @@ async def test_create_response_order_id_must_be_a_plain_token(order_id):
     assert client.counts["create-order"] == 1
     assert ledger.closes[0][2]["status"] == "uncertain"
     assert ledger.closes[0][2]["order_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_nearby_placeholder_store_hint_escalates_to_a_nearby_search():
+    """2026-10-17 demo-dqt1fu 复测：单步 `mcd.menu{store_hint: 附近, city: 当前位置}`，官方接口把「附近」当关键词查、业务拒绝，
+    用户听到「暂时无法查询…请稍后再试」。占位值不是门店：不发官方调用，改派周边按品牌找附近的店。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    result = await workflow.menu(_menu(store_hint="附近", city="当前位置"), CTX, META)
+    assert client.calls == []
+    assert result.data["_escalate"] == {
+        "intent": "nearby.search", "slots": {"brand": "麦当劳"}, "reason": "mcd_store_nearby"}
+    assert "附近的麦当劳" in result.speech
+
+
+@pytest.mark.asyncio
+async def test_a_placeholder_city_counts_as_no_city():
+    """「当前位置」不是城市：不拿它按位置查（官方 searchType=2 会拒），当没给城市，走既有的无城市分支。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    await workflow.menu(_menu(store_hint="科兴", city="当前位置"), CTX, META)
+    name, args, _retry = client.calls[0]
+    assert name == "query-nearby-stores" and args.get("searchType") == 1, "无城市分支照旧查（收藏门店）"
+    assert "city" not in args
+
+
+@pytest.mark.asyncio
+async def test_another_shops_map_name_is_not_used_as_a_store_hint():
+    """2026-10-17 复测：周边退回「美食」兜底，`slot_refs` 把第一家烤肉店的 POI 名填进 store_hint，剥成「科技园店」去查，
+    官方回默认列表，选店卡给的是坑梓、惠州的店。别家的 POI 名不是麦当劳门店：不发官方调用，改派周边按品牌找。"""
+    workflow, client = _workflow(workflow_intent="mcd.menu", scripts={
+        "query-nearby-stores": [_NESTED_STORES], "query-meals": [MENU_RESULT]})
+    result = await workflow.menu(_menu(store_hint="微风小院·烤肉·生日团建·驻唱k歌(科技园店)"), CTX, META)
+    assert client.calls == []
+    assert result.data["_escalate"]["reason"] == "mcd_store_foreign"
+    assert result.data["_escalate"]["slots"] == {"brand": "麦当劳"}
+
+
+def test_only_another_brands_map_name_counts_as_foreign():
+    foreign = McDonaldsWorkflow._foreign_poi
+    assert foreign("沙县精品小吃(老兵大厦店)") and foreign("樟荣·沙县手工小吃（南山店）")
+    for hint in ("麦当劳(深圳科苑南路餐厅)", "McDonald's(科技园店)", "麦当劳深圳前海科兴天地餐厅", "科兴", "国贸店", ""):
+        assert not foreign(hint), hint
+

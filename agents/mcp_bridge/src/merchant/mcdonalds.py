@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from runtime.external_text import plain_name
+from runtime.slots import is_place_placeholder
 from runtime.external_url import https_url_host, pay_url_allowed
 
 from agents._sdk import candidate_ref
@@ -659,6 +660,18 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 break
         return text or str(hint or "").strip()
 
+    @staticmethod
+    def _foreign_poi(hint: str) -> bool:
+        """门店线索是**别家**的地图 POI 名：高德命名的「店名(分店)」形状，括号外的店名里没有麦当劳 ⇒ True。
+
+        `_store_keyword` 只取括号里那段（「麦当劳(深圳科苑南路餐厅)」→「深圳科苑南路餐厅」），不看括号外是谁家的店——
+        「沙县精品小吃(老兵大厦店)」照样被剥成「老兵大厦店」去查官方门店。用户说的门店、选择卡按钮都不带这种括号形状。"""
+        match = re.match(r"^([^（(]+)[（(]", str(hint or "").strip())
+        if not match:
+            return False
+        outer = match.group(1).strip().lower()
+        return bool(outer) and not any(word in outer for word in ("麦当劳", "mcdonald"))
+
     @classmethod
     def _matching_stores(cls, stores: list[dict], hint: str) -> list[dict]:
         if not hint:
@@ -813,9 +826,30 @@ class McDonaldsWorkflow(MerchantWorkflow):
                     f"{self._store_name(chosen) or '这家麦当劳'}现在不能下单（可能已打烊）。"
                     "可以换一家门店或稍后再试。")
             return chosen, store_code, None
-        store_hint = self._store_keyword(
-            self._choice_value(slots.get("store_hint"), "门店"))
+        raw_hint = self._choice_value(slots.get("store_hint"), "门店")
+        not_a_store = ("mcd_store_nearby" if is_place_placeholder(raw_hint)
+                       else "mcd_store_foreign" if self._foreign_poi(raw_hint) else "")
+        if not_a_store:
+            # 两种线索都不是一家麦当劳（2026-10-17 demo-dqt1fu 复测），拿去查官方门店只会出错：
+            # - 「附近 / 这里 / 当前位置」：规划器出单步 `mcd.menu{store_hint: 附近, city: 当前位置}`，官方接口按它当关键词查、
+            #   业务拒绝，用户听到「暂时无法查询…请稍后再试」——每次都一样，不是临时故障；
+            # - 别家的地图 POI 名（周边退回「美食」兜底时，`slot_refs` 把第一家「微风小院·烤肉…(科技园店)」填了进来）：剥成
+            #   「科技园店」去查，官方回默认列表，选店卡给的是坑梓、惠州的店——对「离我最近那家」完全不对。
+            # 桥拿不到位置（GPS 不下发第三方），收藏门店又不是「附近」（demo-3ukshz 碧海君庭）：改派周边按品牌找附近的麦当劳，
+            # 同 `mcd_store_unresolved` 那一跳（每轮最多一跳）；附近真没有，周边会照实说。选一家后再看菜单 / 下单。
+            refusal = self.refused(
+                "我先帮你找找附近的麦当劳。",
+                "从结果里选一家，我就能继续帮你看菜单或下单。")
+            refusal.data["_escalate"] = {
+                "intent": "nearby.search",
+                "slots": {"brand": MERCHANT_NAME},
+                "reason": not_a_store,
+            }
+            return None, "", refusal
+        store_hint = self._store_keyword(raw_hint)
         city = str(slots.get("city") or "").strip()
+        if is_place_placeholder(city):
+            city = ""       # 占位值就是没给城市（`runtime.slots` 同一份判据；官方 searchType=2 拿「当前位置」当城市会被拒）
         # searchType 语义（2026-08-14 真机 schema 取证）：1=搜索**收藏餐厅**、
         # 2=按位置搜索（city+keyword 必填）。此前写死 1，keyword 传了也没人看，
         # 「附近的麦当劳」永远只回测试账号收藏的碧海君庭——真机实测
