@@ -43,7 +43,7 @@ journeys:
   - {id: A3-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
   - {id: A5-2, source: journeys/regression_a.yaml, family: F08, lane: read_only}
   - {id: A1-5, source: journeys/regression_a.yaml, family: F08, lane: read_only,
-     known_red: "2026-10-16：周边不再要求支付权限后天气指南照常注入（§18.2），`3168262c` / `9aa84404` 各 4 / 5、`252cab57` 3 / 5。只给天气漏了类目那种（`9aa84404` r5）已由周边按天气定类目兜住（§18.9）；剩下的都是首轮规划器把 goal 写成「需要澄清：天气未知，先查天气…」却零步（`3168262c` r4、`252cab57` r2 / r3），要改规划知识、先 A/B（§18.14 登记）"}
+     known_red: "2026-10-17 weather-outing 指南补「天气未知不是澄清理由」的 A/B 证伪（生产 cloud-planner 容器只规划不执行，钉 M3：A 臂目标句首轮澄清 7 / 40、B 臂 9 / 40，后续批 §20.3）。确定性出口要让 Agent 声明「这句按 adaptive 先查天气」的 route hint（manifest 新字段），登记。此前：`3168262c` / `9aa84404` 各 4 / 5、`252cab57` 3 / 5，只给天气漏了类目那种已由周边按天气定类目兜住（§18.9）"}
   - {id: A3-3, source: journeys/target_a.yaml, family: F08, lane: read_only}
   # ── F09 周边 ────────────────────────────────────────────────────
   # 2026-10-16 起周边 Agent 不再要求 payment.invoke（后续批 §18.2），这些旅程不再按条补权限，按合成用户的真实权限跑
@@ -233,13 +233,13 @@ journeys:
   - {id: EN05, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
-     known_red: "2026-10-16：`9aa84404` 3 / 5、`252cab57` 4 / 5。第 2 句的两种形态已修：「再加一个」的「再」被当成第二个动作、复核重试零步（§18.10），规划器把路线上已有的站抄进 add_waypoint（§18.11）；T2 再规划的焦点下发与规划器替用户挑站也已修（§18.3 / §18.4）。`252cab57` 没过的那遍在首句：规划器给的两步互相依赖成环，校验拒掉后重试零步，已修（§19.1，`57880d46`）。2026-10-17 `3d2f9a28` 4 / 5：没过的那遍在第 2 句，规划器把途经点写成「候选充电站」、导航按字面搜不到，第二个站没加上（第 3 句因而不问换哪一个），泛指的充电说法改按类目搜已修（§19.2）。`351bc935` 4 / 5：没过的那遍在首句——规划成单步导航、按原话「附近…充电」列沿途的站问去哪家，首句没加站，第 3 句于是直接换掉唯一的站；`3d2f9a28` r3 也出现过这种走法，是首句规划方差"}
+     known_red: "2026-10-17：`292bb8f0` 4 / 5（规划器把站写成「附近可用快充站」，`d6b6b688` 起「可用 / 空闲」算泛指）、`d6b6b688` 3 / 5：r3 第 2 句首轮改线是对的，被「多动作遗漏」复核逼着重试、重试答不受话（第十三轮第三批起显式输入回落原计划，后续批 §20.5）；r4 第 2 句两轮都写「需要澄清」零步、落兜底——首轮澄清方差，同 A1-5 一族。同一 SHA 5 / 5 再摘"}
   - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
-     known_red: "2026-10-17：`3d2f9a28` 4 / 10（钉 M3，两组各 ×5；此前 collector 留存 10 遍 9 遍过）。第 2 句「那顺路加个充电站」6 遍失败里 5 遍规划器只出 `charging.find`（列站、不改线）、1 遍线格式写坏；提示词与历史时期实质相同（第 1 句回复逐字一致），是模型方差。确定性收口要么让充电 Agent 在单步找站时改派改线（需要「结果被后续步引用」的通用信号，否则两步计划会加两个站），要么规划知识先 A/B（§19.2 登记）"}
+     known_red: "2026-10-17：`3d2f9a28` 4 / 10 → `292bb8f0` 7 / 10（找站改派改线）→ `d6b6b688` 4 / 5（补电方案入口也改派、G-3 认「导航去 X」）。剩下的是规划器抽样出「需要澄清」零步（`d6b6b688` r3 第 1 句「需要澄清：用户给的是单一名词对象」、第 2 句两轮都要澄清）——与 A1-5 同一族，规划知识 A/B 已证伪那条路（后续批 §20.3）；同一 SHA 5 / 5 再摘"}
   - {id: EN10, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
-  - {id: EN11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: synthetic_writes,
-     known_red: "2026-10-13（首份 200×5 `70b179b7` 0/5）：行程规划不看能源——杭州两日游的方案不含补电，「这个行程全程要补几次电」答成站数。能力缺口，不是方差"}
+  # 曾标 known_red（「行程规划不看能源」）；2026-10-17 取证改判：「当前位置→第一站」那段高德路线业务层失败被当成 0 km（后续批 §20.4），长途段重试、仍失败如实说，`d6b6b688` 5 / 5，2026-10-17 摘牌；再红就按回退报
+  - {id: EN11, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: synthetic_writes}
   - {id: EN12, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN13, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN14, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}

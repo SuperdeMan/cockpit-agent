@@ -1797,13 +1797,18 @@ def is_voice_input_source(source) -> bool:
     return src.startswith("voice_") or src == "ptt"
 
 
+def _is_hands_free_input(ctx) -> bool:
+    """免唤醒语音（`voice_*`）：受不受话本身是拒识要判的事。文字 / 按钮 / Android ptt 是显式输入。"""
+    prefs = getattr(ctx, "prefs", None) or {}
+    return str(prefs.get("input_source", "")).startswith("voice_")
+
+
 def _trigger_explicit_input_not_addressed(state: PlanAttemptState) -> bool:
     """显式输入（包括 Android ptt）的一次 not-addressed 先重试；免唤醒保持原策略。"""
     parsed = state.parsed
     if not (parsed is not None and not parsed.addressed and not parsed.steps):
         return False
-    prefs = getattr(state.ctx, "prefs", None) or {}
-    return not str(prefs.get("input_source", "")).startswith("voice_")
+    return not _is_hands_free_input(state.ctx)
 
 
 def _trigger_salvage_wire_accepted(state: PlanAttemptState) -> bool:
@@ -2259,6 +2264,19 @@ class PlanBuilder:
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
             # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
             if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):
+                # 「多动作遗漏」复核逼出来的重试把「受话」翻成了「不受话」：与它复核的问题（漏没漏第二个动作）无关——
+                # 强制重试不许比不重试更差，照被复核的原计划执行（`d6b6b688` 复测 EN07 r3「途经再加一个充电站」：首轮改线是对的，
+                # 重试答不受话，整轮落成「没听清」）。照旧用重试的三种：重试交了澄清卡或真给出了计划；免唤醒语音——受不受话正是
+                # 拒识要判的事，两次抽样不一致按拒识算（同 `explicit_input_not_addressed` 只盖显式输入）；求信息的请求而原计划里
+                # 有写步（同循环后 N-3 那条）。
+                if (recheck_kept is not None and attempt > recheck_attempt
+                        and not parsed.steps and not parsed.addressed and parsed.clarify is None
+                        and not _is_hands_free_input(ctx)
+                        and not (is_information_request(text) and self._write_steps(recheck_kept.steps))):
+                    logger.info("multi-action recheck retry flipped to not addressed; keeping the plan it rechecked (%s)",
+                                [s.intent for s in recheck_kept.steps])
+                    plan, plan_mode = recheck_kept, "multi_action_recheck_kept"
+                    break
                 if retries.run(STAGE_ACCEPT, state):
                     salvage_kept = parsed      # 留作回落，再给工具通道一次机会
                     salvage_attempt = attempt

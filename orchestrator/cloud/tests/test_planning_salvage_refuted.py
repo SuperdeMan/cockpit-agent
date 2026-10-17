@@ -232,7 +232,7 @@ def test_a_directive_still_falls_back_to_its_salvaged_vehicle_write():
 
 
 # ── 「多动作遗漏」复核之后没拿到可执行计划（200×5 后续批 §18.10，EN07 `9aa84404` r1）──────────────────────
-def _build_recheck(text, first, retry):
+def _build_recheck(text, first, retry, prefs=None):
     replies = [first, retry]                     # 两轮都走工具通道：第 1 轮单步，被「多动作遗漏」判掉重要一份
 
     async def llm_tools(messages, tools):
@@ -245,10 +245,12 @@ def _build_recheck(text, first, retry):
         return []
 
     builder = PlanBuilder(llm_fn=llm, registry_fn=resolve, llm_tool_fn=llm_tools)
-    return asyncio.run(builder.build(text, WorkingSet(catalog=_agents_with_manual()), PlanContext(session_id="t")))
+    return asyncio.run(builder.build(text, WorkingSet(catalog=_agents_with_manual()),
+                                     PlanContext(session_id="t", prefs=dict(prefs or {}))))
 
 
 _REROUTE = ("navigation", "navigation.reroute")
+_NOT_ADDRESSED_CALL = ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": {"addressed": False, "steps": []}}])
 
 
 def test_a_recheck_that_comes_back_empty_keeps_the_plan_it_rechecked():
@@ -257,6 +259,29 @@ def test_a_recheck_that_comes_back_empty_keeps_the_plan_it_rechecked():
     plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NO_ACTION_CALL)
     assert [s.intent for s in plan.steps] == ["navigation.reroute"], plan.steps
     assert plan.plan_mode == "multi_action_recheck_kept" and plan.technical_failure is False
+
+
+def test_a_recheck_retry_that_flips_to_not_addressed_keeps_the_plan_it_rechecked():
+    """`d6b6b688` 复测 EN07 r3：首轮改线是对的，被「多动作遗漏」复核逼着重试，重试答「不受话」，整轮落成「没听清」。
+    受不受话与复核的问题无关：照被复核的原计划执行。"""
+    plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NOT_ADDRESSED_CALL)
+    assert [s.intent for s in plan.steps] == ["navigation.reroute"], plan.steps
+    assert plan.plan_mode == "multi_action_recheck_kept" and plan.addressed
+
+
+def test_a_hands_free_recheck_retry_that_flips_to_not_addressed_is_a_rejection():
+    """免唤醒语音里受不受话正是拒识要判的事：两次抽样不一致按拒识算，不回落去执行（同 `explicit_input_not_addressed`
+    只盖显式输入）。"""
+    plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NOT_ADDRESSED_CALL,
+                          prefs={"input_source": "voice_followup"})
+    assert plan.steps == [] and plan.addressed is False
+
+
+def test_an_information_request_whose_rechecked_plan_writes_is_not_kept_on_a_not_addressed_flip():
+    """同 N-3：求信息的请求、原计划里有写步，重试说不受话 ⇒ 不回落去执行那一步。"""
+    plan = _build_recheck("推荐三部适合全家看的电影，再说说哪部最好看",
+                          _tool_call(("navigation", "navigation.navigate_to")), _NOT_ADDRESSED_CALL)
+    assert "navigation.navigate_to" not in [s.intent for s in plan.steps], plan.steps
 
 
 def test_a_recheck_refuted_on_an_information_request_does_not_execute_the_write():
