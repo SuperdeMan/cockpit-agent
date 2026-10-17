@@ -190,7 +190,10 @@ def test_a_navigation_verb_governs_only_its_first_clause():
     res = _run(agent, "navigation.navigate_to", {}, "导航去东部华侨城，沿途帮我找个充电站")
     nav = [a for a in res.actions if a["type"] == "navigate"]
     assert nav and nav[0]["payload"]["destination"] == "东部华侨城", (res.status, res.speech)
-    assert all("充电站" not in keyword for keyword in calls["search"])
+    # 第二个分句没漏进任何一次检索。原先写成「没有检索词含『充电站』」，那是拿沿途停靠恰好搜「充电」当的代理；
+    # 2026-10-17 起泛指的充电说法规范成类目词「充电站」（`charger_swap.is_generic_charger_word`），停靠那次检索就是它
+    assert all("沿途" not in keyword and "，" not in keyword for keyword in calls["search"]), calls["search"]
+    assert calls["search"][0] == "东部华侨城", calls["search"]
 
 
 def test_a_trailing_route_preference_still_leaves_one_clause():

@@ -19,7 +19,7 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
                                   location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
-from runtime.charger_swap import asks_to_swap_charger, is_charger_name, names_stop
+from runtime.charger_swap import asks_to_swap_charger, is_charger_name, is_generic_charger_word, names_stop
 from runtime.route_stops import on_route, plain_name, same_stop
 from runtime.slots import STEP_ORIGIN_META, is_place_placeholder
 from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
@@ -1063,6 +1063,9 @@ class NavigationAgent(BaseAgent):
     @classmethod
     def _stop_keyword(cls, category: str) -> str:
         c = (category or "").strip()
+        # 泛指充电这一类（「候选充电站」「一个充电桩」）⇒ 类目检索词；带品牌 / 站名特征的照旧按字面（`charger_swap` 同一份判据）
+        if c and is_generic_charger_word(c):
+            return "充电站"
         for k, v in cls._STOP_CATEGORY_KEYWORDS.items():
             if k in c:
                 return v

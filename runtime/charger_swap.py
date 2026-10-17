@@ -58,3 +58,22 @@ def names_stop(text: str, stop_name: str) -> bool:
         if any(part[i:i + 2] in words for i in range(len(part) - 1)):
             return True
     return False
+
+
+#: 不点名的修饰：「候选充电站」「一个充电站」「附近的充电桩」「顺路的快充」——指的是充电这一类，不是哪一个站。
+_GENERIC_MODIFIERS_RE = re.compile(r"候选|随便|任意|另一个|一个|一家|一座|个|家|座|附近的?|最近的?|顺路的?|沿途的?|路上的?|的")
+
+
+def is_generic_charger_word(text: str) -> bool:
+    """停靠点说法只是泛指充电这一类（去掉类目词与不点名的修饰后什么都不剩）⇒ True；带品牌 / 站名特征的（「特斯拉充电站」）⇒ False。
+
+    2026-10-17 EN07（`3d2f9a28` r3）：「途经再加一个充电站」被规划成 `add_waypoint=候选充电站`，导航按这四个字去搜、什么也没找到，
+    第二个站没加上。导航据此把泛指的说法换成类目检索词；带品牌的照旧按字面搜（换成类目会把用户点名的品牌丢掉）。"""
+    if not is_charger_name(text) and not _STATION_WORD_RE.search(str(text or "")):
+        return False
+    rest = _GENERIC_STOP_PARTS_RE.sub("", plain_name(str(text or "")))
+    return not _GENERIC_MODIFIERS_RE.sub("", rest).strip()
+
+
+_STATION_WORD_RE = re.compile(_STATION)
+

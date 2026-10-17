@@ -678,3 +678,12 @@ def test_a_category_alias_adds_a_stop_of_that_category():
     assert f"已顺路加上{_CHARGER_B['name']}" in res.speech
     assert _CHARGER_B["name"] in names
 
+
+def test_a_generic_charger_phrase_is_searched_as_the_category():
+    """EN07 `3d2f9a28` r3：「途经再加一个充电站」被规划成 `add_waypoint=候选充电站`，修前按这四个字去搜、什么也没找到。"""
+    res, calls, names = _add([_CHARGER_A], [_poi(_CHARGER_A, "c1"), _poi(_CHARGER_B, "c2")],
+                             slots={"add_waypoint": "候选充电站"})
+    assert f"已顺路加上{_CHARGER_B['name']}" in res.speech
+    assert sorted(names) == sorted([_CHARGER_A["name"], _CHARGER_B["name"]])
+    assert all("候选" not in str(c) for c in calls["search"]), calls["search"]
+
