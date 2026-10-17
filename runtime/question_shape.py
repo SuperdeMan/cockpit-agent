@@ -267,6 +267,14 @@ def is_imperative_opening(t: str | None) -> bool:
 #: 补槽挂起下的换题判据（`engine._is_topic_change`）消费同一份。
 REMIND_ME_CUES = ("提醒我", "叫我", "通知我", "别忘了")
 
+#: 句首的「取消 / 删除 + …」与「去 + 第 N 家 / 这家 / 那个」：要系统撤掉一件事，或去候选里的那一处（2026-10-17 G-3 误伤取证：
+#: collector 留存的 5 次拦截全是误伤——N08「明天上午十点提醒我取快递」（`REMIND_ME_CUES` 已收）、NB11「就去第二家」×3、
+#: N02「取消带伞的提醒」）。只认句首（可带礼貌前缀与「就 / 那 / 那就 / 还是 / 我要 / 我想」）：「会议取消了」「我昨天去那家吃过」
+#: 是陈述，不是请求。不进 `OPERATION_VERBS`：那张单字表还有端侧快路径与问句判据在用，「去」「取消」进去牵连太大。零领域词。
+_CANCEL_OR_GO_CUE_RE = re.compile(
+    r"^(?:请|麻烦|帮我|帮忙|给我|替我)?\s*(?:那就|那|就|还是|我要|我想)?\s*"
+    r"(?:取消|删除|删掉|去(?:第[一二三四五六七八九十两\d]+[家个站处]|[这那](?:家|个|里|儿|处)))")
+
 
 def carries_operation_cue(t: str | None) -> bool:
     """原话自己带着「要系统操作」的句法证据：祈使开头、操作动词，或操作动作词（追加批 G）。
@@ -282,7 +290,8 @@ def carries_operation_cue(t: str | None) -> bool:
     return bool(is_imperative_opening(body)
                 or any(v in body for v in OPERATION_VERBS)
                 or any(a in body for a in HOW_TO_ACTIONS)
-                or any(c in body for c in REMIND_ME_CUES))
+                or any(c in body for c in REMIND_ME_CUES)
+                or _CANCEL_OR_GO_CUE_RE.match(body))
 
 
 def _polite_tail_body(t: str) -> str | None:

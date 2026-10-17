@@ -739,3 +739,30 @@ def test_a_remind_me_request_carries_an_operation_cue():
     assert carries_operation_cue("明天上午十点提醒我取快递") is True
     assert carries_operation_cue("下午三点叫我开会") is True
     assert carries_operation_cue("可以，已为您执行") is False      # G-3 的原始反例照旧没有线索
+
+
+@pytest.mark.parametrize("text", [
+    "就去第二家",            # 真栈 NB11 ×3：被「不受话」重试催出来的导航因没有线索作废
+    "去第一个",
+    "那去这家吧",
+    "还是去那家",
+    "取消带伞的提醒",          # 真栈 N02 r5：取消提醒作废
+    "帮我删掉那条提醒",
+    "删除明天的提醒",
+])
+def test_a_clause_initial_cancel_or_go_to_a_candidate_carries_an_operation_cue(text):
+    """2026-10-17 G-3 误伤取证：collector 留存的 5 次拦截全是误伤。"""
+    from runtime.question_shape import carries_operation_cue
+    assert carries_operation_cue(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "会议取消了",             # 陈述：「取消」不在句首
+    "我昨天去那家吃过",        # 陈述：「去」前面是时间词
+    "他去第二家了",
+    "可以，已为您执行",        # G-3 的原始反例照旧没有线索
+])
+def test_cancel_or_go_words_that_are_not_requests_carry_no_cue(text):
+    from runtime.question_shape import carries_operation_cue
+    assert carries_operation_cue(text) is False, text
+
