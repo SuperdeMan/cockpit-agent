@@ -1804,7 +1804,8 @@ async def test_a_nearby_placeholder_store_hint_escalates_to_a_nearby_search():
     result = await workflow.menu(_menu(store_hint="附近", city="当前位置"), CTX, META)
     assert client.calls == []
     assert result.data["_escalate"] == {
-        "intent": "nearby.search", "slots": {"brand": "麦当劳"}, "reason": "mcd_store_nearby"}
+        "intent": "nearby.search", "slots": {"brand": "麦当劳"}, "reason": "mcd_store_nearby",
+        "resume": {"clear": ["store_hint", "city"]}}
     assert "附近的麦当劳" in result.speech
 
 
@@ -1829,6 +1830,8 @@ async def test_another_shops_map_name_is_not_used_as_a_store_hint():
     assert client.calls == []
     assert result.data["_escalate"]["reason"] == "mcd_store_foreign"
     assert result.data["_escalate"]["slots"] == {"brand": "麦当劳"}
+    # 周边找到后由编排续跑这一步：别家的店名与城市清掉，由周边结果里名字带「麦当劳」的那一家补上
+    assert result.data["_escalate"]["resume"] == {"clear": ["store_hint", "city"]}
 
 
 def test_only_another_brands_map_name_counts_as_foreign():
@@ -1848,7 +1851,8 @@ async def test_no_store_hint_but_asking_for_a_nearby_store_escalates_to_a_nearby
     result = await workflow.menu(intent, CTX, META)
     assert client.calls == []
     assert result.data["_escalate"] == {
-        "intent": "nearby.search", "slots": {"brand": "麦当劳"}, "reason": "mcd_store_nearby"}
+        "intent": "nearby.search", "slots": {"brand": "麦当劳"}, "reason": "mcd_store_nearby",
+        "resume": {"clear": ["store_hint", "city"]}}
 
 
 @pytest.mark.asyncio

@@ -243,6 +243,11 @@ def _ordinals(text: str) -> list[int]:
     return out
 
 
+def names_a_position(text: str) -> bool:
+    """句子里点了第几个（「…导航去第一家」，可以带别的内容）。序数判据同 `_ordinals`；执行器据此判「用户自己挑了列表里的哪一项」。"""
+    return bool(_ordinals(str(text or "")))
+
+
 def _named(text: str, items: list[dict]) -> list[dict]:
     """句子里按**名字**点到的候选项，按候选集顺序。
 

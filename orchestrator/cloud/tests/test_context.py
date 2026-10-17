@@ -135,6 +135,27 @@ def test_catalog_falls_back_to_full_when_resolve_empty():
     assert len(ws.catalog) == 5
 
 
+def test_catalog_uses_the_full_registry_when_semantic_ranking_was_unavailable():
+    """注册中心这次没算成语义排序（部署刚重启时向量化超时）：前 K 名只是关键词打分、周边可能被挤出去（2026-10-17 登记项）
+    ⇒ 用全量目录。标记缺席（旧注册中心 / 正常排序）照旧预筛。"""
+    from orchestrator.cloud.clients import ResolvedAgents
+    agents = [_agent(f"ag{i}", [f"ag{i}.x"]) for i in range(5)]
+
+    class _Degraded(_Clients):
+        async def resolve(self, query="", top_k=1):
+            return ResolvedAgents(self._agents[:2], semantic_unavailable=True)
+
+    degraded = ContextManager(_Degraded(agents), top_k=2)
+    assert len(asyncio.run(degraded.assemble("离我最近那家瑞幸", _ctx())).catalog) == 5
+
+    class _Ranked(_Clients):
+        async def resolve(self, query="", top_k=1):
+            return ResolvedAgents(self._agents[:2])
+
+    ranked = ContextManager(_Ranked(agents), top_k=2)
+    assert _ids(asyncio.run(ranked.assemble("离我最近那家瑞幸", _ctx()))) == {"ag0", "ag1"}
+
+
 def test_assemble_graceful_without_memory_methods():
     """clients 缺 get_session/recall → 历史/记忆为空、不崩（不阻塞规划）。"""
     agents = [_agent("a", ["a.x"])]

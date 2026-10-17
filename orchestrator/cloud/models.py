@@ -438,6 +438,9 @@ class PlanContext:
     # C3-D：本轮**被放弃**的那条挂起的人话名字（连续追问到上限）。
     # 空 = 没放弃过。**必须有话术**——静默丢弃就是 Q1-C 那条「淘汰必须有话术」的同一件事。
     abandoned_pending_label: str = ""
+    # K08（2026-10-17）：本轮开头否掉的那条**待确认提议**的 intent（「不对，是充电口」否掉的 `fuel_tank_cover.open`）。
+    # 规划据此确定性消解「只换了对象」的改口：动作沿用被否掉的那个（`PlanBuilder._corrected_object_plan`）。空 = 本轮没否掉提议。
+    rejected_proposal_intent: str = ""
     # C3-D：本轮续接进来的那条挂起「在问什么、问过几次」——
     # `{"step_id":…, "missing":[…], "retry":N}`。`_suspend` 拿它判**这次是不是同一个问题
     # 又问了一遍**：同一步换了个槽再问是**进展**（商户流程「先问门店再问餐品」正是如此），

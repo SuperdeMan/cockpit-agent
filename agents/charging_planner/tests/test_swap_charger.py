@@ -11,6 +11,8 @@ from agents.charging_planner.src.providers.base import ChargingStation
 from runtime.charger_swap import asks_to_swap_charger
 
 LOC = {"current_lat": "22.5", "current_lng": "113.8"}
+#: 执行器按计划下发：这一步的结果有后续步接着用（`runtime.slots.RESULT_CONSUMED_META`）
+_CONSUMED = {"result_consumed": "true"}
 _STATION = {"name": "国网充电站", "lat": 22.61, "lng": 114.03}
 
 
@@ -193,7 +195,8 @@ def _route_agent():
 def test_another_charger_on_an_active_route_skips_the_stations_already_on_it():
     """2026-10-10 真栈 swap2：「途经再加一个充电站」推荐的正是路线上那个站，又被加了一遍。说了「再 / 另 / 多」的，路线上已有的不算数。"""
     agent = _route_agent()
-    res = _find(agent, "途经再加一个充电站", {**LOC, "focus_active_route": _route([_STATION])})
+    # 计划里有后续步接着用这份结果（「找站 → 引用推荐站改线」）：找站照常推荐，不改派（见下面 EN09 那几条）
+    res = _find(agent, "途经再加一个充电站", {**LOC, "focus_active_route": _route([_STATION]), **_CONSUMED})
     assert res.data["waypoint"]["name"] == "特来电充电站", res.data
     assert [item["name"] for item in res.data["items"]] == ["特来电充电站"]
 
@@ -207,5 +210,30 @@ def test_a_repeated_plain_request_still_picks_the_nearest_station():
 
 def test_another_charger_says_so_when_every_station_is_already_on_the_route():
     agent, _ = _agent()
-    res = _find(agent, "再加一个充电站", {**LOC, "focus_active_route": _route([_STATION])})
+    res = _find(agent, "再加一个充电站", {**LOC, "focus_active_route": _route([_STATION]), **_CONSUMED})
     assert "都已经在路线上了" in res.speech and "waypoint" not in (res.data or {})
+
+
+# ── EN09（2026-10-17）：正在导航说「那顺路加个充电站」，规划器只出了找站 ⇒ 零播报改派导航改线 ──────────────────
+
+def test_adding_a_charger_on_an_active_route_is_handed_to_navigation():
+    """`3d2f9a28` EN09 6 遍失败 5 遍：规划器只出 `charging.find`，列站、不改线。挑站与改路线归导航（同换站那一跳）。"""
+    for text in ("那顺路加个充电站", "途经再加一个充电站", "路上帮我加个充电的地方"):
+        agent, calls = _agent()
+        res = _find(agent, text, {**LOC, "focus_active_route": _route([])})
+        assert res.speech == "" and not calls, text
+        assert res.data["_escalate"] == {"intent": "navigation.reroute", "slots": {"add_waypoint": "充电站"},
+                                         "reason": "add_route_charger"}, text
+
+
+def test_adding_a_charger_is_not_escalated_when_a_later_step_uses_this_result_or_there_is_no_route():
+    """后续步接着用这份找站结果（`result_consumed`）时改派会加两个站；没有活动路线、或只是找站（没说加）都照常找站。"""
+    cases = [("那顺路加个充电站", {**LOC, "focus_active_route": _route([]), **_CONSUMED}),
+             ("那顺路加个充电站", dict(LOC)),
+             ("帮我找个充电站", {**LOC, "focus_active_route": _route([])}),
+             # 同一句还在发起导航：新路线还没登记，改派会加到旧路线上
+             ("导航去厦门火车站，顺路加个充电站", {**LOC, "focus_active_route": _route([])})]
+    for text, meta in cases:
+        agent, calls = _agent()
+        res = _find(agent, text, meta)
+        assert "_escalate" not in (res.data or {}) and calls, (text, meta)

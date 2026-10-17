@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.charger_swap import asks_to_swap_charger, is_charger_name, names_stop
+from runtime.charger_swap import asks_to_add_charger, asks_to_swap_charger, is_charger_name, names_stop
 
 
 @pytest.mark.parametrize("text", [
@@ -82,3 +82,11 @@ def test_a_branded_or_named_station_is_not_generic(text):
     from runtime.charger_swap import is_generic_charger_word
     assert not is_generic_charger_word(text), text
 
+
+@pytest.mark.parametrize("text, adds", [
+    ("那顺路加个充电站", True), ("途经再加一个充电站", True), ("路上帮我加个充电的地方", True), ("加上一个快充站", True),
+    ("帮我找个充电站", False), ("附近有充电站吗", False), ("换一个充电站", False), ("加个油", False), ("加个途经点", False),
+])
+def test_adding_a_charger_is_told_apart_from_searching_and_swapping(text, adds):
+    """EN09：「（顺路）加个充电站」是改这趟路线；找站、换站、加别的停靠都不是。"""
+    assert asks_to_add_charger(text) is adds

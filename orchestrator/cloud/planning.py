@@ -53,6 +53,7 @@ from runtime.question_shape import (
     asks_switch_state,
 )
 from .step_grounding import instructs, step_naming_score
+from .pending_cancel import detect_confirm_rejection
 from .reply_position import reply_position
 from .admission import (ADDRESSEE_FALSE, ADDRESSEE_OBJECT_HEAD, ADDRESSEE_QUESTION,
                         ADDRESSEE_TRUE, ADDRESSEE_UNSURE)
@@ -316,6 +317,10 @@ _FOCUSED_CONTROL_ELLIPSIS_RE = re.compile(
     r"立刻|马上|现在))?"
     r"\s*[。！？!?～~]*\s*$"
 )
+# K08 改口只换了对象：否掉待确认提议之后余下的那半——「(我说的 / 我要的 / 应该 / 其实)是 + 对象」，可带语气收尾。
+# 对象 2–8 字、不带标点；方向由调用方用 `step_naming_score` 核（说反了不算点名）。同样零对象词 / 领域词。
+_CORRECTED_OBJECT_RE = re.compile(
+    r"(?:我说的|我要的|应该|其实)?是(?P<object>[^，,。！？!?\s]{2,8}?)(?:才对|吧|啊|呀|呢)?[。！!]?")
 #: 判「这一句要的是开还是关」。与上面的 alternation 同源，**必须同增同减**。
 _FOCUSED_OPEN_ACTIONS = frozenset({"打开", "开启", "开一下", "展开", "开"})
 #: 通用操作对，**不出现任何领域/Agent 字面量**：目标 intent 还要在本轮权限过滤后的
@@ -1968,6 +1973,48 @@ class PlanBuilder:
                     last_intent, match.group("action"), target_intent, positions)
         return Plan(steps=steps, raw_text=str(text or ""), goal=str(text or ""))
 
+    @staticmethod
+    def _corrected_object_plan(text: str, rejected_intent: str,
+                               catalog: PlannerCapabilityCatalog) -> Plan | None:
+        """改口只换了对象的**确定性消费方**（K08，2026-10-17；与 Q7 省略式开关对称）。
+
+        「打开油箱盖」挂着确认，用户说「不对，是充电口」：要做什么是确定的——动作沿用被否掉的提议（`open`），对象换成这句点名的那个。
+        交给规划器有方差（`9aa84404` 5 遍 2 遍错：一遍规划成 `charging_port.close`、一遍两轮零步落闲聊还说「请确认后我帮你执行」）。
+        三样东西各有确定来源，缺一就交回正常规划：
+          · **动作**来自本轮开头否掉的那条待确认提议（engine 从挂起计划里取，`ctx.rejected_proposal_intent`）；
+          · **对象**来自余下那半「(我说的 / 应该)是 + X」；
+          · **能力**来自本轮权限过滤后的 catalog：同一动作、被 X 点名（`step_naming_score`，与问句闸同一份判据）的唯一最高分那条，
+            被否掉的那条本身不算。X 里说了反方向（「是关充电口」）时点名判据给 0 分、交回正常规划；说了同方向（「是打开充电口」）照接。
+        产出的是普通 `Plan`，照常过 `_validated_steps`、executor、VAL 与 `require_confirm`（新提议照样挂确认）。"""
+        if "." not in str(rejected_intent or ""):
+            return None
+        rejection = detect_confirm_rejection(text)
+        remainder = re.split(r"[，,]", rejection.remainder)[-1].strip() if rejection.cancelled else ""
+        match = _CORRECTED_OBJECT_RE.fullmatch(remainder)
+        if match is None:
+            return None
+        target = match.group("object")
+        operation = rejected_intent.rsplit(".", 1)[1]
+        scored = []
+        for agent_id, intent in catalog.pair_to_ref:
+            if intent == rejected_intent or not intent.endswith(f".{operation}"):
+                continue
+            steps = PlanBuilder._validated_steps([{
+                "id": "s1", "agent_id": agent_id, "intent": intent,
+                "slots": {}, "depends_on": [], "slot_refs": {}}], dict(catalog.agent_map))
+            if len(steps) == 1:
+                score = step_naming_score(target, steps[0])
+                if score > 0:
+                    scored.append((score, steps[0]))
+        if not scored:
+            return None
+        best = max(score for score, _ in scored)
+        winners = [step for score, step in scored if score == best]
+        if len(winners) != 1:
+            return None          # 点名不唯一 ⇒ 交回正常规划，不猜
+        logger.info("Corrected object: rejected=%s -> %s", rejected_intent, winners[0].intent)
+        return Plan(steps=winners, raw_text=str(text or ""), goal=str(text or ""))
+
     async def build(self, text: str, working_set: WorkingSet, ctx: PlanContext,
                     granted_permissions: list[str] = None) -> Plan:
         """构建执行计划。最多重试 1 次，失败降级到语义路由。
@@ -2021,9 +2068,15 @@ class PlanBuilder:
         # 真栈证明「把焦点写进 prompt」不够：同一句话三次取样能给出三种结果，
         # 其中一次是 chitchat 声称「已为您关闭天窗」而 action 为空——**说了没做**。
         focused_plan = self._focused_control_ellipsis_plan(text, working_set, catalog)
+        mode = "focus_deterministic"
+        if focused_plan is None:
+            # K08：等确认时「不对，是充电口」——否掉提议、只换了对象 ⇒ 动作沿用被否掉的那个（与上面 Q7 对称）
+            focused_plan = self._corrected_object_plan(
+                text, str(getattr(ctx, "rejected_proposal_intent", "") or ""), catalog)
+            mode = "correction_deterministic"
         if focused_plan is not None:
             focused_plan.catalog_stats = dict(catalog.catalog_stats)
-            focused_plan.plan_mode = "focus_deterministic"
+            focused_plan.plan_mode = mode
             # 评审四轮 R4-07：零 LLM 的计划没有 `addressed` 可言——免唤醒下背景里一句「关掉」会反向执行上一个控制。
             # 标出来，engine 在语音来源下另做一次轻量受话判定（`PlannerEngine._voice_admitted`）
             focused_plan.admission_skipped = True
@@ -2477,6 +2530,22 @@ class PlanBuilder:
                         plan.hint_effect)
             plan.technical_failure = False
         plan.catalog_stats = dict(working_set.catalog_stats)
+        # 完整条件句被规划成「直接做后件」（只有写步、没有查前件的步）：下面的条件写步闸会把它们全拦下、落闲聊，根本进不了 T2 判定
+        # （`252cab57` D01 r1：「如果深圳今天不下雪，就把空调打开」规划成单步 `hvac.on`）。与两轮零步同一个抢救：拿条件分句规划
+        # 观察步、标 adaptive，后件留给 T2 判定成立后再规划、放行。抢救不成就照旧（闸拦下、交兜底谈话）。
+        if plan.steps and deferred_condition.is_conditional_instruction(text or ""):
+            kept, blocked = self._filter_question_side_effect_steps(plan.steps, text)
+            if blocked and not kept:
+                observed = await self._plan_condition_observation(text, catalog, working_set, sk_block, ex_block)
+                if observed is not None:
+                    logger.info("Complete conditional planned only its consequent %s; observing the condition instead",
+                                [step.intent for step in blocked])
+                    plan.steps = observed.steps
+                    plan.complexity = "adaptive"
+                    plan.goal = str(text or "")
+                    plan.clarify = None
+                    plan.addressed = True
+                    plan.plan_mode = f"{plan.plan_mode or ''}_condition_observation"
         # ── 安全闸：问句不许执行端侧写或需确认步骤（C1-A）────────────────────
         # 所有 build 出口共用同一终结器：LLM 计划、降级语义路由、route_hints 补步
         # 与 focused 早退均按同一份判据收束，避免任何一路绕开确认写安全闸。

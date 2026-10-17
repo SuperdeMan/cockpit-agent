@@ -840,7 +840,10 @@ class McDonaldsWorkflow(MerchantWorkflow):
             # - 别家的地图 POI 名（周边退回「美食」兜底时，`slot_refs` 把第一家「微风小院·烤肉…(科技园店)」填了进来）：剥成
             #   「科技园店」去查，官方回默认列表，选店卡给的是坑梓、惠州的店——对「离我最近那家」完全不对。
             # 桥拿不到位置（GPS 不下发第三方），收藏门店又不是「附近」（demo-3ukshz 碧海君庭）：改派周边按品牌找附近的麦当劳，
-            # 同 `mcd_store_unresolved` 那一跳（每轮最多一跳）；附近真没有，周边会照实说。选一家后再看菜单 / 下单。
+            # 同 `mcd_store_unresolved` 那一跳（每轮最多一跳）；附近真没有，周边会照实说。
+            # `resume`：周边找到后编排把这一步续跑一次——清掉这两个不是门店 / 城市的槽，由执行器从周边结果补上名字带「麦当劳」的
+            # 那一家与它的城市（与规划器照范例出的「周边 → 菜单引用第一家」同一条路）。修前列完就结束，用户回「第一个。」
+            # 被规划成看周边详情，原来的请求接不上（`663ab0ee` 重放）。
             refusal = self.refused(
                 "我先帮你找找附近的麦当劳。",
                 "从结果里选一家，我就能继续帮你看菜单或下单。")
@@ -848,6 +851,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 "intent": "nearby.search",
                 "slots": {"brand": MERCHANT_NAME},
                 "reason": not_a_store,
+                "resume": {"clear": ["store_hint", "city"]},
             }
             return None, "", refusal
         store_hint = self._store_keyword(raw_hint)

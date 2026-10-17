@@ -62,6 +62,7 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
         # 关键词之后（保守，关键词 top 不变，仍修 §1.1 无下限追加 bug）。无 embedding 源/PG 不可达
         # → resolve_semantic 返回 [] → recs 原样（关键词路径，byte 一致，nightly 纯 mock 零感知）。
         best_kw = max((s for _, s in recs), default=0)
+        semantic_unavailable = False
         if request.query and best_kw < 1.0 and hasattr(self.store, "resolve_semantic"):
             try:
                 sem_recs = await self.store.resolve_semantic(
@@ -69,6 +70,11 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
                     reader_version=getattr(request, "capability_contract_version", 0))
             except Exception as e:
                 print(f"[registry] semantic resolve failed: {e}", flush=True)
+                sem_recs = None
+            if sem_recs is None:
+                # 该算语义却没算成：只剩关键词排序。告知调用方（云端目录预筛据此用全量目录），并留一行告警看频率；不记查询原文。
+                semantic_unavailable = True
+                print(f"[registry] semantic ranking unavailable; keyword-only (top_k={request.top_k})", flush=True)
                 sem_recs = []
             # SEMANTIC_MIN_SIM 下限双保险：先统一过一道（防未来弱向量源绕开 store 过滤，
             # 修 §1.1「无相似度下限地追加」bug 的另一半）——提升/追加两分支都受保护。
@@ -93,7 +99,7 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
             registry_pb2.ResolvedAgent(manifest=m, endpoint=r.endpoint, score=s)
             for r, s in recs
             if (m := visible_manifest(r.manifest, getattr(request, "capability_contract_version", 0))) is not None
-        ])
+        ], semantic_unavailable=semantic_unavailable)
 
     async def ListAgents(self, request, context):
         recs = self.store.list(request.category)

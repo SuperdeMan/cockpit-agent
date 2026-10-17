@@ -24,6 +24,11 @@ _CITY_PLACEHOLDERS = frozenset({
 # 只作「槽值是不是用户说过的」的接地依据——授权边界只认 `safety_origin_text`，它不是。
 STEP_ORIGIN_META = "step_origin_text"
 
+# 这一步的结果有没有本轮计划里的后续步接着用（依赖它、或引用它的数据）："true" ⇒ 有。执行器按计划下发，客户端偏好里的同名键丢弃。
+# 声明方据此决定要不要零播报改派：后续步会接着用它的结果时再改派，同一件事就做了两遍（核心旅程 EN09：「找站 → 引用第一个改线」
+# 这份两步计划里，找站那一步要是也改派改线，就加了两个站）。
+RESULT_CONSUMED_META = "result_consumed"
+
 
 def is_place_placeholder(value) -> bool:
     """槽值只是「当前位置 / 这里 / 未知」这类占位、不是一个真实地点 ⇒ True（城市槽与导航起点槽共用这一份）。

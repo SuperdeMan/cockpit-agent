@@ -1416,6 +1416,8 @@ def test_discarded_user_term_declares_a_fallback():
         raw_text="附近有没有卖锟斤拷的店", meta=_LOC))
     assert res.status == "ok"
     assert res.data.get("_fallback") is True
+    # 两种兜底分开（2026-10-17）：丢掉的词另外声明，执行器据此不把这份列表的第 N 项绑给后续步
+    assert res.data.get("_dropped_terms") == ["锟斤拷"]
 
 
 def test_generic_food_request_is_not_a_fallback():
@@ -1500,6 +1502,7 @@ def test_guessed_category_declares_a_fallback_even_without_a_discarded_term():
         slots={"category": "餐饮"}, raw_text="附近有没有卖锟斤拷的店", meta=_LOC))
     assert res.status == "ok"
     assert res.data.get("_fallback") is True
+    assert "_dropped_terms" not in res.data, "猜的类目没有丢掉用户的词：列表的项照样能绑给后续步"
 
 
 def test_session_queue_reversal_beats_the_remembered_dislike():
@@ -1741,7 +1744,14 @@ def test_keyword_plan_probes_only_the_unrecognized_food_word():
     assert plan("餐饮", "", "", "晚饭") == ("美食", "")
     assert plan("餐饮", "", "", "人均一百的") == ("美食", "")         # 带虚词 / 数量词的半句话不当名字
     assert plan("餐饮", "", "麦当劳", "") == ("麦当劳", "")
-    assert plan("咖啡", "", "", "星巴克") == ("咖啡厅", "")           # 非餐饮类目不试探（登记为后续）
+    # 非餐饮类目（2026-10-17）：单说品牌也试探；带类目字眼的（「咖啡店」）、品牌 + 类目别名（「瑞幸咖啡」原样搜）不试探
+    assert plan("咖啡", "", "", "星巴克") == ("咖啡厅", "星巴克")
+    assert plan("充电", "", "", "特斯拉") == ("充电站", "特斯拉")
+    assert plan("咖啡", "", "", "咖啡店") == ("咖啡厅", "")
+    assert plan("咖啡", "", "", "瑞幸咖啡") == ("瑞幸咖啡", "")
+    assert plan("停车", "", "", "人均百元的停车场") == ("停车场", "")
+    assert plan("咖啡", "", "", "能办公的") == ("咖啡厅", "能办公")    # 约束词同样试探，由结果裁决（名字里不会带它）
+    assert plan("咖啡", "", "", "安静一点的地方") == ("咖啡厅", "")    # 带虚词的半句话不当名字
 
 
 def test_a_brand_in_keyword_is_searched_by_its_name_when_places_carry_it():
@@ -1797,3 +1807,67 @@ def test_a_spicy_probe_the_user_did_not_say_is_not_searched_under_no_spicy():
     assert calls == ["美食"]
     assert [it["name"] for it in res.data["items"]] == ["粤式茶餐厅"]
 
+
+def _typed_search(by_keyword):
+    """按检索词回放 (POI 名字, 高德类型)；记下每次检索词。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    calls = []
+
+    async def search(keyword, **kw):
+        calls.append(keyword)
+        return [Place(id=f"{keyword}-{i}", name=name, category=kind, address="x",
+                      city="深圳市", lat=22.54, lng=113.95, distance_km=0.3 + i / 10)
+                for i, (name, kind) in enumerate(by_keyword.get(keyword, []))]
+
+    agent.place.search = search
+    return agent, calls
+
+
+_CAFE = "餐饮服务;咖啡厅;咖啡厅"
+_CHARGER = "汽车服务;充电站;充电站"
+
+
+def test_a_bare_brand_in_a_non_food_category_is_searched_by_its_name():
+    """demo-dqt1fu 登记项：「附近有星巴克吗」规划成 `{category: 咖啡, keyword: 星巴克}`，星巴克被换成「咖啡厅」、搜出一圈别家。"""
+    agent, calls = _typed_search({
+        "星巴克": [("星巴克(海岸城店)", _CAFE), ("星巴克臻选(万象天地店)", _CAFE)],
+        "咖啡厅": [("Manner Coffee(科技园店)", _CAFE)]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "咖啡", "keyword": "星巴克"},
+        raw_text="附近有星巴克吗", meta=_LOC))
+    assert calls == ["星巴克"]
+    assert [it["name"] for it in res.data["items"]] == ["星巴克(海岸城店)", "星巴克臻选(万象天地店)"]
+    assert res.data["_candidate_label"] == "星巴克" and "_fallback" not in res.data
+
+
+def test_a_non_food_probe_keeps_only_places_of_the_asked_kind():
+    """「特斯拉」+ 充电：名字带特斯拉的展厅不是充电站——高德类型就是这一类才算。"""
+    agent, calls = _typed_search({
+        "特斯拉": [("特斯拉超级充电站(科技园)", _CHARGER), ("特斯拉中心(深圳湾)", "汽车销售;汽车销售;汽车销售")]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "充电", "keyword": "特斯拉"},
+        raw_text="附近有特斯拉的充电站吗", meta=_LOC))
+    assert calls == ["特斯拉"]
+    assert [it["name"] for it in res.data["items"]] == ["特斯拉超级充电站(科技园)"]
+
+
+def test_a_non_food_probe_without_a_place_of_the_kind_falls_back_to_the_category():
+    """名字带它的只有别的类型（展厅）、或名字都不带它（「拿铁」）：照旧按类目词搜（= 修前行为）。"""
+    agent, calls = _typed_search({
+        "特斯拉": [("特斯拉中心(深圳湾)", "汽车销售;汽车销售;汽车销售")],
+        "充电站": [("南山充电站", _CHARGER)]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "充电", "keyword": "特斯拉"},
+        raw_text="附近有特斯拉的充电站吗", meta=_LOC))
+    assert calls == ["特斯拉", "充电站"]
+    assert [it["name"] for it in res.data["items"]] == ["南山充电站"]
+
+    agent, calls = _typed_search({
+        "拿铁": [("Manner Coffee(科技园店)", _CAFE)],
+        "咖啡厅": [("Manner Coffee(科技园店)", _CAFE), ("瑞幸咖啡(科兴店)", _CAFE)]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "咖啡", "keyword": "拿铁"},
+        raw_text="附近哪里能喝拿铁", meta=_LOC))
+    assert calls == ["拿铁", "咖啡厅"]
+    assert len(res.data["items"]) == 2

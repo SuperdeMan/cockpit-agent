@@ -327,6 +327,17 @@ def _name_probe(cleaned: str) -> str:
     return text
 
 
+def _category_name_probe(cleaned: str) -> str:
+    """非餐饮类目里认不出的词能不能拿去当名字试搜（「星巴克」+ 咖啡，2026-10-17 demo-dqt1fu 登记项）。
+
+    带任何类目别名字眼的（「咖啡店」「充电桩」「停车位」）是在说这一类本身，不试探——试搜它只会把结果收窄成名字里带它的那几家；
+    其余同 `_name_probe`。结果还要过类型判据（`NearbyAgent._probe_type_word`）：名字带它、且高德类型就是这一类，才算名字。"""
+    text = (cleaned or "").strip()
+    if not text or any(alias in text for alias in _CATEGORY_KEYWORD):
+        return ""
+    return _name_probe(text)
+
+
 def _name_carries(name: str, probe: str) -> bool:
     """POI 名字里带着试探词（不分大小写、忽略空白）——试探词是这家店名字的一部分，不是被高德模糊匹配上的。"""
     def norm(value: str) -> str:
@@ -595,6 +606,14 @@ class NearbyAgent(BaseAgent):
         return "餐饮" if _FOOD_HINT_RE.search(hay_all) else ""
 
     @staticmethod
+    def _probe_type_word(category) -> str:
+        """非餐饮类目的名字试探结果要过的类型判据：高德类型（`Place.category`，整串如「餐饮服务;咖啡厅;星巴克咖啡」）里须带
+        这一类的干净类目词。餐饮 / 未知类目 ⇒ 空串（不加判据，同修前）。类型里叫法不同的类目（奶茶、药店、景点）过不了，
+        退回类目词检索 = 修前行为，宁可少认不错认。"""
+        cat_kw = _CATEGORY_KEYWORD.get(category)
+        return cat_kw if cat_kw and category not in _FOOD_CATS and cat_kw != _INDOOR_SENTINEL else ""
+
+    @staticmethod
     def _build_keyword(category, cuisine, brand, kw_slot) -> str:
         """高德检索词：品牌/菜系优先；设施/类型类目（停车场/充电站/酒店…）直接用干净类目词，
         避免把带动词/价位的整句（『帮我查一查人均百元的停车场』）当关键词；仅餐饮用剥壳后的具体词。"""
@@ -604,10 +623,11 @@ class NearbyAgent(BaseAgent):
     def _keyword_plan(category, cuisine, brand, kw_slot) -> tuple[str, str]:
         """(高德检索词, 名字试探词)。检索词的判据见 `_build_keyword`（逐字同旧）；试探词非空时 `_search` 先拿它原样去搜。
 
-        试探词只在餐饮分支「认不出 ⇒ 退回类目词」那一处给出（2026-10-16 demo-dqt1fu）：规划器照范例填 `keyword=麦当劳`，
+        试探词在两处「认不出 ⇒ 退回类目词」给出。餐饮分支（2026-10-16 demo-dqt1fu）：规划器照范例填 `keyword=麦当劳`，
         这里把「麦当劳」当成约束词换成「美食」，搜出一圈沙县小吃、烤肉店，第一家又被当成麦当劳的门店线索。品牌和约束词字面上
         分不出，所以不加品牌词表，交给结果裁决：名字里真带着它 ⇒ 是名字，按它出结果；否则照旧用类目词（`_fallback` 照旧）。
-        非餐饮类目里单说品牌（「星巴克」+ 咖啡 ⇒ 咖啡厅）不在这里试探：「拿铁」「咖啡店」这类词名字里也常带，试探会把结果收窄。
+        非餐饮类目里单说品牌（「星巴克」+ 咖啡 ⇒ 咖啡厅，2026-10-17）：同样试探，但带类目字眼的词（「咖啡店」）不试探，
+        结果还要高德类型就是这一类（`_probe_type_word`）——「特斯拉」+ 充电只认超充站、不认展厅。
         """
         if brand:
             return brand, ""                   # 品牌是专名（瑞幸/星巴克），不做菜品判定
@@ -633,7 +653,12 @@ class NearbyAgent(BaseAgent):
             # 判据刻意收得很紧（见 _brand_qualified）：**不能靠 _strip_qualifiers 兜底**
             # ——它只剥价位/评分/营业/查询措辞，『人均百元的停车场』剥完还是整句，
             # 正是本分支当初存在的理由。剥不成品牌形状的一律退回类目词。
-            return _brand_qualified(_strip_qualifiers(kw_slot)) or cat_kw, ""
+            stripped = _strip_qualifiers(kw_slot)
+            qualified = _brand_qualified(stripped)
+            if qualified:
+                return qualified, ""
+            # 单说品牌（「星巴克」+ 咖啡）：名字试探，见本函数文档
+            return cat_kw, ("" if cat_kw == _INDOOR_SENTINEL else _category_name_probe(stripped))
         cleaned = _strip_qualifiers(kw_slot)           # 餐饮：剥掉价位/评分/动词后的具体词（火锅/川菜）
         if cleaned and cleaned not in ("地点", "的"):
             # 剥完若正好是**类目别名**（「吃饭」「晚饭」），它不是检索词：拿它问高德
@@ -827,8 +852,11 @@ class NearbyAgent(BaseAgent):
             if name_probe:
                 # 名字试探（`_keyword_plan`）：认不出的词先原样搜，结果名字里带着它才算名字——品牌 / 连锁店按它出结果，
                 # 约束词（名字里不会带「不辣」）照旧退回类目词。品牌查询不多花一次调用，约束词多一次。
+                # 非餐饮类目还要高德类型就是这一类（「特斯拉」+ 充电：超充站算、展厅不算）。
+                type_word = self._probe_type_word(category)
                 probed = [p for p in await self.place.search(name_probe, **skw)
-                          if _name_carries(p.name, name_probe)]
+                          if _name_carries(p.name, name_probe)
+                          and (not type_word or type_word in (p.category or ""))]
                 if probed:
                     results, keyword, label = probed, name_probe, name_probe
                 else:
@@ -973,6 +1001,12 @@ class NearbyAgent(BaseAgent):
                 and keyword == _CATEGORY_KEYWORD.get(category)
                 and not brand):
             extra_data["_fallback"] = True
+            if term_discarded:
+                # 两种兜底分开（2026-10-17 demo-dqt1fu 登记项）：用户说了、却没拿去搜的词——这份列表不是他要的那一份，
+                # 执行器不把它的第 N 项绑给后续步（导航不开去随便一家、商户不拿别家当门店）。按天气 / 饮食信号猜的类目不声明：
+                # 用户把挑选交给了系统，第一项照样能用。
+                extra_data["_dropped_terms"] = [term for term in explicit_terms
+                                                if not category_alias_only(term)]
         card = attach({"type": "place_list", "category": category, "keyword": label,
                        "items": items, "display_priority": 1}, self.place)
         # center 来源随数据落盘（观测/下游可辨）：slot=用户指定位置 / vehicle=车辆

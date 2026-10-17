@@ -105,6 +105,26 @@ def _manual_escalate_result(text: str) -> AgentResult:
         "reason": "manual_confident"}})
 
 
+def _asks_about_vehicle_alert(text: str, alert: dict) -> bool:
+    """车辆告警（不是驾驶员状态）的非指令问句：手册能给同一句处置提示加原文（F01 S3，V220 / P05）。
+
+    陈述（「机油灯亮了」）、个人记忆的回忆问句照旧由闲聊直答；犯困、喝酒这类驾驶员状态手册里没有，也照旧直答。"""
+    return (bool(alert) and not driver_state(text) and bool(alert_level(text))
+            and is_non_directive_question(text) and not memory_read.is_memory_recall_question(text))
+
+
+def _manual_alert_escalate_result(text: str, advice: str, alert: dict) -> AgentResult:
+    """零播报改派手册回答车辆告警问句（F01 S3）。
+
+    落到闲聊时，安全直答抢在让手册之前，用户只听到一句通用处置提示（V220「…再解释胎压报警灯是什么意思」、P05「刚才你说胎压报警灯
+    是什么意思？」）；手册对告警走来源证据通道，回答是同一句处置提示加本车手册原文，并同样声明会话告警。改派失败（手册不可达 /
+    执行失败）时编排用 `fallback_speech`——就是闲聊原来那句直答，处置提示一个字不少；会话告警照常声明（失败时原步 data 照留）。"""
+    return AgentResult(speech="", data={
+        "_safety_alert": alert,
+        "_escalate": {"intent": _MANUAL_QUERY, "slots": {"question": text},
+                      "reason": "vehicle_alert_question", "fallback_speech": advice}})
+
+
 def _escalate_result(query: str) -> AgentResult:
     """零播报 + 通用改派声明（协议登记见 docs/conventions.md「Agent→编排结果保留键」）。"""
     return AgentResult(speech="", data={"_escalate": {
@@ -330,6 +350,9 @@ class ChitchatAgent(BaseAgent):
             return AgentResult(speech=who)
         safety, alert = _safety_answer(text)
         if safety:              # 安全信号：确定性直答 + 声明会话告警（只提到风险时不声明），零 LLM
+            if _asks_about_vehicle_alert(text, alert):
+                logger.info("chitchat defers a vehicle alert question to the manual")
+                return _manual_alert_escalate_result(text, safety, alert)
             return AgentResult(speech=safety, data={"_safety_alert": alert} if alert else None)
         # 会话里挂着未解除的告警、这一句只是在拒绝安全建议（「别提醒我，继续开就行」）⇒ 确定性「立场不改」，零 LLM。
         # 评审四轮批 A 回归（2026-09-24，SF4）：system 里的「立场不改」挡不住模型——MiniMax 一趟答了「可以。」。

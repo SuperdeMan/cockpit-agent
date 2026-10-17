@@ -16,7 +16,7 @@ from .context_view import check_current, check_context
 from runtime import capability_contract as cap_contract
 from runtime import operation
 from runtime import effect_evidence
-from runtime.slots import STEP_ORIGIN_META
+from runtime.slots import RESULT_CONSUMED_META, STEP_ORIGIN_META
 
 logger = logging.getLogger("planner.clients")
 
@@ -36,6 +36,15 @@ from cockpit.channel.v1 import channel_pb2, channel_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
 _DEFAULT_TIMEOUT = 10
+
+
+class ResolvedAgents(list):
+    """`ResolveAgents` 的结果（仍是 agent 列表）。`semantic_unavailable`：注册中心这次该算语义排序却没算成，只剩关键词排序
+    （`ResolveResponse.semantic_unavailable`）——目录预筛据此用全量目录（`ContextManager._catalog_with_registry`）。"""
+
+    def __init__(self, agents=(), *, semantic_unavailable: bool = False):
+        super().__init__(agents)
+        self.semantic_unavailable = semantic_unavailable
 # 流式 Agent 调用（ExecuteStream）的 gRPC 总截止（秒）。此前缺省 30s：流式 Agent 边生成边流，长回答
 # （chitchat 上限 900 token、MiniMax-M3 尾部 ~20 token/s ⇒ 45s）会在句中被掐断，然后 D0 走「只流了话术」
 # 那档——用户屏上已流出的整段被「抱歉，刚才没说完」替掉。客户端看门狗 95s、规划 p90 4s，60s 留得下。
@@ -235,7 +244,8 @@ class Clients:
         resp = await self._registry_stub().ResolveAgents(
             registry_pb2.ResolveRequest(query=query, intent=intent, top_k=top_k, capability_contract_version=2),
             timeout=_DEFAULT_TIMEOUT)
-        return list(resp.agents)
+        return ResolvedAgents(resp.agents,
+                              semantic_unavailable=bool(getattr(resp, "semantic_unavailable", False)))
 
     @staticmethod
     def _stamp_llm_meta(req, thinking: bool = False) -> None:
@@ -364,6 +374,8 @@ class Clients:
         prefs.pop("memory_projection", None)
         # 续接那一步被规划时的原话只来自服务端的挂起记录（`_restore` 写进 step meta）
         prefs.pop(STEP_ORIGIN_META, None)
+        # 「结果有没有后续步接着用」只由执行器按计划算（`DagExecutor.run`）
+        prefs.pop(RESULT_CONSUMED_META, None)
         merged = {**prefs, **dict(meta or {})}
         merged.pop("memory_epoch", None)
         merged.pop("memory_projection", None)

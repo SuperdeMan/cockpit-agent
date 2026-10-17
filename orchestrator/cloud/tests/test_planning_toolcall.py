@@ -840,6 +840,50 @@ def test_the_condition_observation_takes_only_read_steps(monkeypatch):
     assert spy.text_calls == 1 and not str(plan.plan_mode or "").startswith("condition_observation_salvage")
 
 
+def test_a_complete_conditional_planned_as_its_bare_consequent_observes_its_condition(monkeypatch):
+    """`252cab57` D01 r1：首轮把「如果深圳今天不下雪，就把空调打开」规划成单步 `hvac.on`，条件写步闸全拦下、落闲聊，没进 T2。
+    与两轮零步同一个抢救：拿条件分句规划观察步、标 adaptive；后件留给 T2 判定成立后再规划、放行。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "如果深圳今天不下雪，就把空调打开"
+    consequent = {"complexity": "simple", "goal": "开空调", "addressed": True, "steps": [
+        {"id": "s1", "capability_ref": "cap_0002", "slots": {}, "depends_on": [], "slot_refs": {}}]}
+    observe = json.dumps({"complexity": "simple", "goal": "查深圳今天的天气", "addressed": True, "steps": [
+        {"id": "s1", "capability_ref": "cap_0001", "slots": {"city": "深圳", "date": "今天"},
+         "depends_on": [], "slot_refs": {}}]}, ensure_ascii=False)
+    spy = _SpyLLM(text_reply=observe, tool_replies=[
+        ("", [{"id": f"c{i}", "name": _SUBMIT_PLAN_NAME, "arguments": consequent}]) for i in range(3)])
+    vehicle = MockAgent("vehicle", ["hvac.on"])
+    vehicle.manifest.kind, vehicle.manifest.deployment = "edge_fast", "edge"   # 与线上同形：车控是端侧写
+    agents = [MockAgent("info", ["info.weather"]), vehicle]
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["info.weather"]
+    assert plan.complexity == "adaptive" and plan.goal == text
+    assert str(plan.plan_mode).endswith("_condition_observation")
+    assert spy.text_calls == 1 and "深圳今天不下雪吗？" in spy.last_text_user
+
+
+def test_a_bare_consequent_whose_salvage_fails_still_falls_to_talk(monkeypatch):
+    """抢救交回的仍是写步（或什么都没有）：不收，照旧由条件写步闸拦下——后件不许借这条路出去。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "如果深圳今天不下雪，就把空调打开"
+    consequent = {"complexity": "simple", "goal": "开空调", "addressed": True, "steps": [
+        {"id": "s1", "capability_ref": "cap_0002", "slots": {}, "depends_on": [], "slot_refs": {}}]}
+    spy = _SpyLLM(text_reply=json.dumps(consequent, ensure_ascii=False), tool_replies=[
+        ("", [{"id": f"c{i}", "name": _SUBMIT_PLAN_NAME, "arguments": consequent}]) for i in range(3)])
+    vehicle = MockAgent("vehicle", ["hvac.on"])
+    vehicle.manifest.kind, vehicle.manifest.deployment = "edge_fast", "edge"
+    agents = [MockAgent("info", ["info.weather"]), vehicle]
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert "hvac.on" not in [step.intent for step in plan.steps]
+    assert not str(plan.plan_mode or "").endswith("_condition_observation")
+
+
 def test_a_constraint_on_how_to_behave_is_not_salvaged(monkeypatch):
     """「如果找不到她的地点就直接问我」约束的是做事方式（后件不是一条指令）：两轮零步就是答案，不去规划「找不到她的地点吗」。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")

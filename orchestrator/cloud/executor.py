@@ -18,10 +18,12 @@ from . import verify as _verify
 from runtime import effect_evidence as _ev
 from runtime.capability_contract import accepts_parameter
 from runtime import operation as _operation
+from runtime.slots import RESULT_CONSUMED_META
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan,
                      step_call_context, step_fingerprint, step_raw_text)
 from observability import events as obs_events
 from . import confirmation
+from .candidate_query import names_a_position
 from .operation_sync import SYNC_SPEECH
 from runtime.slot_fidelity import (restore_dropped_qualifiers,
                                    undeclared_slots)
@@ -134,6 +136,20 @@ def _store_from_listing(data: dict) -> dict | None:
     return next((it for it in items if label in _normalize_store_name(it.get("name"))), None)
 
 
+def unconsumed_escalate_speech(result: StepResult) -> StepResult:
+    """不消费改派的路径（T2 循环）上，声明方带了回落话术、自己又没说话 ⇒ 用回落话术。键不动（同修前：T2 不消费也不剥）。
+
+    改派声明的话术是空的（零播报编排才认改派），T2 不消费它时这一步什么都没说。闲聊把车辆告警问句改派给手册（F01 S3）之后，
+    T2 里落到闲聊的告警问句就会连处置提示都听不到——回落话术正是闲聊原来那句直答。"""
+    data = result.data if isinstance(result.data, dict) else {}
+    esc = data.get("_escalate")
+    if isinstance(esc, dict) and not str(result.speech or "").strip():
+        fallback = esc.get("fallback_speech")
+        if isinstance(fallback, str) and fallback.strip():
+            result.speech = fallback.strip()
+    return result
+
+
 def _match_place_index(places: list, hint: str):
     """按名字在服务端持有的门店列表里找**下标**。找不到返回 None —— 不拿第一条顶替。
 
@@ -194,6 +210,12 @@ class DagExecutor:
           是「执行了但不报」（同 C2 那条「读不到与读到了但不对分开报」）。
         """
         done = dict(done) if done else {}
+        # 结果有没有后续步接着用：按这份计划算好随 meta 下发（`RESULT_CONSUMED_META`，声明方据此决定要不要改派）
+        consumed = self._consumed_step_ids(plan.steps)
+        for step in plan.steps:
+            step.meta = {key: value for key, value in (step.meta or {}).items() if key != RESULT_CONSUMED_META}
+            if step.id in consumed:
+                step.meta[RESULT_CONSUMED_META] = "true"
         try:
             layers = self._topo_layers(plan.steps, completed_ids=set(done))
         except CyclicPlan as e:
@@ -737,6 +759,15 @@ class DagExecutor:
         foreign: dict[str, str] = {}
         # 由引用填出的槽（`${…}` 占位 / slot_refs / `$ref.` 别名载体）——它们是指针或线格式中间物，不带用户原话
         from_refs: set[str] = set()
+        # 这一步的原话自己点了第几个（「…导航去第一家」）：用户亲手挑了位置，兜底列表的项照绑（见 `_dropped_term_item`）
+        picked = names_a_position(step_raw_text(step, ctx)) if ctx is not None else False
+
+        def _refuse_fallback_item(slot_name: str, ref_path: str) -> bool:
+            if picked or not self._dropped_term_item(ref_path, done):
+                return False
+            logger.warning("Step %s(%s): 槽 %s 不绑 %s——那份列表没按用户说的词搜（`_dropped_terms`）",
+                           step.id, step.intent, slot_name, ref_path)
+            return True
 
         def _record(slot_name: str, ref_path: str) -> None:
             producer = done.get(str(ref_path).split(".", 1)[0])
@@ -770,6 +801,9 @@ class DagExecutor:
                      or (bare if bare and bare.group(2) in done else None))
             if not match:
                 continue
+            if _refuse_fallback_item(slot_name, match.group(1)):
+                step.slots.pop(slot_name, None)      # 占位串本身不能发下去（会被当成真地名 / 门店）
+                continue
             value = self._resolve_ref(match.group(1), done)
             if value is not None:
                 step.slots[slot_name] = str(value)
@@ -789,6 +823,10 @@ class DagExecutor:
             # 和同值的 `slot_refs`；旧逻辑认定槽里已有值就跳过，于是那串路径**当成
             # 真 POI id 发给了下游**。判据同 `${...}` 那一段：值和引用长得不一样，
             # 长得一样就说明它是引用。
+            if _refuse_fallback_item(slot_name, ref_path):
+                if str(existing or "").strip() == str(ref_path).strip():
+                    step.slots.pop(slot_name, None)
+                continue
             value = self._resolve_ref(ref_path, done)
             if value is not None:
                 resolved = str(value)
@@ -1036,6 +1074,36 @@ class DagExecutor:
                 step.slots["city"] = city
                 logger.info("Step %s(%s): city 取自%s（%s）",
                             step.id, step.intent, source, city)
+
+    @staticmethod
+    def _consumed_step_ids(steps) -> set[str]:
+        """计划里被后续步接着用的步：有步依赖它（`depends_on`），或引用它的数据（`slot_refs`、槽值里的 `${X.data…}` / `$X.data…` /
+        `X.data…` 引用串）。依赖但不取数据的也算——那一步排在它后面，多半就是冲着它的结果来的，宁可多算（只是让声明方不改派）。"""
+        ids = {str(step.id) for step in steps}
+        consumed: set[str] = set()
+        for step in steps:
+            consumed.update(str(dep) for dep in (step.depends_on or []))
+            refs = [*(step.slot_refs or {}).values(),
+                    *(value for value in (step.slots or {}).values() if isinstance(value, str))]
+            for ref in refs:
+                match = re.match(r"\s*\$?\{?([A-Za-z0-9_-]+)\.data\.", str(ref or ""))
+                if match:
+                    consumed.add(match.group(1))
+        return consumed & ids
+
+    @staticmethod
+    def _dropped_term_item(ref_path: str, done: dict) -> bool:
+        """引用指向的是一份「没按用户说的词搜」的列表里的某一项（产生方声明 `_dropped_terms`，现 nearby.search）。
+
+        2026-10-17 demo-dqt1fu 登记项：周边把「麦当劳」换成「美食」兜底，`slot_refs` 把第一家烤肉店填进了麦当劳的门店线索；
+        导航同理会开去随便一家。那份列表不是用户要的，它的第 N 项就不是用户要去 / 要点的那一家——不绑，让下游照缺槽处理
+        （问用户、或像麦当劳桥那样自己再找）。按天气 / 饮食信号猜类目的兜底（`_fallback` 的另一半）不声明这个键，照绑。"""
+        parts = str(ref_path or "").split(".")
+        if len(parts) < 4 or parts[1] != "data" or parts[2] != "items":
+            return False
+        data = getattr(done.get(parts[0]), "data", None)
+        dropped = data.get("_dropped_terms") if isinstance(data, dict) else None
+        return isinstance(dropped, (list, tuple)) and any(str(term).strip() for term in dropped)
 
     @staticmethod
     def _resolve_ref(ref_path: str, done: dict) -> object:

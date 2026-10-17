@@ -34,13 +34,41 @@ def test_fatigue_answered_deterministically_without_llm():
     assert ((res.data or {}).get("_safety_alert") or {}).get("level") == "critical"
 
 
-def test_warning_light_answered_deterministically():
+def test_warning_light_statement_answered_deterministically():
+    agent = _agent()
+    res = asyncio.run(run_handle(
+        agent, "chitchat.talk", raw_text="红色机油灯亮了"))
+    assert agent.llm.complete.await_count == 0
+    assert "停车" in res.speech
+    assert "_escalate" not in (res.data or {})
+    assert ((res.data or {}).get("_safety_alert") or {}).get("level") == "critical"
+
+
+def test_warning_light_question_defers_to_the_manual_with_the_advice_as_fallback():
+    """F01 S3（V220 / P05）：车辆告警的问句改派手册——手册回同一句处置提示加本车手册原文；改派失败时编排用回落话术，
+    就是原来那句直答。零 LLM、零播报，会话告警照常声明（改派失败时原步 data 照留）。"""
     agent = _agent()
     res = asyncio.run(run_handle(
         agent, "chitchat.talk", raw_text="红色机油灯亮了怎么办？"))
     assert agent.llm.complete.await_count == 0
-    assert "停车" in res.speech
+    assert res.speech == ""
+    esc = (res.data or {}).get("_escalate") or {}
+    assert esc.get("intent") == "manual.query"
+    assert esc.get("slots") == {"question": "红色机油灯亮了怎么办？"}
+    assert "停车" in esc.get("fallback_speech", "")
     assert ((res.data or {}).get("_safety_alert") or {}).get("level") == "critical"
+
+
+def test_alert_question_deferral_is_zero_broadcast_on_the_stream_path():
+    """改派是零播报：流式路径上一个字都不先流出去（流出过，编排就不认这次改派）。"""
+    agent = _agent()
+    events = asyncio.run(run_handle_stream(
+        agent, "chitchat.talk", raw_text="刚才你说胎压报警灯是什么意思？"))
+    assert [k for k, _ in events] == ["final"]
+    final = events[-1][1]
+    assert final.data["_escalate"]["intent"] == "manual.query"
+    assert final.data["_escalate"]["fallback_speech"]
+    assert final.data["_safety_alert"]["level"] == "amber"
 
 
 def test_stream_path_has_the_same_guard():
@@ -144,7 +172,8 @@ def test_a_lit_warning_light_outranks_a_mentioned_risk():
     """此刻亮着的灯比一个话题更要紧：同一句里两样都有时按告警答、并声明会话告警。"""
     agent = _agent()
     res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="机油灯亮了，万一犯困怎么办"))
-    assert "停车" in res.speech
+    # 这是问句：改派手册，回落话术是告警那句处置提示（F01 S3）
+    assert "停车" in res.data["_escalate"]["fallback_speech"]
     assert ((res.data or {}).get("_safety_alert") or {}).get("level") == "critical"
 
 

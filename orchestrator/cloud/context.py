@@ -2335,7 +2335,14 @@ class ContextManager:
         top = []
         if fn:
             try:
-                top = list(await fn(query=text, top_k=self.top_k) or [])
+                resolved = await fn(query=text, top_k=self.top_k)
+                if getattr(resolved, "semantic_unavailable", False):
+                    # 注册中心这次没算成语义排序，前 K 名只是关键词打分：部署刚重启时向量化超时，「离我最近那家瑞幸」
+                    # 里没有「附近」类字眼，周边被挤出前 20 名、规划零步（2026-10-17 登记项）。用全量目录，不用这份残缺的。
+                    logger.warning("catalog pre-filter skipped: registry semantic ranking unavailable (%d agents)",
+                                   len(full))
+                    return full, full
+                top = list(resolved or [])
             except Exception as e:
                 logger.debug("catalog resolve failed, using full catalog: %s", e)
                 top = []

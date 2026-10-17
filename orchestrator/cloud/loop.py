@@ -11,7 +11,7 @@ from runtime import condition_judgement as cj
 from runtime import effect_evidence
 from runtime.deferred_condition import split_conditional_instruction
 
-from .executor import DagExecutor
+from .executor import DagExecutor, unconsumed_escalate_speech
 from .dispatch import error_attrs
 from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
@@ -486,7 +486,8 @@ class LoopController:
                             stream.on_action()
                             yield {"kind": "action", "action": payload}
                         elif kind == "final":
-                            final_sr = DagExecutor._to_result(step.id, payload)
+                            # T2 不消费改派：声明方的回落话术替它说（F01 S3）
+                            final_sr = unconsumed_escalate_speech(DagExecutor._to_result(step.id, payload))
                             final_errors = error_attrs(payload)
                 except Exception as exc:
                     logger.warning(
@@ -593,6 +594,7 @@ class LoopController:
             if not stream.got_final and allow_unary_fallback(stream.state):
                 async for step_result in self.executor.run(
                         current, ctx, done=done_seed):
+                    step_result = unconsumed_escalate_speech(step_result)
                     results.append(step_result)
                     step = next((s for s in current.steps
                                  if s.id == step_result.step_id), None)

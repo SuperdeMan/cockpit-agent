@@ -12,6 +12,9 @@ mini-plan 走 executor（heavy/latency_budget/权限自动带出）。固化的�
   g) heavy escalated 步发过程区 execute 事件 + meta thinking=on
   h) 改派后的单步云端 Agent 走**与 D0 同一份流式直通**（2026-09-18）：edge 步 / 需确认步仍走 executor；
      流零输出（Agent 不支持流式）⇒ 回退 executor unary
+  j) 声明带 `resume`：改派那一步成功后把声明方这一步续跑一次（清掉列出的槽，由执行器从本轮结果补），续跑仍改派 / 失败 ⇒ 丢掉
+     续跑；续跑挂起落在声明方那一步（2026-10-17 demo-dqt1fu）
+  k) 声明带 `fallback_speech`：改派装配不出或那一步失败 ⇒ 用回落话术；没消费的改派（同轮第二条、T2）也照回落话术说（F01 S3）
 全部进程内 stub（装置风格同 test_engine_stream.py），不依赖 gRPC。
 """
 from __future__ import annotations
@@ -536,3 +539,214 @@ def test_a_resumed_step_receives_the_focus_facts_at_resume_time():
     assert json.loads(resumed_meta["focus_active_route"])["destination"] == "深圳北站"
     assert len(json.loads(resumed_meta["focus_active_route"])["waypoints"]) == 2
     assert second["speech"] == "已把途经点特来电充电站换成星星充电。"
+
+
+# ── 改派续跑（`resume`）与失败回落（`fallback_speech`），2026-10-17 ──────────────────────────────────────────────
+
+_MCD_ESC = {"_refused": True, "_escalate": {
+    "intent": "nearby.search", "slots": {"brand": "麦当劳"}, "reason": "mcd_store_nearby",
+    "resume": {"clear": ["store_hint", "city"]}}}
+#: 周边按品牌搜回来的一批：第一家不是麦当劳（demo-dqt1fu 的形状），名字带搜索词的是第二家
+_NEARBY_MCD = {"items": [{"name": "沙县小吃(科技园店)", "city": "深圳市"},
+                         {"name": "麦当劳(汉京中心店)", "city": "深圳市"}],
+               "_candidate_label": "麦当劳"}
+_MENU_PLAN = json.dumps({"steps": [
+    {"id": "s1", "capability_ref": "cap_0001", "slots": {"store_hint": "附近", "city": "当前位置"},
+     "depends_on": [], "slot_refs": {}}]})
+_ORDER_PLAN = json.dumps({"steps": [
+    {"id": "s1", "capability_ref": "cap_0002", "slots": {"store_hint": "附近", "item": "巨无霸"},
+     "depends_on": [], "slot_refs": {}}]})
+
+
+def _cap(intent, slots=(), **kw):
+    cap = _Cap(intent, **kw)
+    cap.slots = list(slots)
+    return cap
+
+
+def _mcd_agents():
+    bridge = SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="mcp-bridge", trust_level="first_party", latency_budget_ms=5000,
+        deployment="cloud", kind="agent", requires_permissions=[], context_scopes=[],
+        capabilities=[_cap("mcd.menu", ["store_hint", "city"]),
+                      _cap("mcd.order", ["store_hint", "city", "item"], require_confirm=True)],
+        route_hints=[]), endpoint="stub:50065")
+    nearby = SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="nearby", trust_level="first_party", latency_budget_ms=15000,
+        deployment="cloud", kind="agent", requires_permissions=[], context_scopes=[],
+        capabilities=[_cap("nearby.search", ["brand", "keyword"])], route_hints=[]), endpoint="stub:50070")
+    return [bridge, nearby]
+
+
+class _McdSpy(_EscSpy):
+    async def resolve(self, query="", intent="", top_k=1):
+        return _mcd_agents()
+
+    async def list_agents(self):
+        return _mcd_agents()
+
+
+def _pending_step(state, step_id):
+    plan = json.loads(state.pending_plan) if isinstance(state.pending_plan, str) else state.pending_plan
+    return next(s for s in plan["steps"] if s["id"] == step_id)
+
+
+def test_resume_reruns_the_declaring_step_with_the_escalated_listing():
+    """契约 j（demo-dqt1fu 登记项「改派后选店不续原请求」）：麦当劳桥没有门店线索、改派周边按品牌找；周边成功后编排把
+    「看菜单」那一步续跑一次——清掉声明里的槽，执行器按本轮补全取名字带「麦当劳」的那一家（不是第一家沙县小吃）与城市。
+    修前列完就结束，用户回「第一个。」被规划成看周边详情。"""
+    spy = _McdSpy(
+        plan_json=_MENU_PLAN,
+        script=[("final", _Resp(speech="", data=dict(_MCD_ESC)))],
+        unary_seq=[_Resp(speech="为您找到 2 家麦当劳。", data=dict(_NEARBY_MCD)),
+                   _Resp(speech="汉京中心店的菜单：巨无霸 25 元。")])
+    engine, session = _make_engine(spy)
+    events = _run(engine, _req("帮我查看离我最近那家麦当劳的菜单"))
+
+    assert [c[1] for c in spy.calls] == ["mcd.menu", "nearby.search", "mcd.menu"]
+    rerun_slots = spy.calls[-1][2]
+    assert rerun_slots.get("store_hint") == "麦当劳(汉京中心店)"
+    assert rerun_slots.get("city") == "深圳市"
+    assert events[-1]["kind"] == "final" and not events[-1].get("need_slot")
+    assert asyncio.run(session.load("sess-esc", owner_user_id="u1")) is None
+
+
+def test_resume_is_dropped_when_the_rerun_still_escalates():
+    """续跑仍要改派（结果里没有它要的店）：不消费第二次改派、丢掉续跑，只交周边的结果（= 修前行为）。"""
+    spy = _McdSpy(
+        plan_json=_MENU_PLAN,
+        script=[("final", _Resp(speech="", data=dict(_MCD_ESC)))],
+        unary_seq=[_Resp(speech="附近没有找到麦当劳。", data={"items": [{"name": "沙县小吃(科技园店)"}],
+                                                          "_candidate_label": "麦当劳"}),
+                   _Resp(speech="我先帮你找找附近的麦当劳。", data=dict(_MCD_ESC))])
+    engine, _ = _make_engine(spy)
+    events = _run(engine, _req("帮我查看离我最近那家麦当劳的菜单"))
+
+    assert [c[1] for c in spy.calls] == ["mcd.menu", "nearby.search", "mcd.menu"]
+    assert events[-1]["speech"] == "附近没有找到麦当劳。"
+
+
+def test_no_resume_when_the_escalated_step_fails_or_is_not_declared():
+    """改派那一步失败不续跑；声明里没有 `resume` 的改派（旧形态）照旧只跑一跳。"""
+    failed = _McdSpy(plan_json=_MENU_PLAN,
+                     script=[("final", _Resp(speech="", data=dict(_MCD_ESC)))],
+                     unary_seq=[_Resp(status=3, speech="周边搜索暂时不可用。")])
+    engine, _ = _make_engine(failed)
+    _run(engine, _req("帮我查看离我最近那家麦当劳的菜单"))
+    assert [c[1] for c in failed.calls] == ["mcd.menu", "nearby.search"]
+
+    legacy = {"_refused": True, "_escalate": {k: v for k, v in _MCD_ESC["_escalate"].items() if k != "resume"}}
+    plain = _McdSpy(plan_json=_MENU_PLAN,
+                    script=[("final", _Resp(speech="", data=legacy))],
+                    unary_seq=[_Resp(speech="为您找到 2 家麦当劳。", data=dict(_NEARBY_MCD))])
+    engine, _ = _make_engine(plain)
+    events = _run(engine, _req("帮我查看离我最近那家麦当劳的菜单"))
+    assert [c[1] for c in plain.calls] == ["mcd.menu", "nearby.search"]
+    assert events[-1]["speech"] == "为您找到 2 家麦当劳。"
+
+
+def test_a_resumed_step_that_asks_suspends_on_the_declaring_step():
+    """续跑出选店卡（官方同名多店）：走既有挂起语义，挂起落在声明方那一步（不是改派步），门店与城市已随计划存下。"""
+    ask = _Resp(status=2, speech="附近有两家汉京中心店，要哪一家？")
+    ask.missing_slots = ["store_hint"]
+    spy = _McdSpy(
+        plan_json=_MENU_PLAN,
+        script=[("final", _Resp(speech="", data=dict(_MCD_ESC)))],
+        unary_seq=[_Resp(speech="为您找到 2 家麦当劳。", data=dict(_NEARBY_MCD)), ask])
+    engine, session = _make_engine(spy)
+    events = _run(engine, _req("帮我查看离我最近那家麦当劳的菜单"))
+
+    state = asyncio.run(session.load("sess-esc", owner_user_id="u1"))
+    assert state is not None and state.phase == "wait_slot" and state.pending_step_id == "s1", events[-1]
+    pending = _pending_step(state, "s1")
+    assert pending["slots"].get("store_hint") == "麦当劳(汉京中心店)"
+    assert pending["depends_on"] == ["esc1"]
+
+
+def test_resume_on_the_executor_path_reaches_the_confirmation():
+    """需确认的下单步走 executor 路径：改派、续跑同样生效，续跑出的确认卡挂在声明方那一步上；没列在 clear 里的槽照留。"""
+    confirm = _Resp(status=1, speech="请确认：麦当劳汉京中心店，巨无霸 1 份。")
+    spy = _McdSpy(
+        plan_json=_ORDER_PLAN,
+        unary_seq=[_Resp(speech="我先帮你找找附近的麦当劳。", data=dict(_MCD_ESC)),
+                   _Resp(speech="为您找到 2 家麦当劳。", data=dict(_NEARBY_MCD)),
+                   confirm])
+    engine, session = _make_engine(spy)
+    events = _run(engine, _req("帮我在最近的麦当劳点个巨无霸"))
+
+    assert [c[1] for c in spy.calls] == ["mcd.order", "nearby.search", "mcd.order"]
+    assert spy.calls[-1][2].get("store_hint") == "麦当劳(汉京中心店)"
+    assert spy.calls[-1][2].get("item") == "巨无霸"
+    state = asyncio.run(session.load("sess-esc", owner_user_id="u1"))
+    assert state is not None and state.phase == "wait_confirm" and state.pending_step_id == "s1", events[-1]
+
+
+_ALERT_ESC = {"_safety_alert": {"level": "amber", "signal": "胎压报警"}, "_escalate": {
+    "intent": "manual.query", "slots": {"question": "胎压报警灯是什么意思"},
+    "reason": "vehicle_alert_question", "fallback_speech": "胎压报警灯亮了，请降低车速，尽快检查轮胎。"}}
+
+
+def test_fallback_speech_answers_when_the_escalated_step_fails():
+    """契约 k（F01 S3 的前提）：改派必须零播报，失败时原步话术是空的——声明方带了回落话术就用它，处置提示一个字不少。"""
+    spy = _EscSpy(script=[("final", _Resp(speech="", data=dict(_ALERT_ESC)))],
+                  unary_seq=[_Resp(status=3, speech="")])
+    engine, _ = _make_engine(spy)
+    events = _run(engine, _req("胎压报警灯是什么意思"))
+
+    assert [c[1] for c in spy.calls] == ["chitchat.talk", "manual.query"]
+    assert events[-1]["speech"] == "胎压报警灯亮了，请降低车速，尽快检查轮胎。"
+
+
+def test_fallback_speech_answers_when_no_agent_serves_the_target():
+    esc = {"_escalate": {**_ALERT_ESC["_escalate"], "intent": "nope.intent"}}
+    spy = _EscSpy(script=[("final", _Resp(speech="", data=esc))])
+    engine, _ = _make_engine(spy)
+    events = _run(engine, _req("胎压报警灯是什么意思"))
+    assert events[-1]["speech"] == "胎压报警灯亮了，请降低车速，尽快检查轮胎。"
+
+
+def test_fallback_speech_is_not_used_when_the_escalated_step_answers():
+    spy = _EscSpy(script=[("final", _Resp(speech="", data=dict(_ALERT_ESC)))],
+                  unary_seq=[_Resp(speech="胎压报警灯表示胎压异常（手册第 257 页）。")])
+    engine, _ = _make_engine(spy)
+    events = _run(engine, _req("胎压报警灯是什么意思"))
+    assert events[-1]["speech"] == "胎压报警灯表示胎压异常（手册第 257 页）。"
+
+
+class _RecordingSpy(_EscSpy):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.llm_prompts: list[str] = []
+
+    async def llm(self, messages, **kwargs):
+        self.llm_prompts.append(json.dumps(messages, ensure_ascii=False))
+        return await super().llm(messages, **kwargs)
+
+
+def test_executor_path_fallback_and_unconsumed_escalations_speak_their_fallback():
+    """executor 路径：被消费的那条改派失败用回落话术；每轮只消费第一条改派，第二条声明方的回落话术也照说（不然那一步一个字都没有）。"""
+    second = {"_escalate": {**_ALERT_ESC["_escalate"], "fallback_speech": "机油灯亮了，请尽快安全停车。"}}
+    spy = _RecordingSpy(
+        plan_json=_TWO_STEP_PLAN,
+        unary_seq=[_Resp(speech="", data=dict(_ALERT_ESC)),     # s1：改派手册
+                   _Resp(speech="", data=second),               # s2：也声明改派（本轮不再消费）
+                   _Resp(status=3, speech="")])                 # esc1 手册失败
+    engine, _ = _make_engine(spy)
+    events = _run(engine, _req("胎压报警灯是什么意思，机油灯呢"))
+
+    assert [c[1] for c in spy.calls] == ["chitchat.talk", "chitchat.talk", "manual.query"]
+    aggregate = spy.llm_prompts[-1]
+    assert "请降低车速" in aggregate and "请尽快安全停车" in aggregate, aggregate[:400]
+    assert events[-1]["kind"] == "final"
+
+
+def test_unconsumed_escalate_speech_only_fills_a_silent_declaring_step():
+    from orchestrator.cloud.executor import unconsumed_escalate_speech
+
+    silent = StepResult("s1", StepStatus.OK, speech="", data=dict(_ALERT_ESC))
+    assert unconsumed_escalate_speech(silent).speech.startswith("胎压报警灯亮了")
+    assert "_escalate" in silent.data, "T2 不消费改派、也不剥键（同修前）"
+    spoken = StepResult("s1", StepStatus.OK, speech="已经说过的话。", data=dict(_ALERT_ESC))
+    assert unconsumed_escalate_speech(spoken).speech == "已经说过的话。"
+    plain = StepResult("s1", StepStatus.OK, speech="", data={"_escalate": {"intent": "info.search", "slots": {}}})
+    assert unconsumed_escalate_speech(plain).speech == ""

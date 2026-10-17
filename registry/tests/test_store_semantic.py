@@ -363,6 +363,26 @@ def test_resolve_semantic_degrades_on_empty_query():
     assert asyncio.run(store.resolve_semantic("")) == []
 
 
+def test_resolve_semantic_reports_a_failed_query_embedding_as_unavailable():
+    """有向量源、这次 query 向量化没成（部署刚重启时超时）：返回 None，不是「语义没结果」的 []——调用方要告诉云端只剩关键词排序。"""
+    store = _llm_store(FakeConn(cap_rows={}))
+
+    async def failed_embed(texts, timeout):
+        return None
+    store._llm_embed = failed_embed
+    assert asyncio.run(store.resolve_semantic("离我最近的那家瑞幸")) is None
+
+
+def test_resolve_semantic_reports_a_failed_query_as_unavailable():
+    store = _llm_store(FakeConn(cap_rows={}))
+
+    class _BrokenPool:
+        def acquire(self):
+            raise ConnectionError("pg gone")
+    store._pool = _BrokenPool()
+    assert asyncio.run(store.resolve_semantic("离我最近的那家瑞幸")) is None
+
+
 # ── query 向量缓存 ─────────────────────────────────────────────────────────
 
 def test_query_embedding_is_cached():
@@ -395,6 +415,21 @@ class _FakeStore:
 
     async def resolve_semantic(self, query, top_k=3, granted=None, reader_version=2):
         return self._sem
+
+
+def test_server_tells_the_caller_when_semantic_ranking_was_unavailable():
+    """语义这次没算成（store 返回 None）⇒ `semantic_unavailable`，排序照旧是关键词那份；语义没结果（[]）、精确 intent 命中
+    （不跑语义）都不算。"""
+    kw = [(_rec("navigation"), 0.4)]
+    req = SimpleNamespace(intent="", query="离我最近的那家瑞幸", top_k=20, granted_permissions=[])
+    resp = asyncio.run(RegistryServicer(store=_FakeStore(None, kw)).ResolveAgents(req, None))
+    assert resp.semantic_unavailable is True
+    assert [a.manifest.agent_id for a in resp.agents] == ["navigation"]
+    resp = asyncio.run(RegistryServicer(store=_FakeStore([], kw)).ResolveAgents(req, None))
+    assert resp.semantic_unavailable is False
+    exact = [(_rec("navigation"), 1.0)]
+    resp = asyncio.run(RegistryServicer(store=_FakeStore(None, exact)).ResolveAgents(req, None))
+    assert resp.semantic_unavailable is False
 
 
 def _rec(agent_id):

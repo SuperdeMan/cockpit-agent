@@ -40,7 +40,12 @@ message ResolvedAgent {
   string endpoint = 2;
   float score = 3;                  // 路由匹配分
 }
-message ResolveResponse { repeated ResolvedAgent agents = 1; }
+message ResolveResponse {
+  repeated ResolvedAgent agents = 1;
+  // 这次该算语义排序、却没算成（向量化失败 / 库不可达），排序只剩关键词打分。没配向量源（离线 mock）不算——那是常态。
+  // 云端规划的目录预筛见到它就用全量目录（2026-10-17：部署刚重启时周边被挤出关键词前 20 名，规划零步）。
+  bool semantic_unavailable = 2;
+}
 
 message ListRequest {
   string category = 1; // core | ecosystem | "" 全部

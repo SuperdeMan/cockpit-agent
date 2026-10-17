@@ -558,7 +558,9 @@ class PgStore(Store):
         """R4.1 P0 语义路由：query 向量化 → 按 capability 粒度 pgvector cosine 检索，
         按 agent 聚 max(similarity)、过 SEMANTIC_MIN_SIM 下限、返回 top_k。
 
-        无 embedding 源 / PG 不可用 / 空 query / embed 失败：返回 []（关键词结果原样生效）。
+        无 embedding 源 / PG 不可用 / 空 query：返回 []（关键词结果原样生效，离线 mock 的常态）。
+        **有向量源、这次却没算成**（query 向量化超时 / 网关不可达、检索 SQL 失败）：返回 None——调用方据此告知「只剩关键词排序」
+        （`ResolveResponse.semantic_unavailable`，2026-10-17：部署刚重启时向量化超时、周边被挤出目录预筛，规划零步）。
         返回 [(Record, score), ...] 按相似度降序；Record 取自内存权威副本（含 route_hints 等）。
         """
         if not self._pg_ok or not query or self._embed_source != "llm":
@@ -572,7 +574,7 @@ class PgStore(Store):
                 return []
         query_embedding = await self._embed_query_cached(query)
         if not query_embedding:
-            return []
+            return None
         try:
             async with self._pool.acquire() as conn:
                 compatibility_filter = " AND (v.agent_id || '/' || v.intent) = ANY($4::text[])" if eligible is not None else ""
@@ -602,8 +604,8 @@ class PgStore(Store):
                 results.append((rec, float(row["similarity"])))
             return results
         except Exception as e:
-            logger.debug("PgStore: semantic resolve failed: %s", e)
-            return []
+            logger.warning("PgStore: semantic resolve failed: %s", type(e).__name__)
+            return None
 
 
 def _manifest_to_dict(manifest) -> dict:
