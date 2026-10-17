@@ -330,28 +330,85 @@ def test_bare_object_clarification_cannot_degrade_into_empty_no_action():
     assert "请介绍云岚国际中心的地点信息" in prompt
 
 
+def _cyclic_pair(first_ref: str, second_ref: str, *, first_refs=None, second_refs=None) -> dict:
+    return {
+        "addressed": True,
+        "steps": [
+            {"id": "s1", "capability_ref": first_ref, "slots": {},
+             "depends_on": ["s2"], "slot_refs": dict(first_refs or {})},
+            {"id": "s2", "capability_ref": second_ref, "slots": {},
+             "depends_on": ["s1"], "slot_refs": dict(second_refs or {})},
+        ],
+    }
+
+
 def test_cyclic_wire_plan_is_rejected_before_it_reaches_the_executor():
-    """The planner seam must fail closed on a graph the executor cannot schedule."""
+    """The planner seam must fail closed on a graph the executor cannot schedule.
+
+    真循环引用（两步互相取对方的结果）补不成一致，整份拒。"""
     _, assemble = _ref_api()
     catalog = assemble([_agent("nearby", "nearby.search", "nearby.detail")])
     search_ref = catalog.pair_to_ref[("nearby", "nearby.search")]
     detail_ref = catalog.pair_to_ref[("nearby", "nearby.detail")]
     builder = planning.PlanBuilder(None, None)
 
-    cyclic = {
-        "addressed": True,
-        "steps": [
-            {"id": "s1", "capability_ref": search_ref, "slots": {},
-             "depends_on": ["s2"], "slot_refs": {}},
-            {"id": "s2", "capability_ref": detail_ref, "slots": {},
-             "depends_on": ["s1"], "slot_refs": {}},
-        ],
-    }
+    cyclic = _cyclic_pair(search_ref, detail_ref,
+                          first_refs={"keyword": "s2.data.items.0.name"},
+                          second_refs={"poi_id": "s1.data.items.0.id"})
     assert builder._parse_and_validate_data(cyclic, catalog, "query") is None
 
     acyclic = json.loads(json.dumps(cyclic))
     acyclic["steps"][0]["depends_on"] = []
+    acyclic["steps"][0]["slot_refs"] = {}
     assert builder._parse_and_validate_data(acyclic, catalog, "query") is not None
+
+
+def test_a_cycle_no_data_reference_backs_becomes_two_independent_steps():
+    """2026-10-16 EN07（`252cab57` r3）：「导航去深圳北站，在附近找个充电桩」两步互相声明依赖、谁也不取谁的结果，整份被拒，
+    用户听到「没能拆成可以执行的步骤」。没有引用撑着的依赖只是排序声明，环里这样的边一起去掉，剩下的与「没写依赖」同形。"""
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("nearby", "nearby.search", "nearby.detail")])
+    plan = planning.PlanBuilder(None, None)._parse_and_validate_data(
+        _cyclic_pair(catalog.pair_to_ref[("nearby", "nearby.search")],
+                     catalog.pair_to_ref[("nearby", "nearby.detail")]), catalog, "query")
+    assert plan is not None
+    assert [step.depends_on for step in plan.steps] == [[], []]
+
+
+def test_a_cycle_keeps_the_edge_a_data_reference_backs():
+    """一边取了另一边的结果：那条边定顺序，只去掉没有引用撑着的那条。"""
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("nearby", "nearby.search", "nearby.detail")])
+    plan = planning.PlanBuilder(None, None)._parse_and_validate_data(
+        _cyclic_pair(catalog.pair_to_ref[("nearby", "nearby.search")],
+                     catalog.pair_to_ref[("nearby", "nearby.detail")],
+                     second_refs={"poi_id": "s1.data.items.0.id"}), catalog, "query")
+    assert plan is not None
+    assert {step.id: step.depends_on for step in plan.steps} == {"s1": [], "s2": ["s1"]}
+
+
+def test_an_ordering_edge_outside_the_cycle_is_kept():
+    """只动环上的边：环外那条没有引用的排序依赖（s3 跟在 s1 后面）照旧保留。"""
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("nearby", "nearby.search", "nearby.detail")])
+    search_ref = catalog.pair_to_ref[("nearby", "nearby.search")]
+    detail_ref = catalog.pair_to_ref[("nearby", "nearby.detail")]
+    wire = _cyclic_pair(search_ref, detail_ref)
+    wire["steps"].append({"id": "s3", "capability_ref": search_ref, "slots": {},
+                          "depends_on": ["s1"], "slot_refs": {}})
+    plan = planning.PlanBuilder(None, None)._parse_and_validate_data(wire, catalog, "query")
+    assert plan is not None
+    assert {step.id: step.depends_on for step in plan.steps} == {"s1": [], "s2": [], "s3": ["s1"]}
+
+
+def test_a_cycle_between_two_side_effects_is_still_rejected():
+    """两步都带副作用（「先关空调再打开」写成环）：去边后两步并行，最终状态不确定——不补，照旧整份拒。"""
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("edge-vehicle", "hvac.open", "hvac.close", protected=True)])
+    plan = planning.PlanBuilder(None, None)._parse_and_validate_data(
+        _cyclic_pair(catalog.pair_to_ref[("edge-vehicle", "hvac.close")],
+                     catalog.pair_to_ref[("edge-vehicle", "hvac.open")]), catalog, "query")
+    assert plan is None
 
 
 def test_missing_container_step_fields_are_normalized_not_dropped():

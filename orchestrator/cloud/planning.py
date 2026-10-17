@@ -3067,8 +3067,14 @@ class PlanBuilder:
 
         # Executor 会对环形 DAG fail closed，但不能让一个确定不可调度的计划先穿过
         # Planner seam、再到执行期才暴露。模型偶发输出 s1→s2→s1；这既不是可归一的
-        # 缺边，也不能靠删任意一条边猜用户意图。把整份候选原子拒绝，交给现有重试。
+        # 缺边，也不能靠删任意一条边猜用户意图。能确定性补成一致的只有一种：环上的边
+        # 都没有数据引用撑着、而且至多一步有副作用（`_drop_dataless_cycle_edges`）；
+        # 其余照旧把整份候选原子拒绝，交给现有重试。
         ids = [step.id for step in steps]
+        if len(set(ids)) == len(ids) and not self._is_acyclic(steps):
+            dropped = self._drop_dataless_cycle_edges(steps)
+            if dropped:
+                logger.info("Plan dependency cycle: dropped data-less edges %s", dropped)
         if len(set(ids)) != len(ids) or not self._is_acyclic(steps):
             logger.warning("Plan contains duplicate step ids or a dependency cycle; retrying")
             return None
@@ -3135,6 +3141,76 @@ class PlanBuilder:
         if len(owners) != 1 or owners[0][1] not in answer_only:
             return None
         return owners[0]
+
+    @staticmethod
+    def _drop_dataless_cycle_edges(steps: list[Step]) -> list[tuple[str, str]]:
+        """依赖成环时，去掉环上**没有数据引用撑着**的边；返回去掉的 `(步, 它声明依赖的步)`。
+
+        2026-10-16 EN07（`252cab57` r3 首句「导航去深圳北站，在附近找个充电桩」）：两步各写了同一个目的地、互相声明依赖、
+        谁也不取谁的结果，校验整份拒掉，重试又零步，用户听到「没能拆成可以执行的步骤」。引用了另一步的输出就是依赖的定义
+        （`_derive_depends_on_from_refs`）；没有引用撑着的 `depends_on` 只是排序声明，成环说明这份排序自相矛盾。
+        - 不挑哪条去删（那是替用户猜方向）：同一个强连通分量里所有这样的边一起去掉，剩下的计划与「规划器没写依赖」同形；
+          有引用撑着的边一条不动，由它定顺序；
+        - 分量里有两步以上带副作用就不动（「先关空调再打开」写成环，去边后两步并行，最终状态不确定），照旧整份拒；
+        - 去掉之后仍有环（真的互相取结果）由调用方照旧整份拒。
+        """
+        by_id = {step.id: step for step in steps}
+        data_deps: dict[str, set[str]] = {}
+        for step in steps:
+            heads = set()
+            for raw in list(step.slot_refs.values()) + list(step.slots.values()):
+                match = PlanBuilder._REF_HEAD_RE.match(raw.strip()) if isinstance(raw, str) else None
+                if match:
+                    heads.add(match.group(1))
+            data_deps[step.id] = heads
+        # 强连通分量（Tarjan）：计划只有几步，递归深度无虞
+        index: dict[str, int] = {}
+        low: dict[str, int] = {}
+        component: dict[str, int] = {}
+        stack: list[str] = []
+        on_stack: set[str] = set()
+
+        def connect(node: str) -> None:
+            index[node] = low[node] = len(index)
+            stack.append(node)
+            on_stack.add(node)
+            for dep in by_id[node].depends_on:
+                if dep not in by_id:
+                    continue
+                if dep not in index:
+                    connect(dep)
+                    low[node] = min(low[node], low[dep])
+                elif dep in on_stack:
+                    low[node] = min(low[node], index[dep])
+            if low[node] == index[node]:
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component[member] = index[node]
+                    if member == node:
+                        break
+
+        for step_id in by_id:
+            if step_id not in index:
+                connect(step_id)
+        members: dict[int, list[str]] = {}
+        for step_id, comp in component.items():
+            members.setdefault(comp, []).append(step_id)
+        side_effect_ids = {step.id for step in PlanBuilder._side_effect_steps(steps)}
+        dropped: list[tuple[str, str]] = []
+        for step in steps:
+            group = members[component[step.id]]
+            if sum(1 for member in group if member in side_effect_ids) > 1:
+                continue
+            kept = []
+            for dep in step.depends_on:
+                on_cycle = dep == step.id or (len(group) > 1 and component.get(dep) == component[step.id])
+                if on_cycle and dep not in data_deps[step.id]:
+                    dropped.append((step.id, dep))
+                    continue
+                kept.append(dep)
+            step.depends_on = kept
+        return dropped
 
     @staticmethod
     def _is_acyclic(steps: list[Step]) -> bool:
