@@ -656,3 +656,25 @@ def test_a_stop_near_the_destination_still_goes_last():
     near_dest = POI(id="d1", name="特来电充电站(北站东广场)", lat=22.6150, lng=114.0300)
     res, _, names = _add([_KFC], [near_dest], slots={"add_waypoint": "充电站"})
     assert names == [_KFC["name"], near_dest.name]
+
+
+# ─── 2026-10-17 EN09：规划器偶发把「顺路加个充电站」写成 `{category: 充电站}` ───
+
+def test_reroute_contract_accepts_category_and_still_rejects_unknown_parameters():
+    """线上 10 遍 1 遍写成 `category`，严格契约以 `unexpected_parameter` 整步拒掉；收下它，别的未声明参数照旧拒。"""
+    from pathlib import Path
+    from agents._sdk.manifest import load_manifest
+    from runtime.capability_contract import argument_error, contract_of
+    manifest = load_manifest(str(Path(__file__).resolve().parents[1] / "manifest.yaml"))
+    cap = next(c for c in manifest.capabilities if c.intent == "navigation.reroute")
+    assert argument_error(contract_of(cap), {"category": "充电站"}) == ""
+    assert argument_error(contract_of(cap), {"poi_category": "充电站"}) == "unexpected_parameter"
+    assert "category" not in list(cap.slots), "别名只进契约参数，不进规划器看得到的 slots"
+
+
+def test_a_category_alias_adds_a_stop_of_that_category():
+    """没给 `add_waypoint`、原话也解析不出要加什么（「顺路补个电」）：按 `category` 加，与 `{add_waypoint: 充电站}` 同一条路。"""
+    res, _, names = _add([_KFC], [_poi(_CHARGER_B, "c2")], slots={"category": "充电站"}, raw_text="顺路补个电")
+    assert f"已顺路加上{_CHARGER_B['name']}" in res.speech
+    assert _CHARGER_B["name"] in names
+

@@ -2370,7 +2370,8 @@ class NavigationAgent(BaseAgent):
 
         # ③ 加途经点：类目词映射后就近解析（当前位置优先，其次目的地）。
         add_word, prepend = "", False
-        slot_add = (intent.slots.get("add_waypoint") or "").strip()
+        # `category` 是规划器偶发用的别名（「顺路加个充电站」→ `{category: 充电站}`，EN09），没给 `add_waypoint` 时当要加的途经点类目
+        slot_add = (intent.slots.get("add_waypoint") or intent.slots.get("category") or "").strip()
         if slot_add:
             add_word, prepend = slot_add, ("先" in raw_text[:raw_text.find(slot_add) + 1]
                                            if slot_add in raw_text else False)

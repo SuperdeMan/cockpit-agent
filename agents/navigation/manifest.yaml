@@ -151,7 +151,10 @@ capabilities:
   - intent: navigation.reroute
     contract:
       version: 2
-      revision: '2'
+      # revision 3（2026-10-17 EN09）：收 `category`——规划器偶发把「顺路加个充电站」写成 `{category: 充电站}`（线上 10 遍 1 遍），
+      # 严格契约整步拒掉；Agent 在没给 `add_waypoint` 时把它当要加的途经点类目，与另外 6 遍 `{add_waypoint: 充电站}` 同一条路。
+      # 只进契约参数、不进 `slots`（规划器看不到，同 200×5 后续批 §18.2 周边的别名参数）。
+      revision: '3'
       effect: state_change
       parameters:
         remove_waypoint:
@@ -159,6 +162,10 @@ capabilities:
           unit: ''
           region: ''
         add_waypoint:
+          type: string
+          unit: ''
+          region: ''
+        category:
           type: string
           unit: ''
           region: ''
