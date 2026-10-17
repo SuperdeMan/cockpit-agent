@@ -324,9 +324,13 @@ def test_launch_worker_rejects_preexisting_external_destination_before_start(
 @pytest.mark.parametrize("alias_kind", ["json", "markdown"])
 def test_launch_worker_rejects_external_hardlink_to_repo_before_start(
         monkeypatch, alias_kind):
+    # 仓库里的目标建在 `.artifacts/` 下（仍在仓库内，这条测的东西不变）。直接建在仓库根时，`test_e2e_manifest` 的隐私扫描遍历到一半
+    # 会撞上它被删、整条用例报错（并行全量偶发）；扫描刻意 fail-closed，不为测试放宽，`.artifacts` 本来就在它的剪枝表里。
+    artifacts = cli.ROOT / ".artifacts"
+    artifacts.mkdir(exist_ok=True)
     with (
         tempfile.TemporaryDirectory(
-            prefix="intent-worker-repo-target-", dir=cli.ROOT) as repo_dir,
+            prefix="intent-worker-repo-target-", dir=artifacts) as repo_dir,
         tempfile.TemporaryDirectory(
             prefix="intent-worker-external-", dir=cli.ROOT.parent) as external_dir,
     ):
