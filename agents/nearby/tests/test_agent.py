@@ -1711,3 +1711,89 @@ def test_a_location_slot_that_agrees_with_the_spoken_place_is_still_preferred(sl
         assert first_near is not None and abs(first_near.lat - 22.54) < 1e-6
     else:
         assert seen["calls"][0][0] == loc, "槽与原话一致：照旧按槽解析"
+
+
+# ── 2026-10-16 demo-dqt1fu：餐饮分支里认不出的词先当名字试搜 ─────────────────────────────
+
+def _scripted_search(by_keyword):
+    """按检索词回放 POI 名字；记下每次检索词。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    calls = []
+
+    async def search(keyword, **kw):
+        calls.append(keyword)
+        return [Place(id=f"{keyword}-{i}", name=name, category="餐饮服务", address="x",
+                      city="深圳市", lat=22.54, lng=113.95, distance_km=0.3 + i / 10)
+                for i, name in enumerate(by_keyword.get(keyword, []))]
+
+    agent.place.search = search
+    return agent, calls
+
+
+def test_keyword_plan_probes_only_the_unrecognized_food_word():
+    """餐饮分支「认不出 ⇒ 退回类目词」那一处才给试探词；菜品、类目别名、半句话、品牌槽都不试探，检索词逐字同旧。"""
+    plan = NearbyAgent._keyword_plan
+    assert plan("餐饮", "", "", "麦当劳") == ("美食", "麦当劳")      # 真栈：规划器照范例填 keyword=麦当劳
+    assert plan("", "", "", "肯德基") == ("美食", "肯德基")          # 类目为空也走餐饮分支
+    assert plan("餐饮", "", "", "不辣") == ("美食", "不辣")          # 约束词同样试探，由结果裁决
+    assert plan("餐饮", "", "", "火锅") == ("火锅", "")
+    assert plan("餐饮", "", "", "晚饭") == ("美食", "")
+    assert plan("餐饮", "", "", "人均一百的") == ("美食", "")         # 带虚词 / 数量词的半句话不当名字
+    assert plan("餐饮", "", "麦当劳", "") == ("麦当劳", "")
+    assert plan("咖啡", "", "", "星巴克") == ("咖啡厅", "")           # 非餐饮类目不试探（登记为后续）
+
+
+def test_a_brand_in_keyword_is_searched_by_its_name_when_places_carry_it():
+    """真栈：「帮我查看离我最近那家麦当劳的菜单。」→ keyword=麦当劳 被换成「美食」，第一家是烤肉店、又被当成麦当劳门店线索。"""
+    agent, calls = _scripted_search({
+        "麦当劳": ["麦当劳(科技园店)", "麦当劳(深圳湾店)"],
+        "美食": ["微风小院·烤肉(科技园店)", "樟荣·沙县手工小吃(南山店)"]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"keyword": "麦当劳"},
+        raw_text="帮我查看离我最近那家麦当劳的菜单。", meta=_LOC))
+    assert calls == ["麦当劳"], "品牌查询不多花调用"
+    assert [it["name"] for it in res.data["items"]] == ["麦当劳(科技园店)", "麦当劳(深圳湾店)"]
+    assert res.data["_candidate_label"] == "麦当劳" and "_fallback" not in res.data
+    assert "麦当劳" in res.speech and "美食" not in res.speech
+
+
+def test_a_probe_keeps_only_places_whose_names_carry_it():
+    """高德按关键词模糊匹配，混进来的别家不算——只留名字里带着它的。"""
+    agent, calls = _scripted_search({"麦当劳": ["麦当劳(科技园店)", "麦香村饺子馆"]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"keyword": "麦当劳"}, raw_text="附近的麦当劳", meta=_LOC))
+    assert [it["name"] for it in res.data["items"]] == ["麦当劳(科技园店)"]
+
+
+def test_a_constraint_word_probe_falls_back_to_the_category_as_before():
+    """「不辣」不是名字：试搜结果名字里都不带它 ⇒ 照旧按「美食」搜、照旧自报兜底（2026-08-15 恶例不复发）。"""
+    agent, calls = _scripted_search({
+        "不辣": ["辣可可·现炒黄牛肉"], "美食": ["粤式茶餐厅", "潮汕牛肉火锅"]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "餐饮", "keyword": "不辣"},
+        raw_text="附近有什么不辣的", meta=_LOC))
+    assert calls == ["不辣", "美食"]
+    assert [it["name"] for it in res.data["items"]] == ["粤式茶餐厅", "潮汕牛肉火锅"]
+    assert res.data["_fallback"] is True and res.data["_candidate_label"] == "美食"
+
+
+def test_a_brand_with_no_named_place_nearby_still_reports_the_fallback():
+    """附近一家都不带这个名字（品牌附近没店，或根本不是名字）：退回类目词，`_fallback` 照旧让编排知道这份不是他点的。"""
+    agent, calls = _scripted_search({"美食": ["粤式茶餐厅"]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "餐饮", "keyword": "麦当劳"},
+        raw_text="附近的麦当劳", meta=_LOC))
+    assert calls == ["麦当劳", "美食"]
+    assert res.data["_fallback"] is True
+
+
+def test_a_spicy_probe_the_user_did_not_say_is_not_searched_under_no_spicy():
+    """C12-C 同一条规则落到试探词上：这一轮说了不要辣，规划器塞进来的「麻辣烫」不是他自己说的，不拿去试搜。"""
+    agent, calls = _scripted_search({"麻辣烫": ["张亮麻辣烫(科技园店)"], "美食": ["粤式茶餐厅"]})
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "餐饮", "keyword": "麻辣烫"},
+        raw_text="附近吃点东西，不要辣的", meta=_LOC))
+    assert calls == ["美食"]
+    assert [it["name"] for it in res.data["items"]] == ["粤式茶餐厅"]
+

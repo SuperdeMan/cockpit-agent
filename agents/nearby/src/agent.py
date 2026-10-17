@@ -311,6 +311,29 @@ def _looks_like_dish(text: str) -> bool:
     return bool(t) and any(m in t for m in _DISH_MARKERS)
 
 
+#: 名字试探词的长度上限：连锁 / 品牌名（麦当劳、蜜雪冰城、西贝莜面村）都在这以内；更长的多半是没剥干净的半句话。
+_NAME_PROBE_MAX = 8
+
+
+def _name_probe(cleaned: str) -> str:
+    """餐饮分支里**认不出**的那个词（不是类目别名、不是菜品）能不能拿去「当名字试搜」：能 ⇒ 原样返回，否则空串。
+
+    它可能是品牌 / 连锁名（「麦当劳」「肯德基」），也可能是约束词（「不辣」「适合带老人」）——字面上分不出，交给数据裁决
+    （`NearbyAgent._search`：结果名字里真带着它才算名字）。这里只挡掉明显不是一个名字的：带虚词 / 数量词的半句话、超长串。
+    """
+    text = (cleaned or "").strip()
+    if not text or len(text) > _NAME_PROBE_MAX or set(text) & _NON_BRAND_CHARS:
+        return ""
+    return text
+
+
+def _name_carries(name: str, probe: str) -> bool:
+    """POI 名字里带着试探词（不分大小写、忽略空白）——试探词是这家店名字的一部分，不是被高德模糊匹配上的。"""
+    def norm(value: str) -> str:
+        return re.sub(r"\s+", "", value or "").casefold()
+    return bool(probe) and norm(probe) in norm(name)
+
+
 class NearbyAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
@@ -575,21 +598,32 @@ class NearbyAgent(BaseAgent):
     def _build_keyword(category, cuisine, brand, kw_slot) -> str:
         """高德检索词：品牌/菜系优先；设施/类型类目（停车场/充电站/酒店…）直接用干净类目词，
         避免把带动词/价位的整句（『帮我查一查人均百元的停车场』）当关键词；仅餐饮用剥壳后的具体词。"""
+        return NearbyAgent._keyword_plan(category, cuisine, brand, kw_slot)[0]
+
+    @staticmethod
+    def _keyword_plan(category, cuisine, brand, kw_slot) -> tuple[str, str]:
+        """(高德检索词, 名字试探词)。检索词的判据见 `_build_keyword`（逐字同旧）；试探词非空时 `_search` 先拿它原样去搜。
+
+        试探词只在餐饮分支「认不出 ⇒ 退回类目词」那一处给出（2026-10-16 demo-dqt1fu）：规划器照范例填 `keyword=麦当劳`，
+        这里把「麦当劳」当成约束词换成「美食」，搜出一圈沙县小吃、烤肉店，第一家又被当成麦当劳的门店线索。品牌和约束词字面上
+        分不出，所以不加品牌词表，交给结果裁决：名字里真带着它 ⇒ 是名字，按它出结果；否则照旧用类目词（`_fallback` 照旧）。
+        非餐饮类目里单说品牌（「星巴克」+ 咖啡 ⇒ 咖啡厅）不在这里试探：「拿铁」「咖啡店」这类词名字里也常带，试探会把结果收窄。
+        """
         if brand:
-            return brand                       # 品牌是专名（瑞幸/星巴克），不做菜品判定
+            return brand, ""                   # 品牌是专名（瑞幸/星巴克），不做菜品判定
         if cuisine:
             # cuisine 槽同样会被填进约束词——真栈实测 planner 把「不辣」「适合带老人」
             # 填在这里，而这条分支是**早退**，下面餐饮分支的守卫根本够不着
             # （首版只补了那一处，复验时原样复现：「为您找到 10 家不辣」）。
             if _looks_like_dish(cuisine):
-                return cuisine
+                return cuisine, ""
             cuisine = ""                       # 不是菜系 → 丢掉，继续按类目走
         # 指名门店（「瑞幸咖啡 深铁金融科技大厦店」/「麦当劳(科苑南路餐厅)」）原样保留：
         # 它比任何类目/品牌词都具体，被改写成「咖啡厅」是静默的信息丢失——
         # 候选卡按钮/用户点名的选店句正是这种形状（demo-mkemhn 选店死路的一环）。
         named = _strip_qualifiers(kw_slot)
         if _named_poi_query(named):
-            return named
+            return named, ""
         cat_kw = _CATEGORY_KEYWORD.get(category)
         if cat_kw and category not in _FOOD_CATS:      # 设施/非餐饮类目 → 干净类目词
             # 但『瑞幸咖啡』『特斯拉充电桩』这种**品牌 + 类目别名**是用户明确点名的东西，
@@ -599,13 +633,13 @@ class NearbyAgent(BaseAgent):
             # 判据刻意收得很紧（见 _brand_qualified）：**不能靠 _strip_qualifiers 兜底**
             # ——它只剥价位/评分/营业/查询措辞，『人均百元的停车场』剥完还是整句，
             # 正是本分支当初存在的理由。剥不成品牌形状的一律退回类目词。
-            return _brand_qualified(_strip_qualifiers(kw_slot)) or cat_kw
+            return _brand_qualified(_strip_qualifiers(kw_slot)) or cat_kw, ""
         cleaned = _strip_qualifiers(kw_slot)           # 餐饮：剥掉价位/评分/动词后的具体词（火锅/川菜）
         if cleaned and cleaned not in ("地点", "的"):
             # 剥完若正好是**类目别名**（「吃饭」「晚饭」），它不是检索词：拿它问高德
             # 会搜名字里带「晚饭」的店，话术还念成「为您找到 10 家晚饭」（真栈实测）。
             if cleaned in _CATEGORY_KEYWORD:
-                return _CATEGORY_KEYWORD[cleaned]
+                return _CATEGORY_KEYWORD[cleaned], ""
             # **约束词不是检索词**（2026-08-15 双档真栈实测的两个恶例）：
             # planner 填 keyword=「不辣」→ 搜出一串「辣可可·现炒黄牛肉」，
             # 填 keyword=「适合带老人」→ 搜出家政公司。餐饮分支此前对剥壳结果
@@ -614,12 +648,12 @@ class NearbyAgent(BaseAgent):
             # 与上面「整句：漏认，退回类目」同一条纪律：**宁可少检索维度，
             # 也不能拿约束词当店名去搜**。
             if _looks_like_dish(cleaned):
-                return cleaned
-            return cat_kw or "美食"
+                return cleaned, ""
+            return cat_kw or "美食", _name_probe(cleaned)
         # Preserve an explicit unknown/coarse category as the provider query;
         # silently rewriting it to food is a semantic corruption.  Only a
         # genuinely absent category keeps the legacy nearby-food default.
-        return cat_kw or _strip_qualifiers(category) or "美食"
+        return cat_kw or _strip_qualifiers(category) or "美食", ""
 
     @staticmethod
     def _item(p: Place) -> dict:
@@ -674,7 +708,7 @@ class NearbyAgent(BaseAgent):
         if anchor and kw_slot and (kw_slot == anchor or anchor in kw_slot) and \
                 len(kw_slot) <= len(anchor) + 2:
             kw_slot = ""
-        keyword = self._build_keyword(category, cuisine, brand, kw_slot)
+        keyword, name_probe = self._keyword_plan(category, cuisine, brand, kw_slot)
         raw = intent.raw_text or ""
         # G6：口味偏好在检索**前**生效。泛餐饮发现（用户没点菜系/品牌/关键词）时，
         # 记忆里的喜好菜系直接偏置检索词；用户点名的东西永远优先于记忆。
@@ -750,6 +784,9 @@ class NearbyAgent(BaseAgent):
                     said = "您说了不要辣" if turn_no_spicy else "您说过不吃辣"
                     taste_notes.append(
                         f"{said}，就没按{'/'.join(spicy_kw)}找")
+                # 名字试探词同一条规则：不是他这一轮自己说的重辣词，不拿去搜
+                if any(w in name_probe and w not in raw for w in self._SPICY_MARKS):
+                    name_probe = ""
         rating_min = _to_float(intent.slots.get("rating_min"))
         # 价位/排序/营业中：原话解析优先（『一百左右』的区间语义只在原话里，LLM 填的 price_max
         # 槽位会丢下限 → 之前『左右』返回太便宜的）；原话无价位再退回 LLM 槽位。
@@ -786,7 +823,19 @@ class NearbyAgent(BaseAgent):
                    price_min=price_min, price_max=price_max, brand=brand,
                    sort=sort, open_now=open_now, meta=meta)
         try:
-            results = await self.place.search(keyword, **skw)
+            results = None
+            if name_probe:
+                # 名字试探（`_keyword_plan`）：认不出的词先原样搜，结果名字里带着它才算名字——品牌 / 连锁店按它出结果，
+                # 约束词（名字里不会带「不辣」）照旧退回类目词。品牌查询不多花一次调用，约束词多一次。
+                probed = [p for p in await self.place.search(name_probe, **skw)
+                          if _name_carries(p.name, name_probe)]
+                if probed:
+                    results, keyword, label = probed, name_probe, name_probe
+                else:
+                    logger.info("nearby name probe %r matched no POI name; falling back to %r",
+                                name_probe, keyword)
+            if results is None:
+                results = await self.place.search(keyword, **skw)
         except ProviderError as e:
             # 真实源失败不再改供 mock 假 POI（假餐厅可能被用户导航过去）——诚实说拿不到。
             # M0a 对齐 R9 契约：OK 话术（单步 FAILED 的 speech 被聚合器吞成裸「处理失败」）。
