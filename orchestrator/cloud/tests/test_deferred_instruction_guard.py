@@ -109,3 +109,22 @@ def test_the_guard_logs_which_reason_dropped_the_steps(caplog):
     assert "Deferred instruction planned into side-effecting step(s) ['hvac.on']" in caplog.text
     assert out.steps == [] or all(step.intent != "hvac.on" for step in out.steps)
     assert (out.plan_mode or "").endswith("_question_write_blocked")
+
+
+@pytest.mark.parametrize("origin", ["八点打开空调", "等会儿再把车窗打开"])
+def test_a_deferred_instruction_blocked_empty_ends_with_a_fixed_offer_not_free_talk(origin):
+    """2026-10-19 复测：拦光后交兜底谈话 6 遍 5 遍答得不像样（空头承诺被剥后剩半截话、转去检索、「没听清」）⇒ 确定性收尾。"""
+    from orchestrator.cloud.models import Plan
+    built = Plan(steps=[_edge("window.open" if "车窗" in origin else "hvac.on", "打开")], goal=origin, technical_failure=True)
+    out = PlanBuilder._apply_question_side_effect_guard(PlanBuilder.__new__(PlanBuilder), built, origin, agents=[])
+    assert out.steps == [] and not out.technical_failure
+    assert out.clarify["question"] == f"「{origin}」要到时候再做，我现在先不做。要我到时候提醒你吗？"
+    assert out.clarify["options"] == [{"label": "到时候提醒我", "send_text": f"到时候提醒我：{origin}"}]
+
+
+def test_a_question_blocked_empty_still_goes_to_the_talk_fallback():
+    """问句被拦光照旧交兜底谈话答一句（「X灯亮了怎么办」最需要一个回答），确定性收尾只给往后推的说法。"""
+    from orchestrator.cloud.models import Plan
+    built = Plan(steps=[_edge("hvac.on", "打开空调")], goal="空调要开吗")
+    out = PlanBuilder._apply_question_side_effect_guard(PlanBuilder.__new__(PlanBuilder), built, "空调要开吗？", agents=[])
+    assert out.clarify is None

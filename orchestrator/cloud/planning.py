@@ -3953,6 +3953,13 @@ class PlanBuilder:
         plan.plan_mode = f"{plan.plan_mode or ''}_question_write_blocked"
         if not plan.steps:
             plan.complexity = "simple"
+            if deferred:
+                # 确定性收尾，不交给兜底谈话（同裸序数那一条）：往后推的说法当场的车控拦光之后，兜底谈话 2026-10-19 复测 6 遍 5 遍答得
+                # 不像样——空头承诺被剥掉后剩半截话、转去检索、「没听清」。说出那句话、说清现在先不做、问一句要不要到时候提醒。
+                plan.clarify = self._deferred_offer(text)
+                plan.technical_failure = False
+                plan.clarify_wanted = False
+                return plan
             # 空计划优先交给**未确认的**兜底 Agent 答一句，而不是宣布没听清：
             # 这一类句子（「X灯亮了怎么办」）恰恰最需要一个回答。默认 chitchat
             # 自己就带安全信号判据（`runtime.safety_signal`），会给出分级建议；
@@ -4203,6 +4210,15 @@ class PlanBuilder:
         plan.clarify_wanted = False
         plan.plan_mode = f"{plan.plan_mode or ''}{mode}"
         return plan
+
+    @staticmethod
+    def _deferred_offer(text: str) -> dict:
+        """往后推的说法当场的车控被拦下、计划空了 ⇒ 复述那句话、说清现在先不做、问要不要到时候提醒。
+
+        选项发出「到时候提醒我：原话」交给提醒（时间由提醒自己从原话解析，「等会儿」这类没有时刻的会追问）；不替用户直接建提醒。"""
+        said = re.sub(r"\s+", "", str(text or "")).strip("，,。.！!？?～~")
+        return {"question": f"「{said}」要到时候再做，我现在先不做。要我到时候提醒你吗？",
+                "options": [{"label": "到时候提醒我", "send_text": f"到时候提醒我：{said}"}]}
 
     @staticmethod
     def _ordinal_selection_clarify(index: int, item: dict) -> dict:
