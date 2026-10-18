@@ -70,14 +70,16 @@ def test_names_stop_needs_a_distinctive_part_of_the_name(text, name, named):
 
 
 @pytest.mark.parametrize("text", ["候选充电站", "充电站", "一个充电站", "附近的充电桩", "顺路的快充",
-                                  "附近可用快充站", "空闲的充电桩", "能用的充电站"])
+                                  "附近可用快充站", "空闲的充电桩", "能用的充电站",
+                                  "下一个充电站", "再一个充电站", "又一个充电站", "多一个充电站"])
 def test_generic_charger_words_name_no_particular_station(text):
     """2026-10-17 EN07 r3：规划器写 `add_waypoint=候选充电站`，导航按字面搜不到，第二个站没加上。"""
     from runtime.charger_swap import is_generic_charger_word
     assert is_generic_charger_word(text), text
 
 
-@pytest.mark.parametrize("text", ["特斯拉充电站", "国家电网充电站", "路特斯汽车充电站(北站闪充站)", "加油站", ""])
+@pytest.mark.parametrize("text", ["特斯拉充电站", "国家电网充电站", "路特斯汽车充电站(北站闪充站)", "加油站", "",
+                                  "下一个特斯拉充电站"])
 def test_a_branded_or_named_station_is_not_generic(text):
     """带品牌 / 站名特征的照旧按字面搜：换成类目会把用户点名的品牌丢掉。"""
     from runtime.charger_swap import is_generic_charger_word

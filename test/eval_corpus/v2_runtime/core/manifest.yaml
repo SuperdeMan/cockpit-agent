@@ -232,8 +232,8 @@ journeys:
   - {id: EN04, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   - {id: EN05, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
   - {id: EN06, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
-  # 曾标 known_red（规划器把站写成「附近可用快充站」/ 复核重试翻成不受话 / 首轮澄清方差）；2026-10-18 `a5c108a2` 5 / 5（同一 SHA），摘牌；再红就按回退报
-  - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
+  - {id: EN07, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle,
+     known_red: "2026-10-18：`a5c108a2` 5 / 5 摘牌后 `d23623a8` 3 / 5，按回退重标。两遍都坏在第 2 句「途经再加一个充电站」（第 3 句「换一个」只是连锁：路线上只剩一个站）：r2 规划器把要加的站写成「下一个充电站」，泛指判据不认「下一个」（第五批补上）；r3 规划器把改线的槽写成散文「从 s1 结果选取」，原样传给了导航（登记，后续批 §20.7）。同一 SHA 5 / 5 再摘"}
   - {id: EN08, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: read_only}
   # 曾标 known_red（「那顺路加个充电站」只找站不改线 / 首轮澄清方差）；2026-10-18 `a5c108a2` 5 / 5（同一 SHA），摘牌；再红就按回退报
   - {id: EN09, source: eval_corpus/v2_runtime/core/f02_f06_f07_f09_more.yaml, family: F07, lane: simulated_vehicle}
