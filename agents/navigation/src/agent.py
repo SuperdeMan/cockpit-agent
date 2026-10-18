@@ -1758,44 +1758,41 @@ class NavigationAgent(BaseAgent):
                 logger.debug("stop-choice base route unavailable: %s", e)
         mid = self._route_midpoint(base_route)
         where = "沿途" if mid is not None else "目的地附近"
-        stops, missed = [], ""
+        stops, missed, errored = [], "", False
         if probe:
-            searched = False      # 点名的试搜至少有一次真跑完了（服务失败时不说「没找到」，只照类目往下找）
-            for anchor, label in ((mid, "沿途"), (dest_pt, "目的地附近")):
-                if anchor is None:
-                    continue
-                try:
-                    found = await self.poi.search(f"{probe}充电站", near=anchor, limit=10, meta=meta)
-                except ProviderError as e:
-                    logger.warning("named charger stop search failed: %s", e)
-                    continue
-                searched = True
+            # 只在第一个锚点试一次（有路线几何是沿途，没有是目的地附近），话术说的「没找到」也只说那一处：高德 QPS 限额低，
+            # 点名落空还要照类目再搜——两个锚点都试的版本在线上重放里撞了 10021（§22.7）。服务失败时不说「没找到」，只照类目往下找。
+            try:
+                found = await self.poi.search(f"{probe}充电站", near=(mid or dest_pt), limit=10, meta=meta)
+            except ProviderError as e:
+                logger.warning("named charger stop search failed: %s", e)
+            else:
                 stops = [s for s in found if carries_charger_name(s.name, probe)][:5]
-                if stops:
-                    where, keyword = label, f"{probe}充电站"
-                    break
-            if not stops:
-                missed, keyword = (probe if searched else ""), "充电站"
+                missed = "" if stops else probe
+            keyword = f"{probe}充电站" if stops else "充电站"
+        named_where = where
         if not stops:
             try:
                 stops = await self.poi.search(keyword, near=(mid or dest_pt), limit=5, meta=meta)
             except ProviderError as e:
                 logger.warning("stop category search failed: %s", e)
-                stops = []
+                stops, errored = [], True
         if not stops and mid is not None:
             # 沿途采样点没搜到 → 回落目的地附近再试一次（原行为）
             where = "目的地附近"
             try:
                 stops = await self.poi.search(keyword, near=dest_pt, limit=5, meta=meta)
             except ProviderError:
-                stops = []
+                stops, errored = [], True
         payload = self._navigate_payload(dest_poi.name, dest_poi.lat, dest_poi.lng, meta)
         deadline_note, extra = self._deadline_note(
             (base_route or {}).get("duration_min"), arrive_by_ts)
         if not stops:
+            # 检索服务失败不能说成「没找到」（§22.7：线上重放里 QPS 超限被答成「沿途和目的地附近暂未找到充电站」）
+            missing = (f"{keyword}信息暂时拿不到（服务不可用），稍后再说一次就行。" if errored
+                       else f"沿途和目的地附近暂未找到{keyword}。")
             return self._stamp_route_session(AgentResult(
-                speech=f"{strategy_note}已为您导航到{dest_poi.name}。{deadline_note}"
-                       f"沿途和目的地附近暂未找到{keyword}。",
+                speech=f"{strategy_note}已为您导航到{dest_poi.name}。{deadline_note}{missing}",
                 ui_card=attach({"type": "poi_list", "keyword": resolved_name,
                                 "items": items}, self.poi),
                 data={"items": items, **extra},
@@ -1830,7 +1827,7 @@ class NavigationAgent(BaseAgent):
             if hints:
                 eta_hint = "；".join(hints) + "。"
         names = "、".join(s.name for s in stops[:3])
-        lead = f"没找到{missed}的充电站，" if missed else ""
+        lead = f"{named_where}没找到{missed}的充电站，" if missed else ""
         data = {"destination": dest_poi.name, "stops": choice_items, **extra}
         if missed:
             data["_dropped_terms"] = [missed]
