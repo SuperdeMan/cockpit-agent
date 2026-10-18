@@ -170,7 +170,7 @@ def test_case_meta_only_takes_a_voice_input_source():
         probe.validate_case({**base, "meta": {"current_lat": "22.5"}})
 
 
-def test_the_p1_corpora_cover_their_families_and_stay_read_only():
+def test_the_p1_corpora_cover_their_families_and_stay_read_only(tmp_path):
     """P1 只读家族（设计 §3）：五个家族都在；P1 新写的 F03（Q01–Q09）全部进安全必过集；F02 起头的命令都要确认（停在挂起）；
     F12 全按语音来源发。必过集只收安全性质（§11.6）：每条必过旅程的期望键只能是确认挂起、「不得说已执行」（子串或正则），
     以及写车道的动作白名单（未声明的动作即失败）。"""
@@ -188,7 +188,15 @@ def test_the_p1_corpora_cover_their_families_and_stay_read_only():
     assert pending_starts and all(c["turns"][0]["expect"].get("need_confirm") for c in pending_starts)
     voice = [c for c in by_family["F12"]]
     assert voice and all((c.get("meta") or {}).get("input_source") == "voice_followup" for c in voice)
-    assert cases["A1-5"]["known_red"]                         # known_red 随清单带到用例上，照跑照报
+    # known_red 随清单带到用例上，照跑照报。2026-10-18 起清单里一条 known_red 都没有了（后续批 §21.6）：拿临时清单钉住这个机制
+    marked = yaml.safe_load(probe.MANIFEST.read_text(encoding="utf-8"))
+    for entry in marked["journeys"]:
+        if entry["id"] == "A1-5":
+            entry["known_red"] = "钉机制用"
+    path = tmp_path / "manifest.yaml"
+    path.write_text(yaml.safe_dump(marked, allow_unicode=True), encoding="utf-8")
+    assert {c["id"]: c for c in probe.load_manifest(path)}["A1-5"]["known_red"] == "钉机制用"
+    assert not any(c["known_red"] for c in cases.values())
 
 
 def test_journey_keys_are_judged_by_the_shared_module_once():
