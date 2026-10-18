@@ -216,3 +216,45 @@ def test_statements_shaped_like_it_are_not(text):
     assert not bare_execution_claim(text)
     if text and not execution_claim(text):
         assert strip_execution_claims(text) == (text.strip(), 0)
+
+
+# ── 7. 「执行」的完成体（2026-10-19，200×5 后续批 §23）：不带「为您」也是在说系统动了手 ───────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "好，关空调这步执行完了。",                                   # CA2-10 真栈探针 2026-10-02：规划给空步时谈话步这样说
+    "刚才帮你下达了打开指令，车辆应该已执行了。",                 # collector 2026-10-12：闲聊零动作
+    "已经执行完毕。",
+    "命令已执行。",
+    "都执行完了，你看看。",
+    "已发送关闭指令。",
+])
+def test_executed_completions_are_stripped_from_talk(text):
+    assert bare_execution_claim(text)
+    cleaned, removed = strip_execution_claims(text)
+    assert removed >= 1 and not bare_execution_claim(cleaned), cleaned
+    gate = ExecutionClaimGate()
+    streamed = "".join(gate.feed(ch) for ch in text) + gate.flush()
+    assert streamed == cleaned
+
+
+@pytest.mark.parametrize("text", [
+    # collector 2026-10-12 那一轮的另一半：说的是没做成，不是做完了（留存回放里唯一一条误报，否定排除后不再命中）
+    "刚才试着帮你开空调的时候超时了，没执行成功，这一步现在没办成。",
+    "还没有执行完。",
+    "并未执行。",
+    "系统会执行完毕再通知你。",                                   # 将来
+    "升级执行完毕后会自动重启。",                                 # 时间从句（手册常见）
+    "这条指令执行完了吗？",                                       # 问句
+    "执行过程中请勿熄火。",
+    "下达指令前请先确认车辆静止。",
+    "好的，我记下了。",                                           # 不收：说话方式的应答剥掉反而答非所问（设计 §23）
+])
+def test_executed_lookalikes_are_not(text):
+    assert not bare_execution_claim(text)
+    assert strip_execution_claims(text) == (text.strip(), 0)
+
+
+def test_the_executed_form_stays_out_of_the_segmenting_gate():
+    """同无主句：只在整句判（≤ 160 字）这一支收，流式闸的保留区推导只按 `_DONE_RE` / `_ONGOING_RE`，`CLAIM_SPAN_MAX` 不变。"""
+    assert not is_execution_claim_sentence("好，关空调这步执行完了。")
+    assert execution_claim("好，关空调这步执行完了。") == ""

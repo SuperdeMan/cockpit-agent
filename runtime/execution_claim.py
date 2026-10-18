@@ -86,15 +86,27 @@ _LEAD_CLAUSE_RE = re.compile(rf"^[^，,：:]{{1,{_LEAD_CLAUSE_MAX}}}[，,：:]\s
 _QUESTION_END_RE = re.compile(r"(?:[吗呢么]\s*[？?]?|[？?])\s*$")
 _SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;\n]?")
 
+#: 同一族的另一种形态（2026-10-19，200×5 后续批 §23）：「执行」本身就是做事的动词，它的完成体不带「为您」也是在说系统动了手——
+#: CA2-10 真栈探针（2026-10-02）规划给空步时谈话步说「好，关空调这步执行完了」，collector 2026-10-12 一轮闲聊零动作说「刚才帮你
+#: 下达了打开指令，车辆应该已执行了」。只认「执行」的完成说法与「下达 / 发送 / 下发了…指令 / 命令」；否定（「没执行成功」）、将来
+#: （「会执行完」）、时间从句（「执行完毕后会重启」）不算。留存话术回放（2026-10-19，全部含「执行 / 指令 / 命令」的轮）命中 2 条：
+#: 1 条真阳性、1 条否定（加否定排除后零误报）。「我记下了」这类不收：「记住…」已经当场写入（10-13 起），留存里剩下的多是对
+#: 「找不到就直接问我」这类说话方式的应答，剥掉反而答非所问。
+_NOT_NEGATED_OR_FUTURE = r"(?<![没未不无会将要能再才])(?<!没有)(?<!尚未)"
+_EXECUTED_RE = re.compile(
+    rf"{_NOT_NEGATED_OR_FUTURE}(?:已经?|都|刚刚?)?执行(?:完毕|完成|完了|好了|成功了?|过了)(?!\s*(?:后|之后|以后))"
+    rf"|{_NOT_NEGATED_OR_FUTURE}已经?执行(?:了|过)?(?=[，,。！？!?；;、\s]|$)"
+    rf"|{_NOT_NEGATED_OR_FUTURE}(?:下达|发送|发出|下发)了[^，,。！？!?；;]{{0,8}}?(?:指令|命令)")
+
 
 def bare_execution_claim(text: str | None) -> bool:
-    """有没有一句无主完成句（观测专用，口径见 `_BARE_DONE_RE`）。"""
+    """有没有一句无主完成句（口径见 `_BARE_DONE_RE` 与 `_EXECUTED_RE`）。"""
     for sentence in _SENTENCE_RE.findall(text or ""):
         s = sentence.strip()
         if not s or _QUESTION_END_RE.search(s):
             continue
         lead = _LEAD_CLAUSE_RE.match(s)
-        if _BARE_DONE_RE.match(s) or (lead and _BARE_DONE_RE.match(s[lead.end():])):
+        if _BARE_DONE_RE.match(s) or (lead and _BARE_DONE_RE.match(s[lead.end():])) or _EXECUTED_RE.search(s):
             return True
     return False
 
