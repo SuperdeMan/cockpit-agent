@@ -319,12 +319,14 @@ def test_units_and_readme_describe_the_same_installation():
     assert "OnCalendar=hourly\n" in timer and "Unit=host-capacity-gc.service\n" in timer
     assert "[Journal]\nSystemMaxUse=1G\n" in journald
     rows = dict(re.findall(r"^\| `deploy/host/([^`]+)` \| `([^`]+)` \|", readme, re.M))
-    assert rows == {
+    capacity = ("host_capacity_gc.py", "host-capacity-gc.service", "host-capacity-gc.timer", "journald-host-capacity.conf")
+    assert {name: rows.get(name) for name in capacity} == {
         "host_capacity_gc.py": "/usr/local/sbin/host-capacity-gc",
         "host-capacity-gc.service": "/etc/systemd/system/host-capacity-gc.service",
         "host-capacity-gc.timer": "/etc/systemd/system/host-capacity-gc.timer",
         "journald-host-capacity.conf": "/etc/systemd/journald.conf.d/60-host-capacity.conf",
     }
+    # 目录里的每个文件都在 README 的某一张安装表里（容量维护与公网 SSH 闸各一张，2026-10-18）
     assert sorted(rows) == sorted(path.name for path in HOST.iterdir() if path.is_file() and path.name != "README.md")
 
 

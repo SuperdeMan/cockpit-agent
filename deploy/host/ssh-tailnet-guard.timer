@@ -1,0 +1,11 @@
+[Unit]
+Description=Re-check the public SSH guard every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=ssh-tailnet-guard.service
+
+[Install]
+WantedBy=timers.target

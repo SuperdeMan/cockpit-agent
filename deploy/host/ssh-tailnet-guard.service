@@ -1,0 +1,7 @@
+[Unit]
+Description=Public SSH guard: port 22 only over the tailnet, fail-open when Tailscale is unhealthy
+After=tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/ssh-tailnet-guard check

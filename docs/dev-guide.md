@@ -28,7 +28,9 @@
 > 换名字要给 known_hosts 补条目：经已校验的旧连接读主机公钥，与新名字出示的公钥逐字比对一致再写入，不做首次信任。
 > Windows 自带的 `ssh-keyscan`（9.x）会选上自己不支持的 `sntrup761` KEX（`choose_kex: unsupported`），什么都扫不到；
 > 改用 `ssh -o UserKnownHostsFile=<临时文件> -o StrictHostKeyChecking=accept-new` 取主机出示的公钥。
-> 本机 Tailscale 断开时可临时把变量指回公网地址，那条 known_hosts 条目仍在。
+> 2026-10-18 起公网 22 端口由主机上的 `ssh-tailnet-guard` 关闭（只收回环与 tailnet 的新连接，见
+> [`deploy/host/README.md`](../deploy/host/README.md#公网-ssh-闸ssh-tailnet-guard)）：**本机** Tailscale 断开时公网地址也连不上，先修本机的
+> Tailscale；**主机**的 Tailscale 不健康时闸在一分钟内自动撤掉（fail-open），这时把变量临时指回公网地址即可，那条 known_hosts 条目仍在。
 
 ### Jev 判别的配置键（`.env.example` 里刻意没有）
 
