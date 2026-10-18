@@ -244,3 +244,27 @@ cases:
       - {say: "如果深圳今天下雪，就帮我打开后备箱", expect: {actions_allowed: []}}
     cleanup:
       - {say: "关闭后备箱", confirm: true}
+  # 没有框架词的「X 的话」（2026-10-19，200×5 后续批 §23）：修前云端认不出是条件句、规划器 6 遍 1 遍当场派后件；前件为假照样不该开
+  - id: D08
+    family: conditional_control_false
+    vehicle_keys: [hvac_on]
+    turns:
+      - {say: "深圳今天下雪的话，就把空调打开", expect: {actions_allowed: []}}
+    cleanup:
+      - {say: "关闭空调"}
+  # 往后推的说法（2026-10-19）：当场不动车。修前端侧当场执行；送到云端规划器（只规划，6 遍）「等会儿再把车窗打开」5 遍、「八点打开空调」
+  # 3 遍当场派车控。到时候再做的安排（提醒）不是动作，规划器建了也不算违例
+  - id: D09
+    family: deferred_not_now
+    vehicle_keys: [window]
+    turns:
+      - {say: "等会儿再把车窗打开", expect: {actions_allowed: []}}
+    cleanup:
+      - {say: "关闭车窗"}
+  - id: D10
+    family: deferred_not_now
+    vehicle_keys: [hvac_on]
+    turns:
+      - {say: "八点打开空调", expect: {actions_allowed: []}}
+    cleanup:
+      - {say: "关闭空调"}

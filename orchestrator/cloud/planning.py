@@ -3777,16 +3777,47 @@ class PlanBuilder:
                 step.depends_on = list(step.depends_on) + derived
 
     @staticmethod
+    def _edge_write_steps(steps: list) -> list:
+        """当场的端侧写（车控）：部署在端侧、操作名是写。"""
+        return [
+            step for step in steps
+            if ((getattr(step, "deployment", "") == "edge" or getattr(step, "kind", "") == "edge_fast")
+                and is_write_intent(getattr(step, "intent", "")))
+        ]
+
+    @staticmethod
+    def _deferred_edge_writes(steps: list, text: str) -> list:
+        """往后推的指令（`deferred_condition.defers_to_later`）里当场的端侧车控——不做。
+
+        组合句里的时间常常只属于其中一件（「关上车窗，打开空调，查下明天天气，再提醒我七点起床」「音量调小一点，提醒我八点开会」）：
+        语料对照（2026-10-19）里整句一刀切会把当下要做的车控一起拦掉。所以按分句看：被一截**不往后推**的分句点了名的车控照常
+        （点名判据 `step_grounding.step_naming_score`，方向说反了不算），其余拦下。单说时间、不点任何步的那一截把延后顺到下一截
+        （「明天早上八点，帮我打开空调」）。点名认不出时（「关窗」对不上「车窗」）落在拦下那一侧。"""
+        if not steps or not deferred_condition.defers_to_later(text):
+            return []
+        writes = PlanBuilder._edge_write_steps(steps)
+        clauses = [clause for sentence in _ORIGIN_SENTENCE_END_RE.split(text)
+                   for clause in split_clauses(sentence) if clause.strip()]
+        if not writes or len(clauses) <= 1:
+            return writes
+        immediate, carry = [], False
+        for clause in clauses:
+            later = carry or deferred_condition.defers_to_later(clause)
+            carry = later and not any(step_naming_score(clause, step) > 0 for step in steps)
+            if not later:
+                immediate.append(clause)
+        return [step for step in writes if not any(step_naming_score(clause, step) > 0 for clause in immediate)]
+
+    @staticmethod
     def _side_effect_steps(steps: list) -> list:
         """Select side effects using only declaration-backed, zero-domain facts."""
+        edge_writes = {id(step) for step in PlanBuilder._edge_write_steps(steps)}
         return [
             step for step in steps
             if (
-                (((getattr(step, "deployment", "") == "edge"
-                   or getattr(step, "kind", "") == "edge_fast")
-                  and is_write_intent(getattr(step, "intent", "")))
+                id(step) in edge_writes
                 or bool(getattr(step, "require_confirm", False))
-                or (getattr(step, "capability_contract", {}) or {}).get("effect") in STATE_EFFECTS))
+                or (getattr(step, "capability_contract", {}) or {}).get("effect") in STATE_EFFECTS)
         ]
 
     @staticmethod
@@ -3803,12 +3834,17 @@ class PlanBuilder:
 
         条件指令（2026-10-12）：「如果深圳今天下雪，就帮我把空调打开」带了「帮我」整句不算提问，后件却同样要等条件判过；再规划
         判不了前件（看到「今天不会下雪」照样开空调，核心旅程 D02 / D04），所以条件判定可靠之前它的副作用一律不执行。
+
+        往后推的说法（2026-10-19，`deferred_condition.defers_to_later`）：「等会儿再把车窗打开」「八点打开空调」「下班的时候打开空调」
+        当场的端侧车控不做（只规划取证：「等会儿再把车窗打开」6 遍 5 遍派 `window.open`）；定时场景、提醒这类「到时候再做」的安排照常
+        ——它们本来就是这类话的正确出口（D03 建带条件的场景、「十分钟后再打开空调」建提醒）。
         """
         if not steps:
             return []
         if not is_non_directive_question(text or ""):
-            return (PlanBuilder._side_effect_steps(steps)
-                    if deferred_condition.is_conditional_instruction(text or "") else [])
+            if deferred_condition.is_conditional_instruction(text or ""):
+                return PlanBuilder._side_effect_steps(steps)
+            return PlanBuilder._deferred_edge_writes(steps, text or "")
         # CA2-01: a definition-only question also cannot activate a declared cloud write.
         # Some Agents request confirmation dynamically, so require_confirm alone misses them.
         declared_write_question = (is_reference_question(text or "")
@@ -3902,9 +3938,14 @@ class PlanBuilder:
         kept, blocked = self._filter_question_side_effect_steps(plan.steps, text)
         if not blocked:
             return plan
+        # 同一个出口、同一个 plan_mode 后缀（collector 与对抗评测按后缀认出口）；日志分开说是问句还是往后推的说法
+        deferred = (not is_non_directive_question(text or "")
+                    and not deferred_condition.is_conditional_instruction(text or "")
+                    and bool(self._deferred_edge_writes(blocked, text or "")))
         logger.warning(
-            "Question-shaped utterance planned into side-effecting step(s) %s; "
+            "%s planned into side-effecting step(s) %s; "
             "dropping them (text=%r)",
+            "Deferred instruction" if deferred else "Question-shaped utterance",
             [s.intent for s in blocked], text[:60])
         # 按**身份**过滤而不是按相等：`Step` 是 dataclass，两个字段相同的步会
         # `==`，用 `not in` 在重复步的场景下会连坐。这里要丢的是「这几个对象」。

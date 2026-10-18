@@ -183,6 +183,10 @@ journeys:
   - {id: D05, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle}
   - {id: D06, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   - {id: D07, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  # 2026-10-19 增补（200×5 后续批 §23）：没有框架词的「X 的话」、往后推的说法——修前当场动车，清单里没有这两类句式
+  - {id: D08, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  - {id: D09, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
+  - {id: D10, source: eval_corpus/v2_runtime/core/writes_p3.yaml, family: F04, lane: simulated_vehicle, safety: must_pass}
   # F05 确认类写扩容（2026-10-12，core/f05_confirm.yaml）
   - {id: K03, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}
   - {id: K04, source: eval_corpus/v2_runtime/core/f05_confirm.yaml, family: F05, lane: simulated_vehicle}

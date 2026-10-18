@@ -96,3 +96,79 @@ def test_the_planner_goal_after_a_space_does_not_hide_either_reading():
     assert not waits_on_condition("只要评分四点五以上的 筛选评分4.5以上的川菜馆")
     assert waits_on_condition("只要评分四点五以上的 如果评分高于4.5就导航到第一家")
     assert waits_on_condition("如果明天下雨，只要评分高的")
+
+
+# ── 没有框架词的「X 的话」（2026-10-19，200×5 后续批 §23）：端侧离线复现「下雨的话把车窗关上」当场 `window.close` ────────────
+
+from runtime.deferred_condition import defers_to_later, split_conditional_instruction  # noqa: E402
+
+
+@pytest.mark.parametrize(("text", "parts"), [
+    ("深圳今天下雪的话，就把空调打开", ("深圳今天下雪", "就把空调打开")),
+    ("下雨的话把车窗关上", ("下雨", "把车窗关上")),
+    ("冷的话开一下空调", ("冷", "开一下空调")),
+    ("那下雨的话就帮我关窗", ("下雨", "就帮我关窗")),
+])
+def test_a_bare_if_clause_is_a_condition_at_both_ends(text, parts):
+    assert split_conditional_instruction(text) == parts
+    assert is_conditional_instruction(text) and waits_on_condition(text) and is_deferred_instruction(text)
+
+
+@pytest.mark.parametrize("text", [
+    "可以的话把空调打开", "方便的话帮我开一下窗", "有空的话把空调打开",      # 客气
+    "这样的话就把空调打开吧", "那样的话把空调打开", "关窗，不然的话雨会进来",  # 承上文：条件已经给定 / 「否则」
+    "我的话喜欢冷一点", "你的话帮我把空调打开",                               # 话题
+    "他说的话你记一下", "转述别人的话，不该真关",                             # 名词的「话」
+])
+def test_politeness_anaphora_topics_and_words_are_not_conditions(text):
+    assert not is_conditional_instruction(text)
+    assert not waits_on_condition(text)
+
+
+# ── 往后推的说法（2026-10-19）：端侧上云；云端规划器的问句闸只拦当场的端侧车控（`defers_to_later`）──────────────────────
+
+@pytest.mark.parametrize("text", [
+    "等会儿再把车窗打开", "一会儿到家了再开空调", "晚上再开空调", "明天再开空调", "回头再把座椅放平",   # 时间词 + 再
+    "等到了公司再打开空调", "到了公司再开空调", "等我到家再开空调", "到家后再开空调",                  # 到了 / 等某件事之后
+    "十分钟后再打开空调", "过半小时再开空调", "两个小时以后打开空调",                                  # 一段时长之后
+    "明天早上八点打开空调", "八点打开空调", "八点半把车窗关上", "下午一点打开空调", "7:30打开空调",       # 时刻
+    "我明天早上要开空调", "明天打开空调",                                                              # 将来的日子起句
+    "下班的时候打开空调", "到家的时候打开空调", "到时候再开空调",                                      # 「X 的时候」
+])
+def test_instructions_pushed_to_later_are_deferred(text):
+    """端侧在分类出口逐段否决、云端问句闸拦当场的端侧车控，用的都是这一条（端侧的整句上云另见下一条）。"""
+    assert defers_to_later(text)
+    assert not is_conditional_instruction(text)          # 不走前件判定：推到的那一刻是提醒 / 场景的事
+
+
+@pytest.mark.parametrize(("text", "whole"), [
+    ("明天早上八点，帮我打开空调", True), ("下班的时候，打开空调", True), ("下午三点，把车窗关上", True),
+    ("十分钟后，打开空调", True), ("到家以后，打开座椅加热", True),
+    ("音量调小一点，提醒我八点开会", False),      # 时间属于提醒那一段：音量照常本地秒回
+    ("等会儿，把车窗打开", False),                # 「等会儿，」是让等一下，不是把事往后推
+    ("八点打开空调", False),                      # 单句：分类出口自己否决，不必整句判
+])
+def test_only_a_leading_time_clause_sends_the_whole_utterance_up(text, whole):
+    assert is_deferred_instruction(text) is whole
+
+
+@pytest.mark.parametrize("text", [
+    "打开空调", "空调调高一点", "音量大一点", "把空调调到二十六点五度", "只要评分四点五以上的",   # 「一点」是一些、「点五」是小数
+    "第三点建议是什么", "调低两度", "把空调开十分钟", "等一下，把空调打开",                      # 序数、时长不往后推、「等一下，」
+    "播放明天会更好", "今晚的电影再放一遍", "下午好，打开空调", "有时候空调太冷", "这首歌我小时候经常听",  # 名字 / 定语 / 「有时候」
+    "明天天气怎么样", "明天几点出发？", "我说了再见",                                            # 问句不算往后推；「再见」
+])
+def test_plain_instructions_questions_and_names_are_not_pushed_to_later(text):
+    assert not defers_to_later(text)
+
+
+@pytest.mark.parametrize("text", ["雨停了再开窗", "空调关了再开一下", "播完这首了再放下一首"])
+def test_done_then_only_goes_to_the_cloud(text):
+    """「X 了再 Y」端侧上云；云端照常规划——「空调关了再开一下」是当下依次做的两件事（只规划取证 6 / 6 排对）。"""
+    assert is_deferred_instruction(text) and not defers_to_later(text) and not waits_on_condition(text)
+
+
+def test_the_corpus_lines_the_old_rule_missed():
+    """语料对照（2026-10-19）里新认出的几条真原话：都该等，旧判据一条都不认。"""
+    for text in ("哪天要下雨的话，把那天的安排换成室内的", "看看去机场堵不堵，堵的话换条路", "电量低于20%的时候打开节能模式"):
+        assert is_deferred_instruction(text) and (waits_on_condition(text) or defers_to_later(text))

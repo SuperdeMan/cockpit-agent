@@ -12,6 +12,7 @@ from runtime.polarity import is_negated_directive, is_withdrawn_directive
 from runtime.positions import SEAT_IDS, ids_of, position_spans, scan_positions
 from runtime.reported_speech import is_reported_speech
 from runtime.anaphora import has_anaphoric_subject
+from runtime.deferred_condition import defers_to_later
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
 from runtime.question_shape import asks_for_explanation, asks_switch_state, is_non_directive_question
 
@@ -373,6 +374,11 @@ def classify_structured(text: str) -> dict | None:
     # 判据是**语域**（说话人在对听众播报 / 转述），零领域词；同样只盖写操作（判据全在 reported_speech.py）
     if _is_write_action(result) and is_reported_speech(text):
         return None                       # 整句上云：由云侧受话判定决定要不要回应
+    # 要做的事往后推了（2026-10-19，200×5 后续批 §23）：「八点打开空调」「等会儿再把车窗打开」「下班的时候打开空调」当场执行
+    # 就是做早了。分段时逐段判——「音量调小一点，提醒我八点开会」的音量那段照常秒回；省略回填（`_backfill_object`）也经过这里
+    # （判据全在 runtime/deferred_condition.py）
+    if _is_write_action(result) and defers_to_later(text):
+        return None                       # 上云：由规划器安排到时候再做（提醒 / 场景），当场不动车
     # 第四维（批 7 ④，W19-c 视窗实验三臂恒定的 3 组）：主语是会话里的**另一个东西**（「它续航多久」
     # 「那它的纯电续航呢」——刚在云端聊完问界 M9），端侧命中「续航」就秒回本车电量。指代物只活在
     # 云端历史里，这里看不见。这一维只盖**查询**：写操作带对象词时「它」是冗余的，不带对象词
