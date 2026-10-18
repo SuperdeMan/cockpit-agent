@@ -139,6 +139,8 @@ python scripts/dev_stack.py retention  # 按已批准保留策略的计划（缺
 ```
 
 - `status.capacity` 只是提示，不进 `warnings`、不改变 `status` 与退出码（长会话验收要求 status 为 ok 且零 warning）。
+- `dev_stack capacity` 只分列镜像、构建缓存与 `/opt/car-agent`，看不到别的项目的数据目录：容量对不上时只读跑
+  `sudo du -x -B1M --max-depth=2 /`（2026-10-19：drone-agent 37 G 的语料补全数据在 `/home/ubuntu/drone-agent-data/`）。
 - `docker system df` 在 containerd 镜像存储下的 unique / reclaimable 不可信；构建缓存对已构建镜像是冗余副本，清缓存不伤运行中的镜像；
   按时间清缓存会被祖先链锁住；旧 release 之间高度共享层，删旧版本收益有限。
 - **任何真删了记录的 prune 都会让两个项目的下一次构建大面积冷启动**：BuildKit 删除后会解绑缓存键，记录还在盘上，却再也命中不了。
