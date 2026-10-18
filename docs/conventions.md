@@ -602,7 +602,7 @@ owner**）。当前已收窄：`REMINDERS_ACTIVE`、`REMINDER_PENDING`。
 
 | `_fallback` | 产出候选列表的 Agent（现 nearby.search）| `context.extract_focus` → `CandidateSet.is_fallback`；`newest_candidate_set()` 据它**优先绑定最近一份非兜底候选**，`_derive_choice_view` 据它决定 prompt 里渲染哪一份 | `True` | 「这一份候选是**我猜的那一类**，不是用户点名的那一份」——Q2/N5。出处：I-011 的真根因不是「失败的重搜清空了候选」，那次重搜**根本没失败**——泛化兜底搜出 10 家「美食」，于是它**合法地**覆盖了上一份川菜候选。**必须由产生方声明**：只有它知道「搜的和他说的是不是一回事」，编排看不出来。nearby 的判据是两个信号取或（用户给了具体词却被丢掉 / 类目是从饮食信号猜出来的），单一信号各有够不着的一半。⚠ 标反方向比漏标贵——真候选被当成兜底会**永远排在序数解析之后**。契约测试 `orchestrator/cloud/tests/test_candidate_sets.py` + `agents/nearby/tests/test_agent.py` |
 
-| `_dropped_terms` | 产出候选列表的 Agent（现 nearby.search，与 `_fallback` 同处判定）| executor `_resolve_slot_refs`：指向这份列表 `items.N…` 的引用不绑（`${…}` 占位一并去掉），下游照缺槽处理；这一步原话自己点了第几个（`candidate_query.names_a_position`）时照绑 | `[str]`（用户说了、没拿去搜的词）| 「这份列表**没按用户说的词搜**」——`_fallback` 的两种来源分开（2026-10-17 demo-dqt1fu 登记项）：周边把「麦当劳」换成「美食」兜底，`slot_refs` 把第一家烤肉店填成麦当劳的门店线索；导航同理会开去随便一家。按天气 / 饮食信号**猜**类目的兜底不声明（用户把挑选交给了系统，第一项照绑）。契约测试 `orchestrator/cloud/tests/test_fallback_listing_refs.py` + `agents/nearby/tests/test_agent.py` |
+| `_dropped_terms` | 产出候选列表的 Agent（现 nearby.search，与 `_fallback` 同处判定；charging.find，原话点名的站没找到时）| executor `_resolve_slot_refs`：指向这份列表 `items.N…` 的引用不绑（`${…}` 占位一并去掉），下游照缺槽处理；这一步原话自己点了第几个（`candidate_query.names_a_position`）时照绑 | `[str]`（用户说了、没拿去搜的词）| 「这份列表**没按用户说的词搜**」——`_fallback` 的两种来源分开（2026-10-17 demo-dqt1fu 登记项）：周边把「麦当劳」换成「美食」兜底，`slot_refs` 把第一家烤肉店填成麦当劳的门店线索；导航同理会开去随便一家。按天气 / 饮食信号**猜**类目的兜底不声明（用户把挑选交给了系统，第一项照绑）。契约测试 `orchestrator/cloud/tests/test_fallback_listing_refs.py` + `agents/nearby/tests/test_agent.py` |
 | `_candidate_label` | 产出候选列表的 Agent（现 nearby.search 两条分支、mcd.menu、luckin.menu）| `context.extract_focus` → 候选组的 `label`；`context.label_hit()` 拿它做**组指代**（`resolve_candidate_scope` 选主组、`candidate_query._group_slices` 切跨组引用）| `str`（规范化后 ≥2 字，>20 字截断；<2 字视为**未声明**）| 「这一组该怎么被称呼」——I-030。**判据与 `_fallback` 同一条**：编排看不出 `mcd.menu` 那一组该叫「麦当劳」，只有产生方知道（而它已经把这个词渲染在卡上给用户看了：`ui_card.merchant` / `ui_card.keyword`）。⚠ 出处是一个比立卡时严重一档的形态：两家菜单并存时「**麦当劳**的第二个多少钱」被 `newest_candidate_set` 绑到瑞幸那组，**零方差地**答出「「生椰拿铁」16 元」——商品名与价格都真实存在、没有任何一处对不上，**比编造更难被发现**。⚠ **值必须与卡上那个称呼是同一个**（用户是照卡点名的），所以产生方两处共用一个常量、契约测试断言两处相等，而不是断言字面量。**未声明的产生方逐字零行为变化**（点不了名 ⇒ 退回 `newest_candidate_set`）。契约测试 `orchestrator/cloud/tests/test_candidate_sets.py` + 三个产生方各一条 |
 | `_candidate_place` | 产出候选列表的 Agent（现 nearby.search：中心来自 `location` 槽或原话「X 附近」锚定时）| `context._place_hint(slots, data)` → 候选组的 `place_hint`（组指代、墓碑点名都读它）；未声明时照旧从查询槽派生 | `str`（≥2 字，>20 字截断；坐标不声明）| 「这一批是在哪一带搜的」——批 7 追加（2026-09-22，真栈 continuity T9 → T18）：planner 把「科技园附近的餐厅」填成 `{cuisine, sort}`，地名整个丢了；nearby 从原话锚定了科技园、结果也对，但编排的地点提示只从槽派生 ⇒ 这批叫不出名 ⇒ 十几轮后「科技园那批第二家」零命中退回最新那批（南山书城），答了别人家的店。**判据与 `_candidate_label` 同一条：在哪搜的只有产生方知道。**契约测试 `test_candidate_sets` +2、nearby +2 |
 
@@ -3288,6 +3288,8 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 - 槽值用文字点了本计划另一步的 id（「从 s1 结果选取」「ref:s2」）是引用残渣，派发前丢掉、交下游按缺槽处理；这一步自己的 id 与引用填出的
   真值不查（§21.2）。
 - 找站时原话点名的站名（「特斯拉的充电站」）先按名字搜、结果名字里真带着它才算；落空就照旧按类目搜并如实说没找到、声明 `_dropped_terms`（§21.3）。
+  带目的地时在目的地 5 km 内同样先按名字搜；落空照旧把最优的普通站作途经点（补电是实际诉求）、话术如实说没找到。站名取最后一个方位 / 存在 /
+  请求词之后的部分、先剔掉目的地；属性与指代（「普通 / 便宜 / 上次」）不算站名（§22.1）。
 - route hint 可声明 `complexity: adaptive`（proto `RouteHint` 字段 8）：以 replace 命中时整份计划按 adaptive 规划、goal 保留原话；只来自 manifest，
   经 SDK → Registry JSONB 往返 → RouteHintEngine，挂起 / 恢复沿用计划既有的 `complexity` / `goal`（§21.5）。
 

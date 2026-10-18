@@ -1108,7 +1108,7 @@ class DagExecutor:
 
     @staticmethod
     def _dropped_term_item(ref_path: str, done: dict) -> bool:
-        """引用指向的是一份「没按用户说的词搜」的列表里的某一项（产生方声明 `_dropped_terms`，现 nearby.search）。
+        """引用指向的是一份「没按用户说的词搜」的列表里的某一项（产生方声明 `_dropped_terms`，现 nearby.search 与 charging.find）。
 
         2026-10-17 demo-dqt1fu 登记项：周边把「麦当劳」换成「美食」兜底，`slot_refs` 把第一家烤肉店填进了麦当劳的门店线索；
         导航同理会开去随便一家。那份列表不是用户要的，它的第 N 项就不是用户要去 / 要点的那一家——不绑，让下游照缺槽处理

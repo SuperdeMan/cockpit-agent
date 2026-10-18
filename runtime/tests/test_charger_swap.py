@@ -73,7 +73,8 @@ def test_names_stop_needs_a_distinctive_part_of_the_name(text, name, named):
 
 @pytest.mark.parametrize("text", ["候选充电站", "充电站", "一个充电站", "附近的充电桩", "顺路的快充",
                                   "附近可用快充站", "空闲的充电桩", "能用的充电站", "免费的充电桩", "公共充电站",
-                                  "下一个充电站", "再一个充电站", "又一个充电站", "多一个充电站"])
+                                  "下一个充电站", "再一个充电站", "又一个充电站", "多一个充电站",
+                                  "普通充电站", "便宜的充电站", "电动车充电桩", "上次的充电站"])
 def test_generic_charger_words_name_no_particular_station(text):
     """2026-10-17 EN07 r3：规划器写 `add_waypoint=候选充电站`，导航按字面搜不到，第二个站没加上。"""
     from runtime.charger_swap import is_generic_charger_word
@@ -106,13 +107,26 @@ def test_a_named_station_is_taken_from_before_the_station_word(text, probe):
     assert charger_name_probe(text) == probe
 
 
+@pytest.mark.parametrize("text, place, probe", [
+    ("导航去深圳北站，在附近找个特斯拉充电桩", "深圳北站", "特斯拉"), ("在深圳北站附近找个特斯拉充电桩", "深圳北站", "特斯拉"),
+    ("深圳北站附近有特斯拉充电站吗", "深圳北站", "特斯拉"), ("导航去深圳北站，顺便在附近找个特斯拉的充电桩", "深圳北站", "特斯拉"),
+    ("帮我找一下深圳北站附近的特来电充电站", "深圳北站", "特来电"), ("深圳北站特斯拉充电站", "深圳北站", "特斯拉"),
+    ("导航去附近的理想超充站", "", "理想"), ("找个理想超级充电站", "", "理想"),
+])
+def test_the_name_comes_after_the_place_and_the_last_frame_word(text, place, probe):
+    """§22.1：带目的地的找站先说了地点——名字在最后一个方位 / 存在 / 请求词之后，目的地本身先去掉。"""
+    assert charger_name_probe(text, place=place) == probe
+
+
 @pytest.mark.parametrize("text", [
     "附近有充电站吗", "帮我找一下附近能用的充电桩", "我的车快没电了，附近有充电站吗", "小区里有公共充电桩吗",
     "离我最近的充电站在哪", "附近有免费的充电桩吗", "附近有没有24小时的充电站", "附近有空闲的充电桩吗",
     "途经再加一个充电站", "换一个充电站", "去会展中心的路上找个充电站", "我要去充电站",
+    "深圳北站附近的充电站", "在深圳北站附近找个充电桩", "找个普通充电站", "附近有普通的充电站吗", "找个便宜的充电站",
+    "有没有快速充电站", "找个其他的充电站", "找个人少的充电站", "上次那家充电站", "找个电动车充电桩",
 ])
 def test_generic_or_non_name_words_give_no_probe(text):
-    """只泛指充电这一类、或那个词带虚词 / 方位 / 数字：不当名字试搜（照旧按类目搜）。"""
+    """只泛指充电这一类、或那个词带虚词 / 方位 / 指代 / 数字：不当名字试搜（照旧按类目搜）。"""
     assert charger_name_probe(text) == ""
 
 

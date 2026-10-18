@@ -33,6 +33,10 @@ logger = logging.getLogger("agent.charging_planner")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
+#: 目的地附近点名的站最远算到多远（km）。高德周边检索近处没有时会给十几、二十公里外的（2026-10-18 深圳北站附近：岚图最近 10.6 km、
+#: 问界 21.7 km）；作途经点就是为它绕这一趟。同 `find_nearby` 声明的缺省半径。
+_NAMED_NEAR_DEST_KM = 5
+
 
 class ChargingPlannerAgent(BaseAgent):
     def __init__(self):
@@ -204,7 +208,8 @@ class ChargingPlannerAgent(BaseAgent):
             if clarify:
                 return clarify
             return await self._find_near_destination(destination, charger_type, soc, meta, ctx=ctx, seen=seen,
-                                                     en_route=en_route)
+                                                     en_route=en_route,
+                                                     probe=charger_name_probe(intent.raw_text or "", place=destination))
 
         # 获取位置
         current = current_location_from_meta(meta)
@@ -285,11 +290,19 @@ class ChargingPlannerAgent(BaseAgent):
         )
 
     async def _find_near_destination(self, destination: str, charger_type: str,
-                                     soc: Reading, meta, *, ctx=None, seen=(), en_route=()) -> AgentResult:
+                                     soc: Reading, meta, *, ctx=None, seen=(), en_route=(),
+                                     probe: str = "") -> AgentResult:
         """按目的地搜充电站，把最优站作为导航途经点（出 charging_route 卡 + data.waypoint）。
 
         聚合器据 data.waypoint 把该站并入导航步的 navigate 动作（payload.waypoints），
         让“导航去X + 附近充电”产出带途经充电点的单条路线，而非孤立的充电列表。
+
+        probe：原话点名的站名（「导航去深圳北站，在附近找个特斯拉充电桩」⇒「特斯拉」，200×5 后续批 §22.1）。先在目的地附近按
+        「名字 + 充电站」搜、只留名字里带着它、离目的地不超过 `_NAMED_NEAR_DEST_KM` 的充电站；一个都没有就照旧按类目搜、
+        照旧把最优的普通站作途经点——话术如实说没找到点名的站，并声明 `_dropped_terms`（后续步不把它当成用户点名的那家去绑）。
+        不加途经点不行：补电是这一步的实际诉求，
+        事后要在目的地附近补一个站没有顺手的说法（改路线按当前位置就近检索）；普通站并进路线时聚合器会确定性念出它的名字，
+        用户听得到不是点名的那家，说「X 不去了」就能去掉。
         """
         # 视觉地标目的地（“像笋的建筑”）先解析成地图可检索的正式名再搜——否则高德 geocode
         # 不到原描述、会失败/限流回退假数据。候选优先，原描述兜底（与导航步同一共享解析器）。
@@ -299,8 +312,24 @@ class ChargingPlannerAgent(BaseAgent):
             if cands:
                 targets = cands + [destination]
 
-        resolved, stations, errored = destination, [], False
-        for target in targets:
+        resolved, stations, errored, missed = destination, [], False, ""
+        if probe:
+            searched = False      # 点名的试搜至少有一次真跑完了（服务失败时不说「没找到」，只照类目往下找）
+            for target in targets:
+                try:
+                    stations = [s for s in await self.charging.find_nearby(
+                                    GeoPoint(address=target), charger_type=charger_type, meta=meta,
+                                    keyword=f"{probe}充电站")
+                                if carries_charger_name(s.name, probe) and not s.distance_km > _NAMED_NEAR_DEST_KM]
+                    searched = True
+                except ProviderError as e:
+                    logger.warning("charging named find near %s failed: %s", target, e)
+                    stations = []
+                if stations:
+                    resolved = target
+                    break
+            missed = probe if searched and not stations else ""
+        for target in ([] if stations else targets):
             try:
                 stations = await self.charging.find_nearby(
                     GeoPoint(address=target), charger_type=charger_type, meta=meta)
@@ -345,7 +374,8 @@ class ChargingPlannerAgent(BaseAgent):
         dist = f"{top.distance_km}km" if top.distance_km else "目的地附近"
         # CA2-19 S3：只说推荐。这一步自己不发导航——同轮有导航时聚合器才把途经点并进导航动作；
         # 单独问「X附近有充电站吗」时没有路线，此前却说「已为前往X的路线加入途经充电站」
-        speech = (f"前往{resolved}，可以在目的地附近的{top.name}补电"
+        lead = f"{resolved}附近没找到{missed}的充电站，" if missed else f"前往{resolved}，"
+        speech = (f"{lead}可以在目的地附近的{top.name}补电"
                   f"（{dist}{extra}）。")
         # 复用 charging_route 卡：出发地 → ⚡该站 → 目的地
         # stops 带坐标（2026-09-11）：Android 地图页据此标出补电站；HMI 只读 name/address
@@ -361,9 +391,12 @@ class ChargingPlannerAgent(BaseAgent):
              "lat": s.lat, "lng": s.lng, "availability_known": s.total > 0}
             for s in stations
         ]
+        data = {"waypoint": waypoint, "items": items,
+                "choice_reason": f"附近没有{missed}的充电站，{reason}" if missed else reason}
+        if missed:
+            data["_dropped_terms"] = [missed]
         return AgentResult(
-            speech=speech, ui_card=card,
-            data={"waypoint": waypoint, "items": items, "choice_reason": reason},
+            speech=speech, ui_card=card, data=data,
             # 手机端把追问提示整句做成 chip、点按原样发出：提示本身就得是能用的说法（`runtime.charger_swap` 认得出）
             follow_up="想换一个充电站，说『换一个充电站』就行")
 
