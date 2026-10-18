@@ -39,7 +39,8 @@ _FOR_YOU = r"(?:为|帮|替|给)\s*[您你]"
 #: 它把「路线已经算好了吗？」这类**客观陈述/反问**一并判成声明——判据一旦不看
 #: 「是谁做的」，它量的就不再是「系统声称自己动了手」。
 #: 代价是漏掉「路线已经算好了。」这种无主句声明，**这是刻意选的那一侧**：
-#: shadow 的分布要能读，宁可窄。
+#: shadow 的分布要能读，宁可窄。（这两族至今仍窄；2026-10-19 起这类说法由剥句那一族收——`_OBJECT_DONE_RE`，
+#: 只在谈话步 + 零动作时剥，问句与假设 / 时间框架里的不算，见 `bare_execution_claim`。）
 _DONE_RE = re.compile(
     rf"已经?\s*{_FOR_YOU}"
     rf"|{_FOR_YOU}[^，。！？；、\s]{{0,10}}(?:好了|完成了?|完毕)")
@@ -97,16 +98,35 @@ _EXECUTED_RE = re.compile(
     rf"{_NOT_NEGATED_OR_FUTURE}(?:已经?|都|刚刚?)?执行(?:完毕|完成|完了|好了|成功了?|过了)(?!\s*(?:后|之后|以后))"
     rf"|{_NOT_NEGATED_OR_FUTURE}已经?执行(?:了|过)?(?=[，,。！？!?；;、\s]|$)"
     rf"|{_NOT_NEGATED_OR_FUTURE}(?:下达|发送|发出|下发)了[^，,。！？!?；;]{{0,8}}?(?:指令|命令)")
+#: 对象作主语的完成体（2026-10-19 复测，核心旅程 E06 必过）：用户说「把你记的我喜欢喝拿铁那条删掉」（语音删记忆不提供），规划两次
+#: 给不出动作、兜底闲聊回「好嘞，那条已经删掉了。」只认「已经 / 已」之后几个字内收在「掉 / 好 / 完 / 除了」上的完成补语；「已经是 / 很 /
+#: 有 / 没 / 不 / 数字」这类状态说法排除（同 `_BARE_DONE_RE`）。全部留存话术命中 38 次，落在只回答步 + 零动作里的只有这 1 次。
+_OBJECT_DONE_RE = re.compile(
+    r"(?:已经|已)(?!经?\s*(?:是|快|很|太|有|没|不|[0-9０-９一二三四五六七八九十两几半]))[^，,。！？!?；;\s]{0,6}?[掉好完除]了")
+#: 往后推的承诺（2026-10-19 复测，核心旅程 D10）：「八点打开空调」当场的车控被拦下、兜底闲聊回「好呀，早上八点帮你打开空调。」——没有
+#: 建提醒、也没有定时，到点不会有人开。时间往后（到时候 / 待会儿 / N 点）+ 指向用户；全部留存话术只命中这 1 次。
+_LATER_PROMISE_RE = re.compile(
+    rf"(?:到时候?|届时|回头|待会儿?|一会儿?|等会儿?|[0-9０-９一二三四五六七八九十两]{{1,3}}\s*点"
+    rf"(?:半|钟|[0-9０-９一二三四五六七八九十]{{1,3}}分?)?)\s*(?:再\s*)?{_FOR_YOU}")
+#: 这两种形态前面有假设 / 时间框架时说的是条件，不是做过（手册「如果已经充好了电，就可以出发」）。
+_FRAMED_BEFORE_RE = re.compile(r"如果|要是|假如|若|当|一旦|等到?|万一")
+
+
+def _unframed(rx: re.Pattern, sentence: str) -> bool:
+    m = rx.search(sentence)
+    return bool(m) and not _FRAMED_BEFORE_RE.search(sentence[:m.start()])
 
 
 def bare_execution_claim(text: str | None) -> bool:
-    """有没有一句无主完成句（口径见 `_BARE_DONE_RE` 与 `_EXECUTED_RE`）。"""
+    """有没有一句不带「为您」的执行声称：无主完成句、「执行」的完成体、对象作主语的完成体、往后推的承诺
+    （口径见 `_BARE_DONE_RE` / `_EXECUTED_RE` / `_OBJECT_DONE_RE` / `_LATER_PROMISE_RE`）。"""
     for sentence in _SENTENCE_RE.findall(text or ""):
         s = sentence.strip()
         if not s or _QUESTION_END_RE.search(s):
             continue
         lead = _LEAD_CLAUSE_RE.match(s)
-        if _BARE_DONE_RE.match(s) or (lead and _BARE_DONE_RE.match(s[lead.end():])) or _EXECUTED_RE.search(s):
+        if (_BARE_DONE_RE.match(s) or (lead and _BARE_DONE_RE.match(s[lead.end():])) or _EXECUTED_RE.search(s)
+                or _unframed(_OBJECT_DONE_RE, s) or _unframed(_LATER_PROMISE_RE, s)):
             return True
     return False
 

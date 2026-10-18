@@ -202,7 +202,7 @@ def test_a_false_lock_claim_never_leaves_a_talk_step():
     "（有 1 个方面资料不足，已在报告中标注。）",
     "珠海是广东省唯一至今全域禁止电动自行车上路的城市，已实施20年。",
     "已经到了吗？",                           # 问句
-    "路线已经算好了。",                       # 有主语
+    # 「路线已经算好了。」原先在这里（有主语，观测期为分布好读刻意放过）；2026-10-19 起归对象作主语的完成体，见第 8 节
     "已为您导航到深圳北站。",                 # 「为您」归 done 一族
     # 2026-10-10 升为剥之前按形态排除的客观陈述：数目 / 时刻、系词、程度、有无、否定
     "已经十点了，早点休息。",
@@ -258,3 +258,32 @@ def test_the_executed_form_stays_out_of_the_segmenting_gate():
     """同无主句：只在整句判（≤ 160 字）这一支收，流式闸的保留区推导只按 `_DONE_RE` / `_ONGOING_RE`，`CLAIM_SPAN_MAX` 不变。"""
     assert not is_execution_claim_sentence("好，关空调这步执行完了。")
     assert execution_claim("好，关空调这步执行完了。") == ""
+
+
+# ── 8. 对象作主语的完成体与往后推的承诺（2026-10-19 复测查出，后续批 §23.6）────────────────────────────
+
+@pytest.mark.parametrize(("text", "cleaned"), [
+    # 核心旅程 E06（必过）r1：语音删记忆不提供，规划两次给不出动作，兜底闲聊这样说
+    ("好嘞，那条已经删掉了。", ""),
+    # 核心旅程 D10 r1：「八点打开空调」当场的车控被拦下，兜底闲聊空头承诺
+    ("好呀，早上八点帮你打开空调。不过这条提醒得让系统来记。", "不过这条提醒得让系统来记。"),
+    ("路线已经算好了。", ""),            # 观测期为分布好读放过；剥句只在只回答步 + 零动作时做，这里它同样是假话
+    ("空调已经关好了，放心。", ""),
+    ("好的，到时候帮你打开。", ""),
+    ("一会儿再帮你关上车窗。", ""),
+])
+def test_object_completions_and_later_promises_are_stripped_from_talk(text, cleaned):
+    assert bare_execution_claim(text)
+    assert strip_execution_claims(text)[0] == cleaned
+    assert execution_claim(text) == "" or execution_claim(text)        # 两族口径不变（探针按两族判，不受这一节影响）
+
+
+@pytest.mark.parametrize("text", [
+    "已经十点了。", "雨已经停了。", "电量已经充满了。", "进度已经过半。",     # 状态 / 没有完成补语
+    "要不要我到时候帮你提醒？",                                           # 问句：是提议
+    "好的，明天八点提醒你：打开空调。",                                   # 建了提醒的回执：不是「帮你做」
+    "那条还没删掉。",
+    "如果已经充好了电，就可以出发。", "当座椅已经调好了，再系安全带。",       # 前面有假设 / 时间框架：说的是条件（手册常见）
+])
+def test_states_offers_and_receipts_are_not(text):
+    assert not bare_execution_claim(text)
