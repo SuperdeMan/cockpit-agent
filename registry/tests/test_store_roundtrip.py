@@ -179,7 +179,7 @@ def _fully_populated_manifest():
         route_hints=[
             agent_pb2.RouteHint(
                 pattern="接.+", intent="fixture.do", policy="append", priority=7,
-                guard="不接", slots={"raw": "$text"}, scope="clause"),
+                guard="不接", slots={"raw": "$text"}, scope="clause", complexity="adaptive"),
         ],
     )
 
@@ -252,3 +252,15 @@ def test_non_proto_manifest_roundtrip_is_lossless_for_declared_fields():
     assert list(restored.edge_intents) == ["window.open"]
     assert restored.kind == "edge_fast"
     assert restored.route_hints[0].scope == "clause"
+    assert restored.route_hints[0].complexity == "adaptive"
+
+
+def test_a_route_hint_complexity_survives_the_round_trip_and_old_records_default_to_unchanged():
+    """§21.5：丢了 `complexity`，registry 重启后「先观察、再按结果规划」的 hint 退回单步（只报天气）。旧记录没有这个键 ⇒ 空串 = 不改。"""
+    restored = _dict_to_manifest(_manifest_to_dict(_fully_populated_manifest()))
+    assert restored.route_hints[0].complexity == "adaptive"
+
+    old = _manifest_to_dict(_fully_populated_manifest())
+    for hint in old["route_hints"]:
+        hint.pop("complexity", None)
+    assert _dict_to_manifest(old).route_hints[0].complexity == ""

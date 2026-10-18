@@ -253,10 +253,15 @@ _REROUTE = ("navigation", "navigation.reroute")
 _NOT_ADDRESSED_CALL = ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": {"addressed": False, "steps": []}}])
 
 
+#: 触发复核的句子：真有两件事（「再」前面有一个动作）。EN07 原句「途经再加一个充电站」自后续批 §21.1 起不再触发复核
+#: （「再」是「再来一个」），回落机制改用这句钉住。
+_RECHECKED = "导航去万象天地，再加一个充电站"
+
+
 def test_a_recheck_that_comes_back_empty_keeps_the_plan_it_rechecked():
-    """「途经再加一个充电站」的「再」是「再多一个」，被当成第二个动作复核；重试交了零步，修前整轮落成技术失败。复核只问覆盖面，
-    原来那一步是用户要的：照原计划执行（强制重试不许比不重试更差）。"""
-    plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NO_ACTION_CALL)
+    """§18.10（EN07 `9aa84404` r1）：复核重试交了零步，修前整轮落成技术失败。复核只问覆盖面，原来那一步可能就是用户要的：
+    照原计划执行（强制重试不许比不重试更差）。"""
+    plan = _build_recheck(_RECHECKED, _tool_call(_REROUTE), _NO_ACTION_CALL)
     assert [s.intent for s in plan.steps] == ["navigation.reroute"], plan.steps
     assert plan.plan_mode == "multi_action_recheck_kept" and plan.technical_failure is False
 
@@ -264,7 +269,7 @@ def test_a_recheck_that_comes_back_empty_keeps_the_plan_it_rechecked():
 def test_a_recheck_retry_that_flips_to_not_addressed_keeps_the_plan_it_rechecked():
     """`d6b6b688` 复测 EN07 r3：首轮改线是对的，被「多动作遗漏」复核逼着重试，重试答「不受话」，整轮落成「没听清」。
     受不受话与复核的问题无关：照被复核的原计划执行。"""
-    plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NOT_ADDRESSED_CALL)
+    plan = _build_recheck(_RECHECKED, _tool_call(_REROUTE), _NOT_ADDRESSED_CALL)
     assert [s.intent for s in plan.steps] == ["navigation.reroute"], plan.steps
     assert plan.plan_mode == "multi_action_recheck_kept" and plan.addressed
 
@@ -272,7 +277,7 @@ def test_a_recheck_retry_that_flips_to_not_addressed_keeps_the_plan_it_rechecked
 def test_a_hands_free_recheck_retry_that_flips_to_not_addressed_is_a_rejection():
     """免唤醒语音里受不受话正是拒识要判的事：两次抽样不一致按拒识算，不回落去执行（同 `explicit_input_not_addressed`
     只盖显式输入）。"""
-    plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NOT_ADDRESSED_CALL,
+    plan = _build_recheck(_RECHECKED, _tool_call(_REROUTE), _NOT_ADDRESSED_CALL,
                           prefs={"input_source": "voice_followup"})
     assert plan.steps == [] and plan.addressed is False
 
@@ -289,6 +294,14 @@ def test_a_recheck_refuted_on_an_information_request_does_not_execute_the_write(
     plan = _build_recheck("推荐三部适合全家看的电影，再说说哪部最好看",
                           _tool_call(("navigation", "navigation.navigate_to")), _NO_ACTION_CALL)
     assert "navigation.navigate_to" not in [s.intent for s in plan.steps], plan.steps
+
+
+def test_en07_one_more_charger_is_planned_without_a_recheck():
+    """§21.1：「途经再加一个充电站」的「再」是「再来一个」——首轮正确的单步改线直接执行，不再被逼着重试（`ce3b0c7a` 复测 EN07 r3：
+    重试给出「在当前位置附近找站 → 改线」两步，站没加上）。"""
+    plan = _build_recheck("途经再加一个充电站", _tool_call(_REROUTE), _NO_ACTION_CALL)
+    assert [s.intent for s in plan.steps] == ["navigation.reroute"], plan.steps
+    assert "multi_action_omitted" not in (plan.retry_policies or []) and plan.plan_mode == "toolcall"
 
 
 def test_a_recheck_that_returns_a_plan_uses_that_plan():

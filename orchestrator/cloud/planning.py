@@ -256,7 +256,8 @@ _NO_CLARIFY_GOAL_RE = re.compile(
 _OBJECT_RECAST_GOAL_RE = re.compile(r"(?:解析|识别|理解)(?:为|成)")
 _OBJECT_WRAPPER_GOAL_RE = re.compile(r"(?:作为|当作)")
 _MULTI_ACTION_CONNECTOR_RE = re.compile(
-    r".{1,120}?(?:再|然后|接着|随后|顺便)"
+    # 「再」另判（`_zai_sequences_actions`）：它常常不是「然后」，是「再来一个 / 又一次」
+    r".{1,120}?(?:然后|接着|随后|顺便)"
     r"|.{1,120}?[，,。；;！？!?]沿途(?!的)"
     # 「路上/途中/沿途/顺路 + 找/搜」是同一族的**无标点**形态：「导航去公司路上找个
     # 充电站」既没有连接词也没有逗号，上面两支都接不住，于是单步计划不被复核。
@@ -266,14 +267,33 @@ _MULTI_ACTION_CONNECTOR_RE = re.compile(
     # 要求后面跟检索动词，「路上堵不堵」这种单动作句不会被拽进来。
     # 这里只换来**一次按 capability contract 的复核**，不指定域、不强加步骤——
     # 第二次结果仍允许是单步。
-    # ⚠ 间隔里不许有空白或句读：本函数量的是 `utterance + " " + goal`，
+    # ⚠ 间隔里不许有空白或句读：本函数当初量的是 `utterance + " " + goal`，
     # 用 `.{0,8}` 会让窗口**跨过那个空格**——「查找沿途的加油站」里 goal 副本开头
     # 的「查找」正好补上缺的动词，定语用法被误判成两个动作（既有反例用例当场抓到）。
+    # 2026-10-18 起原话与 goal 分开量，不再拼成一串（见 `_simple_goal_omits_multi_action_step`）。
     r"|.{1,120}?(?:路上|途中|沿途|顺路)[^，,。；;！？!?\s]{0,8}(?:帮我)?(?:找|搜)"
 )
 _NEGATED_SEQUENCE_HEAD_RE = re.compile(
     r"(?:先|首先)(?:请)?(?:暂时)?(?:别|不要|不用|不必|不)"
 )
+#: 「再」只在接着前面一个动作时才是「然后」（2026-10-18，200×5 后续批 §21.1）：「放首歌，再查天气」「打开天窗再关闭车窗」
+#: 「找充电站再导航」「先导航再找充电站」。「途经再加一个充电站」「10分钟后再提醒我」「后排车窗再打开10%」「还要再听一个吗」里的
+#: 「再」是「再来一个 / 又一次 / 再多一些」，前面没有动作；「再次 / 再一次」是「又一次」，「再见」是告别。collector 留存两个月这条
+#: 复核触发 29 次，全是这类误触发（EN07「途经再加一个充电站」24 次；「10分钟后再提醒我接水」重试后掉档成闲聊）。
+_SEQUENCE_ZAI_RE = re.compile(r"再(?!次|一次|见)")
+_CLAUSE_PUNCT_RE = re.compile(r"[，,。；;！？!?]")
+#: 「再」前面那个动作常用的检索 / 查看 / 收听动词（零领域词）；控制类动词与祈使开头由 `carries_operation_cue` 认
+_ZAI_LEAD_VERB_RE = re.compile(r"[找搜查看听放播订买]")
+
+
+def _zai_sequences_actions(segment: str) -> bool:
+    """这段话里有一个「再」在接着前面的动作：它前面有分句标点、「先」、操作线索或检索 / 查看动词。"""
+    for m in _SEQUENCE_ZAI_RE.finditer(segment or ""):
+        before = segment[:m.start()]
+        if before and (_CLAUSE_PUNCT_RE.search(before) or "先" in before
+                       or carries_operation_cue(before) or _ZAI_LEAD_VERB_RE.search(before)):
+            return True
+    return False
 _NO_ACTION_CLAUSE_SPLIT_RE = re.compile(
     r"[，,。；;！？!?\n]+|然后|接着|随后|同时|另外|顺便|并且|以及|但是|不过|可是|(?<!不)再"
 )
@@ -458,10 +478,13 @@ def _simple_goal_omits_multi_action_step(
     goal = re.sub(r"\s+", "", str(wire.get("goal") or ""))
     utterance = re.sub(r"\s+", "", str(text or ""))
     semantic_text = f"{utterance} {goal}"
+    # 原话与 goal 分开量：拼成一串时 goal 开头的连接词会把原话当成它前面的动作（「再换一个充电站」+ goal「再换一批…」）
+    connected = any(_MULTI_ACTION_CONNECTOR_RE.search(segment) or _zai_sequences_actions(segment)
+                    for segment in (utterance, goal) if segment)
     return bool(
         plan.complexity == "simple"
         and len(plan.steps) < 2
-        and _MULTI_ACTION_CONNECTOR_RE.search(semantic_text)
+        and connected
         and not deferred_condition.waits_on_condition(semantic_text)
         and not _NEGATED_SEQUENCE_HEAD_RE.search(utterance)
     )

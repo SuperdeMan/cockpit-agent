@@ -11,7 +11,8 @@ class MockChargingProvider(ChargingProvider):
     _CHARGER_TYPES = [["快充"], ["慢充"], ["快充", "慢充"]]
 
     async def find_nearby(self, location: GeoPoint, radius_km: float = 5,
-                          charger_type: str = "", meta=None) -> list[ChargingStation]:
+                          charger_type: str = "", meta=None, keyword: str = "") -> list[ChargingStation]:
+        # 演示数据不按名字检索：点名的站名（`keyword`）照旧回随机运营商，由调用方按名字裁决
         stations = []
         for i in range(5):
             available = random.randint(0, 4)

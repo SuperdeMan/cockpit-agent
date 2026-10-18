@@ -333,6 +333,17 @@ route_hints:
     policy: replace
     priority: 57
     slots: {}
+  # 「这天气适合去哪玩」（核心旅程 A1-5，200×5 后续批 §21.5）：先查天气、看到结果再推荐去处——首轮只派天气、标 adaptive，
+  # 推荐交给 T2 按天气结果再规划（weather-outing 指南 + 周边按天气定类目的兜底 §18.9）。首轮误澄清 / 零步是模型方差，
+  # 指南补一句的 A/B 已证伪（§20.3）。要求句末是游玩类动词：「天气不好去哪吃饭」是找餐厅，不归这条。
+  # 比上一条高一级：「天气适合出去哪里玩」两条都命中时，要的是查完天气接着推荐，不是只答天气。
+  - pattern: '(天气|气温)[^。！？!?]{0,10}?(去|出去)?(哪|哪里|哪儿|什么地方)(玩|逛|走走|转转|溜达|耍)'
+    guard: '导航|路线|路况|怎么走'
+    intent: info.weather
+    policy: replace
+    priority: 58
+    complexity: adaptive
+    slots: {}
 
 requires_permissions:
   - network.external

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.charger_swap import asks_to_add_charger, asks_to_swap_charger, is_charger_name, names_stop
+from runtime.charger_swap import (
+    asks_to_add_charger, asks_to_swap_charger, carries_charger_name, charger_name_probe, is_charger_name, names_stop,
+)
 
 
 @pytest.mark.parametrize("text", [
@@ -70,7 +72,7 @@ def test_names_stop_needs_a_distinctive_part_of_the_name(text, name, named):
 
 
 @pytest.mark.parametrize("text", ["候选充电站", "充电站", "一个充电站", "附近的充电桩", "顺路的快充",
-                                  "附近可用快充站", "空闲的充电桩", "能用的充电站",
+                                  "附近可用快充站", "空闲的充电桩", "能用的充电站", "免费的充电桩", "公共充电站",
                                   "下一个充电站", "再一个充电站", "又一个充电站", "多一个充电站"])
 def test_generic_charger_words_name_no_particular_station(text):
     """2026-10-17 EN07 r3：规划器写 `add_waypoint=候选充电站`，导航按字面搜不到，第二个站没加上。"""
@@ -93,3 +95,29 @@ def test_a_branded_or_named_station_is_not_generic(text):
 def test_adding_a_charger_is_told_apart_from_searching_and_swapping(text, adds):
     """EN09：「（顺路）加个充电站」是改这趟路线；找站、换站、加别的停靠都不是。"""
     assert asks_to_add_charger(text) is adds
+
+
+# ── 原话点名的站名（200×5 后续批 §21.3：「附近有特斯拉的充电站吗」修前只按「充电站」搜，「特斯拉」被静默丢掉）──────────
+@pytest.mark.parametrize("text, probe", [
+    ("附近有特斯拉的充电站吗", "特斯拉"), ("找个国家电网的充电桩", "国家电网"), ("特来电充电站在哪", "特来电"),
+    ("附近有特斯拉超充吗", "特斯拉"), ("附近有没有国网的充电桩", "国网"), ("有蔚来的充电站吗", "蔚来"),
+])
+def test_a_named_station_is_taken_from_before_the_station_word(text, probe):
+    assert charger_name_probe(text) == probe
+
+
+@pytest.mark.parametrize("text", [
+    "附近有充电站吗", "帮我找一下附近能用的充电桩", "我的车快没电了，附近有充电站吗", "小区里有公共充电桩吗",
+    "离我最近的充电站在哪", "附近有免费的充电桩吗", "附近有没有24小时的充电站", "附近有空闲的充电桩吗",
+    "途经再加一个充电站", "换一个充电站", "去会展中心的路上找个充电站", "我要去充电站",
+])
+def test_generic_or_non_name_words_give_no_probe(text):
+    """只泛指充电这一类、或那个词带虚词 / 方位 / 数字：不当名字试搜（照旧按类目搜）。"""
+    assert charger_name_probe(text) == ""
+
+
+def test_a_named_station_must_carry_the_name_and_be_a_charging_station():
+    assert carries_charger_name("特斯拉超级充电站(深圳湾)", "特斯拉")
+    assert carries_charger_name("TESLA 超充站", "tesla")
+    assert not carries_charger_name("特斯拉中心(深圳湾店)", "特斯拉")       # 展厅不是充电站
+    assert not carries_charger_name("特来电充电站", "特斯拉")

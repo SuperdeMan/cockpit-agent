@@ -20,7 +20,9 @@ from agents._sdk.dest_choice import resolve_ordinal, save_choices
 from runtime.proactive import publish_proactive
 from runtime import vehicle_reading
 from runtime.vehicle_reading import Reading
-from runtime.charger_swap import asks_for_another_charger, asks_to_add_charger, asks_to_swap_charger
+from runtime.charger_swap import (
+    asks_for_another_charger, asks_to_add_charger, asks_to_swap_charger, carries_charger_name, charger_name_probe,
+)
 from runtime.slots import RESULT_CONSUMED_META
 from runtime.route_stops import on_route
 from .low_battery import LowBatteryWatcher
@@ -213,10 +215,21 @@ class ChargingPlannerAgent(BaseAgent):
             location = loc_values.get("vehicle.location", "")
             near = GeoPoint(address=location) if location else GeoPoint()
 
-        # 搜充电站
+        # 搜充电站。原话点名了站名（「附近有特斯拉的充电站吗」，200×5 后续批 §21.3）：先按「名字 + 充电站」搜，只留名字里带着它、
+        # 按名字也是充电站的（特斯拉的展厅不算）；一个都没有就照旧按类目搜，并如实说没找到、声明 `_dropped_terms`——
+        # 后续步不把普通站当成用户点名的那家去绑（修前只按「充电站」搜，点名的「特斯拉」被静默丢掉）。
+        probe = charger_name_probe(intent.raw_text or "")
+        missed = ""
         try:
-            stations = await self.charging.find_nearby(
-                near, charger_type=charger_type, meta=meta)
+            stations = []
+            if probe:
+                stations = [s for s in await self.charging.find_nearby(
+                                near, charger_type=charger_type, meta=meta, keyword=f"{probe}充电站")
+                            if carries_charger_name(s.name, probe)]
+                missed = "" if stations else probe
+            if not stations:
+                stations = await self.charging.find_nearby(
+                    near, charger_type=charger_type, meta=meta)
         except ProviderError as e:
             # §9.5 铁律③：运行期真实源失败不改供 mock 假充电站（假站可能被用户导航过去）；
             # R9 契约：诚实话术用 OK 返回（FAILED 会被聚合器吞成裸「抱歉，处理失败」）。
@@ -250,19 +263,24 @@ class ChargingPlannerAgent(BaseAgent):
             return f"{s.name}（{s.distance_km}km{extra}）"
 
         names = "、".join(_desc(s) for s in top3)
-        speech = f"为您找到 {len(stations)} 个充电站，推荐：{names}。需要导航过去吗？"
+        label = f"{probe}充电站" if probe and not missed else "充电站"
+        lead = f"附近没找到{missed}的充电站，" if missed else ""
+        speech = f"{lead}为您找到 {len(stations)} 个{label}，推荐：{names}。需要导航过去吗？"
         items = [
             {"id": s.id, "name": s.name, "available": s.available,
              "total": s.total, "price": s.price_per_kwh,
              "distance_km": s.distance_km, "operator": s.operator}
             for s in stations
         ]
+        data = {"items": items}
+        if missed:
+            data["_dropped_terms"] = [missed]
         return AgentResult(
             speech=speech,
             # CA2-19 S1：站点数据带来源（`_prov`），电量带时效与来源
             ui_card=attach({"type": "charging_list", "items": items, **self._soc_card(soc)},
                            self.charging),
-            data={"items": items},
+            data=data,
             follow_up="说『导航去第一个』或告诉我你的偏好",
         )
 

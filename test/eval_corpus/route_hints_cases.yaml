@@ -1087,3 +1087,47 @@
   source: "问收费：不归这条（守卫「费 / 收费」）"
   tags: [nearby, parking, guard]
 
+
+# 200×5 后续批 §21.5（核心旅程 A1-5）：「这天气适合去哪玩」先查天气、标 adaptive，推荐交给 T2 按天气结果再规划。
+# 澄清 / 只推荐不看天气 / 闲聊兜底都换成天气这一步；模型已经「天气 → 周边」两步的不动；找餐厅、导航、问天气本身不归这条。
+- text: 今天的天气适合去哪玩
+  initial_intents: []
+  expect_final_intents: [info.weather]
+  source: "A1-5 首轮误澄清（模型方差，指南 A/B 已证伪，后续批 §20.3）"
+  tags: [weather, outing, adaptive, replace]
+
+- text: 今天的天气适合去哪玩
+  initial_intents: [nearby.search]
+  expect_final_intents: [info.weather]
+  source: "A1-5：只推荐不看天气 = 把雨天的公园推给用户"
+  tags: [weather, outing, adaptive, replace]
+
+- text: 今天的天气适合去哪玩
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [info.weather]
+  source: "A1-5：两轮失败落闲聊兜底"
+  tags: [weather, outing, adaptive, replace]
+
+- text: 今天的天气适合去哪玩
+  initial_intents: [info.weather, nearby.search]
+  expect_final_intents: [info.weather, nearby.search]
+  source: "模型已经「天气 → 周边」两步：不动"
+  tags: [weather, outing, adaptive, guardrail]
+
+- text: 天气这么好，去哪里逛逛
+  initial_intents: []
+  expect_final_intents: [info.weather]
+  source: "后续批 §21.5 同族说法"
+  tags: [weather, outing, adaptive, replace]
+
+- text: 天气不好去哪吃饭
+  initial_intents: [nearby.search]
+  expect_final_intents: [nearby.search]
+  source: "找餐厅不归这条（句末不是游玩类动词）"
+  tags: [weather, outing, guardrail]
+
+- text: 天气好的话导航去哪里玩
+  initial_intents: [navigation.search_poi]
+  expect_final_intents: [navigation.search_poi]
+  source: "guard：导航"
+  tags: [weather, outing, guardrail]

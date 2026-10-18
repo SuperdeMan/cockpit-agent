@@ -104,6 +104,10 @@ message RouteHint {
   // 剩下那半仍交给正常规划。clause 档的 `$text` 解析成**命中的那一分句**，不是整句；
   // append 的去重也按「这一步是不是已经带着本 hint 要填的值」判，不是只看 intent 在不在。
   string scope = 7;
+  // 计划复杂度（2026-10-18，200×5 后续批 §21.5）：""=不改（缺省，行为不变）；"adaptive"=以 replace 命中、换上本 hint
+  // 那一步时，整份计划标 adaptive、goal 保留原话——那一步是观察步，后面的交给 T2 按观察结果再规划（「今天的天气适合去哪玩」：
+  // 先查天气、看到结果再推荐去处）。只来自 manifest，LLM 写不到。
+  string complexity = 8;
 }
 
 message ExecuteRequest {

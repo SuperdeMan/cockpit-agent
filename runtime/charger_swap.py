@@ -73,9 +73,11 @@ def names_stop(text: str, stop_name: str) -> bool:
 #: 不点名的修饰：「候选充电站」「一个充电站」「附近的充电桩」「顺路的快充」——指的是充电这一类，不是哪一个站。
 # 「可用 / 能用 / 空闲 / 有空位」说的是状态不是站名（高德没有实时空闲数，也就按不了它搜）：`292bb8f0` 复测 EN07 r5，规划器把要加的站写成
 # 「附近可用快充站」，导航按字面搜不到，第二个站没加上。「下一个 / 再一个 / 又一个 / 多一个」是「再来一个」，也不点名：`d23623a8` 复测
-# EN07 r2 把要加的站写成「下一个充电站」，去掉「一个」剩个「下」，同样按字面搜不到。
+# EN07 r2 把要加的站写成「下一个充电站」，去掉「一个」剩个「下」，同样按字面搜不到。「免费 / 公共 / 直流 / 交流 / 大功率」同属属性、
+# 不是站名（2026-10-18，§21.3：点名站名的试搜不拿它们当名字）。
 _GENERIC_MODIFIERS_RE = re.compile(r"候选|随便|任意|另一个|下一个|再一个|又一个|多一个|一个|一家|一座|个|家|座|附近的?|最近的?|"
-                                   r"顺路的?|沿途的?|路上的?|可用的?|能用的?|空闲的?|有空位的?|的")
+                                   r"顺路的?|沿途的?|路上的?|可用的?|能用的?|空闲的?|有空位的?|免费的?|公共的?|直流的?|交流的?|"
+                                   r"大功率的?|的")
 
 
 def is_generic_charger_word(text: str) -> bool:
@@ -90,4 +92,38 @@ def is_generic_charger_word(text: str) -> bool:
 
 
 _STATION_WORD_RE = re.compile(_STATION)
+
+#: 「X 的充电站 / X 充电桩 / X 超充」里站名前面那个词：可能是品牌 / 运营商（「特斯拉」「国家电网」「特来电」），也可能是属性（「免费」）——
+#: 字面上分不出，交给检索结果裁决（结果名字里真带着它才算，同周边的名字试探）。这里只把那个词取出来、挡掉明显不是名字的。
+#: 2026-10-18（200×5 后续批 §21.3）：「附近有特斯拉的充电站吗」规划给 `charging.find`，充电 Agent 只按「充电站」搜、回 8 个普通站，
+#: 用户点名的「特斯拉」被静默丢掉。
+_BEFORE_STATION_RE = re.compile(rf"([^\s，,。？?！!、；;：:]*?)的?{_STATION}")
+#: 分句开头的请求 / 方位 / 存在框架（零领域词）：剥掉之后剩下的才可能是名字；可连用（「帮我找一下附近…」）
+_PROBE_FRAME_RE = re.compile(
+    r"^(?:请|麻烦|帮我|给我|你|我想|我要|想|要|在|去)?"
+    r"(?:附近|周边|周围|这附近|这边|离我最近|最近)?的?"
+    r"(?:有没有|哪里有|哪儿有|还有|有)?(?:找|搜|查|看看|看一下|看下)?(?:一个|一家|几个|一下|个|家|下)?")
+#: 名字里不会有的字：虚词、方位、疑问、数字与量词（「家」不在内：「国家电网」）
+_PROBE_NON_NAME_CHARS = set("的了吗呢吧啊呀么里有没在哪谁什怎样个0123456789一二三四五六七八九十百千万元块")
+_PROBE_MAX = 8
+
+
+def charger_name_probe(text: str) -> str:
+    """原话点名的充电站名字（「附近有特斯拉的充电站吗」⇒「特斯拉」）；只泛指充电这一类（「附近有充电站吗」「能用的充电桩」）、
+    或那个词明显不是名字（带虚词 / 方位 / 数字，超长）⇒ 空串。"""
+    for match in _BEFORE_STATION_RE.finditer(str(text or "")):
+        word, previous = match.group(1), None
+        while word and word != previous:
+            previous, word = word, _PROBE_FRAME_RE.sub("", word, count=1)
+        if (2 <= len(word) <= _PROBE_MAX and not set(word) & _PROBE_NON_NAME_CHARS
+                and not is_generic_charger_word(word + "充电站")):
+            return word
+    return ""
+
+
+def carries_charger_name(name: str, probe: str) -> bool:
+    """这个站名里带着原话点名的那个词（不分大小写、忽略空白），且按名字确实是充电站（特斯拉的展厅、服务中心不算）。"""
+    def norm(value: str) -> str:
+        return re.sub(r"\s+", "", str(value or "")).casefold()
+    return bool(probe) and norm(probe) in norm(name) and is_charger_name(name)
 

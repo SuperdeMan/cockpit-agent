@@ -49,8 +49,8 @@ class ChargingProvider(ABC):
 
     @abstractmethod
     async def find_nearby(self, location: GeoPoint, radius_km: float = 5,
-                          charger_type: str = "", meta=None) -> list[ChargingStation]:
-        """搜索附近的充电站。"""
+                          charger_type: str = "", meta=None, keyword: str = "") -> list[ChargingStation]:
+        """搜索附近的充电站。`keyword` 是原话点名的站名检索词（「特斯拉充电站」，200×5 后续批 §21.3）；不给时按类目词搜。"""
         ...
 
     @abstractmethod

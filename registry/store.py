@@ -660,6 +660,7 @@ def _manifest_to_dict(manifest) -> dict:
             "guard": getattr(h, "guard", ""),
             "slots": {str(k): str(v) for k, v in (getattr(h, "slots", None) or {}).items()},
             "scope": getattr(h, "scope", ""),
+            "complexity": getattr(h, "complexity", ""),
         })
     if hints:
         d["route_hints"] = hints
@@ -738,6 +739,9 @@ def _dict_to_manifest(d: dict):
             # C6-A 匹配范围：丢了它 `clause` 档退回整句匹配——接送类 hint 的分句锚定
             # 在 registry 重启后静默消失（AR05 F08 同批）。
             scope=str(h.get("scope", "") or ""),
+            # §21.5 计划复杂度：丢了它 registry 重启后「先观察、再按结果规划」的 hint 退回单步（只报天气）。
+            # 旧记录没有这个键 ⇒ 空串 = 不改（修前行为）。
+            complexity=str(h.get("complexity", "") or ""),
         )
         for h in d.get("route_hints", [])
     ]

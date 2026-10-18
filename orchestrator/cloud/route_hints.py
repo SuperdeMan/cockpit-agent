@@ -88,6 +88,7 @@ class RouteHintEngine:
             hit = True
             if self._has_intent(plan, hint.intent) and not self._receiver_rejects(plan, hint.intent):
                 # LLM 已正确路由到该 intent，保留原计划；replace 互斥 → 停
+                self._adopt_complexity(plan, hint, text)
                 return True
             if self._has_intent(plan, hint.intent):
                 # 意图对了、槽是编的：接收方的严格契约会整步拒绝（`argument_error`，派发前同一个判断），用户只会听到
@@ -97,8 +98,24 @@ class RouteHintEngine:
             self._apply_step(plan, agent_id, hint,
                              self._resolve_slots(hint, m, span), agent_map,
                              replace=True)
+            self._adopt_complexity(plan, hint, text)
             return True
         return hit
+
+    @staticmethod
+    def _adopt_complexity(plan, hint, text: str) -> None:
+        """hint 声明了 `complexity: adaptive`（200×5 后续批 §21.5），且计划里只有它这一种 intent（换上的那一步，或模型自己只派了它，
+        「只报天气」那种）⇒ 整份计划按 adaptive：goal 保留原话、清掉澄清卡、标受话——这一步是观察步，后面的交给 T2 按观察结果
+        再规划（「今天的天气适合去哪玩」：先查天气、看到结果再推荐去处）。计划里还有别的步（「天气 → 周边」两步）时不动。"""
+        if (str(getattr(hint, "complexity", "") or "").strip().lower() != "adaptive" or not plan.steps
+                or any(step.intent != hint.intent for step in plan.steps)):
+            return
+        if plan.complexity != "adaptive":
+            logger.info("route_hint %s plans adaptively: observe first, then replan on the result", hint.intent)
+        plan.complexity = "adaptive"
+        plan.goal = str(text or "")
+        plan.clarify = None
+        plan.addressed = True
 
     def matches_clause_scope(self, text: str, agent_map: dict) -> bool:
         """本轮原话是否命中了任一 **clause 档** hint（C6-B 的触发条件，只读）。

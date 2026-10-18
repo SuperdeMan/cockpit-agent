@@ -3283,4 +3283,11 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   免唤醒语音（受不受话就是拒识）与「求信息的请求 + 原计划有写步」除外。
 - 带操作线索、目录里有能力被点名（且不只是对象名）的指令被判成澄清 ⇒ 下一次只许给计划（`named_directive_clarified`，只在首轮）；裸对象、
   指代、没有操作线索的真歧义照旧澄清。新的「别澄清」类守卫先在 collector 历史量与 `test/eval_corpus/clarify_cases.yaml` 上量误伤再进表。
+- 多动作复核的「再」只在接着前面一个动作时才算连接词（前面有分句标点、「先」、操作线索或检索 / 查看动词）；「再次 / 再一次 / 再见」不算。
+  原话与模型 goal 分开量，不拼成一串（200×5 后续批 §21.1）。
+- 槽值用文字点了本计划另一步的 id（「从 s1 结果选取」「ref:s2」）是引用残渣，派发前丢掉、交下游按缺槽处理；这一步自己的 id 与引用填出的
+  真值不查（§21.2）。
+- 找站时原话点名的站名（「特斯拉的充电站」）先按名字搜、结果名字里真带着它才算；落空就照旧按类目搜并如实说没找到、声明 `_dropped_terms`（§21.3）。
+- route hint 可声明 `complexity: adaptive`（proto `RouteHint` 字段 8）：以 replace 命中时整份计划按 adaptive 规划、goal 保留原话；只来自 manifest，
+  经 SDK → Registry JSONB 往返 → RouteHintEngine，挂起 / 恢复沿用计划既有的 `complexity` / `goal`（§21.5）。
 

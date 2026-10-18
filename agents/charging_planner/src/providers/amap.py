@@ -74,8 +74,9 @@ class AmapChargingProvider(ChargingProvider):
         return (f"{h}小时" if h else "") + (f"{mm}分钟" if mm else "")
 
     async def find_nearby(self, location: GeoPoint, radius_km: float = 5,
-                          charger_type: str = "", meta=None) -> list[ChargingStation]:
-        keyword = "快充站" if charger_type and "快" in charger_type else "充电站"
+                          charger_type: str = "", meta=None, keyword: str = "") -> list[ChargingStation]:
+        # 原话点名的站名（「特斯拉充电站」，200×5 后续批 §21.3）按它搜；没点名时按类目词
+        keyword = keyword or ("快充站" if charger_type and "快" in charger_type else "充电站")
         pois = await self._poi.search(
             keyword, near=self._amap_geo(location), limit=8, meta=meta)
         return [

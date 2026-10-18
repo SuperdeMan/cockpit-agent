@@ -84,6 +84,8 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             slots={k: str(v) for k, v in (h.get("slots") or {}).items()},
             # C6-A：匹配范围。缺省空串=整句（行为逐字不变）；"clause"=逐分句锚定。
             scope=str(h.get("scope", "") or ""),
+            # §21.5：计划复杂度。缺省空串=不改；"adaptive"=命中换步时整份计划按 adaptive 规划
+            complexity=str(h.get("complexity", "") or ""),
         )
         for h in (data.get("route_hints") or [])
     ]

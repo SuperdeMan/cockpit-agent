@@ -108,6 +108,17 @@ _REF_RESIDUE_RE = re.compile(
     r"^\$?\{?\s*[A-Za-z0-9_-]+\.data\.[A-Za-z0-9_.]+\s*\}?$")
 
 
+def _prose_step_reference(value: str, step_ids) -> bool:
+    """槽值在文字里点了本计划另一步的 id、却不是能解析的引用（「从 s1 结果选取」「ref:s2」「s1.data」）——是没写成引用的引用，
+    不是用户给的值（200×5 后续批 §21.2：collector 留存 5 053 次规划参数里 4 次，3 次在 `add_waypoint`，修前原样当成地名发给下游）。
+    只认独立成词的 id（前后不是字母 / 数字 / `_` / `-`）：「S1 车型」（大写）、「abcs1x」（嵌在词里）不算。"""
+    ids = sorted({str(i) for i in step_ids if i}, key=len, reverse=True)
+    if not ids or not isinstance(value, str):
+        return False
+    pattern = r"(?<![A-Za-z0-9_-])(?:" + "|".join(re.escape(i) for i in ids) + r")(?![A-Za-z0-9_-])"
+    return re.search(pattern, value) is not None
+
+
 def _looks_like_ref_path(value: str) -> bool:
     """`s1.data.items.0.lng` 这种没解析成的引用字面串不是门店名，是残渣。"""
     return bool(_REF_PATH_RE.match(str(value or "").strip()))
@@ -883,10 +894,14 @@ class DagExecutor:
         # 留着就是把一串路径当地名 / POI id 发给下游（200×5 后续批 §18.7，NB09 `3168262c` r1：`poi_id="s1.data.items.0.id"`
         # 指向这一步自己、`location` 与 slot_refs 同写 `s1.data.items.0.location`）。丢掉，交给下游按缺槽处理（追问、用原话、
         # 用别的槽）。放在门店锚定之后：锚定要先看见残渣才知道「没给门店」（同 `_REF_RESIDUE_RE` 那一条判据）。
+        # 用文字点了另一步的 id 也是残渣（§21.2「从 s1 结果选取」）；只看本计划里别的步（本轮已完成的、这一步依赖的），
+        # 引用填出来的真值不查——单步计划里用户自己说的「华为 s1 手机」不会被当成残渣。
+        other_steps = (set(done) | set(step.depends_on or [])) - {step.id}
         for slot_name, raw_value in list(step.slots.items()):
             if isinstance(raw_value, str) and (
                     _REF_RESIDUE_RE.match(raw_value.strip())
-                    or re.fullmatch(r"\$ref\.[A-Za-z_][A-Za-z0-9_]*", raw_value.strip())):
+                    or re.fullmatch(r"\$ref\.[A-Za-z_][A-Za-z0-9_]*", raw_value.strip())
+                    or (slot_name not in from_refs and _prose_step_reference(raw_value, other_steps))):
                 step.slots.pop(slot_name)
                 trusted.pop(slot_name, None)
                 foreign.pop(slot_name, None)

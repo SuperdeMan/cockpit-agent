@@ -74,6 +74,8 @@ Manifest 约定：
 
 - `route_hints` 只用于弱模型确定性兜底；领域知识留在 Agent，不写进 Planner 分支；
 - `scope=clause` 时 pattern 与 `$text` 按分句，guard 仍对整句求值；
+- route hint 的 `complexity: adaptive` 只给「先观察、按结果再规划」的整句（A1-5「这天气适合去哪玩」）：以 replace 命中时整份计划
+  标 adaptive、goal 保留原话，那一步是观察步，后面交给 T2；计划里已有别的步时不动；
 - 重任务标 `heavy: true`；
 - 消费整句且一份计划最多一步的能力标 `whole_utterance: true`；
 - 追问自由文本槽时声明 `slot_shapes`；形状名必须存在于 `slot_shape.SHAPES`；

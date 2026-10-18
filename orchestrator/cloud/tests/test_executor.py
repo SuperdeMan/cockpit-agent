@@ -278,6 +278,40 @@ def test_a_reference_that_does_not_resolve_is_dropped_not_sent_downstream():
     assert dangling.slots == {"category": "停车场"}
 
 
+def test_a_prose_reference_to_another_step_is_dropped_not_sent_as_a_name():
+    """§21.2（`d23623a8` 复测 EN07 r3）：规划器把改线的槽写成「从 s1 结果选取」——点了依赖步的 id、却不是引用，修前原样当站名
+    发给导航。collector 留存里同形的还有「从s1候选中选择第二个充电站」「ref:s2」「s1.data」。丢掉，交下游按缺槽处理；同一步的真值照留。"""
+    done = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="charging.find",
+                             data={"items": [{"name": "海王银河科技大厦电动汽车充电站"}]})}
+    for value in ("从 s1 结果选取", "从s1候选中选择第二个充电站", "ref:s1", "s1.data", "s1"):
+        step = Step(id="s2", agent_id="navigation", intent="navigation.reroute", depends_on=["s1"],
+                    slots={"add_waypoint": value, "destination": "深圳北站"})
+        DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+        assert step.slots == {"destination": "深圳北站"}, value
+
+
+def test_a_value_that_only_looks_like_a_step_id_is_kept():
+    """只认本计划里别的步的 id、独立成词：大写「S1」、嵌在词里的「abcs1x」照留；单步计划里用户说的「华为 s1 手机」也照留
+    （那里没有别的步可指）。"""
+    done = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="info.search", data={})}
+    step = Step(id="s2", agent_id="info", intent="info.search", depends_on=["s1"],
+                slots={"query": "S1 车型参数", "model": "abcs1x"})
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+    assert step.slots == {"query": "S1 车型参数", "model": "abcs1x"}
+
+    alone = Step(id="s1", agent_id="info", intent="info.search", slots={"query": "华为 s1 手机"})
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(alone, {})
+    assert alone.slots == {"query": "华为 s1 手机"}
+
+    # 引用填出来的真值不查：站名里恰好有「s1」也照发
+    found = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="charging.find",
+                              data={"items": [{"name": "星河 s1 充电站"}]})}
+    reroute = Step(id="s2", agent_id="navigation", intent="navigation.reroute", depends_on=["s1"],
+                   slot_refs={"add_waypoint": "s1.data.items.0.name"})
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(reroute, found)
+    assert reroute.slots == {"add_waypoint": "星河 s1 充电站"}
+
+
 def test_resolve_slot_refs_records_executor_trusted_provenance():
     """跨步来源只能由执行器依据已完成结果盖章，不能采用 Planner 自报 meta。"""
     done = {
