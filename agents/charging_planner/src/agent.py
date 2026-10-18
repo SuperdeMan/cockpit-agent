@@ -313,12 +313,15 @@ class ChargingPlannerAgent(BaseAgent):
                 targets = cands + [destination]
 
         resolved, stations, errored, missed = destination, [], False, ""
+        points = {target: GeoPoint(address=target) for target in targets}
         if probe:
             searched = False      # 点名的试搜至少有一次真跑完了（服务失败时不说「没找到」，只照类目往下找）
             for target in targets:
                 try:
+                    # 目的地只编码一次，点名试搜与类目回退共用坐标（§22.6：重放里第二次编码撞了高德 QPS 限额）
+                    points[target] = await self.charging.locate(points[target], meta=meta)
                     stations = [s for s in await self.charging.find_nearby(
-                                    GeoPoint(address=target), charger_type=charger_type, meta=meta,
+                                    points[target], charger_type=charger_type, meta=meta,
                                     keyword=f"{probe}充电站")
                                 if carries_charger_name(s.name, probe) and not s.distance_km > _NAMED_NEAR_DEST_KM]
                     searched = True
@@ -332,7 +335,7 @@ class ChargingPlannerAgent(BaseAgent):
         for target in ([] if stations else targets):
             try:
                 stations = await self.charging.find_nearby(
-                    GeoPoint(address=target), charger_type=charger_type, meta=meta)
+                    points[target], charger_type=charger_type, meta=meta)
             except ProviderError as e:
                 logger.warning("charging find near %s failed（诚实降级，无 mock 回退）: %s",
                                target, e)

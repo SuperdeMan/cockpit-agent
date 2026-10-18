@@ -58,6 +58,10 @@ class ChargingProvider(ABC):
         """查询充电站实时状态。"""
         ...
 
+    async def locate(self, location: GeoPoint, meta=None) -> GeoPoint:
+        """地名 → 带坐标的位置，供同一处连搜几次时复用（点名试搜与类目回退，200×5 后续批 §22.6）；缺省原样返回。"""
+        return location
+
     @abstractmethod
     async def plan_route(self, destination: str, soc: int | None = None,
                          meta=None, *, soc_note: str = "") -> ChargingPlan:

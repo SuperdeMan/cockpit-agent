@@ -10,7 +10,7 @@ import asyncio
 
 from agents._sdk.testing import make_context, run_handle
 from agents.charging_planner.src.agent import ChargingPlannerAgent
-from agents.charging_planner.src.providers.base import ChargingStation
+from agents.charging_planner.src.providers.base import ChargingStation, GeoPoint
 
 LOC = {"current_lat": "22.5", "current_lng": "113.8"}
 
@@ -128,3 +128,38 @@ def test_a_generic_ask_near_the_destination_searches_by_category_once():
     res = _find_near(agent, "导航去深圳北站，在附近找个充电桩")
     assert calls == [""] and res.data["waypoint"]["name"] == "国网充电站"
     assert "没找到" not in res.speech and "_dropped_terms" not in res.data
+
+
+def test_the_destination_is_located_once_for_both_searches():
+    """§22.6：点名试搜落空再按类目搜，同一个目的地修前编码两次——线上第二次撞了高德 QPS 限额，答成「服务不可用」。"""
+    agent, calls = _agent({"特斯拉充电站": [], "": ["国网充电站"]})
+    plain, located, seen = agent.charging.find_nearby, [], []
+
+    async def locate(point, meta=None):
+        located.append(point.address)
+        return GeoPoint(address=point.address, lat=22.61, lng=114.03)
+
+    async def nearby(point, charger_type="", meta=None, keyword=""):
+        seen.append((point.lat, point.lng))
+        return await plain(point, charger_type=charger_type, meta=meta, keyword=keyword)
+
+    agent.charging.locate, agent.charging.find_nearby = locate, nearby
+    res = _find_near(agent, "导航去深圳北站，在附近找个特斯拉充电桩")
+    assert located == ["深圳北站"] and seen == [(22.61, 114.03), (22.61, 114.03)]
+    assert res.data["waypoint"]["name"] == "国网充电站"
+
+
+def test_the_amap_provider_turns_a_place_name_into_coordinates_once():
+    from agents.charging_planner.src.providers.amap import AmapChargingProvider
+
+    provider, asked = AmapChargingProvider("test-key"), []
+
+    async def resolve(point, meta=None):
+        asked.append(point.address)
+        return "114.03,22.61" if point.address == "深圳北站" else None
+
+    provider._poi.resolve_location = resolve
+    point = asyncio.run(provider.locate(GeoPoint(address="深圳北站")))
+    assert (point.address, point.lat, point.lng) == ("深圳北站", 22.61, 114.03)
+    assert asyncio.run(provider.locate(GeoPoint(address="不存在的地方"))) == GeoPoint(address="不存在的地方")
+    assert asyncio.run(provider.locate(point)) is point and asked == ["深圳北站", "不存在的地方"]

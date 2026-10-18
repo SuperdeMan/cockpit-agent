@@ -32,6 +32,19 @@ class AmapChargingProvider(ChargingProvider):
     def _amap_geo(p: GeoPoint) -> AmapGeo:
         return AmapGeo(lat=p.lat, lng=p.lng, address=p.address)
 
+    async def locate(self, location: GeoPoint, meta=None) -> GeoPoint:
+        """地名只编码一次：已有坐标原样返回，解析不出也原样返回（之后的检索照旧按地名）。服务失败抛 ProviderError。
+
+        §22.6：点名试搜落空再按类目搜时，同一个目的地被编码两次；线上重放里第二次撞了高德 QPS 限额（10021），答成「服务不可用」。"""
+        if location.lat and location.lng:
+            return location
+        loc = await self._poi.resolve_location(self._amap_geo(location), meta)
+        try:
+            lng, lat = (float(v) for v in str(loc or "").split(",")[:2])
+        except ValueError:
+            return location
+        return GeoPoint(address=location.address, lat=lat, lng=lng)
+
     @staticmethod
     def _core_place(dest: str) -> str:
         """从行政区划目的地取核心地名用于搜候选：甘肃省兰州市→兰州、朝阳区→朝阳。"""

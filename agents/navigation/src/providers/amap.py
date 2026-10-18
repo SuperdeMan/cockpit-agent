@@ -129,6 +129,10 @@ class AmapPOIProvider(POIProvider):
                 pass
         return await self._geocode(addr, meta)
 
+    async def resolve_location(self, point: GeoPoint | None, meta=None) -> str | None:
+        """`_resolve_location` 的公开入口：同一个地名要连搜几次的调用方先解析一次、复用坐标（充电找站，200×5 后续批 §22.6）。"""
+        return await self._resolve_location(point, meta)
+
     def _poi_from(self, p: dict) -> POI:
         lng = lat = 0.0
         loc = _as_str(p.get("location"))

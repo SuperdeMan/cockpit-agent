@@ -188,7 +188,7 @@ def test_the_p1_corpora_cover_their_families_and_stay_read_only(tmp_path):
     assert pending_starts and all(c["turns"][0]["expect"].get("need_confirm") for c in pending_starts)
     voice = [c for c in by_family["F12"]]
     assert voice and all((c.get("meta") or {}).get("input_source") == "voice_followup" for c in voice)
-    # known_red 随清单带到用例上，照跑照报。2026-10-18 起清单里一条 known_red 都没有了（后续批 §21.6）：拿临时清单钉住这个机制
+    # known_red 随清单带到用例上，照跑照报：拿临时清单钉住这个机制（真实清单里有几条随复测增减，不钉条数——后续批 §21.6 / §22.6）
     marked = yaml.safe_load(probe.MANIFEST.read_text(encoding="utf-8"))
     for entry in marked["journeys"]:
         if entry["id"] == "A1-5":
@@ -196,7 +196,9 @@ def test_the_p1_corpora_cover_their_families_and_stay_read_only(tmp_path):
     path = tmp_path / "manifest.yaml"
     path.write_text(yaml.safe_dump(marked, allow_unicode=True), encoding="utf-8")
     assert {c["id"]: c for c in probe.load_manifest(path)}["A1-5"]["known_red"] == "钉机制用"
-    assert not any(c["known_red"] for c in cases.values())
+    # 清单头的规矩：known_red 写原因
+    assert all(isinstance(c["known_red"], str) and c["known_red"].strip()
+               for c in cases.values() if c["known_red"])
 
 
 def test_journey_keys_are_judged_by_the_shared_module_once():
