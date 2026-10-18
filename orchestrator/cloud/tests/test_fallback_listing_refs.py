@@ -60,3 +60,13 @@ def test_a_user_value_is_kept_and_non_item_refs_are_untouched():
                          slot_refs={"destination": "s1.data.items.0.name", "city": "s1.data.city"}),
                     done, "导航去附近不辣的餐厅")
     assert step.slots == {"destination": "海岸城", "city": "深圳市"}
+
+
+def test_a_stop_list_that_dropped_the_named_station_is_not_bound():
+    """导航顺路停靠的候选在 `data.stops`（§22.5）：没找到「零跑」照类目列的普通站，同样不当成用户点名的那家绑给后续步。"""
+    done = {"s1": StepResult(step_id="s1", status=StepStatus.OK, source_intent="navigation.navigate_to",
+                             data={"stops": [{"name": "一能充电站(裕和大厦)"}], "_dropped_terms": ["零跑"]})}
+    step = _resolve(Step(id="s2", agent_id="info", intent="info.search",
+                         slot_refs={"query": "s1.data.stops.0.name"}),
+                    done, "导航去深圳北站，在附近找个零跑充电站，再查查那个站几点关门")
+    assert "query" not in step.slots

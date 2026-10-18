@@ -1573,6 +1573,8 @@ def _drop_refused_goal_steps(
 #: executor `_resolve_slot_refs` 认的两种线上占位写法（槽值里直接写引用）：`${s1.data...}` 与 `$s1.data...`。
 _REF_PLACEHOLDER_RE = re.compile(r"\$\{([^{}.]+)((?:\.[^{}]*)?)\}")
 _REF_BARE_PLACEHOLDER_RE = re.compile(r"\$([A-Za-z0-9_-]+)(\.data\.[A-Za-z0-9_.]+)")
+#: 槽值里独立成词、像步骤 id 的记号（`s1.data…`「从s1结果选取」「ref:s2」）：没写 `id` 的计划里出现它，说明模型心里有编号
+_STEP_ID_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_-])[sr]\d+(?![A-Za-z0-9_-])")
 
 
 def _rewrite_completed_ref(value, replacements: dict[str, str]):
@@ -3023,8 +3025,9 @@ class PlanBuilder:
         MiniMax 高频漏写 `slot_refs`/`depends_on`（偶发连 `slots`），此前一个键缺席
         就整份丢弃计划——demo-mkemhn 三轮（f868a7ce / 3650e2b5 / cffc84fd）由此退成
         chitchat 兜底，并在兜底里编造「已找到 10 家门店」。缺席容器键的含义唯一（空），
-        补齐不引入任何语义猜测；**多出的未知键与缺席的身份键（id/capability_ref）
-        照旧整份拒绝**——那两类才是要挡的。"""
+        补齐不引入任何语义猜测；**多出的未知键与缺席的 `capability_ref`（身份）
+        照旧整份拒绝**——那两类才是要挡的。`id` 只在整份计划都没写、又没有一步引用别的步时
+        按位置补（`_label_unlabelled_steps`），其余缺 `id` 的照旧拒绝。"""
         missing = _NORMALIZABLE_STEP_FIELDS - set(raw_step)
         if not missing or not set(raw_step) <= set(_PLANNER_STEP_FIELDS):
             return raw_step
@@ -3033,6 +3036,29 @@ class PlanBuilder:
             filled[key] = [] if key == "depends_on" else {}
         logger.info("normalized missing step fields: %s", sorted(missing))
         return filled
+
+    @staticmethod
+    def _label_unlabelled_steps(wire: dict, raw_steps: list) -> list:
+        """整份计划的步骤都没写 `id`、也没有一步引用别的步 ⇒ 按位置补 `s1…sN`；否则原样返回（交给线契约校验整份拒绝）。
+
+        2026-10-18（200×5 后续批 §22.4）：MiniMax-M3 阵发性漏写步骤 `id`（工具 schema 标了必填，厂商不强制）——10-18 15 点 66 份
+        有步骤的计划里 10 份。线契约整份拒绝、重试又漏，正确的单步导航落成「没能拆成步骤」（EN09 复测两遍）。没有引用时 `id` 只是标签，
+        补上不带任何语义猜测，与补空容器键同一判据；`capability_ref` 缺席仍是身份缺失。照旧整份拒绝的：有依赖 / 引用 / 槽值里像
+        步骤 id 的记号（模型心里有编号，得猜它指哪步）、只有部分步骤写了 `id`、顶层出现 `id`（值放错了层）。"""
+        steps = [step for step in raw_steps if isinstance(step, dict)]
+        if (not steps or len(steps) != len(raw_steps) or "id" in wire
+                or any("id" in step for step in steps)):
+            return raw_steps
+        for step in steps:
+            if step.get("depends_on") or step.get("slot_refs"):
+                return raw_steps
+            slots = step.get("slots")
+            text = json.dumps(slots, ensure_ascii=False) if slots else ""
+            if (_REF_PLACEHOLDER_RE.search(text) or _REF_BARE_PLACEHOLDER_RE.search(text)
+                    or _STEP_ID_TOKEN_RE.search(text)):
+                return raw_steps
+        logger.info("Plan steps carried no ids and no references; labelled s1..s%d by position", len(steps))
+        return [{**step, "id": f"s{n}"} for n, step in enumerate(steps, 1)]
 
     @staticmethod
     def _looks_like_no_action(data) -> bool:
@@ -3137,6 +3163,7 @@ class PlanBuilder:
         # 是值被丢在了外面；归一会让计划带着空槽被静默执行。整份拒绝交给重试，
         # 只有「哪儿都没有这些值」的纯缺席才允许补空。
         displaced_step_fields = _NORMALIZABLE_STEP_FIELDS & set(wire)
+        raw_steps = self._label_unlabelled_steps(wire, raw_steps)
         goals = _parse_goals(wire.get("goals"))
         covers_by_id: dict[str, list[int]] = {}
         resolved_steps = []

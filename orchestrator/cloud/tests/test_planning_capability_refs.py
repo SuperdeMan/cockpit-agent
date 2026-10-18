@@ -506,7 +506,8 @@ def test_displaced_step_fields_at_wire_top_level_still_reject_the_plan():
 
 def test_unknown_step_fields_and_missing_identity_still_reject_the_plan():
     """归一只救缺席的容器键：多出的未知键是模型自造语法（真值可能放错字段名，
-    接受等于静默错执行）；id/capability_ref 缺席是身份缺失，都整份拒绝。"""
+    接受等于静默错执行）；capability_ref 缺席是身份缺失，整份拒绝（`id` 只在整份都没写、
+    又没有引用时按位置补，见 `test_planning_unlabelled_steps.py`）。"""
     _, assemble = _ref_api()
     catalog = assemble([_agent("nearby", "nearby.search")])
     ref = catalog.pair_to_ref[("nearby", "nearby.search")]

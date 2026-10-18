@@ -19,7 +19,9 @@ from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_
                                   location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
 from runtime.vehicle_reading import Reading
-from runtime.charger_swap import asks_to_swap_charger, is_charger_name, is_generic_charger_word, names_stop
+from runtime.charger_swap import (
+    asks_to_swap_charger, carries_charger_name, charger_name_probe, is_charger_name, is_generic_charger_word, names_stop,
+)
 from runtime.route_stops import on_route, plain_name, same_stop
 from runtime.slots import STEP_ORIGIN_META, is_place_placeholder
 from agents._sdk.shared_state import NAVIGATION_DEST_CHOICES, REMINDABLE_ACTIVE
@@ -1266,7 +1268,7 @@ class NavigationAgent(BaseAgent):
                     return await self._navigate_with_stop_choice(
                         stored_poi, place_label, stop_category, items, meta,
                         arrive_by_ts=arrive_by_ts, strategy=strategy,
-                        strategy_note=strategy_note)
+                        strategy_note=strategy_note, raw_text=raw_text, place=place_label)
                 return await self._navigate_to_stored(
                     place_label, stored, meta, ctx=ctx, arrive_by_ts=arrive_by_ts,
                     strategy=strategy, strategy_note=strategy_note)
@@ -1452,7 +1454,8 @@ class NavigationAgent(BaseAgent):
         if stop_category:
             return await self._navigate_with_stop_choice(
                 first, resolved_name, stop_category, items, meta,
-                arrive_by_ts=arrive_by_ts, strategy=strategy, strategy_note=strategy_note)
+                arrive_by_ts=arrive_by_ts, strategy=strategy, strategy_note=strategy_note,
+                raw_text=raw_text, place=dest)
 
         # 普通导航：出路线规划卡（起点 → 目的地，起终点 + best-effort 距离/时长）
         prefix = (f"识别到您说的是{first.name}。" if resolved_name != dest else "")
@@ -1725,15 +1728,24 @@ class NavigationAgent(BaseAgent):
     async def _navigate_with_stop_choice(self, dest_poi, resolved_name, stop_category,
                                          items, meta, *, arrive_by_ts=None,
                                          strategy: str = "",
-                                         strategy_note: str = "") -> AgentResult:
+                                         strategy_note: str = "",
+                                         raw_text: str = "", place: str = "") -> AgentResult:
         """轮1：导航到目的地，并给"顺路停靠"类目候选让用户二次选择途经点（不自动选）。
 
         G2（EVA 二轮）：候选搜索锚点从「目的地附近」改为**真沿途**——起点→目的地路线
         几何的 45% 里程采样点。拿不到路线几何/沿途空结果回落目的地附近，并在话术里
         如实说是哪种（不把目的地附近说成「顺路」）。
         G1：带 arrive_by 时报直达 ETA 判定，并给前 2 个候选算「顺道去这家」的到校时刻。
+
+        raw_text / place：这一步的原话与目的地，停靠的是充电站时取原话点名的站名用（§22.5）。
         """
         keyword = self._stop_keyword(stop_category)
+        # 停靠的是充电站、原话点名了站名（「导航去深圳北站，在附近找个零跑充电站」，200×5 后续批 §22.5）：先按「名字 + 充电站」搜、
+        # 只留名字里带着它的；一个都没有就照类目列，话术如实说没找到（判据同充电找站，`runtime.charger_swap` 那一份）。规划器常把
+        # 站名丢在槽外（`stop_category: 充电站`）；写进槽里的（「零跑充电站」）修前按字面搜，高德的模糊结果不按名字过滤，
+        # 会把普通站念成「零跑充电站」。
+        probe = ((charger_name_probe(stop_category) or charger_name_probe(raw_text, place=place))
+                 if is_charger_name(keyword) else "")
         current = current_location_from_meta(meta)
         dest_pt = GeoPoint(lat=dest_poi.lat, lng=dest_poi.lng)
         base_route = None
@@ -1746,11 +1758,30 @@ class NavigationAgent(BaseAgent):
                 logger.debug("stop-choice base route unavailable: %s", e)
         mid = self._route_midpoint(base_route)
         where = "沿途" if mid is not None else "目的地附近"
-        try:
-            stops = await self.poi.search(keyword, near=(mid or dest_pt), limit=5, meta=meta)
-        except ProviderError as e:
-            logger.warning("stop category search failed: %s", e)
-            stops = []
+        stops, missed = [], ""
+        if probe:
+            searched = False      # 点名的试搜至少有一次真跑完了（服务失败时不说「没找到」，只照类目往下找）
+            for anchor, label in ((mid, "沿途"), (dest_pt, "目的地附近")):
+                if anchor is None:
+                    continue
+                try:
+                    found = await self.poi.search(f"{probe}充电站", near=anchor, limit=10, meta=meta)
+                except ProviderError as e:
+                    logger.warning("named charger stop search failed: %s", e)
+                    continue
+                searched = True
+                stops = [s for s in found if carries_charger_name(s.name, probe)][:5]
+                if stops:
+                    where, keyword = label, f"{probe}充电站"
+                    break
+            if not stops:
+                missed, keyword = (probe if searched else ""), "充电站"
+        if not stops:
+            try:
+                stops = await self.poi.search(keyword, near=(mid or dest_pt), limit=5, meta=meta)
+            except ProviderError as e:
+                logger.warning("stop category search failed: %s", e)
+                stops = []
         if not stops and mid is not None:
             # 沿途采样点没搜到 → 回落目的地附近再试一次（原行为）
             where = "目的地附近"
@@ -1799,17 +1830,21 @@ class NavigationAgent(BaseAgent):
             if hints:
                 eta_hint = "；".join(hints) + "。"
         names = "、".join(s.name for s in stops[:3])
+        lead = f"没找到{missed}的充电站，" if missed else ""
+        data = {"destination": dest_poi.name, "stops": choice_items, **extra}
+        if missed:
+            data["_dropped_terms"] = [missed]
         # purpose=waypoint_choice 让 HMI 把"第N个"回填为途经点（派发"导航去X途经Y"），而非发起新导航
         return self._stamp_route_session(AgentResult(
             speech=f"{strategy_note}已为您规划到{dest_poi.name}的路线。{deadline_note}"
-                   f"{where}的{keyword}有：{names}。{eta_hint}"
+                   f"{lead}{where}的{keyword}有：{names}。{eta_hint}"
                    f"想顺道去哪家？说『第几个』即可，不去也可以直接出发。",
             ui_card=attach({"type": "poi_list", "purpose": "waypoint_choice",
                             "display_priority": 1,
                             "title": f"顺路{keyword} · 选择途经点",
                             "destination": dest_poi.name, "items": choice_items},
                            self.poi),
-            data={"destination": dest_poi.name, "stops": choice_items, **extra},
+            data=data,
         ).action("navigate", payload),
             dest_poi.name, dest_poi.lat, dest_poi.lng,
             strategy=strategy, arrive_by_ts=arrive_by_ts)
