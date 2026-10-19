@@ -1500,3 +1500,31 @@ async def test_the_refreshed_ordinal_frame_after_a_cancel_keeps_arrival_reminder
     await run_handle(a, "reminder.cancel", raw_text="取消明天带伞", ctx=ctx)
 
     assert _active_titles(ctx) == ["取票"]
+
+
+# 往后推的说法被拦光之后，收尾卡「到时候提醒我」那一项是一条空槽的预解析建提醒步，发的是改说成提醒语序的那句
+# （`runtime.deferred_condition.as_reminder_request`，设计 200×5 后续批 §23.7）：标题、时刻、地点都要从这句话里取对。
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("said", "title", "fire_at"), [
+    ("十分钟后再打开空调", "打开空调", _NOW + timedelta(minutes=10)),
+    ("八点打开空调", "打开空调", datetime(2026, 7, 11, 20, 0, tzinfo=_TZ)),        # 10:00 说的「八点」是今晚
+    ("明天早上把车窗打开", "把车窗打开", datetime(2026, 7, 12, 8, 0, tzinfo=_TZ)),
+])
+async def test_the_deferred_offer_request_creates_a_clean_reminder(said, title, fire_at):
+    from runtime.deferred_condition import as_reminder_request
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=as_reminder_request(said))
+    times, _ = await a.store.list_split("u1")
+    assert res.status == "ok" and [(r.title, r.fire_at) for r in times] == [(title, int(fire_at.timestamp()))]
+
+
+@pytest.mark.asyncio
+async def test_the_deferred_offer_request_asks_when_there_is_no_time_and_arrives_by_place():
+    from runtime.deferred_condition import as_reminder_request
+    a = await _agent()
+    vague = await run_handle(a, "reminder.create", raw_text=as_reminder_request("等会儿再把车窗打开"))
+    assert vague.status == "need_slot" and vague.missing_slots == ["time_text"] and vague.speech.endswith("什么时候提醒你？")
+    place = await run_handle(a, "reminder.create", raw_text=as_reminder_request("到了公司再开空调"))
+    assert "公司在哪" in place.speech                  # 走位置提醒（这个用户还没存公司地址）
+    times, todos = await a.store.list_split("u1")
+    assert times == [] and todos == []

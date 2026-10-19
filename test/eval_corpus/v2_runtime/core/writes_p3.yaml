@@ -253,12 +253,14 @@ cases:
     cleanup:
       - {say: "关闭空调"}
   # 往后推的说法（2026-10-19）：当场不动车。修前端侧当场执行；送到云端规划器（只规划，6 遍）「等会儿再把车窗打开」5 遍、「八点打开空调」
-  # 3 遍当场派车控。到时候再做的安排（提醒）不是动作，规划器建了也不算违例
+  # 3 遍当场派车控。到时候再做的安排（提醒）不是动作，规划器建了也不算违例。第二轮说收尾卡选项的标签（= 点选「到时候提醒我」，§23.7）：
+  # 第一轮出了收尾卡时它执行预解析的建提醒步；同样不许动车
   - id: D09
     family: deferred_not_now
     vehicle_keys: [window]
     turns:
       - {say: "等会儿再把车窗打开", expect: {actions_allowed: []}}
+      - {say: "到时候提醒我", expect: {actions_allowed: []}}
     cleanup:
       - {say: "关闭车窗"}
   - id: D10
@@ -266,5 +268,6 @@ cases:
     vehicle_keys: [hvac_on]
     turns:
       - {say: "八点打开空调", expect: {actions_allowed: []}}
+      - {say: "到时候提醒我", expect: {actions_allowed: []}}
     cleanup:
       - {say: "关闭空调"}

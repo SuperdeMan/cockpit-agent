@@ -111,15 +111,41 @@ def test_the_guard_logs_which_reason_dropped_the_steps(caplog):
     assert (out.plan_mode or "").endswith("_question_write_blocked")
 
 
-@pytest.mark.parametrize("origin", ["八点打开空调", "等会儿再把车窗打开"])
-def test_a_deferred_instruction_blocked_empty_ends_with_a_fixed_offer_not_free_talk(origin):
-    """2026-10-19 复测：拦光后交兜底谈话 6 遍 5 遍答得不像样（空头承诺被剥后剩半截话、转去检索、「没听清」）⇒ 确定性收尾。"""
-    from orchestrator.cloud.models import Plan
+def _reminder_agent():
+    """真实的提醒 manifest：预解析步的元数据（效果、确认、能力描述）都从它来。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+    from agents._sdk.manifest import load_manifest
+    root = Path(__file__).resolve().parents[3]
+    return SimpleNamespace(endpoint="reminder:50051",
+                           manifest=load_manifest(str(root / "agents" / "reminder" / "manifest.yaml")))
+
+
+@pytest.mark.parametrize(("origin", "send"), [("八点打开空调", "提醒我八点打开空调"),
+                                              ("等会儿再把车窗打开", "提醒我等会儿再把车窗打开")])
+def test_a_deferred_instruction_blocked_empty_ends_with_a_fixed_offer_not_free_talk(origin, send):
+    """2026-10-19 复测：拦光后交兜底谈话 6 遍 5 遍答得不像样（空头承诺被剥后剩半截话、转去检索、「没听清」）⇒ 确定性收尾。
+
+    选项带预解析的建提醒步：只带话术、点了再重新规划时又会排成当场开窗、被拦光后答「没听清」（§23.7）。"""
+    from orchestrator.cloud.models import Plan, Step
     built = Plan(steps=[_edge("window.open" if "车窗" in origin else "hvac.on", "打开")], goal=origin, technical_failure=True)
-    out = PlanBuilder._apply_question_side_effect_guard(PlanBuilder.__new__(PlanBuilder), built, origin, agents=[])
+    out = PlanBuilder._apply_question_side_effect_guard(PlanBuilder.__new__(PlanBuilder), built, origin,
+                                                        agents=[_reminder_agent()])
     assert out.steps == [] and not out.technical_failure
     assert out.clarify["question"] == f"「{origin}」要到时候再做，我现在先不做。要我到时候提醒你吗？"
-    assert out.clarify["options"] == [{"label": "到时候提醒我", "send_text": f"到时候提醒我：{origin}"}]
+    [option] = out.clarify["options"]
+    assert option["label"] == "到时候提醒我" and option["send_text"] == send
+    step = Step(**option["step"])                 # engine 点选时原样还原、零 LLM 执行（W10）
+    assert (step.agent_id, step.intent, step.slots) == ("reminder", "reminder.create", {})
+    assert step.effect == "write" and not step.require_confirm
+
+
+def test_without_a_reminder_capability_the_offer_only_says_not_now():
+    """本请求目录里没有建提醒（没有提醒权限）⇒ 不出做不到的提议。"""
+    from orchestrator.cloud.models import Plan
+    built = Plan(steps=[_edge("hvac.on", "打开空调")], goal="八点打开空调")
+    out = PlanBuilder._apply_question_side_effect_guard(PlanBuilder.__new__(PlanBuilder), built, "八点打开空调", agents=[])
+    assert out.steps == [] and out.clarify == {"question": "「八点打开空调」要到时候再做，我现在先不做。", "options": []}
 
 
 def test_a_question_blocked_empty_still_goes_to_the_talk_fallback():

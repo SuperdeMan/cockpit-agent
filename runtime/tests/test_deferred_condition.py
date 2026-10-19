@@ -172,3 +172,19 @@ def test_the_corpus_lines_the_old_rule_missed():
     """语料对照（2026-10-19）里新认出的几条真原话：都该等，旧判据一条都不认。"""
     for text in ("哪天要下雨的话，把那天的安排换成室内的", "看看去机场堵不堵，堵的话换条路", "电量低于20%的时候打开节能模式"):
         assert is_deferred_instruction(text) and (waits_on_condition(text) or defers_to_later(text))
+
+
+# ── 拦光之后收尾卡「到时候提醒我」发的那句：改说成提醒认的语序（200×5 后续批 §23.7）──────────────────────
+
+@pytest.mark.parametrize(("text", "restated"), [
+    ("十分钟后再打开空调", "十分钟后提醒我打开空调"), ("明天早上八点再开空调", "明天早上八点提醒我开空调"),
+    ("晚上再开空调", "晚上提醒我开空调"), ("到了公司再开空调", "到了公司提醒我开空调"),
+    ("等到了公司再打开空调", "等到了公司提醒我打开空调"), ("一会儿到家了再开空调", "一会儿到家了提醒我开空调"),
+    # 没有「再」、说不出时刻的词（提醒剥不掉「等会儿」，加在句首标题才干净）、「再」在要做的事里：「提醒我」加在原话前
+    ("八点打开空调", "提醒我八点打开空调"), ("明天早上把车窗打开", "提醒我明天早上把车窗打开"),
+    ("等会儿再把车窗打开", "提醒我等会儿再把车窗打开"), ("待会儿再开空调", "提醒我待会儿再开空调"),
+    ("八点把空调再调高一点", "提醒我八点把空调再调高一点"), (" 八点打开空调。", "提醒我八点打开空调"),
+])
+def test_a_deferred_instruction_is_restated_as_a_reminder_request(text, restated):
+    from runtime.deferred_condition import as_reminder_request
+    assert as_reminder_request(text) == restated

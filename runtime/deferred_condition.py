@@ -74,9 +74,10 @@ def _has_bare_condition(text: str) -> bool:
 # ── 往后推的说法（2026-10-19）──────────────────────────────────────────────────────────
 #: 将来的日子（「明天 / 后天 / 今晚」，日词表 `runtime.cntime.DAY_WORDS` 里天偏移 ≥ 1 或内嵌晚上的那些）。
 _FUTURE_DAY_ALT = "|".join(word for word, offset, segment in DAY_WORDS if offset >= 1 or segment == "eve")
-#: 往后推的时间词：等会儿 / 一会儿 / 待会儿 / 稍后 / 晚点 / 回头 / 改天，一天里的时段，将来的日子。
-_LATER_WORD = (rf"(?:等(?:一?会儿?|一下|下)|一会儿?|待会儿?|过一?会儿?|稍后|晚点|晚些|回头|改天|{SEG_ALT}"
-               rf"|{_FUTURE_DAY_ALT})")
+#: 说不出时刻的往后推：等会儿 / 一会儿 / 待会儿 / 稍后 / 晚点 / 回头 / 改天。
+_VAGUE_LATER = r"(?:等(?:一?会儿?|一下|下)|一会儿?|待会儿?|过一?会儿?|稍后|晚点|晚些|回头|改天)"
+#: 往后推的时间词：上面那些，一天里的时段，将来的日子。
+_LATER_WORD = rf"(?:{_VAGUE_LATER}|{SEG_ALT}|{_FUTURE_DAY_ALT})"
 #: 时间词之后再做：「等会儿再把车窗打开」「晚上再开空调」「一会儿到家了再开空调」。时间词作定语的不算（「今晚的电影再放一遍」）。
 _LATER_THEN_RE = re.compile(rf"{_LATER_WORD}(?![的那])[^，,。；;！!？?\s]{{0,20}}?再", re.IGNORECASE)
 #: 到了某处 / 等某件事之后再做：「到了公司再开空调」「等我到家再开空调」「到家后再开空调」。
@@ -155,6 +156,27 @@ def _time_only_clause(clause: str) -> bool:
     if _SUBORDINATE_LATER_RE.fullmatch(c) and (_has_later_when(c) or not c.endswith("时候")):
         return True
     return bool(_TIME_ONLY_RE.fullmatch(c)) and defers_to_later(c)
+
+
+_VAGUE_LATER_RE = re.compile(_VAGUE_LATER)
+_THEN_RE = re.compile(r"再(?!见)")
+
+
+def as_reminder_request(text) -> str:
+    """往后推的说法改说成一句提醒请求（拦光之后收尾卡上「到时候提醒我」那一项发它，`PlanBuilder._deferred_offer`）。
+
+    提醒认「X 提醒我 Y」：「十分钟后提醒我打开空调」建 10 分钟后的「打开空调」，「到了公司提醒我开空调」是位置提醒。所以「X 再 Y」里 X 只说了
+    时刻 / 时长 / 到了哪儿时改成「X提醒我Y」；X 是「等会儿」这类说不出时刻的词，或者「再」在要做的事里面（「八点把空调再调高一点」）时，
+    「提醒我」加在原话前（「提醒我八点打开空调」）——时间词提醒自己剥，「等会儿」没有时刻它会追问。"""
+    said = re.sub(r"\s+", "", str(text or "")).strip("，,。.！!？?～~")
+    m = _THEN_RE.search(said)
+    if m:
+        head, tail = said[:m.start()], said[m.end():]
+        if (head and tail and not _VAGUE_LATER_RE.fullmatch(head)
+                and (_LATER_THEN_RE.fullmatch(head + "再") or _ARRIVE_THEN_RE.fullmatch(head + "再")
+                     or _time_only_clause(head))):
+            return f"{head}提醒我{tail}"
+    return f"提醒我{said}"
 
 
 def _leads_with_time_clause(text: str) -> bool:

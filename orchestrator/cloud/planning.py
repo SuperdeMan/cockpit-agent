@@ -358,6 +358,8 @@ _EXPLICIT_CLOSE_ACTION_RE = re.compile(
 # 延后条件判据端云共用一份（端侧据此不就地执行，见 runtime/deferred_condition.py）；云端判「要不要等条件」用
 # `deferred_condition.waits_on_condition`——同一条判据，只多认出「只想要」义的「只要…的」（核心旅程 NB06）。
 _COMPLETE_DEFERRED_CONDITION_RE = deferred_condition.COMPLETE_DEFERRED_CONDITION_RE
+# 往后推的说法拦光之后，收尾卡「到时候提醒我」那一项预解析到的能力——选项说的就是建一条提醒（`PlanBuilder._deferred_offer`）。
+_DEFER_REMINDER_INTENT = "reminder.create"
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
 _UTTERANCE_PASSTHROUGH_SLOT_KEYS = frozenset({
@@ -3956,7 +3958,7 @@ class PlanBuilder:
             if deferred:
                 # 确定性收尾，不交给兜底谈话（同裸序数那一条）：往后推的说法当场的车控拦光之后，兜底谈话 2026-10-19 复测 6 遍 5 遍答得
                 # 不像样——空头承诺被剥掉后剩半截话、转去检索、「没听清」。说出那句话、说清现在先不做、问一句要不要到时候提醒。
-                plan.clarify = self._deferred_offer(text)
+                plan.clarify = self._deferred_offer(text, agents)
                 plan.technical_failure = False
                 plan.clarify_wanted = False
                 return plan
@@ -4211,14 +4213,35 @@ class PlanBuilder:
         plan.plan_mode = f"{plan.plan_mode or ''}{mode}"
         return plan
 
-    @staticmethod
-    def _deferred_offer(text: str) -> dict:
-        """往后推的说法当场的车控被拦下、计划空了 ⇒ 复述那句话、说清现在先不做、问要不要到时候提醒。
+    @classmethod
+    def _deferred_offer(cls, text: str, agents: list = None) -> dict:
+        """往后推的说法当场的车控被拦下、计划空了 ⇒ 复述那句话、说清现在先不做、问要不要到时候提醒。不替用户直接建提醒。
 
-        选项发出「到时候提醒我：原话」交给提醒（时间由提醒自己从原话解析，「等会儿」这类没有时刻的会追问）；不替用户直接建提醒。"""
+        「到时候提醒我」带一条预解析好的建提醒步（W10：点选后零 LLM 直接执行）：只带话术、点了再重新规划时，「等会儿再把车窗打开」
+        那一句 6 遍 3 遍没排成提醒（2 遍又是当场开窗、被拦光后续接轮不许问同一个问题 ⇒「没听清」，设计 §23.7）。发的话改说成提醒认的
+        语序（`deferred_condition.as_reminder_request`），时间 / 地点由提醒从这句话里解析，「等会儿」这类没有时刻的会追问。
+        本请求目录里没有建提醒（没有提醒权限）⇒ 不给这一项，只说现在先不做。"""
         said = re.sub(r"\s+", "", str(text or "")).strip("，,。.！!？?～~")
+        step = cls._deferred_reminder_step(agents)
+        if step is None:
+            return {"question": f"「{said}」要到时候再做，我现在先不做。", "options": []}
         return {"question": f"「{said}」要到时候再做，我现在先不做。要我到时候提醒你吗？",
-                "options": [{"label": "到时候提醒我", "send_text": f"到时候提醒我：{said}"}]}
+                "options": [{"label": "到时候提醒我", "send_text": deferred_condition.as_reminder_request(said),
+                             "step": step}]}
+
+    @classmethod
+    def _deferred_reminder_step(cls, agents: list = None) -> dict | None:
+        """本请求目录里建提醒的那一步（空槽：标题与时间由提醒从选项那句话里取，同 route hint 灌整句）；没有 ⇒ None。"""
+        for a in agents or []:
+            if not any(c.intent == _DEFER_REMINDER_INTENT for c in (a.manifest.capabilities or [])):
+                continue
+            steps = cls._validated_steps(
+                [{"id": "c1", "agent_id": a.manifest.agent_id, "intent": _DEFER_REMINDER_INTENT,
+                  "slots": {}, "depends_on": [], "slot_refs": {}}],
+                {a.manifest.agent_id: a})
+            if len(steps) == 1:
+                return step_record(steps[0])
+        return None
 
     @staticmethod
     def _ordinal_selection_clarify(index: int, item: dict) -> dict:
