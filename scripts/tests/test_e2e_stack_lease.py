@@ -2040,3 +2040,38 @@ def test_parallel_second_launch_failure_reaps_first_tree_before_restore(
     assert all(tree.closed == 1 for tree in trees)
     assert trees[0].terminated >= 1
     assert summary["results"][1]["errors"] == ["child_start_failed"]
+
+
+def test_collector_ready_requires_nats_true(monkeypatch):
+    module = require_module()
+
+    class FakeResponse:
+        def __init__(self, status: int, body: bytes):
+            self.status = status
+            self._body = body
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    responses = [
+        FakeResponse(200, b'{"status": "ok", "nats": false}'),
+        FakeResponse(200, b"not-json"),
+        FakeResponse(503, b'{"status": "ok", "nats": true}'),
+        FakeResponse(200, b'{"status": "ok", "nats": true}'),
+    ]
+
+    def fake_urlopen(url, timeout=1):
+        assert url == "http://127.0.0.1:8092/healthz"
+        return responses.pop(0)
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    assert module._collector_ready("http://127.0.0.1:8092/healthz") is False
+    assert module._collector_ready("http://127.0.0.1:8092/healthz") is False
+    assert module._collector_ready("http://127.0.0.1:8092/healthz") is False
+    assert module._collector_ready("http://127.0.0.1:8092/healthz") is True

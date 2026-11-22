@@ -6,6 +6,8 @@
 
 订阅的 subject：`vehicle.state.changed`、`obs.span`、`obs.metric`、`obs.agent.health`、
 `obs.turn`（轮次收口）、`obs.llm`（LLM 调用）、`obs.log`（结构化日志，2026-07-10 起）。
+NATS 订阅落齐并 flush 后向 `vehicle.state.snapshot.request` 发出只读快照同步请求（重连与收到
+`snapshot_required` 增量时按节流补发），再将 `/healthz` 的 `nats` 置为 `true`。
 
 ## 运行
 

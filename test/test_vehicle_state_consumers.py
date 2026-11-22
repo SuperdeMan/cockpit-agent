@@ -157,3 +157,126 @@ def test_fault_lab_is_replayable_and_ack_is_independent_from_state():
     first, second=run(12),run(12)
     assert first==second and first["passed"]
     assert first["receipt"]["status"]=="unknown" and not first["causality_proven"]
+
+
+@pytest.mark.asyncio
+async def test_scene_and_proactive_mirrors_request_snapshot_and_self_heal(monkeypatch):
+    import sys
+    from types import ModuleType
+    from orchestrator.edge.vehicle_driver import SimulatedVehicleDriver
+    from runtime.vehicle_state import SNAPSHOT_REQUEST_SUBJECT, STATE_SUBJECT
+
+    driver = SimulatedVehicleDriver("v1")
+    _ = driver.observation(snapshot=True)
+    driver.state["battery"] = 18
+    delta = driver.observation(changes=[{"key": "battery", "old": 72, "new": 18}])
+
+    # Proactive VehicleMirror: subscribe flushes and requests snapshot; delta triggers throttled resync.
+    proactive_events = []
+    proactive_cbs = {}
+
+    class FakeNC:
+        async def subscribe(self, subject, cb=None):
+            proactive_events.append(("subscribe", subject))
+            proactive_cbs[subject] = cb
+
+        async def flush(self):
+            proactive_events.append(("flush", None))
+
+        async def publish(self, subject, data):
+            proactive_events.append(("publish", subject, data))
+
+    clock = [50.0]
+    pm = VehicleMirror(monotonic=lambda: clock[0])
+    assert await pm.subscribe(FakeNC()) is True
+    assert proactive_events == [
+        ("subscribe", STATE_SUBJECT),
+        ("flush", None),
+        ("publish", SNAPSHOT_REQUEST_SUBJECT, b"{}"),
+    ]
+    clock[0] += 2.0
+    await proactive_cbs[STATE_SUBJECT](SimpleNamespace(data=json.dumps(delta).encode()))
+    assert proactive_events[-1] == ("publish", SNAPSHOT_REQUEST_SUBJECT, b"{}")
+
+    # Scene StateMirror: start flushes and requests snapshot; delta triggers throttled resync.
+    scene_events = []
+    scene_cbs = {}
+
+    class SceneNC:
+        async def subscribe(self, subject, cb=None):
+            scene_events.append(("subscribe", subject))
+            scene_cbs[subject] = cb
+
+        async def flush(self):
+            scene_events.append(("flush", None))
+
+        async def publish(self, subject, data):
+            scene_events.append(("publish", subject, data))
+
+    fake_nats = ModuleType("nats")
+
+    async def fake_connect(url, **kwargs):
+        return SceneNC()
+
+    fake_nats.connect = fake_connect
+    monkeypatch.setenv("NATS_URL", "nats://fake:4222")
+    monkeypatch.setitem(sys.modules, "nats", fake_nats)
+
+    sm = StateMirror(monotonic=lambda: clock[0])
+    assert await sm.start() is True
+    assert scene_events == [
+        ("subscribe", STATE_SUBJECT),
+        ("flush", None),
+        ("publish", SNAPSHOT_REQUEST_SUBJECT, b"{}"),
+    ]
+    clock[0] += 2.0
+    await scene_cbs[STATE_SUBJECT](SimpleNamespace(data=json.dumps(delta).encode()))
+    assert scene_events[-1] == ("publish", SNAPSHOT_REQUEST_SUBJECT, b"{}")
+
+
+def test_central_hub_wait_vehicle_state_polls_and_still_fails_on_timeout(monkeypatch):
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / "e2e_central_hub_assertions.py"
+    monkeypatch.syspath_prepend(str(path.parent))
+    spec = importlib.util.spec_from_file_location("central_hub_wait_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    states = iter([{}, {"hvac_on": False}, {"hvac_on": True, "hvac_temp": 26}])
+    monkeypatch.setattr(mod, "_get", lambda _path: next(states))
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+
+    got = mod._wait_vehicle_state(
+        lambda s: mod._state_matches(s, {"hvac_on": True, "hvac_temp": 26}),
+        timeout_s=5.0,
+        interval_s=0.0,
+    )
+    assert got == {"hvac_on": True, "hvac_temp": 26}
+
+    # Timeout returns last observed state so _assert_turn still fails on unmet expectation.
+    monkeypatch.setattr(mod, "_get", lambda _path: {"hvac_on": False})
+    now = [0.0]
+
+    def tick():
+        now[0] += 1.0
+        return now[0]
+
+    monkeypatch.setattr(mod.time, "monotonic", tick)
+    timed_out = mod._wait_vehicle_state(
+        lambda s: mod._state_matches(s, {"hvac_on": True}),
+        timeout_s=2.0,
+        interval_s=0.0,
+    )
+    assert timed_out == {"hvac_on": False}
+    with pytest.raises(AssertionError):
+        mod._assert_turn(
+            "t0_hvac_local",
+            {"expect_state": {"hvac_on": True}},
+            {},
+            timed_out,
+            [],
+            [],
+            "trace-1",
+        )

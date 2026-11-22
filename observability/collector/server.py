@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 
@@ -19,12 +20,16 @@ from .query_projection import trace_view
 from .store import CollectorStore
 from observability.redact import content_capture_enabled
 from runtime import obs_access
-from runtime.vehicle_state import LEGACY_VEHICLE
+from runtime.vehicle_state import (
+    LEGACY_VEHICLE,
+    SNAPSHOT_REQUEST_SUBJECT,
+    STATE_SUBJECT,
+)
 
 logger = logging.getLogger("obs.collector")
 
 SUBJECTS = (
-    "vehicle.state.changed",
+    STATE_SUBJECT,
     "obs.span",
     "obs.metric",
     "obs.agent.health",
@@ -339,21 +344,39 @@ async def ingest_loop(app: FastAPI) -> None:
         logger.warning("NATS_URL unset; collector runs without live stream")
         return
 
+    connection = None
+    last_snapshot_request = -math.inf
+
+    async def request_snapshot(*, force: bool = False) -> None:
+        nonlocal last_snapshot_request
+        if connection is None:
+            return
+        now = time.monotonic()
+        if not force and now - last_snapshot_request < 1.0:
+            return
+        last_snapshot_request = now
+        try:
+            await connection.publish(SNAPSHOT_REQUEST_SUBJECT, b"{}")
+        except Exception as exc:
+            logger.debug("collector snapshot request failed: %s", exc)
+
+    async def on_reconnected() -> None:
+        await request_snapshot(force=True)
+
     try:
         import nats
 
         connection = await nats.connect(
             nats_url,
             max_reconnect_attempts=-1,
+            reconnected_cb=on_reconnected,
         )
     except Exception as exc:
         logger.warning("collector NATS connect failed: %s", exc)
         return
 
-    app.state.nc = connection
     store = app.state.store
     hub = app.state.hub
-
     db = app.state.db
 
     async def _persist(fn, event):
@@ -369,10 +392,12 @@ async def ingest_loop(app: FastAPI) -> None:
         except Exception:
             return
 
-        if message.subject == "vehicle.state.changed":
+        if message.subject == STATE_SUBJECT:
             result = store.apply_state(message.data)
             if result.accepted:
                 await hub.broadcast_vehicle(store, result.vehicle_id)
+            elif result.reason == "snapshot_required":
+                await request_snapshot()
         elif message.subject == "obs.span":
             store.apply_span(event)
             otel_bridge.export_span(event)  # T3.6: best-effort tee, no-op unless bridge active
@@ -396,6 +421,10 @@ async def ingest_loop(app: FastAPI) -> None:
 
     for subject in SUBJECTS:
         await connection.subscribe(subject, cb=handler)
+    if hasattr(connection, "flush"):
+        await connection.flush()
+    await request_snapshot(force=True)
+    app.state.nc = connection
     logger.info("collector subscribed: %s", SUBJECTS)
 
 

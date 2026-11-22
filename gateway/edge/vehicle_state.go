@@ -8,8 +8,40 @@ import (
 	"sync"
 	"time"
 
+	natsgo "github.com/nats-io/nats.go"
+
 	"github.com/cockpit/car-agent/gateway/vehiclestate"
 )
+
+var snapshotSync = struct {
+	sync.Mutex
+	last time.Time
+}{}
+
+func requestVehicleStateSnapshotWith(
+	publish func(subject string, data []byte) error,
+	now time.Time,
+	force bool,
+) bool {
+	if publish == nil {
+		return false
+	}
+	snapshotSync.Lock()
+	if !force && !snapshotSync.last.IsZero() && now.Sub(snapshotSync.last) < time.Second {
+		snapshotSync.Unlock()
+		return false
+	}
+	snapshotSync.last = now
+	snapshotSync.Unlock()
+	return publish(vehiclestate.SnapshotRequestSubject, []byte("{}")) == nil
+}
+
+func requestVehicleStateSnapshot(nc *natsgo.Conn, force bool) bool {
+	if nc == nil {
+		return false
+	}
+	return requestVehicleStateSnapshotWith(nc.Publish, time.Now(), force)
+}
 
 var vehicleProjection = struct {
 	sync.Mutex
@@ -51,18 +83,22 @@ func vehicleStateFrame(vehicleID string) (map[string]any, bool) {
 		"state": view["state"], "observation": view}, changed
 }
 
-func receiveVehicleState(raw []byte) bool {
+func receiveVehicleStateResult(raw []byte) vehiclestate.Result {
 	vehicleProjection.Lock()
 	result := vehicleProjection.store.Ingest(raw)
 	vehicleProjection.Unlock()
 	if !result.Accepted {
-		return false
+		return result
 	}
 	frame, changed := vehicleStateFrame(result.VehicleID)
 	if changed {
 		hub.broadcastFor(result.VehicleID, "", frame)
 	}
-	return true
+	return result
+}
+
+func receiveVehicleState(raw []byte) bool {
+	return receiveVehicleStateResult(raw).Accepted
 }
 
 func expireVehicleState(ctx context.Context) {

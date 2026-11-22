@@ -27,6 +27,8 @@ const MaxPayload = 128 * 1024
 const MaxSignals = 256
 const ClockSkewMS int64 = 5000
 const LegacyVehicle = "v1"
+const StateSubject = "vehicle.state.changed"
+const SnapshotRequestSubject = "vehicle.state.snapshot.request"
 const domain = "cockpit.vehicle-state.v2\x00"
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_.:/-]{1,128}$`)

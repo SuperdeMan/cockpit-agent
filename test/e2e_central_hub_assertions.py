@@ -149,6 +149,31 @@ def _wait_trace(trace_id: str, required_nodes: list[str], timeout_s=12):
     return last_spans
 
 
+def _state_matches(state: dict, expected: dict) -> bool:
+    for key, value in expected.items():
+        target = value.upper() if key == "gear" and isinstance(value, str) else value
+        if state.get(key) != target:
+            return False
+    return True
+
+
+def _wait_vehicle_state(predicate, *, timeout_s: float = 15.0, interval_s: float = 0.2) -> dict:
+    deadline = time.monotonic() + timeout_s
+    last: dict = {}
+    while True:
+        try:
+            state = _get("/api/vehicle/state")
+            if isinstance(state, dict):
+                last = state
+                if predicate(state):
+                    return state
+        except Exception:
+            pass
+        if time.monotonic() >= deadline:
+            return last
+        time.sleep(interval_s)
+
+
 def _assert_turn(case_name, turn, before, after, spans, finals, trace_id):
     nodes = _nodes(spans)
     diff = _state_diff(before, after)
@@ -209,11 +234,18 @@ async def _run_case(case, recorder: CaseRecorder, session_id: str):
     name = case["name"]
     print(f"\n== {name} ==")
 
-    for key, value in case.get("setup", {}).items():
+    setup = case.get("setup", {})
+    for key, value in setup.items():
         result = _post_debug(key, value)
         assert result.get("ok") is True, f"{name}: debug setup failed: {result!r}"
-    if case.get("setup"):
-        time.sleep(1.0)
+    if setup:
+        settled = _wait_vehicle_state(
+            lambda state: _state_matches(state, setup),
+            timeout_s=5.0,
+        )
+        assert _state_matches(settled, setup), (
+            f"{name}: debug setup did not settle; expected={setup!r}, state={settled!r}"
+        )
 
     for index, turn in enumerate(case["turns"], start=1):
         trace_id = _trace_id()
@@ -227,7 +259,14 @@ async def _run_case(case, recorder: CaseRecorder, session_id: str):
         )
         required_nodes = turn.get("expect_spans", [])
         spans = _wait_trace(trace_id, required_nodes)
-        after = _get("/api/vehicle/state")
+        expected_state = turn.get("expect_state", {})
+        if expected_state:
+            after = _wait_vehicle_state(
+                lambda state: _state_matches(state, expected_state),
+                timeout_s=5.0,
+            )
+        else:
+            after = _get("/api/vehicle/state")
 
         _assert_turn(name, turn, before, after, spans, finals, trace_id)
         print(
@@ -246,6 +285,10 @@ async def _main() -> int:
     with recorder:
         health = _get("/healthz")
         print(f"collector healthz: {health}")
+        initial_state = _wait_vehicle_state(bool, timeout_s=15.0)
+        assert initial_state, (
+            "collector /api/vehicle/state did not hydrate initial vehicle snapshot within 15s"
+        )
         cases = _load_cases(Path(args.fixture))
         selected = set(args.case)
         if selected:

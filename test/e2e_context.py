@@ -34,7 +34,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent))
 from e2e_central_hub_assertions import (  # noqa: E402
     _get, _post_debug, _trace_id, _wait_trace, _assert_turn,
-    _nodes, _state_diff,
+    _nodes, _state_diff, _state_matches, _wait_vehicle_state,
 )
 
 try:
@@ -88,10 +88,17 @@ async def _run_case(case, recorder: CaseRecorder, session_id: str):
     case_meta = case.get("meta", {})
     print(f"\n== {name} ==")
 
-    for key, value in case.get("setup", {}).items():
+    setup = case.get("setup", {})
+    for key, value in setup.items():
         assert _post_debug(key, value).get("ok") is True, f"{name}: debug setup failed"
-    if case.get("setup"):
-        time.sleep(1.0)
+    if setup:
+        settled = _wait_vehicle_state(
+            lambda state: _state_matches(state, setup),
+            timeout_s=5.0,
+        )
+        assert _state_matches(settled, setup), (
+            f"{name}: debug setup did not settle; expected={setup!r}, state={settled!r}"
+        )
 
     for index, turn in enumerate(case["turns"], start=1):
         trace_id = _trace_id()
@@ -104,7 +111,14 @@ async def _run_case(case, recorder: CaseRecorder, session_id: str):
         spans = _wait_trace(
             trace_id, turn.get("expect_spans", []),
             timeout_s=turn.get("trace_timeout", 20))
-        after = _get("/api/vehicle/state")
+        expected_state = turn.get("expect_state", {})
+        if expected_state:
+            after = _wait_vehicle_state(
+                lambda state: _state_matches(state, expected_state),
+                timeout_s=5.0,
+            )
+        else:
+            after = _get("/api/vehicle/state")
         _assert_turn(name, turn, before, after, spans, finals, trace_id)
         print(f"  turn {index}: ok nodes={_nodes(spans)} diff={_state_diff(before, after)}")
 
@@ -187,6 +201,10 @@ async def _main() -> int:
     recorder = CaseRecorder()
     with recorder:
         print(f"collector healthz: {_get('/healthz')}")
+        initial_state = _wait_vehicle_state(bool, timeout_s=15.0)
+        assert initial_state, (
+            "collector /api/vehicle/state did not hydrate initial vehicle snapshot within 15s"
+        )
         cases = CASES
         if args.case:
             cases = [c for c in CASES if c["name"] in set(args.case)]

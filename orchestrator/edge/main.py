@@ -9,6 +9,7 @@ from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 
 from observability import setup_structured_logging
 from runtime.grpcio import aio_server, bind_port, run_aio_server
+from runtime.vehicle_state import SNAPSHOT_REQUEST_SUBJECT
 from server import EdgeOrchestratorServicer
 from capabilities import register_edge_capabilities
 
@@ -26,11 +27,22 @@ async def _debug_subscription(servicer: EdgeOrchestratorServicer):
     try:
         import nats
 
-        connection = await nats.connect(
-            url,
-            connect_timeout=2,
-            max_reconnect_attempts=3,
-        )
+        while connection is None:
+            try:
+                connection = await nats.connect(
+                    url,
+                    connect_timeout=2,
+                    max_reconnect_attempts=-1,
+                    reconnect_time_wait=2,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(
+                    f"[edge-orchestrator] control NATS connect failed (retrying): {exc}",
+                    flush=True,
+                )
+                await asyncio.sleep(2)
 
         async def apply(message):
             try:
@@ -42,7 +54,14 @@ async def _debug_subscription(servicer: EdgeOrchestratorServicer):
             except Exception:
                 pass
 
+        async def on_snapshot_request(message):
+            try:
+                await servicer.handle_snapshot_request(message.data)
+            except Exception:
+                pass
+
         await connection.subscribe("obs.debug.vehicle.set", cb=apply)
+        await connection.subscribe(SNAPSHOT_REQUEST_SUBJECT, cb=on_snapshot_request)
         await asyncio.Future()
     except asyncio.CancelledError:
         raise
@@ -116,6 +135,7 @@ async def serve():
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        servicer.cancel_pending_snapshot()
         await servicer.obs.close()
 
 

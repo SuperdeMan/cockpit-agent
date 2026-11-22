@@ -885,6 +885,17 @@ def _http_ready(url: str) -> bool:
         return False
 
 
+def _collector_ready(url: str) -> bool:
+    try:
+        with urlopen(url, timeout=1) as response:
+            if not (200 <= response.status < 300):
+                return False
+            payload = json.loads(response.read().decode("utf-8"))
+            return isinstance(payload, dict) and payload.get("nats") is True
+    except Exception:
+        return False
+
+
 def _tcp_ready(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=1):
@@ -900,7 +911,7 @@ def wait_identity_services(timeout_s: int = 90) -> bool:
             _http_ready("http://127.0.0.1:8090/healthz")
             and _http_ready("http://127.0.0.1:50059/api/health")
             and _tcp_ready("127.0.0.1", 50053)
-            and _http_ready("http://127.0.0.1:8092/healthz")
+            and _collector_ready("http://127.0.0.1:8092/healthz")
         ):
             return True
         time.sleep(0.5)

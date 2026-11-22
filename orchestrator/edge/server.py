@@ -7,6 +7,7 @@ import os
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from collections import OrderedDict
@@ -327,6 +328,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # 会话 → (到期 monotonic, 候选名)：只从云端 final 的 `slot_request` 记，客户端带不进来
         self._slot_offers: OrderedDict[tuple[str, str, str], tuple[float, tuple[str, ...]]] = OrderedDict()
         self._bg: set[asyncio.Task] = set()  # 持有 fire-and-forget 任务引用，防 GC
+        self._snapshot_clock = time.monotonic
+        self._last_snapshot_mono: float = -math.inf
+        self._snapshot_timer: asyncio.Task | None = None
 
     async def drain_state(self):
         """Publish queued state changes without blocking vehicle control."""
@@ -343,7 +347,88 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
     async def emit_snapshot(self):
         """Publish the complete initial vehicle-state mirror."""
+        current = asyncio.current_task()
+        if (
+            self._snapshot_timer is not None
+            and self._snapshot_timer is not current
+            and not self._snapshot_timer.done()
+        ):
+            self._snapshot_timer.cancel()
+            self._snapshot_timer = None
+        self._last_snapshot_mono = self._snapshot_clock()
         await self.obs.emit_state(self.val.driver.observation(snapshot=True), source="snapshot")
+
+    async def request_snapshot(
+        self,
+        vehicle_id: str = "",
+        *,
+        min_interval_s: float = 0.5,
+    ) -> str:
+        """Serve a consumer's snapshot sync request with trailing coalescing.
+
+        Freshly restarted consumers reject deltas (`snapshot_required`) until a
+        full checkpoint arrives. Trailing coalescing absorbs restart bursts
+        without dropping a consumer that connected right after a prior snapshot.
+        """
+        if vehicle_id and vehicle_id != self.val.driver.vehicle_id:
+            return "ignored"
+        now = self._snapshot_clock()
+        elapsed = now - self._last_snapshot_mono
+        if min_interval_s <= 0 or elapsed >= min_interval_s:
+            await self.emit_snapshot()
+            return "emitted"
+        if self._snapshot_timer is not None and not self._snapshot_timer.done():
+            return "coalesced"
+        delay = max(0.0, min_interval_s - elapsed)
+
+        async def _delayed() -> None:
+            try:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                await self.emit_snapshot()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("delayed vehicle snapshot emit failed", exc_info=True)
+            finally:
+                if self._snapshot_timer is task:
+                    self._snapshot_timer = None
+
+        task = asyncio.create_task(_delayed())
+        self._snapshot_timer = task
+        return "scheduled"
+
+    async def handle_snapshot_request(
+        self,
+        data: bytes,
+        *,
+        min_interval_s: float = 0.5,
+    ) -> str:
+        """Validate a NATS snapshot-sync payload and delegate to request_snapshot."""
+        vehicle_id = ""
+        if data and data.strip():
+            try:
+                payload = json.loads(data.decode("utf-8"))
+            except Exception:
+                return "ignored"
+            if not isinstance(payload, dict):
+                return "ignored"
+            raw_vid = payload.get("vehicle_id", "")
+            if raw_vid is None:
+                raw_vid = ""
+            if not isinstance(raw_vid, str):
+                return "ignored"
+            vehicle_id = raw_vid.strip()
+        return await self.request_snapshot(
+            vehicle_id=vehicle_id,
+            min_interval_s=min_interval_s,
+        )
+
+    def cancel_pending_snapshot(self) -> None:
+        timer = self._snapshot_timer
+        self._snapshot_timer = None
+        if timer is not None and not timer.done():
+            timer.cancel()
 
     def apply_debug(self, key: str, value) -> bool:
         """Update a simulated environment value through a strict whitelist."""

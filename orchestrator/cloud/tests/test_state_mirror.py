@@ -80,3 +80,64 @@ def test_subject_matches_edge_broadcast():
 
 def test_close_is_safe_without_connection():
     asyncio.run(VehicleStateMirror().close())
+
+
+def test_start_requests_snapshot_after_subscribe_and_self_heals_on_delta(monkeypatch):
+    import sys
+    from types import ModuleType, SimpleNamespace
+    from orchestrator.edge.vehicle_driver import SimulatedVehicleDriver
+    from runtime.vehicle_state import SNAPSHOT_REQUEST_SUBJECT
+
+    events = []
+    callbacks = {}
+
+    class FakeConnection:
+        async def subscribe(self, subject, cb=None):
+            events.append(("subscribe", subject))
+            callbacks[subject] = cb
+
+        async def flush(self):
+            events.append(("flush", None))
+
+        async def publish(self, subject, data):
+            events.append(("publish", subject, data))
+
+        async def close(self):
+            pass
+
+    fake_nats = ModuleType("nats")
+
+    async def fake_connect(url, **kwargs):
+        return FakeConnection()
+
+    fake_nats.connect = fake_connect
+    monkeypatch.setenv("NATS_URL", "nats://fake:4222")
+    monkeypatch.setitem(sys.modules, "nats", fake_nats)
+
+    clock = [100.0]
+    mirror = VehicleStateMirror(monotonic=lambda: clock[0])
+
+    async def run():
+        assert await mirror.start() is True
+        assert events == [
+            ("subscribe", STATE_SUBJECT),
+            ("flush", None),
+            ("publish", SNAPSHOT_REQUEST_SUBJECT, b"{}"),
+        ]
+
+        driver = SimulatedVehicleDriver("v1")
+        _ = driver.observation(snapshot=True)
+        driver.state["hvac_on"] = True
+        delta = driver.observation(changes=[{"key": "hvac_on", "old": False, "new": True}])
+
+        clock[0] += 2.0
+        result = await callbacks[STATE_SUBJECT](SimpleNamespace(data=json.dumps(delta).encode()))
+        assert not result.accepted and result.reason == "snapshot_required"
+        assert events[-1] == ("publish", SNAPSHOT_REQUEST_SUBJECT, b"{}")
+
+        snap = driver.observation(snapshot=True)
+        result = await callbacks[STATE_SUBJECT](SimpleNamespace(data=json.dumps(snap).encode()))
+        assert result.accepted
+        assert mirror.get("hvac_on") is True
+
+    asyncio.run(run())

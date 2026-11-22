@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import time
 from typing import Awaitable, Callable
 
-from runtime.vehicle_state import VehicleStateStore, LEGACY_VEHICLE
+from runtime.vehicle_state import (
+    LEGACY_VEHICLE,
+    SNAPSHOT_REQUEST_SUBJECT,
+    STATE_SUBJECT,
+    VehicleStateStore,
+)
 from runtime.proactive import SKIPPED, publish_proactive
 
 logger = logging.getLogger("agent.scene.mirror")
-
-STATE_SUBJECT = "vehicle.state.changed"
 
 ChangeCb = Callable[[list, dict], Awaitable[None]]
 
@@ -26,6 +31,8 @@ class StateMirror:
         clocks = {"wall_ms": wall_ms}
         if monotonic is not None:
             clocks["monotonic"] = monotonic
+        self._mono = monotonic or time.monotonic
+        self._last_snapshot_req = -math.inf
         self.store = VehicleStateStore(policy, **clocks)
         self._nc = None
         self._cbs: list[tuple[ChangeCb, str]] = []
@@ -35,6 +42,21 @@ class StateMirror:
     def connected(self) -> bool:
         return self._nc is not None
 
+    async def _request_snapshot(self, *, force: bool = False) -> None:
+        if self._nc is None or not hasattr(self._nc, "publish"):
+            return
+        now = self._mono()
+        if not force and now - self._last_snapshot_req < 1.0:
+            return
+        self._last_snapshot_req = now
+        try:
+            await self._nc.publish(SNAPSHOT_REQUEST_SUBJECT, b"{}")
+        except Exception as e:
+            logger.debug("scene: 请求车况快照失败：%s", e)
+
+    async def _on_reconnected(self) -> None:
+        await self._request_snapshot(force=True)
+
     async def start(self) -> bool:
         """订阅状态广播。无 NATS_URL / 连接失败 → 静默禁用（镜像恒空），不影响请求-响应。"""
         url = os.getenv("NATS_URL", "")
@@ -43,8 +65,15 @@ class StateMirror:
             return False
         try:
             import nats
-            self._nc = await nats.connect(url, max_reconnect_attempts=-1)
+            self._nc = await nats.connect(
+                url,
+                max_reconnect_attempts=-1,
+                reconnected_cb=self._on_reconnected,
+            )
             await self._nc.subscribe(STATE_SUBJECT, cb=self._on_state)
+            if hasattr(self._nc, "flush"):
+                await self._nc.flush()
+            await self._request_snapshot(force=True)
         except Exception as e:
             logger.warning("scene: NATS 连接失败，车况镜像禁用：%s", e)
             self._nc = None
@@ -63,6 +92,8 @@ class StateMirror:
     async def _on_state(self, msg) -> None:
         accepted = self.store.ingest(msg.data)
         if not accepted.accepted:
+            if accepted.reason == "snapshot_required":
+                await self._request_snapshot()
             return
         for cb in list(self._vehicle_cbs):
             try:

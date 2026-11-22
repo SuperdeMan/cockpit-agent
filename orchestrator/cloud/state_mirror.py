@@ -8,12 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
-from runtime.vehicle_state import VehicleStateStore, TrustPolicy, LEGACY_VEHICLE
+import time
+from runtime.vehicle_state import (
+    LEGACY_VEHICLE,
+    SNAPSHOT_REQUEST_SUBJECT,
+    STATE_SUBJECT,
+    TrustPolicy,
+    VehicleStateStore,
+)
 
 logger = logging.getLogger("planner.state_mirror")
 
-STATE_SUBJECT = "vehicle.state.changed"
 # 镜像陈旧上限：超过这么久没收到任何广播 = 链路断了（edge 每 30s 必发全量快照），
 # 此时镜像内容不可信 → 当作"看不见"（UNKNOWN），而不是拿陈旧值去定罪。
 DEFAULT_STALE_S = 180.0
@@ -27,11 +34,28 @@ class VehicleStateMirror:
         clock = {"wall_ms": wall_ms}
         if monotonic is not None:
             clock["monotonic"] = monotonic
+        self._mono = monotonic or time.monotonic
+        self._last_snapshot_req = -math.inf
         self.store = VehicleStateStore(policy, **clock)
 
     @property
     def connected(self) -> bool:
         return self._nc is not None
+
+    async def _request_snapshot(self, *, force: bool = False) -> None:
+        if self._nc is None or not hasattr(self._nc, "publish"):
+            return
+        now = self._mono()
+        if not force and now - self._last_snapshot_req < 1.0:
+            return
+        self._last_snapshot_req = now
+        try:
+            await self._nc.publish(SNAPSHOT_REQUEST_SUBJECT, b"{}")
+        except Exception as e:
+            logger.debug("cloud: 请求车况快照失败：%s", e)
+
+    async def _on_reconnected(self) -> None:
+        await self._request_snapshot(force=True)
 
     async def start(self) -> bool:
         url = os.getenv("NATS_URL", "")
@@ -40,8 +64,15 @@ class VehicleStateMirror:
             return False
         try:
             import nats
-            self._nc = await nats.connect(url, max_reconnect_attempts=-1)
+            self._nc = await nats.connect(
+                url,
+                max_reconnect_attempts=-1,
+                reconnected_cb=self._on_reconnected,
+            )
             await self._nc.subscribe(STATE_SUBJECT, cb=self._on_state)
+            if hasattr(self._nc, "flush"):
+                await self._nc.flush()
+            await self._request_snapshot(force=True)
         except Exception as e:
             logger.warning("cloud: NATS 连接失败，车况镜像禁用：%s", e)
             self._nc = None
@@ -50,7 +81,10 @@ class VehicleStateMirror:
         return True
 
     async def _on_state(self, msg) -> None:
-        return self.store.ingest(msg.data)
+        result = self.store.ingest(msg.data)
+        if not result.accepted and result.reason == "snapshot_required":
+            await self._request_snapshot()
+        return result
 
     def snapshot(self, vehicle_id=LEGACY_VEHICLE) -> dict:
         return self.store.snapshot(vehicle_id)

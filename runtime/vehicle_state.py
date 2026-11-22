@@ -21,6 +21,8 @@ from types import MappingProxyType
 
 VERSION = 2
 DOMAIN = b"cockpit.vehicle-state.v2\x00"
+STATE_SUBJECT = "vehicle.state.changed"
+SNAPSHOT_REQUEST_SUBJECT = "vehicle.state.snapshot.request"
 TRUST_ENV = "VEHICLE_STATE_TRUST"
 PRIVATE_KEY_ENV = "VEHICLE_STATE_PRIVATE_KEY"
 KEY_ID_ENV = "VEHICLE_STATE_KEY_ID"

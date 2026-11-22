@@ -683,7 +683,13 @@ func main() {
 	// 主动建议投递：订阅 NATS agent.proactive（agents/memory 发布）→ 广播给已连 HMI。
 	// 这是「NATS→HMI 投递一跳」；无 NATS_URL 时静默禁用，不影响请求-响应。
 	if natsURL := os.Getenv("NATS_URL"); natsURL != "" {
-		if nc, err := natsgo.Connect(natsURL, natsgo.MaxReconnects(-1)); err != nil {
+		if nc, err := natsgo.Connect(
+			natsURL,
+			natsgo.MaxReconnects(-1),
+			natsgo.ReconnectHandler(func(conn *natsgo.Conn) {
+				requestVehicleStateSnapshot(conn, true)
+			}),
+		); err != nil {
 			log.Printf("[edge-gateway] NATS connect failed, proactive disabled: %v", err)
 		} else {
 			setProactiveBus(nc)
@@ -718,11 +724,16 @@ func main() {
 				log.Printf("[edge-gateway] NATS proactive bridge active (%s)", natsURL)
 			}
 			// 车况桥接：合并增量 diff / 周期全量快照（同主题）→ 有实际变化才广播全量给 HMI。
-			if _, err := nc.Subscribe("vehicle.state.changed", func(m *natsgo.Msg) {
-				receiveVehicleState(m.Data)
+			if _, err := nc.Subscribe(vehiclestate.StateSubject, func(m *natsgo.Msg) {
+				res := receiveVehicleStateResult(m.Data)
+				if !res.Accepted && res.Reason == "snapshot_required" {
+					requestVehicleStateSnapshot(nc, false)
+				}
 			}); err != nil {
 				log.Printf("[edge-gateway] NATS vehicle.state subscribe failed: %v", err)
 			} else {
+				_ = nc.Flush()
+				requestVehicleStateSnapshot(nc, true)
 				log.Printf("[edge-gateway] NATS vehicle-state bridge active")
 			}
 		}
