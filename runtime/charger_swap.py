@@ -31,11 +31,20 @@ _ANOTHER_RE = re.compile(
 #: 「（顺路）加个充电站」：在这趟路线上加一个充电停靠（核心旅程 EN09 第 2 句「那顺路加个充电站」）。动词必须是加 / 添 / 插——
 #: 「找个充电站」是找站、不在这里；「再加一个充电站」也算（要另一个站，由导航按路线上已有的排除）。
 _ADD_RE = re.compile(rf"(?:加|添|插)上?(?:{_WHICH}){{0,2}}{_STATION}")
+_ADD_ONE_ONLY_RE = re.compile(
+    rf"\s*(?:那就?)?\s*(?:请|帮我)?\s*(?:顺路|沿途|途中|途经|路上)?\s*(?:再|另|多)?\s*"
+    rf"(?:加|添|插)上?\s*(?:一个|一家|一座|个|家|座)\s*{_STATION}(?:吧|啊)?\s*[。！!]?\s*"
+)
 
 
 def asks_to_add_charger(text: str) -> bool:
     """原话是不是在要「（顺路）加一个充电站」——正在导航时，这是改这趟路线。"""
     return bool(_ADD_RE.search(text or ""))
+
+
+def asks_only_to_add_one_charger(text: str) -> bool:
+    """整句只要求在当前路线上加一个充电站，供 T2 核实完成后收口。"""
+    return bool(_ADD_ONE_ONLY_RE.fullmatch(text or ""))
 
 
 def asks_to_swap_charger(text: str) -> bool:

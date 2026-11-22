@@ -22,6 +22,7 @@ from .task_identity import bind_task_identity
 from . import result_bundle
 from .progress import make_progress, phase_label, step_summary
 from .superseded import drop_superseded_steps
+from .waypoints import completed_single_charger_add
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
@@ -629,6 +630,9 @@ class LoopController:
                 )
             except Exception:
                 pass
+            if completed_single_charger_add(safety_origin_text, current, results[batch_start:]):
+                logger.info("T2 loop completed after adding the requested single charging stop")
+                break
             current = None
             batch_local_ids = {}
             if self.clock() >= deadline:

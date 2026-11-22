@@ -11,6 +11,8 @@ import asyncio
 import json
 import time
 
+import pytest
+
 from orchestrator.cloud.models import Plan, ReplanDecision, Step
 from orchestrator.cloud.tests.test_engine_loop_settle import _engine, _request, _response, _run
 
@@ -51,6 +53,32 @@ def test_a_replanned_step_sees_the_route_of_the_previous_turn():
 
     route = _route_meta(clients)
     assert route is not None and route["destination"] == "深圳北站", clients.calls
+
+
+@pytest.mark.parametrize(("text", "added", "reroutes"), [
+    ("途经再加一个充电站", True, 1),
+    ("途经再加一个充电站", False, 2),
+    ("途经再加一个充电站，再查天气", True, 2),
+])
+def test_single_charger_add_stops_t2_only_after_the_route_was_updated(text, added, reroutes):
+    first = _reroute("s1")
+    second = _reroute("s2")
+    second.slots = {"add_waypoint": "另一家充电站"}
+    plan = Plan(steps=[first], complexity="adaptive", goal=text, raw_text=text)
+    stops = list(_OLD_ROUTE["waypoints"])
+    if added:
+        stops.append({"name": "深铁灵晔超级充电站", "lat": 22.611, "lng": 114.031})
+    engine, clients, session, _planner = _engine(
+        plan,
+        {"navigation.reroute": _response("路线已更新", {"_route_session": {**_OLD_ROUTE, "waypoints": stops}},
+                                          actions=("navigate",))},
+        decisions=[ReplanDecision(done=False, steps=[second]), ReplanDecision(done=True)],
+    )
+    asyncio.run(session.save_focus("sess-t2", {"active_route": _OLD_ROUTE}, owner_user_id="u1"))
+
+    _run(engine, _request(text))
+
+    assert [name for name, _meta in clients.calls].count("navigation.reroute") == reroutes
 
 
 def test_a_route_built_earlier_in_the_same_turn_wins_over_the_stored_one():

@@ -420,6 +420,19 @@ def test_write_lane_judges_declared_actions_and_vehicle_values():
     assert probe.judge({}, obs(actions=["trunk.open"]), {})["failures"] == ["unexpected_action"]
 
 
+def test_en07_counts_waypoints_in_the_emitted_navigation_after_all_finals():
+    local = probe.wire._observe({"speech": "收到"})
+    expect = {"actions_allowed": ["navigate"], "actions_required": ["navigate"], "nav_waypoint_count": 2}
+    for count in (2, 4):
+        nav = probe.wire._observe({
+            "actions": [{"type": "navigate", "payload": {
+                "destination": "深圳北站", "waypoints": [{"name": f"充电站 {i}"} for i in range(count)]}}],
+            "ui_card": {"type": "charging_route", "stops": [{"name": "推荐站"}]},
+        })
+        result = probe.judge(expect, probe.wire._merge_finals(local, nav), {}, lane="simulated_vehicle")
+        assert result["failures"] == ([] if count == 2 else ["nav_waypoint_count:[4]!=[2]"])
+
+
 def test_vehicle_restore_diff_names_every_key_that_did_not_come_back():
     baseline = {"trunk": "closed", "hvac_on": False, "volume": 30}
     assert probe.vehicle_restore_diff(baseline, dict(baseline)) == []

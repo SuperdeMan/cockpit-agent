@@ -2230,7 +2230,7 @@ def _say_button_failure(case_id: str, turn_no: int, ref_turn: int,
 
 
 def _nav_targets(msg: dict) -> list[dict]:
-    """本轮 navigate 动作的目的地 `{name, lat, lng}`（`_navigate_payload` 的形状）。
+    """本轮 navigate 动作的目的地、坐标和下发的途经点数量。
 
     **从动作派生而不是从卡派生**：多意图轮里赢下主卡的可能是别的 Agent，
     而「车被导去哪」这件事只有动作说了算。
@@ -2259,8 +2259,11 @@ def _nav_targets(msg: dict) -> list[dict]:
             lat, lng = float(payload["lat"]), float(payload["lng"])
         except (KeyError, TypeError, ValueError):
             lat = lng = None
+        waypoints = payload.get("waypoints", [])
+        count = len(waypoints) if isinstance(waypoints, list) and all(
+            isinstance(point, dict) and point.get("name") for point in waypoints) else None
         out.append({"name": str(payload.get("destination") or ""),
-                    "lat": lat, "lng": lng})
+                    "lat": lat, "lng": lng, "waypoint_count": count})
     return out
 
 
@@ -2950,6 +2953,8 @@ def _merge_finals(first: dict, later: dict) -> dict:
     """同一轮的第二个 final 并进第一个。**首个 final 的语义字段不被覆盖。**"""
     out = dict(first)
     out["actions"] = list(first.get("actions") or []) + list(later.get("actions") or [])
+    if "nav_targets" in first or "nav_targets" in later:
+        out["nav_targets"] = list(first.get("nav_targets") or []) + list(later.get("nav_targets") or [])
     speeches = [s for s in (first.get("speech"), later.get("speech")) if s]
     out["speech"] = "\n".join(speeches)
     # is_question 按合并后的**末尾**判——用户听到的最后一句才决定这轮是不是在问他。

@@ -52,13 +52,15 @@ cases:
     providers: [AMAP_KEY]
     vehicle_keys: [speed_kmh]
     turns:
-      - {say: "导航去深圳北站，在附近找个充电桩", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"]}}
-      # 2026-10-10 修过：路线上已有的站不再加一遍（runtime/route_stops.same_stop）
+      - {say: "导航去深圳北站，在附近找个充电桩", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"], nav_waypoint_count: 1}}
+      # 2026-11-22：navigate 合并会掩盖 T2 多次改线。从动作载荷核对这句只追加一个站。
       - {say: "途经再加一个充电站", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                             nav_waypoint_count: 2,
                                              speech_not: ["当前暂无正在进行的导航", "当前没有正在进行的导航"]}}
       # 几个充电站又没点名：反问、挂起，不猜、不动路线
       - {say: "换一个充电站", expect: {actions_allowed: [], speech_any: ["换哪一个"]}}
       - {say: "换第二个", expect: {actions_required: ["navigate"], actions_allowed: ["navigate"],
+                                   nav_waypoint_count: 2,
                                    speech_not: ["当前没有正在进行的导航", "途经点里没找到"]}}
     cleanup:
       - {say: "取消导航"}

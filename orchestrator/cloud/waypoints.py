@@ -6,7 +6,12 @@
 """
 from __future__ import annotations
 
-from runtime.route_stops import same_stop
+import json
+
+from runtime.charger_swap import asks_only_to_add_one_charger, is_charger_name
+from runtime.route_stops import on_route, same_stop
+
+from .models import Plan, StepResult, StepStatus
 
 
 def merged_waypoints(results) -> list[dict]:
@@ -35,3 +40,43 @@ def merged_waypoints(results) -> list[dict]:
                 waypoint = {**earlier, **waypoint}
             waypoints.append(waypoint)
     return waypoints
+
+
+def completed_single_charger_add(origin: str, plan: Plan, results: list[StepResult]) -> bool:
+    """用改线前的活动路线和改线步生成的路线会话核对单站追加是否完成。"""
+    if not asks_only_to_add_one_charger(origin):
+        return False
+    navigated = [
+        result for result in results
+        if result.status == StepStatus.OK
+        and any(action.get("type") == "navigate" for action in result.actions)
+    ]
+    if len(navigated) != 1:
+        return False
+    result = navigated[0]
+    step = next((s for s in plan.steps if s.id == result.step_id), None)
+    if step is None or not isinstance(result.data, dict):
+        return False
+    try:
+        previous = json.loads((step.meta or {}).get("focus_active_route") or "{}")
+    except (TypeError, ValueError):
+        return False
+    updated = result.data.get("_route_session")
+    if not isinstance(previous, dict) or not isinstance(updated, dict):
+        return False
+    target = tuple(previous.get(key) for key in ("destination", "lat", "lng"))
+    if not target[0] or None in target or target != tuple(updated.get(key) for key in ("destination", "lat", "lng")):
+        return False
+    if any((previous.get(key) or None) != (updated.get(key) or None) for key in ("strategy", "arrive_by_ts")):
+        return False
+    before, after = previous.get("waypoints"), updated.get("waypoints")
+    if not isinstance(before, list) or not isinstance(after, list) or len(after) != len(before) + 1:
+        return False
+    new = [stop for stop in after if not on_route(stop, before)]
+    if len(new) != 1 or not isinstance(new[0], dict):
+        return False
+    name = new[0].get("name")
+    if not isinstance(name, str) or not is_charger_name(name):
+        return False
+    retained = [stop for stop in after if stop is not new[0]]
+    return all(same_stop(old, kept) for old, kept in zip(before, retained))

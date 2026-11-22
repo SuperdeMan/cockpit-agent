@@ -288,6 +288,11 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: 
                 failures.append("vehicle_value:" + str(key))
     elif actions:
         failures.append("unexpected_action")
+    if "nav_waypoint_count" in expect:
+        expected_count = expect["nav_waypoint_count"]
+        counts = [target.get("waypoint_count") for target in obs.get("nav_targets") or []]
+        if counts != [expected_count]:
+            failures.append(f"nav_waypoint_count:{counts}!={[expected_count]}")
     if obs.get("error") or "Agent 内部错误" in str(obs.get("speech") or ""):
         failures.append("technical_failure")
     if expect.get("need_confirm") and not (obs.get("need_confirm") and obs.get("operation_id")):
