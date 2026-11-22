@@ -3792,8 +3792,8 @@ class PlanBuilder:
 
         组合句里的时间常常只属于其中一件（「关上车窗，打开空调，查下明天天气，再提醒我七点起床」「音量调小一点，提醒我八点开会」）：
         语料对照（2026-10-19）里整句一刀切会把当下要做的车控一起拦掉。所以按分句看：被一截**不往后推**的分句点了名的车控照常
-        （点名判据 `step_grounding.step_naming_score`，方向说反了不算），其余拦下。单说时间、不点任何步的那一截把延后顺到下一截
-        （「明天早上八点，帮我打开空调」）。点名认不出时（「关窗」对不上「车窗」）落在拦下那一侧。"""
+        （点名判据 `step_grounding.step_naming_score`）。现在开前排窗、雨停再开后排窗时，当前分句必须比事件后件更准确地点名这一步。
+        单说时间、不点任何步的那一截把延后顺到下一截（「明天早上八点，帮我打开空调」），说全事件和后件的一截只约束自己。"""
         if not steps or not deferred_condition.defers_to_later(text):
             return []
         writes = PlanBuilder._edge_write_steps(steps)
@@ -3801,13 +3801,13 @@ class PlanBuilder:
                    for clause in deferred_condition.split_deferral_clauses(sentence)]
         if not writes or len(clauses) <= 1:
             return writes
-        immediate, carry = [], False
+        rows, carry = [], False
         for clause in clauses:
+            event = deferred_condition.waits_for_event(clause)
             later = carry or deferred_condition.defers_to_later(clause)
-            carry = later and not any(step_naming_score(clause, step) > 0 for step in steps)
-            if not later:
-                immediate.append(clause)
-        return [step for step in writes if not any(step_naming_score(clause, step) > 0 for clause in immediate)]
+            carry = later and not event and not any(step_naming_score(clause, step) > 0 for step in steps)
+            rows.append((clause, later and event, not later))
+        return [step for step in writes if not PlanBuilder._named_by_an_instruction(step, rows)]
 
     @staticmethod
     def _side_effect_steps(steps: list) -> list:
@@ -3888,11 +3888,10 @@ class PlanBuilder:
 
     @staticmethod
     def _named_by_an_instruction(step, rows) -> bool:
-        """这一步由某个指令分句点名，且点得比任何提问分句都准（平手不算——「关闭空调，告诉我空调有哪些模式」里编出来的
-        `hvac.on`，两边都只点到「空调」）。"""
+        """指令分句点名了这一步，并且比受限制的分句更准，平手不放行。"""
         act = max((step_naming_score(clause, step) for clause, _, acts in rows if acts), default=0)
-        ask = max((step_naming_score(clause, step) for clause, asks, _ in rows if asks), default=0)
-        return act > 0 and act > ask
+        restricted = max((step_naming_score(clause, step) for clause, blocks, _ in rows if blocks), default=0)
+        return act > restricted
 
     @staticmethod
     def _filter_question_side_effect_steps(

@@ -115,10 +115,22 @@ def test_a_scene_with_a_trigger_is_the_right_place_for_a_future_condition():
     ("等雨停，再打开车窗，打开座椅加热",
      [_edge("window.open", "打开车窗"), _edge("seat.heating.on", "打开座椅加热", "e2")],
      ["seat.heating.on"], ["window.open"]),
+    ("等雨停，再打开车窗，打开座椅加热",
+     [_edge("seat.heating.on", "打开座椅加热")], ["seat.heating.on"], []),
 ])
 def test_in_a_compound_only_what_the_deferred_part_names_waits(origin, steps, kept_intents, blocked_intents):
     kept, blocked = _filter(steps, origin)
     assert _intents(kept) == kept_intents and _intents(blocked) == blocked_intents
+
+
+def test_immediate_open_does_not_authorize_a_deferred_open_of_the_same_object():
+    front = _edge("window.open", "打开车窗")
+    front.slots = {"position": "前排"}
+    rear = _edge("window.open", "打开车窗", "e2")
+    rear.slots = {"position": "后排"}
+    unscoped = _edge("window.open", "打开车窗", "e3")
+    kept, blocked = _filter([front, rear, unscoped], "打开前排车窗，雨停了，再打开后排车窗")
+    assert kept == [front] and blocked == [rear, unscoped]
 
 
 @pytest.mark.parametrize("origin", ["打开空调", "先关窗再开空调", "空调关了再开一下", "把空调调到二十六点五度", "空调调高一点",

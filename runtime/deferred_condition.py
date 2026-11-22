@@ -108,7 +108,7 @@ _DONE_THEN_RE = re.compile(r"了再(?!见)")
 #: 那件事不是用户要系统做的动作——不带操作线索（`carries_operation_cue`）；带的是当下依次做的两件事（「空调关了再开一下」
 #: 「车窗关好了再开空调」规划器 6 / 6 排成依次两步），不算。只规划取证（线上 `ebd6988a`，钉 M3，每句 6 遍）：事件句 36 遍里
 #: 13 遍当场派了端侧车控，「车里凉快了再关空调」6 / 6 当场关空调。「再来一遍 / 再来一首」是又一次（「这首歌太热了再来一遍」），不算。
-_EVENT_LINK = rf"(?P<link>\s*(?:[，,]\s*)?{SEQUENCE_ZAI_RE.pattern}(?!来一))"
+_EVENT_LINK = rf"(?P<link>\s*(?:[，,]\s*)?{SEQUENCE_ZAI_RE.pattern}(?!来一))(?=\s*[^，,。；;！!？?\s])"
 _EVENT_THEN_RE = re.compile(rf"(?P<event>[^，,。；;！!？?\s]{{1,20}}?)(?:了|之后|以后){_EVENT_LINK}")
 #: 分句开头明说要等（「等天黑再开大灯」「等雨停再开窗」「等我把东西放好再开后备箱」）：等的是什么都算往后推，那件事是不是动作不用看。
 #: 「等级」「等于」「等同」不是等。
@@ -123,6 +123,11 @@ def _event_links(text: str) -> Iterator[re.Match[str]]:
     for match in _EVENT_THEN_RE.finditer(text):
         if not carries_operation_cue(match.group("event")):
             yield match
+
+
+def waits_for_event(text: str) -> bool:
+    """原话中有一项动作要等某件事发生后才能做。"""
+    return next(_event_links(text), None) is not None
 
 
 def split_deferral_clauses(text: str) -> list[str]:
@@ -167,7 +172,7 @@ def defers_to_later(text) -> bool:
     t = re.sub(r"\s+", " ", str(text or "")).strip()
     return bool(t) and not is_non_directive_question(t) and bool(
         _LATER_THEN_RE.search(t) or _ARRIVE_THEN_RE.search(t) or _AFTER_DURATION_RE.search(t)
-        or _FUTURE_DAY_RE.search(t) or _has_clock_time(t) or _has_later_when(t) or next(_event_links(t), None))
+        or _FUTURE_DAY_RE.search(t) or _has_clock_time(t) or _has_later_when(t) or waits_for_event(t))
 
 
 #: 单说时间的一截（「明天早上八点」「下午三点」「十分钟后」）：只由时间词、时刻、日子、时段与虚词组成。
@@ -224,7 +229,7 @@ def is_deferred_instruction(text) -> bool:
     句首单说时间的一截，以及「X 了再 Y」和明说要等事件的说法。云端保留依次两步，事件未至的车控由 `defers_to_later` 拦下。"""
     t = str(text or "")
     return bool(DEFERRED_CONDITION_RE.search(t) or _has_bare_condition(t) or _DONE_THEN_RE.search(t)
-                or _leads_with_time_clause(t) or next(_event_links(t), None))
+                or _leads_with_time_clause(t) or waits_for_event(t))
 
 
 #: 「只要评分四点五以上的」「只要靠窗的」：这里的「只要」是「只想要」——后面是一个「…的」名词短语、没有后件，不等任何条件
