@@ -223,23 +223,36 @@ verify_https_endpoints() {
   HTTPS_READY_S=$(( SECONDS - started ))
 }
 
+# Tailscale 1.104+ 将 Serve 监听套接字绑定到 tailscale0 接口（100.x.y.z%tailscale0），
+# 桥接容器内 docker exec 直连主机 tailnet IP 会被内核拒连（ECONNREFUSED）。
+# 探针改用当前发布 observability-collector 镜像以 --network host 一次性运行，
+# 仍走完整 Tailnet HTTPS/WSS + TLS 证书校验 + 鉴权，不放宽任何判据；
+# 凭据通过命令级环境变量传入（不进 docker run 参数列）。
 run_wss_probes() {
   local release_dir="$1" sha="$2" fqdn="$3"
-  local hmi_id collector_id ws_token
+  local hmi_id collector_id collector_image ws_token e2e_secret
   hmi_id="$(compose_for_release "${release_dir}" "${sha}" ps -q hmi)" || return $?
   collector_id="$(compose_for_release "${release_dir}" "${sha}" ps -q observability-collector)" || return $?
   [[ -n "${hmi_id}" && -n "${collector_id}" ]] \
     || { verify_error "probe containers are unavailable"; return 1; }
+  collector_image="$(docker inspect --format '{{.Image}}' "${collector_id}")" || return $?
+  [[ -n "${collector_image}" ]] \
+    || { verify_error "collector probe image is unavailable"; return 1; }
   ws_token="$(container_env_value "${hmi_id}" VITE_WS_TOKEN)" || return $?
   [[ -n "${ws_token}" ]] || { verify_error "runtime WebSocket credential is unavailable"; return 1; }
-  EDGE_PROBE_OUTPUT="$(docker exec -i \
+  e2e_secret="$(container_env_value "${collector_id}" E2E_IDENTITY_SECRET)" || return $?
+  [[ -n "${e2e_secret}" ]] || { verify_error "collector operator credential is unavailable"; return 1; }
+  EDGE_PROBE_OUTPUT="$(WS_TOKEN="${ws_token}" docker run --pull never --rm=true -i \
+    --network host \
     -e WS_URL="wss://${fqdn}:8443/ws" \
-    -e WS_TOKEN="${ws_token}" \
-    "${collector_id}" python - \
+    -e WS_TOKEN \
+    "${collector_image}" python - \
     <"${release_dir}/deploy/cloud/probes/edge_ws_probe.py")" || return $?
-  COLLECTOR_PROBE_OUTPUT="$(docker exec -i \
+  COLLECTOR_PROBE_OUTPUT="$(E2E_IDENTITY_SECRET="${e2e_secret}" docker run --pull never --rm=true -i \
+    --network host \
     -e WS_URL="wss://${fqdn}:8446/stream" \
-    "${collector_id}" python - \
+    -e E2E_IDENTITY_SECRET \
+    "${collector_image}" python - \
     <"${release_dir}/deploy/cloud/probes/collector_ws_probe.py")" || return $?
 }
 

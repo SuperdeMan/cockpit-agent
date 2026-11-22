@@ -4470,3 +4470,73 @@ def test_collector_volume_replace_never_renames_across_mounts(
     helper.replace_collector_database(incoming, data, rollback)
     with sqlite3.connect(rollback / "obs.db") as connection:
         assert connection.execute("SELECT value FROM marker").fetchone() == ("old",)
+
+
+def test_run_wss_probes_uses_host_network_collector_image_without_secret_argv(tmp_path: Path):
+    release_dir = tmp_path / "release"
+    probes_dir = release_dir / "deploy" / "cloud" / "probes"
+    probes_dir.mkdir(parents=True)
+    (probes_dir / "edge_ws_probe.py").write_text("# edge probe\n", encoding="utf-8")
+    (probes_dir / "collector_ws_probe.py").write_text("# collector probe\n", encoding="utf-8")
+    calls = tmp_path / "docker-calls"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        CALLS="$1"
+        RELEASE_DIR="$3"
+        source "$2"
+        compose_for_release() {
+          case "${*: -1}" in
+            hmi) printf 'hmi-cid\n' ;;
+            observability-collector) printf 'col-cid\n' ;;
+            *) return 1 ;;
+          esac
+        }
+        docker() {
+          if [[ "$1" == "inspect" ]]; then
+            if [[ "$3" == "{{.Image}}" ]]; then
+              printf 'sha256:collector-img\n'
+              return 0
+            fi
+            if [[ "${*: -1}" == "hmi-cid" ]]; then
+              printf 'VITE_WS_TOKEN=super-ws-secret\n'
+              return 0
+            fi
+            if [[ "${*: -1}" == "col-cid" ]]; then
+              printf 'E2E_IDENTITY_SECRET=super-e2e-secret\n'
+              return 0
+            fi
+          fi
+          if [[ "$1" == "run" ]]; then
+            printf 'ARGV:%s|WS_TOKEN=%s|E2E_IDENTITY_SECRET=%s\n' "$*" "${WS_TOKEN:-}" "${E2E_IDENTITY_SECRET:-}" >>"$CALLS"
+            if [[ "$*" == *":8443/ws"* ]]; then
+              printf '{"case":"summary","status":"pass"}\n'
+            else
+              printf '{"case":"collector_reconnect","status":"pass"}\n'
+            fi
+            return 0
+          fi
+          return 1
+        }
+        run_wss_probes "$RELEASE_DIR" "abcdef0" "car-agent-dev.example.ts.net"
+        printf 'EDGE=%s\nCOLLECTOR=%s\n' "$EDGE_PROBE_OUTPUT" "$COLLECTOR_PROBE_OUTPUT"
+        """,
+        calls,
+        VERIFY_RELEASE_PATH,
+        release_dir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = calls.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert "--pull never --rm=true -i --network host" in lines[0]
+    assert "WS_URL=wss://car-agent-dev.example.ts.net:8443/ws" in lines[0]
+    assert "sha256:collector-img python -" in lines[0]
+    assert "|WS_TOKEN=super-ws-secret|" in lines[0]
+    assert "super-ws-secret" not in lines[0].split("|", 1)[0]
+    assert "--pull never --rm=true -i --network host" in lines[1]
+    assert "WS_URL=wss://car-agent-dev.example.ts.net:8446/stream" in lines[1]
+    assert "sha256:collector-img python -" in lines[1]
+    assert "|E2E_IDENTITY_SECRET=super-e2e-secret" in lines[1]
+    assert "super-e2e-secret" not in lines[1].split("|", 1)[0]
