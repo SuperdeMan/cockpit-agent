@@ -21,10 +21,11 @@ from runtime.proactive import publish_proactive
 from runtime import vehicle_reading
 from runtime.vehicle_reading import Reading
 from runtime.charger_swap import (
-    asks_for_another_charger, asks_to_add_charger, asks_to_swap_charger, carries_charger_name, charger_name_probe,
+    asks_for_another_charger, asks_only_to_add_one_charger, asks_to_add_charger, asks_to_swap_charger,
+    carries_charger_name, charger_name_probe,
 )
 from runtime.slots import RESULT_CONSUMED_META
-from runtime.route_stops import on_route
+from runtime.route_stops import REFERENCE_ONLY_WAYPOINTS, on_route
 from .low_battery import LowBatteryWatcher
 from .providers import build_charging_provider
 from .providers.base import GeoPoint
@@ -207,9 +208,15 @@ class ChargingPlannerAgent(BaseAgent):
             clarify = await self._clarify_vague_destination(destination, meta, ctx=ctx)
             if clarify:
                 return clarify
-            return await self._find_near_destination(destination, charger_type, soc, meta, ctx=ctx, seen=seen,
-                                                     en_route=en_route,
-                                                     probe=charger_name_probe(intent.raw_text or "", place=destination))
+            result = await self._find_near_destination(
+                destination, charger_type, soc, meta, ctx=ctx, seen=seen, en_route=en_route,
+                probe=charger_name_probe(intent.raw_text or "", place=destination),
+            )
+            if ((meta or {}).get(RESULT_CONSUMED_META) == "true"
+                    and asks_only_to_add_one_charger(intent.raw_text or "")
+                    and self._route_active(meta) and (result.data or {}).get("waypoint")):
+                result.data[REFERENCE_ONLY_WAYPOINTS] = True
+            return result
 
         # 获取位置
         current = current_location_from_meta(meta)

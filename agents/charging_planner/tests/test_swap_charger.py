@@ -9,6 +9,7 @@ from agents._sdk.testing import make_context, run_handle
 from agents.charging_planner.src.agent import ChargingPlannerAgent
 from agents.charging_planner.src.providers.base import ChargingStation
 from runtime.charger_swap import asks_to_swap_charger
+from runtime.route_stops import REFERENCE_ONLY_WAYPOINTS
 
 LOC = {"current_lat": "22.5", "current_lng": "113.8"}
 #: 执行器按计划下发：这一步的结果有后续步接着用（`runtime.slots.RESULT_CONSUMED_META`）
@@ -237,6 +238,19 @@ def test_adding_a_charger_is_not_escalated_when_a_later_step_uses_this_result_or
         agent, calls = _agent()
         res = _find(agent, text, meta)
         assert "_escalate" not in (res.data or {}) and calls, (text, meta)
+
+
+def test_an_upstream_station_for_a_single_route_addition_remains_available_to_the_editor():
+    agent, _ = _agent()
+    meta = {**LOC, "focus_active_route": _route([]), **_CONSUMED}
+    result = _find(agent, "途经再加一个充电站", meta)
+    assert result.data[REFERENCE_ONLY_WAYPOINTS] is True
+    assert result.data["waypoint"]["name"] == _STATION["name"]
+    assert result.data["items"][0]["name"] == _STATION["name"]
+
+    new_route = _find(agent, "导航去深圳北站，在附近找个充电桩", meta)
+    assert new_route.data["waypoint"]["name"] == _STATION["name"]
+    assert REFERENCE_ONLY_WAYPOINTS not in new_route.data
 
 
 def test_adding_a_charger_from_the_long_trip_plan_entry_is_handed_to_navigation_too():

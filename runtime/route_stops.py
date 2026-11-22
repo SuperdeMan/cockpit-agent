@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import math
 
+#: 候选途经点仅供后续步骤引用，由改线步决定实际停靠点。
+REFERENCE_ONLY_WAYPOINTS = "_waypoints_reference_only"
+
 #: 坐标相距不到这么远（公里）就是同一处：高德同一个 POI 在不同接口里的坐标差在几十米内
 SAME_SPOT_KM = 0.05
 #: 同名且相距不到这么远（公里）也是同一处；同名但更远是同一品牌的另一家（连锁站名常常一模一样）

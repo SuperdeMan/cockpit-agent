@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 
 from runtime.charger_swap import asks_only_to_add_one_charger, is_charger_name
-from runtime.route_stops import on_route, same_stop
+from runtime.route_stops import REFERENCE_ONLY_WAYPOINTS, on_route, same_stop
 
 from .models import Plan, StepResult, StepStatus
 
@@ -24,7 +24,7 @@ def merged_waypoints(results) -> list[dict]:
     waypoints: list[dict] = []
     for result in results or []:
         data = getattr(result, "data", None) or {}
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or data.get(REFERENCE_ONLY_WAYPOINTS) is True:
             continue
         declared = []
         single = data.get("waypoint")

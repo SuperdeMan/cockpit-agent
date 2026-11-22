@@ -137,6 +137,24 @@ def test_waypoint_line_only_for_stops_another_step_declared_into_a_navigation():
     assert "加入导航途经点" not in out["speech"]
 
 
+def test_a_referenced_charging_candidate_is_not_an_additional_waypoint():
+    from runtime.route_stops import REFERENCE_ONLY_WAYPOINTS
+
+    existing = {"name": "路特斯充电站", "lat": 22.609, "lng": 114.029}
+    selected = {"name": "海王银河充电站", "lat": 22.627, "lng": 114.035}
+    candidate = {"name": "深铁灵晔超级充电站", "lat": 22.611, "lng": 114.031}
+    found = StepResult("s1", StepStatus.OK, speech="附近有深铁灵晔超级充电站",
+                       data={"waypoint": candidate, REFERENCE_ONLY_WAYPOINTS: True})
+    reroute = StepResult("s2", StepStatus.OK, speech="已顺路加上海王银河充电站",
+                         actions=[{"type": "navigate", "payload": {"destination": "深圳北站"}}],
+                         data={"waypoints": [existing, selected]})
+    results = [found, reroute]
+
+    actions = Aggregator.compose_actions(results)
+    assert actions[0]["payload"]["waypoints"] == [existing, selected]
+    assert Aggregator.merged_waypoint_line(results, actions) == ""
+
+
 def test_prefers_waypoint_choice_card_over_other_cards():
     """多意图『导航+找餐厅』若 planner 误拆出 food，导航的 waypoint_choice 真实候选卡应胜出。"""
     agg = Aggregator(_fake_llm)

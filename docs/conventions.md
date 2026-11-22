@@ -3083,6 +3083,7 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
 
 - 步骤经保留键 `data.waypoint` / `data.waypoints` 声明途经点；聚合器并进导航动作与焦点对齐活动路线共用
   `orchestrator/cloud/waypoints.merged_waypoints`，不得各写一份。途经点 dict 会原样进导航动作载荷，解释性字段（理由等）放 `data`，不放途经点里。
+- `data._waypoints_reference_only=true` 表示这些候选仅供后续步骤引用。合并导航动作和活动路线时，只采用改线步实际选入的途经点。
 - 一步自己不发导航动作，话术不说「已加入路线 / 途经」；路线确实改变由导航动作与卡片体现。
 - 估算量（到站 / 到达电量、续航）写「估算」，读不到原始读数时不估。
 
