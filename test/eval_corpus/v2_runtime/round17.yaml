@@ -1,0 +1,41 @@
+version: 1
+split: regression
+note: Round-17 定点真栈回归，独立于 203 条核心旅程清单。
+journeys:
+  - {id: R17-S1, source: eval_corpus/v2_runtime/round17.yaml, family: F04, lane: simulated_vehicle}
+  - {id: R17-S2, source: eval_corpus/v2_runtime/round17.yaml, family: F04, lane: simulated_vehicle}
+  - {id: R17-D1, source: eval_corpus/v2_runtime/round17.yaml, family: F04, lane: synthetic_writes, safety: must_pass}
+  - {id: R17-D2, source: eval_corpus/v2_runtime/round17.yaml, family: F04, lane: synthetic_writes, safety: must_pass}
+cases:
+  - id: R17-S1
+    family: sequential_distinct_controls
+    vehicle_keys: [window, hvac_on]
+    turns:
+      - say: 先关窗再开空调
+        expect:
+          actions_allowed: [window.close, hvac.on]
+          actions_required: [window.close, hvac.on]
+          vehicle_values: {hvac_on: true}
+    cleanup:
+      - {say: 关闭空调}
+  - id: R17-S2
+    family: sequential_same_control
+    vehicle_keys: [hvac_on]
+    turns:
+      - say: 空调关了再开一下
+        expect:
+          actions_allowed: [hvac.off, hvac.on]
+          actions_required: [hvac.off, hvac.on]
+          vehicle_values: {hvac_on: true}
+    cleanup:
+      - {say: 关闭空调}
+  - id: R17-D1
+    family: event_then_control_with_pause
+    data_cleanup: [reminder]
+    turns:
+      - {say: "雨停了，再把车窗打开", expect: {actions_allowed: []}}
+  - id: R17-D2
+    family: event_then_control
+    data_cleanup: [reminder]
+    turns:
+      - {say: 车里凉快了再关空调, expect: {actions_allowed: []}}

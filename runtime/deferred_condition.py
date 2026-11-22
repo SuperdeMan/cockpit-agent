@@ -17,13 +17,18 @@ The edge keeps the broad ``is_deferred_instruction`` on purpose.
 - 要往后推的说法：「等会儿再把车窗打开」「到了公司再开空调」「十分钟后再打开空调」「明天早上八点打开空调」「下班的时候打开空调」。
   端侧一律上云；云端只拦当场的端侧车控（`defers_to_later`，规划器的问句闸消费），定时场景、提醒这类「到时候再做」的安排照常——
   规划器对这些说法多半建提醒（只规划取证：「十分钟后再打开空调」6 遍 5 遍提醒），可「等会儿再把车窗打开」6 遍 5 遍当场 `window.open`。
+
+2026-10-29 补一族（第十七轮）：等一件事过去再做——「雨停了再开窗」「车里凉快了再关空调」。端侧早已整句上云（`_DONE_THEN_RE`），
+云端此前不拦：只规划取证 36 遍里 13 遍当场派了端侧车控。端云现在共用 `_event_links` 识别事件和后件的连接。
 """
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
+from runtime.clause_split import SEQUENCE_ZAI_RE, split_clauses
 from runtime.cntime import CN_NUM_SRC, DAY_ALT, DAY_WORDS, SEG_ALT, cn_int
-from runtime.question_shape import is_non_directive_question
+from runtime.question_shape import DIRECTIVE_MARKERS, carries_operation_cue, is_non_directive_question
 
 DEFERRED_CONDITION_RE = re.compile(
     r"(?:如果|要是|假如|若|只要|除非|"
@@ -99,6 +104,31 @@ _NOT_LATER_WHEN_RE = re.compile(
     r"(?:(?:这|那|此)(?:个|种)?|现在|当下|当前|目前|平时|平常|有|小|什么|啥|任何|这会儿|那会儿)$")
 #: 「X 了再 Y」（「雨停了再开窗」）只让端侧上云：云端对「空调关了再开一下」这种当下依次做的两件事本来就排对了（只规划取证 6 / 6）。
 _DONE_THEN_RE = re.compile(r"了再(?!见)")
+#: 等一件事过去再做（2026-10-29，第十七轮）：「雨停了再开窗」「车里凉快了再关空调」「吃完饭了再开空调」「雨停之后再打开车窗」。
+#: 那件事不是用户要系统做的动作——不带操作线索（`carries_operation_cue`）；带的是当下依次做的两件事（「空调关了再开一下」
+#: 「车窗关好了再开空调」规划器 6 / 6 排成依次两步），不算。只规划取证（线上 `ebd6988a`，钉 M3，每句 6 遍）：事件句 36 遍里
+#: 13 遍当场派了端侧车控，「车里凉快了再关空调」6 / 6 当场关空调。「再来一遍 / 再来一首」是又一次（「这首歌太热了再来一遍」），不算。
+_EVENT_LINK = rf"(?P<link>\s*(?:[，,]\s*)?{SEQUENCE_ZAI_RE.pattern}(?!来一))"
+_EVENT_THEN_RE = re.compile(rf"(?P<event>[^，,。；;！!？?\s]{{1,20}}?)(?:了|之后|以后){_EVENT_LINK}")
+#: 分句开头明说要等（「等天黑再开大灯」「等雨停再开窗」「等我把东西放好再开后备箱」）：等的是什么都算往后推，那件事是不是动作不用看。
+#: 「等级」「等于」「等同」不是等。
+_WAIT_THEN_RE = re.compile(
+    rf"(?:^|(?<=[，,。；;！!？?\s]))(?:(?:{'|'.join(DIRECTIVE_MARKERS)})\s*)?"
+    rf"等(?!级|于|同)\s*[^，,。；;！!？?\s]{{1,20}}?{_EVENT_LINK}"
+)
+
+
+def _event_links(text: str) -> Iterator[re.Match[str]]:
+    yield from _WAIT_THEN_RE.finditer(text)
+    for match in _EVENT_THEN_RE.finditer(text):
+        if not carries_operation_cue(match.group("event")):
+            yield match
+
+
+def split_deferral_clauses(text: str) -> list[str]:
+    """分句时保留「雨停了，再开窗」的连接，供云端逐段判断执行时机。"""
+    protected = tuple(match.span("link") for match in _event_links(text))
+    return split_clauses(text, protected_spans=protected)
 
 
 def _has_clock_time(text: str) -> bool:
@@ -137,7 +167,7 @@ def defers_to_later(text) -> bool:
     t = re.sub(r"\s+", " ", str(text or "")).strip()
     return bool(t) and not is_non_directive_question(t) and bool(
         _LATER_THEN_RE.search(t) or _ARRIVE_THEN_RE.search(t) or _AFTER_DURATION_RE.search(t)
-        or _FUTURE_DAY_RE.search(t) or _has_clock_time(t) or _has_later_when(t))
+        or _FUTURE_DAY_RE.search(t) or _has_clock_time(t) or _has_later_when(t) or next(_event_links(t), None))
 
 
 #: 单说时间的一截（「明天早上八点」「下午三点」「十分钟后」）：只由时间词、时刻、日子、时段与虚词组成。
@@ -191,10 +221,10 @@ def is_deferred_instruction(text) -> bool:
 
     端侧用：拿不准就整句上云。往后推的说法不在这里整句判——端侧在分类出口逐段否决（`fast_intent.classify_structured`
     用 `defers_to_later`），「音量调小一点，提醒我八点开会」的音量那段照常本地秒回；这里只收两种逐段判不出来的：
-    句首单说时间的一截（`_leads_with_time_clause`）与「X 了再 Y」（云端照常规划）。"""
+    句首单说时间的一截，以及「X 了再 Y」和明说要等事件的说法。云端保留依次两步，事件未至的车控由 `defers_to_later` 拦下。"""
     t = str(text or "")
     return bool(DEFERRED_CONDITION_RE.search(t) or _has_bare_condition(t) or _DONE_THEN_RE.search(t)
-                or _leads_with_time_clause(t))
+                or _leads_with_time_clause(t) or next(_event_links(t), None))
 
 
 #: 「只要评分四点五以上的」「只要靠窗的」：这里的「只要」是「只想要」——后面是一个「…的」名词短语、没有后件，不等任何条件

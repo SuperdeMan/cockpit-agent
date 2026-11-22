@@ -162,10 +162,34 @@ def test_plain_instructions_questions_and_names_are_not_pushed_to_later(text):
     assert not defers_to_later(text)
 
 
-@pytest.mark.parametrize("text", ["雨停了再开窗", "空调关了再开一下", "播完这首了再放下一首"])
-def test_done_then_only_goes_to_the_cloud(text):
-    """「X 了再 Y」端侧上云；云端照常规划——「空调关了再开一下」是当下依次做的两件事（只规划取证 6 / 6 排对）。"""
+@pytest.mark.parametrize("text", ["空调关了再开一下", "车窗关好了再开空调", "导航设好了再放首歌"])
+def test_done_then_with_an_action_first_only_goes_to_the_cloud(text):
+    """「X 了再 Y」端侧上云；X 是用户要做的动作时云端照常规划——「空调关了再开一下」是当下依次做的两件事（只规划取证 6 / 6 排对）。"""
     assert is_deferred_instruction(text) and not defers_to_later(text) and not waits_on_condition(text)
+
+
+@pytest.mark.parametrize("text", [
+    "雨停了再开窗", "雨停了再把车窗打开", "车里凉快了再关空调", "吃完饭了再开空调", "天黑了再开大灯", "等我上车了再开空调",
+    "播完这首了再放下一首", "空调先别关，等我说了再关",
+    "雨停之后再打开车窗", "车里凉快以后再关空调",                         # 「之后 / 以后」同「了」
+    "等天黑再开大灯", "等雨停再开窗", "等我把东西放好再开后备箱",          # 分句开头明说要等：等的是动作也算
+    "雨停了，再打开车窗", "等雨停，再打开车窗", "请等雨停再打开车窗",
+])
+def test_waiting_for_something_to_happen_is_pushed_to_later(text):
+    """等一件事过去再做（2026-10-29，第十七轮）：云端问句闸拦当场的端侧车控（只规划取证：事件句 36 遍里 13 遍当场派车控，
+    「车里凉快了再关空调」6 / 6 当场关空调）。不走前件判定、不升多轮。"""
+    assert defers_to_later(text)
+    assert is_deferred_instruction(text)
+    assert not waits_on_condition(text) and not is_conditional_instruction(text)
+
+
+@pytest.mark.parametrize("text", [
+    "这首歌太热了再来一遍", "听完了再来一首",            # 「再来一…」是又一次
+    "雨停了再开窗吗", "车里凉快了再关空调好不好？",     # 问句不算往后推
+    "等级再高一点", "我说了再见",
+])
+def test_one_more_time_questions_and_words_are_not_waiting_for_an_event(text):
+    assert not defers_to_later(text)
 
 
 def test_the_corpus_lines_the_old_rule_missed():

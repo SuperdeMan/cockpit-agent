@@ -37,12 +37,29 @@ SPLIT_MARKERS = re.compile(
 #: 「顺承还是补语」（端侧 `_split_parts_with_sep` 的输入）。
 SPLIT_MARKERS_CAPTURING = re.compile(f"({SPLIT_MARKERS.pattern})")
 
+#: 不带逗号的「再」：上面的表只在逗号后切它（「再来一首」「温度再调高一点」里的「再」是「又一次 / 再多一些」）。它是不是「然后」
+#: 要看前面有没有一个动作，由消费方各自判：云侧多动作复核（`orchestrator/cloud/planning.py::_zai_sequences_actions`，2026-10-18）、
+#: 端侧分类出口（`fast_intent._leaves_another_command`，2026-10-29：「先关窗再开空调」整句只解出一条）。「再次 / 再一次」是又一次，
+#: 「再见」是告别，都不算。
+SEQUENCE_ZAI_RE = re.compile(r"再(?!次|一次|见)")
 
-def split_clauses(text: str) -> list[str]:
-    """按分隔符表拆句，返回 strip 后的非空段；无分隔符时原样返回单段。
+
+def split_clauses(text: str, *, protected_spans: tuple[tuple[int, int], ...] = ()) -> list[str]:
+    """按分隔符表拆句，跳过调用方标出的连接词位置，返回去掉空白的非空段。
 
     纯函数、零副作用、零领域词。**不做任何语义判断**——「这一段是不是一条命令」
     「这一段是不是肯定的」都是调用方的事，本模块只管断句。
     """
-    return [part.strip() for part in SPLIT_MARKERS.split(text or "")
-            if part and part.strip()]
+    t = text or ""
+    if not protected_spans:
+        return [part.strip() for part in SPLIT_MARKERS.split(t) if part.strip()]
+
+    parts = []
+    start = 0
+    for sep in SPLIT_MARKERS.finditer(t):
+        if any(left <= sep.start() < right for left, right in protected_spans):
+            continue
+        parts.append(t[start:sep.start()])
+        start = sep.end()
+    parts.append(t[start:])
+    return [part.strip() for part in parts if part.strip()]

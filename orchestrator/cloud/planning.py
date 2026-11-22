@@ -43,7 +43,7 @@ from . import skills as _skills
 from runtime import memory_directive as _memory_directive
 from runtime.affirmation import is_acknowledgment_only, offer_sentence
 from runtime.anaphora import has_elided_subject
-from runtime.clause_split import split_clauses
+from runtime.clause_split import SEQUENCE_ZAI_RE, split_clauses
 from runtime.condition_judgement import consequent_phrase
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
@@ -280,7 +280,6 @@ _NEGATED_SEQUENCE_HEAD_RE = re.compile(
 #: 「找充电站再导航」「先导航再找充电站」。「途经再加一个充电站」「10分钟后再提醒我」「后排车窗再打开10%」「还要再听一个吗」里的
 #: 「再」是「再来一个 / 又一次 / 再多一些」，前面没有动作；「再次 / 再一次」是「又一次」，「再见」是告别。collector 留存两个月这条
 #: 复核触发 29 次，全是这类误触发（EN07「途经再加一个充电站」24 次；「10分钟后再提醒我接水」重试后掉档成闲聊）。
-_SEQUENCE_ZAI_RE = re.compile(r"再(?!次|一次|见)")
 _CLAUSE_PUNCT_RE = re.compile(r"[，,。；;！？!?]")
 #: 「再」前面那个动作常用的检索 / 查看 / 收听动词（零领域词）；控制类动词与祈使开头由 `carries_operation_cue` 认
 _ZAI_LEAD_VERB_RE = re.compile(r"[找搜查看听放播订买]")
@@ -288,7 +287,7 @@ _ZAI_LEAD_VERB_RE = re.compile(r"[找搜查看听放播订买]")
 
 def _zai_sequences_actions(segment: str) -> bool:
     """这段话里有一个「再」在接着前面的动作：它前面有分句标点、「先」、操作线索或检索 / 查看动词。"""
-    for m in _SEQUENCE_ZAI_RE.finditer(segment or ""):
+    for m in SEQUENCE_ZAI_RE.finditer(segment or ""):
         before = segment[:m.start()]
         if before and (_CLAUSE_PUNCT_RE.search(before) or "先" in before
                        or carries_operation_cue(before) or _ZAI_LEAD_VERB_RE.search(before)):
@@ -3799,7 +3798,7 @@ class PlanBuilder:
             return []
         writes = PlanBuilder._edge_write_steps(steps)
         clauses = [clause for sentence in _ORIGIN_SENTENCE_END_RE.split(text)
-                   for clause in split_clauses(sentence) if clause.strip()]
+                   for clause in deferred_condition.split_deferral_clauses(sentence)]
         if not writes or len(clauses) <= 1:
             return writes
         immediate, carry = [], False

@@ -7,7 +7,7 @@
 from __future__ import annotations
 import re
 
-from runtime.clause_split import SPLIT_MARKERS, SPLIT_MARKERS_CAPTURING
+from runtime.clause_split import SEQUENCE_ZAI_RE, SPLIT_MARKERS, SPLIT_MARKERS_CAPTURING
 from runtime.polarity import is_negated_directive, is_withdrawn_directive
 from runtime.positions import SEAT_IDS, ids_of, position_spans, scan_positions
 from runtime.reported_speech import is_reported_speech
@@ -391,6 +391,11 @@ def classify_structured(text: str) -> dict | None:
     # 定义问同族（评审四轮待办，2026-09-26）：「胎压报警灯亮了是什么意思」命中「胎压」秒回「胎压正常」——问的是那盏灯的意思。
     if result is not None and result.get("intent") == "query" and asks_for_explanation(text):
         return None                       # 整句上云：解释在云端
+    # 整句只解出一条，原话里还有它没覆盖的另一条（2026-10-29，第十七轮）：分支按子串认对象与方向，「先关窗再开空调」「先打开空调再关窗」
+    # 「关上车窗打开空调」修前全解成关空调（方向取自另一个分句），「打开天窗再关闭车窗」「把温度调到26度再开风扇」只做一半。
+    # 逗号 / 连词分得开的在拆句那层已经各解各的；走到这里的是分不开的：不带逗号的「再」、两个动宾直接挨着（判据见 `_leaves_another_command`）
+    if _is_write_action(result) and _leaves_another_command(text, result):
+        return None                       # 整句上云：云端对这类句子排得对（只规划取证 6 / 6），端侧拿不准就不做
     if result is not None:
         # Q13：原话随意图走。**不是为了让下游再分类一次**——是因为结构化意图里
         # 有信息拿不回来：`下一首` 与 `上一首` 解出的 data 逐字相同（都是
@@ -412,8 +417,18 @@ def is_negated_write_directive(text: str) -> bool:
     return _is_write_action(result) and is_negated_directive(text)
 
 
+#: 「开关」是名词（「语音唤醒开关」「香氛开关」），不是开 / 关的方向。下面的分支按「"关" in t」判方向，修前「打开语音唤醒开关」
+#: 「请把语音唤醒开关打开」被执行成关闭（2026-10-29 语料普查：飞书意图语料里「…语音唤醒开关」12 句不论开关全解成 close）。
+#: 分类前去掉它，方向只看真正的动词；没有一个分支拿「开关」认对象。
+_SWITCH_NOUN = "开关"
+
+
+def _without_switch_noun(text: str) -> str:
+    return text.replace(_SWITCH_NOUN, "")
+
+
 def _classify_structured(text: str) -> dict | None:
-    t = text.strip()
+    t = _without_switch_noun(text.strip())
 
     # 元话语纠错不是业务执行请求。「不要把生活指数当成股票指数」同时含两域词，
     # 旧规则按先后顺序必然挑一个执行；正确行为是整句上云解释，不发任何动作。
@@ -1857,7 +1872,7 @@ def _display_names() -> dict[str, str]:
 _DISPLAY_NAMES: dict[str, str] | None = None
 
 
-def _backfill_object(part: str, previous: dict | None) -> dict | None:
+def _backfill_object(part: str, previous: dict | None, *, allow_target_parameter: bool = False) -> dict | None:
     """段内省略回填（QA 卡 Q7 / I-040）：这一段没有对象，用**上一段的对象**再判一次。
 
     「把空调打开**然后立刻关掉**」——第二段 `立刻关掉` 判不出对象，整段标
@@ -1889,7 +1904,11 @@ def _backfill_object(part: str, previous: dict | None) -> dict | None:
     if str(((retry.get("data") or {}).get("object")) or "") != prev_obj:
         return None                  # 拼出来的是别的对象 = 这一段说的是别的事
     if _is_filler_segment(part):
-        return None                  # 这一段没贡献任何信息 = 它不是一条指令
+        if not allow_target_parameter:
+            return None
+        bare = _classify_structured(name)
+        if bare is None or _same_command_parameters(retry, bare):
+            return None
     retry["_backfilled_from"] = prev_obj
     return retry
 
@@ -1932,6 +1951,101 @@ def _is_filler_segment(part: str, prev_obj: str = "") -> bool:
     if not probe:
         return False                 # 找不到合格探针 ⇒ 不做填充判定（宁可不跳过）
     return classify_structured(f"{probe}{part}") is None
+
+
+# ── 整句只解出一条时，原话里还有没有另一条（2026-10-29，第十七轮）──────────
+# 拆句那层（`_split_parts_with_sep`）只认逗号与连词；分不开的句子整句进分类，分支按子串认对象与方向，整句只出一条：
+# 「先关窗再开空调」「先打开空调再关窗」「关上车窗打开空调」「关闭空调再打开」修前全解成关空调，「打开天窗再关闭车窗」只关了车窗，
+# 「把温度调到26度再开风扇」只调了温度。判据只问分类器自己：切开的每一截各自解出什么，整句那条有没有把它覆盖住。
+# 零领域词：方向字沿用 `_DIRECTION_MARKS`，「再」的形态在 `runtime/clause_split.SEQUENCE_ZAI_RE`。
+
+_OPEN_MARKS = ("开", "启")
+_CLOSE_MARKS = ("关", "闭")
+
+
+def _object_of(result: dict | None) -> str:
+    return str(((result or {}).get("data") or {}).get("object") or "")
+
+
+def _stated_direction(segment: str, result: dict | None) -> str:
+    """这一截自己说出的开 / 关方向：分类结果的方向，且这一截里有同向的方向字。裸对象名默认的「开」不算说了（「后排车窗」解成开窗，
+    但它没说开）；切在词中间的残片也不算（「关闭空调」里的「闭空调」解成开空调，可它只有「闭」字）。"""
+    direction = _direction_of(result)
+    marks = _OPEN_MARKS if direction == "open" else _CLOSE_MARKS if direction == "close" else ()
+    return direction if any(m in segment for m in marks) else ""
+
+
+def _same_command_parameters(part: dict, whole: dict) -> bool:
+    """核对分段已经说出的操作和参数。省略的对象位置可来自另一段。"""
+    data = whole["data"]
+    return all(data.get(key) == value for key, value in part["data"].items()
+               if key != "conf" and value is not None)
+
+
+def _covered_by(segment: str, whole: dict, *, follows: bool) -> bool:
+    """「再」切开的一侧有没有被整句那条覆盖住：这一截没有指令内容，或说的是同一个操作和参数。
+    认不出又不是填充语的内容算没覆盖（「先关窗再开空调」的「先关窗」端侧认不出，但它是一件事）。
+    `follows`：「再」后面那一侧可以省略对象（「关闭空调再打开」），按整句的对象回填再判（同 `_backfill_object`）。"""
+    seg = segment.strip()
+    if not seg:
+        return True
+    result = _classify_structured(seg)
+    if result is None and follows:
+        # 「调到26度」只在补上「空调」时才说清参数，通用动词探针识别不了它。
+        result = _backfill_object(seg, whole, allow_target_parameter=True)
+    if result is None:
+        return _is_filler_segment(seg)
+    if _object_of(result) != _object_of(whole):
+        return False
+    if _direction_of(result) and not _stated_direction(seg, result):
+        return True                   # 裸对象名的默认开关方向不构成另一条指令
+    return _same_command_parameters(result, whole)
+
+
+def _verb_starts(t: str) -> list[int]:
+    """没有连词时一个动作可能起头的位置：方向字（连着的只取第一个，「关闭」不在「闭」处切；「打开」从「打」切）与「把 / 将」。"""
+    marks = _OPEN_MARKS + _CLOSE_MARKS
+    starts = set()
+    for i, ch in enumerate(t):
+        if ch in marks and not (i > 0 and t[i - 1] in marks):
+            starts.add(i - 1 if i > 0 and t[i - 1] == "打" else i)
+        elif ch in ("把", "将"):
+            starts.add(i)
+    return sorted(i for i in starts if i > 0)
+
+
+def _contradicts(segment: str, whole: dict) -> bool:
+    """切出的一截自己说出了另一件开 / 关方向的写指令：另一个对象，或同一个对象说反了方向。
+    没说方向的残片（「打开空调调到26度」的「调到26度」）不算：它多半是同一件事的补充，整句那条照旧本地做。"""
+    result = _classify_structured(segment)
+    if not _is_write_action(result):
+        return False
+    stated = _stated_direction(segment, result)
+    if not stated:
+        return False
+    if _object_of(result) != _object_of(whole):
+        return True
+    return bool(_direction_of(whole)) and not _same_command_parameters(result, whole)
+
+
+_CLAUSE_END_RE = re.compile(r"[，,。；;！!？?\n]+")
+
+
+def _leaves_another_command(text: str, whole: dict) -> bool:
+    """整句解成了 `whole` 这一条写指令，原话里却还有它没覆盖的另一条 ⇒ True（出口据此整句上云）。
+
+    分句内两种切法——① 不带逗号的「再」（前面不是空的）：前后两截都要被覆盖，「空调温度再调高一点」「后排车窗再关闭10%」里前一截只是
+    对象、后一截回填后还是同一件事，照旧本地做；② 没有「再」的切点（方向字 / 「把 / 将」起头）：切出的一截自己说出了另一件事才算——
+    「关上车窗打开空调」「打开空调关窗」。切点不跨分句：「车窗开了几个，都关上」的「开了」是在说状态，分类器却会把它读成开窗。"""
+    t = _without_switch_noun(text.strip())
+    for clause in _CLAUSE_END_RE.split(t):
+        parts = [part.strip() for part in SEQUENCE_ZAI_RE.split(clause) if part.strip()]
+        if len(parts) > 1 and any(not _covered_by(part, whole, follows=i > 0)
+                                  for i, part in enumerate(parts)):
+            return True
+        if any(_contradicts(clause[:i], whole) or _contradicts(clause[i:], whole) for i in _verb_starts(clause)):
+            return True
+    return False
 
 
 def split_and_classify(text: str) -> list[dict] | None:

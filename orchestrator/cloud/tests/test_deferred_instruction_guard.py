@@ -66,6 +66,31 @@ def test_the_window_variant_that_the_planner_ran_now_five_times_in_six():
     assert kept == [] and _intents(blocked) == ["window.open"]
 
 
+@pytest.mark.parametrize(("origin", "intent", "description"), [
+    ("车里凉快了再关空调", "hvac.off", "关闭空调"),          # 只规划取证（2026-10-29，线上 ebd6988a）6 / 6 当场关空调
+    ("雨停了再把车窗打开", "window.open", "打开车窗"),       # 3 / 6
+    ("天黑了再开大灯", "headlight.on", "打开大灯"),          # 2 / 6
+    ("吃完饭了再开空调", "hvac.on", "打开空调"),             # 1 / 6
+    ("雨停之后再打开车窗", "window.open", "打开车窗"),
+    ("雨停了，再把车窗打开", "window.open", "打开车窗"),
+    ("请等雨停再打开车窗", "window.open", "打开车窗"),
+])
+def test_waiting_for_something_to_happen_does_not_run_the_vehicle_action_now(origin, intent, description):
+    """等一件事过去再做（第十七轮）：同往后推，当场的端侧车控不做，提醒照常。"""
+    kept, blocked = _filter([_edge(intent, description), _cloud("reminder.create", "创建提醒")], origin)
+    assert _intents(blocked) == [intent] and _intents(kept) == ["reminder.create"]
+
+
+@pytest.mark.parametrize(("origin", "steps"), [
+    ("空调关了再开一下", [_edge("hvac.off", "关闭空调"), _edge("hvac.on", "打开空调", "e2")]),
+    ("车窗关好了再开空调", [_edge("window.close", "关闭车窗"), _edge("hvac.on", "打开空调", "e2")]),
+])
+def test_two_actions_done_one_after_the_other_still_run(origin, steps):
+    """X 是用户要做的动作：规划器 6 / 6 排成依次两步，照常执行。"""
+    kept, blocked = _filter(steps, origin)
+    assert _intents(kept) == _intents(steps) and blocked == []
+
+
 def test_a_scene_with_a_trigger_is_the_right_place_for_a_future_condition():
     """D03（用户 2026-10-16 裁决建成带条件的场景）：场景要确认保存，照常；当场开空调不做。"""
     kept, blocked = _filter([_cloud("scene.create", "创建场景", confirm=True), _edge("hvac.on", "打开空调")],
@@ -84,6 +109,12 @@ def test_a_scene_with_a_trigger_is_the_right_place_for_a_future_condition():
      [_edge("volume.dec", "调小音量"), _cloud("reminder.create", "创建提醒")], ["volume.dec", "reminder.create"], []),
     ("先开空调，十分钟后再关",
      [_edge("hvac.on", "打开空调"), _edge("hvac.off", "关闭空调", "e2")], ["hvac.on"], ["hvac.off"]),
+    ("打开座椅加热，雨停了，再把车窗打开",
+     [_edge("seat.heating.on", "打开座椅加热"), _edge("window.open", "打开车窗", "e2")],
+     ["seat.heating.on"], ["window.open"]),
+    ("等雨停，再打开车窗，打开座椅加热",
+     [_edge("window.open", "打开车窗"), _edge("seat.heating.on", "打开座椅加热", "e2")],
+     ["seat.heating.on"], ["window.open"]),
 ])
 def test_in_a_compound_only_what_the_deferred_part_names_waits(origin, steps, kept_intents, blocked_intents):
     kept, blocked = _filter(steps, origin)
