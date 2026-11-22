@@ -253,6 +253,20 @@ def freeze(expected_sha: str, provider: str, model: str, corpus: Path = CORPUS, 
     }
 
 
+def _edge_steps_ran_in_order(spans: list, intents: list[str]) -> bool:
+    """用云端派发的开始和完成时间核对两步没有重叠。时间戳精度为一毫秒。"""
+    edge = [span for span in spans if isinstance(span, dict)
+            and str(span.get("node") or "").startswith("step.edge:")]
+    if [span["node"] for span in edge] != [f"step.edge:{intent}" for intent in intents]:
+        return False
+    if any(not isinstance(span.get("ts"), (int, float))
+           or not isinstance(span.get("duration_ms"), (int, float))
+           or span["duration_ms"] < 0 for span in edge):
+        return False
+    return all(current["ts"] - current["duration_ms"] + 1 >= previous["ts"]
+               for previous, current in zip(edge, edge[1:]))
+
+
 def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: float = 0.0,
           lane: str = "read_only", vehicle_after: dict | None = None, held: str = "") -> dict:
     """Separate planning/dispatch from presentation; a spoken hint is not a card.
@@ -293,6 +307,8 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: 
         counts = [target.get("waypoint_count") for target in obs.get("nav_targets") or []]
         if counts != [expected_count]:
             failures.append(f"nav_waypoint_count:{counts}!={[expected_count]}")
+    if "edge_step_order" in expect and not _edge_steps_ran_in_order(spans, expect["edge_step_order"]):
+        failures.append("edge_step_order")
     if obs.get("error") or "Agent 内部错误" in str(obs.get("speech") or ""):
         failures.append("technical_failure")
     if expect.get("need_confirm") and not (obs.get("need_confirm") and obs.get("operation_id")):

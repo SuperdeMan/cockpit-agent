@@ -47,6 +47,18 @@ def asks_only_to_add_one_charger(text: str) -> bool:
     return bool(_ADD_ONE_ONLY_RE.fullmatch(text or ""))
 
 
+_NAV_AND_NEAR_CHARGER_RE = re.compile(
+    rf"\s*(?:请|帮我|麻烦)?\s*导航(?:前往|去|到)\s*(?P<destination>[^，,。！？!?；;\n]{{2,32}}?)"
+    rf"[，,]\s*(?:再)?(?:在)?(?:目的地)?附近(?:帮我)?\s*找(?:一?[个家座])?\s*{_STATION}(?:吧|啊)?[。！!]?\s*"
+)
+
+
+def destination_for_nearby_charger(text: str) -> str:
+    """「导航去 X，在附近找个充电桩」给漏填目的地的找站步补原话。"""
+    match = _NAV_AND_NEAR_CHARGER_RE.fullmatch(text or "")
+    return match["destination"].strip() if match else ""
+
+
 def asks_to_swap_charger(text: str) -> bool:
     """原话是不是在要「换一个充电站」。"""
     return bool(_SWAP_RE.search(text or ""))

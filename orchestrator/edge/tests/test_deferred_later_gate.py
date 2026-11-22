@@ -49,6 +49,7 @@ def _run(monkeypatch, text: str) -> tuple[list[str], str]:
     "下雨的话把车窗关上",                                   # 没有框架词的条件句
     "明天早上八点，帮我打开空调", "下班的时候，打开空调",     # 句首单说时间、逗号后才是要做的事
     "雨停了，再把车窗打开", "请等雨停再打开车窗", "打开座椅加热，等雨停，再把车窗打开",
+    "先等雨停再打开车窗", "请先等雨停，再把车窗打开",
     "等车里凉快以后再把空调温度和风速都调一下",
 ])
 def test_a_deferred_instruction_does_not_run_on_the_edge(monkeypatch, text):

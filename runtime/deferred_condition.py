@@ -114,7 +114,7 @@ _EVENT_THEN_RE = re.compile(rf"(?P<event>[^，,。；;！!？?\s]{{1,20}}?)(?:�
 #: 「等级」「等于」「等同」不是等。
 _WAIT_THEN_RE = re.compile(
     rf"(?:^|(?<=[，,。；;！!？?\s]))(?:(?:{'|'.join(DIRECTIVE_MARKERS)})\s*)?"
-    rf"等(?!级|于|同)\s*[^，,。；;！!？?\s]{{1,20}}?{_EVENT_LINK}"
+    rf"(?:先\s*)?等(?!级|于|同)\s*[^，,。；;！!？?\s]{{1,20}}?{_EVENT_LINK}"
 )
 
 

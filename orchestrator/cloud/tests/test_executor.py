@@ -1,4 +1,5 @@
 """Planner 引擎单元测试：拓扑分层、环检测、slot_refs、部分失败。"""
+import asyncio
 import json
 import time
 
@@ -59,6 +60,40 @@ def test_topo_cycle_raises():
     ]
     with pytest.raises(CyclicPlan):
         DagExecutor._topo_layers(steps)
+
+
+@pytest.mark.parametrize(("origin", "first_intent", "first_desc", "serial"), [
+    ("先关窗再开空调", "window.close", "关闭车窗", True),
+    ("空调关了再开一下", "hvac.off", "关闭空调", True),
+    ("关闭车窗，打开空调", "window.close", "关闭车窗", False),
+])
+def test_explicit_edge_sequence_waits_for_the_first_operation(origin, first_intent, first_desc, serial):
+    calls = []
+
+    async def call(endpoint, intent, slots, ctx, meta):
+        calls.append(("start", intent))
+        await asyncio.sleep(0)
+        calls.append(("end", intent))
+        return MockResponse(status=0, speech="完成")
+
+    first = Step(id="close", agent_id="edge-vehicle", deployment="edge",
+                 intent=first_intent, capability_description=first_desc)
+    second = Step(id="open", agent_id="edge-vehicle", deployment="edge",
+                  intent="hvac.on", capability_description="打开空调")
+    # 模型给的列表顺序与原话相反，用户指定的先后由执行器补入。
+    plan = Plan(steps=[second, first], goal="先关窗再开空调", safety_origin_text=origin)
+    executor = DagExecutor(call_agent_fn=call)
+
+    async def run():
+        return [r async for r in executor.run(plan, PlanContext())]
+
+    results = asyncio.run(run())
+    assert len(results) == 2 and all(result.status == StepStatus.OK for result in results)
+    if serial:
+        assert calls == [("start", first_intent), ("end", first_intent),
+                         ("start", "hvac.on"), ("end", "hvac.on")]
+    else:
+        assert [phase for phase, _ in calls] == ["start", "start", "end", "end"]
 
 
 # ─── 部分失败测试 ───

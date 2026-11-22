@@ -5,6 +5,8 @@ import asyncio
 import json
 import time
 
+import pytest
+
 from agents._sdk.testing import make_context, run_handle
 from agents.charging_planner.src.agent import ChargingPlannerAgent
 from agents.charging_planner.src.providers.base import ChargingStation
@@ -251,6 +253,18 @@ def test_an_upstream_station_for_a_single_route_addition_remains_available_to_th
     new_route = _find(agent, "导航去深圳北站，在附近找个充电桩", meta)
     assert new_route.data["waypoint"]["name"] == _STATION["name"]
     assert REFERENCE_ONLY_WAYPOINTS not in new_route.data
+
+
+@pytest.mark.parametrize(("text", "expected_address"), [
+    ("导航去深圳北站，在附近找个充电桩", "深圳北站"),
+    ("导航去深圳北站，在我附近找个充电桩", None),
+])
+def test_find_uses_the_named_destination_when_the_planner_omits_the_slot(text, expected_address):
+    agent, calls = _agent()
+    result = asyncio.run(run_handle(agent, "charging.find", slots={}, raw_text=text,
+                                    ctx=make_context(), meta=LOC))
+    assert (calls[0].address or None) == expected_address
+    assert bool(result.data.get("waypoint")) is (expected_address is not None)
 
 
 def test_adding_a_charger_from_the_long_trip_plan_entry_is_handed_to_navigation_too():

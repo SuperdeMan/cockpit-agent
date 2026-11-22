@@ -433,6 +433,16 @@ def test_en07_counts_waypoints_in_the_emitted_navigation_after_all_finals():
         assert result["failures"] == ([] if count == 2 else ["nav_waypoint_count:[4]!=[2]"])
 
 
+@pytest.mark.parametrize(("finished", "failures"), [(1025, []), (1013, ["edge_step_order"])])
+def test_reported_action_order_does_not_pass_when_dispatches_overlap(finished, failures):
+    intents = ["window.close", "hvac.on"]
+    spans = [{"node": "step.edge:window.close", "ts": 1000, "duration_ms": 20},
+             {"node": "step.edge:hvac.on", "ts": finished, "duration_ms": 20}]
+    expect = {"actions_required": intents, "actions_allowed": intents, "edge_step_order": intents}
+    assert probe.judge(expect, obs(actions=intents), {"spans": spans},
+                       lane="simulated_vehicle")["failures"] == failures
+
+
 def test_vehicle_restore_diff_names_every_key_that_did_not_come_back():
     baseline = {"trunk": "closed", "hvac_on": False, "volume": 30}
     assert probe.vehicle_restore_diff(baseline, dict(baseline)) == []

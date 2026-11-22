@@ -18,6 +18,7 @@ from . import verify as _verify
 from runtime import effect_evidence as _ev
 from runtime.capability_contract import accepts_parameter
 from runtime import operation as _operation
+from runtime.intent_effect import is_write_intent
 from runtime.slots import RESULT_CONSUMED_META
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan,
                      step_call_context, step_fingerprint, step_raw_text)
@@ -25,6 +26,7 @@ from observability import events as obs_events
 from . import confirmation
 from .candidate_query import names_a_position
 from .operation_sync import SYNC_SPEECH
+from .step_grounding import explicit_edge_order
 from runtime.slot_fidelity import (restore_dropped_qualifiers,
                                    undeclared_slots)
 
@@ -221,6 +223,18 @@ class DagExecutor:
           是「执行了但不报」（同 C2 那条「读不到与读到了但不对分开报」）。
         """
         done = dict(done) if done else {}
+        # Round-17 真栈：两步计划有时漏了口述的「先…再…」依赖，进同一层同时派发。
+        if len(plan.steps) == 2 and all(
+            _vehicle_side(step) and is_write_intent(step.intent)
+            and not step.depends_on and not step.slot_refs and step.id not in done
+            for step in plan.steps
+        ):
+            origin = plan.safety_origin_text or getattr(ctx, "safety_origin_text", "")
+            ordered = explicit_edge_order(origin, plan.steps)
+            if ordered:
+                first, second = ordered
+                second.depends_on = [first.id]
+                logger.info("Bound explicit edge sequence: %s before %s", first.intent, second.intent)
         # 结果有没有后续步接着用：按这份计划算好随 meta 下发（`RESULT_CONSUMED_META`，声明方据此决定要不要改派）
         consumed = self._consumed_step_ids(plan.steps)
         for step in plan.steps:

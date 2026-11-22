@@ -22,7 +22,7 @@ from runtime import vehicle_reading
 from runtime.vehicle_reading import Reading
 from runtime.charger_swap import (
     asks_for_another_charger, asks_only_to_add_one_charger, asks_to_add_charger, asks_to_swap_charger,
-    carries_charger_name, charger_name_probe,
+    carries_charger_name, charger_name_probe, destination_for_nearby_charger,
 )
 from runtime.slots import RESULT_CONSUMED_META
 from runtime.route_stops import REFERENCE_ONLY_WAYPOINTS, on_route
@@ -203,6 +203,8 @@ class ChargingPlannerAgent(BaseAgent):
         # 「导航去X + 在附近找充电桩」：按目的地搜，最优站经聚合器并入导航路线作为途经点。
         # 泛目的地（含裸城市名）与 plan 同门：先 dest_choice 澄清（R1，B2-3/B5-2）。
         destination = (intent.slots.get("destination") or "").strip()
+        if not destination:
+            destination = destination_for_nearby_charger(intent.raw_text or "")
         if destination:
             destination = await self._resolve_dest_ordinal(ctx, destination)
             clarify = await self._clarify_vague_destination(destination, meta, ctx=ctx)

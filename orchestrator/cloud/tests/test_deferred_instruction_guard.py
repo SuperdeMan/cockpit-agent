@@ -74,6 +74,7 @@ def test_the_window_variant_that_the_planner_ran_now_five_times_in_six():
     ("雨停之后再打开车窗", "window.open", "打开车窗"),
     ("雨停了，再把车窗打开", "window.open", "打开车窗"),
     ("请等雨停再打开车窗", "window.open", "打开车窗"),
+    ("请先等雨停，再把车窗打开", "window.open", "打开车窗"),
 ])
 def test_waiting_for_something_to_happen_does_not_run_the_vehicle_action_now(origin, intent, description):
     """等一件事过去再做（第十七轮）：同往后推，当场的端侧车控不做，提醒照常。"""

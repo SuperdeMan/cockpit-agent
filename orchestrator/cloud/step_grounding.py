@@ -20,8 +20,14 @@ from __future__ import annotations
 
 import re
 
+from runtime.clause_split import SEQUENCE_ZAI_RE, split_clauses
+from runtime.deferred_condition import defers_to_later, waits_on_condition
 from runtime.polarity import is_negated_directive
-from runtime.question_shape import HOW_TO_ACTIONS, is_imperative_opening, is_non_directive_question
+from runtime.question_shape import (
+    HOW_TO_ACTIONS, carries_operation_cue, is_imperative_opening, is_non_directive_question,
+)
+
+from .models import Step
 
 #: 能力描述与指令常用的多字操作词（端侧 `capabilities._describe` 写的动词 + 问句判据的方法动词里 ≥2 字的那些）。
 OPERATION_WORDS = tuple(sorted({w for w in HOW_TO_ACTIONS if len(w) >= 2} | {
@@ -146,3 +152,31 @@ def directs(clause: str) -> bool:
 def instructs(clause: str) -> bool:
     """这个分句是一条指令：要求做事、且以指令起句（`opens_as_instruction`）。认不出的不算。"""
     return directs(clause) and opens_as_instruction(clause)
+
+
+def explicit_edge_order(origin: str, steps: list[Step]) -> tuple[Step, Step] | None:
+    """用原话将「先 X 再 Y」或「X 了再 Y」分别绑定到两条即时车控。"""
+    if not origin or len(steps) != 2 or not directs(origin) or waits_on_condition(origin) or defers_to_later(origin):
+        return None
+    text = origin.strip().rstrip("。！？!?").strip()
+    links = list(SEQUENCE_ZAI_RE.finditer(text))
+    if len(links) != 1:
+        return None
+    link = links[0]
+    head, tail = text[:link.start()].rstrip("，, "), text[link.end():].lstrip()
+    lead = _LEADING_FILLER_RE.match(_compact(head))
+    if not (head.endswith("了") or (lead and "先" in lead[0])):
+        return None
+    if any(re.search(r"[。！？!?；;\n]", clause) or len(split_clauses(clause)) != 1
+           or not directs(clause) or not carries_operation_cue(clause) for clause in (head, tail)):
+        return None
+
+    matches = []
+    for first, second in (steps, steps[::-1]):
+        if inverts_stated_direction(head, first) or inverts_stated_direction(tail, second):
+            continue
+        head_margin = step_naming_score(head, first) - step_naming_score(head, second)
+        tail_margin = step_naming_score(tail, second) - step_naming_score(tail, first)
+        if min(head_margin, tail_margin) >= 0 and max(head_margin, tail_margin) > 0:
+            matches.append((first, second))
+    return matches[0] if len(matches) == 1 else None
