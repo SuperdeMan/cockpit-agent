@@ -11594,3 +11594,20 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   - PowerShell 5.1 把带英文双引号的多行提交说明传给 git 会拆坏参数 ⇒ `git commit -F 文件`；`python -c` 放在 PowerShell 双引号里时反引号是转义符；
   - 容量归因先 `du -x` 整个分区、先读 dev-guide 的容量一节：`dev_stack capacity` 只分列镜像、构建缓存与 `/opt/car-agent`；`docker system df -v`
     的独占列在 containerd 存储下重复计数，按它估「删旧标签能腾多少」差一个数量级（看着约 50 GB，实际 3.2 GiB），第一版文档就这样写错了归因。
+
+## 2026-11-22：Nightly CI 车况快照冷启同步修复 + 云端 Tailscale 1.104 验收探针适配（`75f57ead` → `503f24ba`）
+
+- **Nightly CI 连续 19 晚红灯根因与修复（`75f57ead`）**：
+  - GitHub `nightly-e2e.yml` 自 2026-11-03 起连续 19 次在 `e2e_central_hub_assertions::t0_hvac_local` 失败（`state 'hvac_on'=None, expected True; diff={}`），而第三例 `cloud_chitchat_streaming` 时全部 29 键一次性从 `None` 跳出（含 `hvac_on=True, hvac_temp=26`）。
+  - 根因：`IdentityStackLease.enable()` 重建 `observability-collector` 与 `edge-gateway` 清空了内存 `VehicleStateStore`，而 `edge-orchestrator` 继续运行（`seq >= 1`）每 30 s 才发一次全量快照；冷启消费方在首个 `snapshot=True` 检查点前按 CA2-06 契约以 `snapshot_required` 丢弃所有增量包。此外 `collector` 在订阅完成前即设置 `app.state.nc` 使 `/healthz` 提前报 `nats: true`，`wait_identity_services` 也未校验 `nats is True`。
+  - 修复：在 `runtime/vehicle_state.py` / `gateway/vehiclestate/state.go` 定义 `STATE_SUBJECT` 与 `SNAPSHOT_REQUEST_SUBJECT`（`vehicle.state.snapshot.request`）；`edge-orchestrator` 订阅该只读主题并按 `vehicle_id` 过滤、0.5 s 尾合并节流触发 `emit_snapshot()`（控制面 NATS 改为无限重连 + 冷启重试）；`collector` 先完成订阅并 `flush`、请求快照后再置 `app.state.nc`；`collector` / `edge-gateway` / `cloud` / `scene` / `proactive` 均在启动、重连及收到 `snapshot_required` 时节流补发同步请求；`e2e_stack_lease._collector_ready` 要求 `nats is True`；`e2e_central_hub_assertions` 与 `e2e_context` 启动等待初始快照并轮询 `setup` / `expect_state`。
+  - 验证：清洁隔离工作树全量 `pytest` 12 858 passed / 38 skipped，Go 5/5 包，4 道阻断门禁 + 端侧 smoke 13/13 + E2E 契约与 CI 车道全绿，3 项反向变异全转红后恢复；GitHub `ci.yml` Run #44989185032 全 8 jobs success。
+- **云端 Tailscale 1.104.6 验收探针适配（`503f24ba`）**：
+  - 部署 `75f57ead` 时 26 镜像全部构建、30 容器运行、5 HTTPS 200，但在 `verify-release.sh::run_wss_probes` 失败回滚至 `ebd6988a`；只读复测现网 `ebd6988a` 的 `verify-current` 亦同点失败。
+  - 根因：云主机 `/usr/sbin/tailscaled` 于 2026-11-11 自动升级至 1.104.6，Tailscale Serve 套接字改为 `100.69.183.124%tailscale0` 接口绑定；桥接容器内 `docker exec` 直连主机 tailnet IP 被内核 `ECONNREFUSED`（`errno 111`）。
+  - 修复（经用户授权）：`deploy/cloud/verify-release.sh::run_wss_probes` 改用当版 `observability-collector` 镜像执行 `docker run --pull never --rm=true -i --network host`（凭据 `WS_TOKEN` / `E2E_IDENTITY_SECRET` 走命令级环境变量、不进 argv），补 `test_run_wss_probes_uses_host_network_collector_image_without_secret_argv`（云端发布测试集 454 passed / 3 skipped）。
+  - 上线与真栈验证：`infra-approval --sha 503f24ba --apply` 更新批准锚至 `129fedb2…` → `deploy --sha 503f24ba --apply`（~3 min）→ `status` ok（5/5 healthy、warnings 空、可用 54.6 GiB）→ `verify` 通过（`20261122T065230Z-503f24b.json`，主机证据 30/30 容器 + WSS 探针全过）→ `scripts/probe_vehicle_state_live.py --expected-sha 503f24ba… --expected-authentication signed` **16/16 全过**（Ed25519 验签、`gateway_and_collector_agree`、未知车辆拒绝、零车态改写）。
+- ⛔ 教训：
+  - 周期广播（30 s）只能作兜底，不能作强检查点协议（`snapshot_required`）的冷启同步机制——消费方冷启或重连必须主动拉一次只读快照，且服务端须用尾合并节流防重启风暴又不丢末尾请求；
+  - `verify-release.sh` 有一条源码级静态断言禁止出现 `"rm "` 子串——一次性容器必须写 `--rm=true` 而非 `--rm `；
+  - 现网部署失败回滚到 `ROLLBACK_FAILED` 时先在现网只读跑一次 `verify-current`，能立刻区分「新代码回归」还是「宿主机环境变化（本次为 Tailscale 1.104.6 套接字绑定收紧）」。
