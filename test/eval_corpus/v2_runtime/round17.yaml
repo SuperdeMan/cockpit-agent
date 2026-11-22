@@ -41,7 +41,7 @@ cases:
     family: event_then_control
     data_cleanup: [reminder]
     turns:
-      - {say: 车里凉快了再关空调, expect: {actions_allowed: []}}
+      - {say: 车里凉快了再关空调, expect: {actions_allowed: [], allowed_confirm_intents: ["scene.create"]}}
   - id: R17-D3
     family: explicit_wait_with_sequence_prefix
     data_cleanup: [reminder]

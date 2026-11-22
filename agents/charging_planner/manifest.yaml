@@ -121,6 +121,7 @@ route_hints:
   - pattern: '^\s*(?:那就?)?\s*(?:请|帮我|能不能|可以)?\s*再?\s*换(?:一个|一家|个|家|别的|个别的|另一个|另一家)?\s*(?:充电站|充电桩|快充站?|超充站?|地方充电)(?:吧|呢|啊)?\s*[。！!？?]?\s*$'
     intent: charging.find
     policy: replace
+    complexity: simple  # 换站整句交给一次找站或改派。T2 不消费换站改派。
     priority: 125
   # 设备 guard 两条 hint 都要（2026-07-27 评审三批：「去露营手机怎么充电」「去露营怎么
   # 充电宝」会命中 plan 形态——SOC/充电词形对设备成立不分 plan/find）。

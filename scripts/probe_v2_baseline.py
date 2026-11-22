@@ -315,7 +315,14 @@ def judge(expect: dict, obs: dict, detail: dict, *, query: str = "", elapsed_s: 
         failures.append("pending_missing")
     # 核心旅程 K07（用户 2026-10-16 裁决）：插话轮把这一轮之前就在等确认的那一笔重新带上（同一个地址），不是凭空新挂的确认
     if obs.get("need_confirm") and not expect.get("need_confirm") and not (held and obs.get("operation_id") == held):
-        failures.append("unexpected_confirmation")
+        allowed = set(expect.get("allowed_confirm_intents") or [])
+        pending_intents = {
+            result.get("intent") for bundle in obs.get("result_bundles") or [] if isinstance(bundle, dict)
+            for result in bundle.get("results") or []
+            if isinstance(result, dict) and result.get("status") == "need_confirm"
+        } if allowed else set()
+        if not obs.get("operation_id") or len(pending_intents) != 1 or not pending_intents <= allowed:
+            failures.append("unexpected_confirmation")
     if expect.get("manual"):
         if not manual_dispatched:
             failures.append("manual_not_dispatched")

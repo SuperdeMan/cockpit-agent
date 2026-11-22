@@ -107,6 +107,7 @@ message RouteHint {
   // 计划复杂度（2026-10-18，200×5 后续批 §21.5）：""=不改（缺省，行为不变）；"adaptive"=以 replace 命中、换上本 hint
   // 那一步时，整份计划标 adaptive、goal 保留原话——那一步是观察步，后面的交给 T2 按观察结果再规划（「今天的天气适合去哪玩」：
   // 先查天气、看到结果再推荐去处）。只来自 manifest，LLM 写不到。
+  // "simple" 只用于整句 replace，归成一个步骤并交给单次执行或改派。
   string complexity = 8;
 }
 

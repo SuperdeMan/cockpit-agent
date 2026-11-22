@@ -161,8 +161,11 @@ def test_the_swap_hint_is_a_subset_of_the_predicate():
             assert asks_to_swap_charger(text), text
 
 
-def test_the_swap_hint_replaces_a_talk_only_plan():
-    """规划器判「无需动作」交出闲聊时，提示把整句换成 charging.find（由它决定改派换站还是找站）。"""
+@pytest.mark.parametrize("intents", [
+    ["chitchat.talk"], ["charging.find"], ["charging.find", "navigation.reroute"],
+])
+def test_the_swap_hint_runs_a_single_step_that_can_handoff(intents):
+    """换站原话被规划为 T2 时，归回到可消费改派的单次路径。"""
     from types import SimpleNamespace
     from agents._sdk.manifest import load_manifest
     from orchestrator.cloud.models import Plan, Step
@@ -171,10 +174,12 @@ def test_the_swap_hint_replaces_a_talk_only_plan():
 
     manifest = load_manifest(str(Path(__file__).resolve().parents[1] / "manifest.yaml"))
     amap = {"charging-planner": SimpleNamespace(manifest=manifest, endpoint="x:0")}
-    plan = Plan(steps=[Step(id="s1", agent_id="chitchat", intent="chitchat.talk")])
+    plan = Plan(steps=[Step(id=f"s{i}", agent_id=intent.split(".")[0], intent=intent)
+                       for i, intent in enumerate(intents)], complexity="adaptive")
     assert RouteHintEngine(lambda raws, agent_map: [_step_from(item) for item in raws]).apply(
         plan, "换一个充电站", amap) is True
     assert [s.intent for s in plan.steps] == ["charging.find"]
+    assert plan.complexity == "simple"
 
 
 def _step_from(raw):

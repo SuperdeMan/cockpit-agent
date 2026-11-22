@@ -8,10 +8,20 @@ from __future__ import annotations
 
 import json
 
-from runtime.charger_swap import asks_only_to_add_one_charger, is_charger_name
+from runtime.charger_swap import asks_only_to_add_one_charger, destination_for_nearby_charger, is_charger_name
 from runtime.route_stops import REFERENCE_ONLY_WAYPOINTS, on_route, same_stop
 
 from .models import Plan, StepResult, StepStatus
+
+
+def bind_charging_destination(plan: Plan, origin: str) -> None:
+    """把跨分句的目的地填进已校验的找站步，之后仍按分句投影原话。"""
+    destination = destination_for_nearby_charger(origin)
+    if destination:
+        for step in plan.steps:
+            if (step.intent == "charging.find" and not step.slots.get("destination")
+                    and "destination" not in step.slot_refs):
+                step.slots["destination"] = destination
 
 
 def merged_waypoints(results) -> list[dict]:

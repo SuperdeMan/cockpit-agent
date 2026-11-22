@@ -15,8 +15,9 @@ from orchestrator.cloud.planning import (
     _planner_system, _submit_plan_tools, _CLARIFY_SECTION, _SUBMIT_PLAN_NAME,
     _TOOLCALL_SECTION, _goal_requires_clarification,
 )
-from orchestrator.cloud.models import PlanContext
+from orchestrator.cloud.models import PlanContext, step_raw_text
 from orchestrator.cloud.context import Focus, WorkingSet
+from orchestrator.cloud.step_input import bind_step_inputs
 
 
 class MockAgent:
@@ -137,6 +138,37 @@ def test_planner_prompt_checks_every_affirmative_clause_before_submit(monkeypatc
     assert "goal 写到了但 steps 没有" in spy.last_system
     assert "明确否定" in spy.last_system
     assert "条件分支" in spy.last_system
+
+
+def test_empty_charger_destination_is_bound_before_the_turn_is_projected(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    origin = "导航去深圳北站，在附近找个充电桩"
+    nav = MockAgent("navigation", ["navigation.navigate_to"])
+    charge = MockAgent("charging-planner", ["charging.find"])
+    nav.manifest.capabilities[0].description = "导航到目的地"
+    charge.manifest.capabilities[0].description = "寻找附近充电桩"
+    for agent in (nav, charge):
+        agent.manifest.capabilities[0].slots = ["destination"]
+        agent.manifest.capabilities[0].whole_utterance = False
+    agents = [nav, charge]
+    catalog = _assemble_capability_catalog(agents)
+    args = {"addressed": True, "complexity": "simple", "steps": [
+        {"id": "s1", "capability_ref": catalog.pair_to_ref[("navigation", "navigation.navigate_to")],
+         "slots": {"destination": "深圳北站"}, "depends_on": [], "slot_refs": {}},
+        {"id": "s2", "capability_ref": catalog.pair_to_ref[("charging-planner", "charging.find")],
+         "slots": {}, "depends_on": [], "slot_refs": {}},
+    ]}
+    spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": args}]))
+    builder = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    plan = _build(builder, origin, agents=agents)
+    plan.safety_origin_text = origin
+    for step in plan.steps:
+        step.origin_text = origin
+    bind_step_inputs(plan, origin_exchange_id="turn-1")
+
+    station = next(step for step in plan.steps if step.intent == "charging.find")
+    assert station.slots["destination"] == "深圳北站"
+    assert step_raw_text(station, PlanContext(raw_text=origin)) == "在附近找个充电桩"
 
 
 def test_planner_prompt_splits_unpunctuated_actions_without_inventing_inverse(monkeypatch):

@@ -443,6 +443,18 @@ def test_reported_action_order_does_not_pass_when_dispatches_overlap(finished, f
                        lane="simulated_vehicle")["failures"] == failures
 
 
+@pytest.mark.parametrize(("intent", "operation", "failures"), [
+    ("scene.create", "op1", []),
+    ("scene.activate", "op1", ["unexpected_confirmation"]),
+    ("scene.create", "", ["unexpected_confirmation"]),
+])
+def test_optional_deferred_scene_confirmation_needs_the_typed_addressed_pending(intent, operation, failures):
+    expect = {"actions_allowed": [], "allowed_confirm_intents": ["scene.create"]}
+    observed = obs(need_confirm=True, operation_id=operation,
+                   result_bundles=[{"results": [{"intent": intent, "status": "need_confirm"}]}])
+    assert probe.judge(expect, observed, {}, lane="synthetic_writes")["failures"] == failures
+
+
 def test_vehicle_restore_diff_names_every_key_that_did_not_come_back():
     baseline = {"trunk": "closed", "hvac_on": False, "volume": 30}
     assert probe.vehicle_restore_diff(baseline, dict(baseline)) == []

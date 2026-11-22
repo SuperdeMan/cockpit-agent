@@ -3299,6 +3299,7 @@ Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明
   按名字搜到的才叫「X 充电站」，落空照类目列并如实说（§22.5）。
 - route hint 可声明 `complexity: adaptive`（proto `RouteHint` 字段 8）：以 replace 命中时整份计划按 adaptive 规划、goal 保留原话；只来自 manifest，
   经 SDK → Registry JSONB 往返 → RouteHintEngine，挂起 / 恢复沿用计划既有的 `complexity` / `goal`（§21.5）。
+- 整句 replace hint 也可声明 `complexity: simple`，归成单步计划，允许现有单次执行路径消费改派，例如「换一个充电站」。
 - 规划线契约：步骤全没写 `id`、也没有一步引用别的步（依赖 / `slot_refs` / 槽值里的占位或像步骤 id 的记号）时按位置补 `s1…sN`——这时 `id`
   只是标签，同补空容器键；部分写了、顶层出现 `id`、缺 `capability_ref` 的照旧整份拒绝（§22.4）。
 

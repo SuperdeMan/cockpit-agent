@@ -86,11 +86,15 @@ class RouteHintEngine:
                 continue
             # replace（默认，互斥）
             hit = True
-            if self._has_intent(plan, hint.intent) and not self._receiver_rejects(plan, hint.intent):
+            complexity = str(getattr(hint, "complexity", "") or "").strip().lower()
+            if complexity == "simple" and str(getattr(hint, "scope", "") or "").lower() == "clause":
+                complexity = ""
+            accepted = self._has_intent(plan, hint.intent) and not self._receiver_rejects(plan, hint.intent)
+            if accepted and (complexity != "simple" or len(plan.steps) == 1):
                 # LLM 已正确路由到该 intent，保留原计划；replace 互斥 → 停
-                self._adopt_complexity(plan, hint, text)
+                self._adopt_complexity(plan, hint, text, complexity)
                 return True
-            if self._has_intent(plan, hint.intent):
+            if not accepted and self._has_intent(plan, hint.intent):
                 # 意图对了、槽是编的：接收方的严格契约会整步拒绝（`argument_error`，派发前同一个判断），用户只会听到
                 # 「接口或参数暂时不匹配」。换成本 hint 解析出的那一步——整步替换，不是从模型那一步里删键
                 # （200×5 后续批复测 `4fc69b40`：`memory.remember` 被模型填上 content / item / key-value，17 轮被拒）。
@@ -98,21 +102,20 @@ class RouteHintEngine:
             self._apply_step(plan, agent_id, hint,
                              self._resolve_slots(hint, m, span), agent_map,
                              replace=True)
-            self._adopt_complexity(plan, hint, text)
+            self._adopt_complexity(plan, hint, text, complexity)
             return True
         return hit
 
     @staticmethod
-    def _adopt_complexity(plan, hint, text: str) -> None:
-        """hint 声明了 `complexity: adaptive`（200×5 后续批 §21.5），且计划里只有它这一种 intent（换上的那一步，或模型自己只派了它，
-        「只报天气」那种）⇒ 整份计划按 adaptive：goal 保留原话、清掉澄清卡、标受话——这一步是观察步，后面的交给 T2 按观察结果
-        再规划（「今天的天气适合去哪玩」：先查天气、看到结果再推荐去处）。计划里还有别的步（「天气 → 周边」两步）时不动。"""
-        if (str(getattr(hint, "complexity", "") or "").strip().lower() != "adaptive" or not plan.steps
+    def _adopt_complexity(plan, hint, text: str, complexity: str) -> None:
+        """同一个整句替换 hint 可声明单步完成或先观察再规划。"""
+        if (complexity not in ("simple", "adaptive") or not plan.steps
+                or (complexity == "simple" and len(plan.steps) != 1)
                 or any(step.intent != hint.intent for step in plan.steps)):
             return
-        if plan.complexity != "adaptive":
-            logger.info("route_hint %s plans adaptively: observe first, then replan on the result", hint.intent)
-        plan.complexity = "adaptive"
+        if plan.complexity != complexity:
+            logger.info("route_hint %s selects %s complexity", hint.intent, complexity)
+        plan.complexity = complexity
         plan.goal = str(text or "")
         plan.clarify = None
         plan.addressed = True

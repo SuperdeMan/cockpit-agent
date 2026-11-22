@@ -53,6 +53,7 @@ from runtime.question_shape import (
     asks_switch_state,
 )
 from .step_grounding import instructs, names_only_the_object, step_naming_score
+from .waypoints import bind_charging_destination
 from .pending_cancel import detect_confirm_rejection
 from .reply_position import reply_position
 from .admission import (ADDRESSEE_FALSE, ADDRESSEE_OBJECT_HEAD, ADDRESSEE_QUESTION,
@@ -2751,6 +2752,7 @@ class PlanBuilder:
                 plan.clarify = None
                 plan.cancel_unresolved = cancel_object
                 plan.plan_mode = f"{plan.plan_mode or ''}_cancel_unresolved"
+        bind_charging_destination(plan, text)
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
@@ -2990,6 +2992,7 @@ class PlanBuilder:
 
         repair_plan = Plan(steps=steps)
         effects = _skills.apply_plan_repairs(repair_plan, goal, skill_names)
+        bind_charging_destination(repair_plan, getattr(ctx, "safety_origin_text", ""))
         kept_ids = {step.id for step in steps}
         return ReplanDecision(done=not bool(steps), steps=steps, skill_effects=effects,
                               blocked=blocked_intents,
